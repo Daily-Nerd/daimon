@@ -24,21 +24,28 @@ def test_render_none_when_no_signal():
 def test_external_state_items_surface_at_top(sample_checkpoint):
     text = briefing.render(sample_checkpoint)
     assert text is not None
-    # The external-state / verify-before-trusting block must precede the rest.
-    verify_idx = text.lower().find("verify")
-    decisions_idx = text.lower().find("decision")
+    # #1128: the layout follows reader need, so Decisions sit above the
+    # verify-before-trusting block in EVERY render; VERIFY still precedes
+    # the open loops and everything after it.
+    verify_idx = text.find("VERIFY BEFORE TRUSTING")
+    decisions_idx = text.find("Decisions made:")
+    open_idx = text.find("Open loops:")
     assert verify_idx != -1
     assert decisions_idx != -1
-    assert verify_idx < decisions_idx
+    assert decisions_idx < verify_idx
+    if open_idx != -1:
+        assert verify_idx < open_idx
     # The exact PR-merge gap item is present with its quote.
     assert "PR #6" in text
 
 
-def test_open_loops_before_decisions(sample_checkpoint):
+def test_decisions_before_open_loops(sample_checkpoint):
+    # #1128: one section order (briefing.SECTION_ORDER), decisions first.
     text = briefing.render(sample_checkpoint)
-    open_idx = text.lower().find("open")
-    dec_idx = text.lower().find("decision")
-    assert open_idx < dec_idx
+    open_idx = text.find("Open loops:")
+    dec_idx = text.find("Decisions made:")
+    assert dec_idx < open_idx
+    assert briefing.SECTION_ORDER[0] == "decisions"
 
 
 def test_verify_marker_present_for_external_state(sample_checkpoint):
@@ -139,51 +146,59 @@ def _decs(n):
     return [{"text": f"d{i}", "trust": "inferred"} for i in range(n)]
 
 
-def test_build_caps_decisions_to_recent_tail(monkeypatch):
+def test_select_caps_decisions_to_recent_tail(monkeypatch):
+    # #1128: build() keeps every decision; select() applies the cap and
+    # records "cap" as the reason for each one it takes out.
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     cp = {"working_context": {"recent_decisions": _decs(18)}, "epistemic_snapshot": {}}
     b = briefing.build(cp)
-    assert len(b["decisions"]) == 10
-    assert b["decisions_overflow"] == 8
+    assert len(b["decisions"]) == 18
+    sel = briefing.select(b, None)
+    assert len(sel.kept["decisions"]) == 10
+    assert sel.reasons["decisions"] == ["cap"] * 8
     # newest kept, oldest dropped
-    assert [d["text"] for d in b["decisions"]] == [f"d{i}" for i in range(8, 18)]
+    assert [d["text"] for d in sel.kept["decisions"]] == [f"d{i}" for i in range(8, 18)]
 
 
 def test_build_no_overflow_when_under_cap(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     cp = {"working_context": {"recent_decisions": _decs(3)}, "epistemic_snapshot": {}}
-    b = briefing.build(cp)
-    assert len(b["decisions"]) == 3
-    assert b["decisions_overflow"] == 0
+    sel = briefing.select(briefing.build(cp), None)
+    assert len(sel.kept["decisions"]) == 3
+    assert sel.dropped["decisions"] == []
 
 
 def test_build_zero_is_unbounded(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "0")
     cp = {"working_context": {"recent_decisions": _decs(18)}, "epistemic_snapshot": {}}
-    b = briefing.build(cp)
-    assert len(b["decisions"]) == 18
-    assert b["decisions_overflow"] == 0
+    sel = briefing.select(briefing.build(cp), None)
+    assert len(sel.kept["decisions"]) == 18
+    assert sel.dropped["decisions"] == []
 
 
-def test_overflow_note_text():
-    assert briefing._overflow_note(0) is None
-    assert briefing._overflow_note(-1) is None
-    assert briefing._overflow_note(8) == "(+8 earlier decisions — full history in checkpoint)"
-    assert briefing._overflow_note(1) == "(+1 earlier decision — full history in checkpoint)"
+def test_decision_note_text(monkeypatch):
+    # #1128: one note per section, built from the selection manifest.
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
+    cp = {"working_context": {"recent_decisions": _decs(18)}, "epistemic_snapshot": {}}
+    sel = briefing.select(briefing.build(cp), None)
+    assert briefing.section_note(sel, "decisions") == \
+        "  (10 of 18 shown; 8 over the 10-item cap)"
+    assert briefing.section_note(sel, "beliefs") is None
 
 
 def test_render_plain_shows_overflow_marker(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     cp = {"working_context": {"recent_decisions": _decs(18)}, "epistemic_snapshot": {}}
     out = briefing.render_plain(briefing.build(cp))
-    assert "  (+8 earlier decisions — full history in checkpoint)" in out
+    assert "  (10 of 18 shown; 8 over the 10-item cap)" in out
+    assert "earlier decisions" not in out
 
 
 def test_render_plain_no_marker_when_under_cap(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     cp = {"working_context": {"recent_decisions": _decs(3)}, "epistemic_snapshot": {}}
     out = briefing.render_plain(briefing.build(cp))
-    assert "earlier decision" not in out
+    assert "shown;" not in out
 
 
 # ---- #1034: the cap must not spend its room on carried decisions ----
@@ -257,19 +272,21 @@ def test_merged_fixture_is_native_then_carried():
 
 def test_cap_spends_every_slot_on_native_decisions(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
-    b = briefing.build(_merged_checkpoint(), now=_CARRY_NOW)
-    assert _texts(b["decisions"]) == _NATIVE_TEXTS[3:]
-    assert all(not d.get("carried_from") for d in b["decisions"])
-    assert b["decisions_overflow"] == 11
+    sel = briefing.select(briefing.build(_merged_checkpoint(), now=_CARRY_NOW),
+                          None, _CARRY_NOW)
+    assert _texts(sel.kept["decisions"]) == _NATIVE_TEXTS[3:]
+    assert all(not d.get("carried_from") for d in sel.kept["decisions"])
+    assert len(sel.dropped["decisions"]) == 11
 
 
 def test_carried_fill_the_room_native_leaves_heaviest_first(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "15")
-    b = briefing.build(_merged_checkpoint(), now=_CARRY_NOW)
+    sel = briefing.select(briefing.build(_merged_checkpoint(), now=_CARRY_NOW),
+                          None, _CARRY_NOW)
     # 13 native, chronological, then the two heaviest carried by #78 weight.
-    assert _texts(b["decisions"])[:13] == _NATIVE_TEXTS
-    assert _texts(b["decisions"])[13:] == ["cdec-03", "cdec-06"]
-    assert b["decisions_overflow"] == 6
+    assert _texts(sel.kept["decisions"])[:13] == _NATIVE_TEXTS
+    assert _texts(sel.kept["decisions"])[13:] == ["cdec-03", "cdec-06"]
+    assert len(sel.dropped["decisions"]) == 6
 
 
 def test_budget_drops_carried_before_native_newest_stands_last(monkeypatch):
@@ -313,8 +330,9 @@ def test_all_native_merge_still_renders_chronologically(monkeypatch):
         for t in _NATIVE_TEXTS
     ])
     b = briefing.build(carry.merge(new, prev, _CARRY_NOW), now=_CARRY_NOW)
-    assert _texts(b["decisions"]) == _NATIVE_TEXTS[3:]
-    assert b["decisions_overflow"] == 3
+    sel = briefing.select(b, None, _CARRY_NOW)
+    assert _texts(sel.kept["decisions"]) == _NATIVE_TEXTS[3:]
+    assert len(sel.dropped["decisions"]) == 3
 
 
 def test_render_plain_byte_identical_when_unbounded(monkeypatch):
@@ -570,7 +588,7 @@ def test_render_plain_respects_token_budget(monkeypatch):
     # the load-bearing skeleton survives every cut
     assert "VERIFY BEFORE TRUSTING" in out and "verify the deploy state" in out
     assert "Active topic" in out
-    assert "trimmed" in out  # dropped content is announced, never silent
+    assert "cut for budget" in out  # dropped content is announced, never silent
 
 
 def test_render_plain_budget_zero_is_unbounded(monkeypatch):
@@ -582,7 +600,7 @@ def test_render_plain_budget_zero_is_unbounded(monkeypatch):
     b = briefing.build(_fat_checkpoint(), now=1_800_000_000.0)
     out = briefing.render_plain(b)
     assert briefing.estimate_tokens(out) > 800  # nothing dropped
-    assert "trimmed" not in out
+    assert "cut for budget" not in out
 
 
 def test_render_plain_drops_low_weight_background_before_open_loops(monkeypatch):
@@ -598,7 +616,7 @@ def test_render_plain_under_budget_untouched(monkeypatch, sample_checkpoint):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
     b = briefing.build(sample_checkpoint, now=1_800_000_000.0)
     out = briefing.render_plain(b)
-    assert "trimmed" not in out and "PR #6" in out
+    assert "cut for budget" not in out and "PR #6" in out
 
 
 # ---- #1044: hard byte ceiling on the FINAL rendered briefing ----
@@ -642,8 +660,18 @@ def test_byte_ceiling_caps_output_and_preserves_rulings(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "900")
     b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
     out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
-    assert len(out.encode("utf-8")) <= 900
-    assert "truncated" in out
+    # #1128: the rulings, the greeting and the newest decision are fixed
+    # furniture, and here they alone exceed 900 bytes. Nothing is blindly cut
+    # to force a fit: the render says by how much it is over, and keeps them.
+    assert "bytes over the 900-byte budget" in out
+    assert out.splitlines()[0].startswith("While you were away")
+    for line in _CEILING_RULINGS:
+        assert line in out
+    # Where the fixed part fits, the ceiling holds and no marker appears.
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "2600")
+    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    assert len(out.encode("utf-8")) <= 2600
+    assert "bytes over the" not in out
     for line in _CEILING_RULINGS:
         assert line in out
 
@@ -657,8 +685,8 @@ def test_byte_ceiling_drops_items_without_the_hard_backstop(monkeypatch):
     b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
     out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
     assert len(out.encode("utf-8")) <= 15000
-    assert "trimmed" in out
-    assert "truncated" not in out
+    assert "cut for budget" in out
+    assert "bytes over the" not in out
     for line in _CEILING_RULINGS:
         assert line in out
 

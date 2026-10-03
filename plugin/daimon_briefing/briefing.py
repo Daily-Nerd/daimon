@@ -315,15 +315,6 @@ def _nonempty(item) -> bool:
     return bool(item and isinstance(item, dict) and str(item.get("text") or "").strip())
 
 
-def _overflow_note(dropped: int) -> str | None:
-    """Marker text when the briefing capped older decisions, or None. Single source
-    for both the plain and rich render paths (DRY + one singular/plural rule)."""
-    if dropped <= 0:
-        return None
-    plural = "s" if dropped != 1 else ""
-    return f"(+{dropped} earlier decision{plural} — full history in checkpoint)"
-
-
 def _by_weight(items, item_type, now):
     """Sort a section by #78 effective weight, heaviest first. sorted() is stable,
     so legacy items (no first_seen / no importance -> equal neutral weights) keep
@@ -339,38 +330,23 @@ def _is_carried(item) -> bool:
     return bool(isinstance(item, dict) and item.get("carried_from"))
 
 
-def _select_decisions(decisions, n, now):
-    """The N decisions the briefing renders (#1034), native first.
-
-    The old rule was `decisions[-n:]`, positional-recent under the serializer's
-    CHRONOLOGY contract. carry.merge breaks that contract from the other side:
-    it appends the previous checkpoint's items — older than every native one by
-    construction — at the TAIL of the same list (`native.extend(carried[:cap])`).
-    Composed, the tail is the carried block, so the tail-slice spent the whole
-    cap on old carried items and dropped the decisions the session just made.
-
-    Selection instead: the chronological tail of the NATIVE block first (so the
-    newest native decision can never be crowded out), then carried items by #78
-    effective weight, heaviest first, filling whatever room is left. With no
-    carried items this is byte-identical to the old slice. n = 0 is unbounded.
-    Render-time only: the checkpoint keeps every decision."""
-    if not n or len(decisions) <= n:
-        return decisions
+def _order_decisions(decisions, now):
+    """The native block stays chronological (the serializer's CHRONOLOGY
+    contract), then carried decisions by #78 effective weight, heaviest first
+    (#1034). carry.merge appends the previous checkpoint's older items at the
+    TAIL of the same list, so the raw order is not the render order."""
     native = [i for i in decisions if not _is_carried(i)]
-    kept = native[-n:]
-    room = n - len(kept)
-    if room > 0:
-        carried = [i for i in decisions if _is_carried(i)]
-        kept = kept + _by_weight(carried, "recent_decision", now)[:room]
-    return kept
+    carried = [i for i in decisions if _is_carried(i)]
+    return native + _by_weight(carried, "recent_decision", now)
 
 
-def build(checkpoint, now=None, *, capped: bool = True) -> dict | None:
+def build(checkpoint, now=None) -> dict | None:
     """Structured briefing sections, or None if nothing is worth surfacing.
-    Deterministic — no LLM; `now` is injectable for tests. Sections order by #78
-    effective weight EXCEPT recent_decisions, whose NATIVE block stays
-    chronological (the serializer's CHRONOLOGY contract); carried decisions
-    render after it, by weight — see `_select_decisions`."""
+    Deterministic and pure — no LLM, no I/O; `now` is injectable for tests.
+    Sections order by #78 effective weight EXCEPT recent_decisions, whose
+    NATIVE block stays chronological; carried decisions follow it, by weight.
+    Nothing is capped or dropped here (#1128): `select` applies the decision
+    cap and the byte budget, with a reason recorded for every item it drops."""
     if not checkpoint or not isinstance(checkpoint, dict):
         return None
     if now is None:
@@ -393,20 +369,15 @@ def build(checkpoint, now=None, *, capped: bool = True) -> dict | None:
             or _nonempty(active)):
         return None
 
-    # Cap to N decisions: this session's own first, carried ones in the room
-    # left over (#1034). 0 = unbounded. Render-time only.
-    kept = _select_decisions(
-        decisions, config.max_briefing_decisions() if capped else 0, now)
-
     return {
         "external": [i for i in open_qs if i.get("external_state")],
         "open_loops": [i for i in open_qs if not i.get("external_state")],
-        "decisions": kept,
-        "decisions_overflow": len(decisions) - len(kept),
+        "decisions": _order_decisions(decisions, now),
         "active_topic": active if _nonempty(active) else None,
         "beliefs": beliefs,
         "uncertainties": uncertainties,
         "contradictions": contradictions,
+        "now": now,
     }
 
 
@@ -976,18 +947,16 @@ def _byte_len(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-def _log_render_size(text: str, token_budget: int, byte_ceiling: int) -> None:
-    """#1044: nothing logged the token estimate before this. The rendered
-    byte size goes right next to it, at the same place the estimate is
-    computed, so the next drift between "under budget" and "still spills" is
-    visible in the log instead of discovered from a host's truncated
-    preview. `byte_ceiling` is the EFFECTIVE ceiling this call used (a caller
-    such as `render.render_brief` may have passed a reduced `max_bytes`), not
-    always `config.brief_max_bytes()` verbatim."""
+def _log_render_size(text: str, budget) -> None:
+    """#1044: the rendered byte size and its token estimate, logged at the
+    place the budget is applied, so the next drift between "under budget" and
+    "still spills" is visible in the log instead of discovered from a host's
+    truncated preview. `budget` is the EFFECTIVE byte budget this call used
+    (`effective_budget`; a caller such as `render.render_brief` may have
+    passed a reduced `max_bytes`), or None when unbounded."""
     log.debug("daimon: briefing rendered %d bytes (~%d tokens estimated, "
-              "token budget %d, byte ceiling %d)",
-              _byte_len(text), estimate_tokens(text), token_budget,
-              byte_ceiling)
+              "byte budget %s)", _byte_len(text), estimate_tokens(text),
+              budget)
 
 
 def truncate_preserving_sections(text: str, max_len: int, *, measure=len) -> str:
@@ -1030,50 +999,9 @@ def truncate_preserving_sections(text: str, max_len: int, *, measure=len) -> str
     return body[:lo] + _TRUNCATION_MARKER
 
 
-def _trim_note(dropped: int) -> str:
-    plural = "s" if dropped != 1 else ""
-    return f"  (+{dropped} item{plural} trimmed for budget — full history in checkpoint)"
-
-
-# Budget drop order (#79): background sections go before actionable ones, and
-# within a section the LOWEST-weight items go first — beliefs/uncertainties are
-# #78-sorted heaviest-first, so their tail is the lightest. Decisions are not a
-# single ordered run (#1034): `_select_decisions` renders the native block
-# chronologically and then carried items heaviest-first, so "the head is the
-# oldest" is only true of the native half. Their rule is its own — see
-# `_decision_drop_index`. external / active_topic / contradictions are never
-# dropped: they are the skeleton.
-_DROP_ORDER = (("beliefs", "tail"), ("uncertainties", "tail"),
-               ("decisions", "decisions"), ("open_loops", "tail"))
-
-
-def _decision_drop_index(items) -> int:
-    """Which rendered decision the budget gives up next (#1034): the LAST
-    carried one while any remains — carried render heaviest-first, so the last
-    is the lightest — and only then the head of the native block, the oldest.
-    The newest native decision is therefore the last decision standing.
-
-    Scans for the carried item rather than trusting the tail, so a caller that
-    hands render_plain a hand-built briefing with its own ordering still drops
-    a carried item before a native one."""
-    for idx in range(len(items) - 1, -1, -1):
-        if _is_carried(items[idx]):
-            return idx
-    return 0
-
-
-def _drop_index(items, end) -> int:
-    """Which index of a section the budget gives up next. Every section but
-    decisions is #78-sorted heaviest-first, so its tail ("tail") is its
-    lightest item; decisions have their own rule (#1034)."""
-    if end == "decisions":
-        return _decision_drop_index(items)
-    return -1
-
-
 # ---- #693: standing rulings — the always-present positive-polarity section ----
 
-# The section renders at the TOP of the briefing, outside _DROP_ORDER: a
+# The section renders at the TOP of the briefing, outside the drop order: a
 # ruling is a human-ratified standing constraint, and budget pressure must
 # never silently drop the one section whose whole point is that it cannot
 # fade. Worst case (a full cap of maximum-length rulings) costs ~17-20% of
@@ -1822,125 +1750,34 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
     return lines
 
 
-def _apply_byte_ceiling(text: str, b: dict, trimmed: dict, degraded: bool,
-                        rulings, request_lines, verdict_lines, owed_lines,
-                        decision_count, *, max_bytes: int) -> str:
-    """#1044: the hard ceiling on the FINAL rendered briefing, applied after
-    every section is assembled. A SEPARATE, later check from the #79 token
-    budget above, in UTF-8 bytes because that is what the hosts that spill
-    actually measure (Claude Code's own spill message reports "12.8KB" for a
-    13,249-character render): chars and bytes are not the same axis once the
-    render carries multi-byte glyphs, and the token estimate never sees the
-    skeleton furniture (rulings, decision/request/verdict/owed panels) at
-    all, so a render can clear the token budget and still miss this one.
-
-    `max_bytes` is the EFFECTIVE ceiling for this call, not always
-    `config.brief_max_bytes()` verbatim: `render.render_brief`'s non-rich
-    path passes a REDUCED value (the configured ceiling minus the bytes it
-    already spends on the handoff, drift, teammates, and version-note text
-    that print beside this body), so the byte ceiling bounds a host's WHOLE
-    stdout rather than just this function's own return value.
-
-    Reuses the same `_DROP_ORDER` machinery the token budget uses (background
-    sections before actionable ones, lowest-weight item first within a
-    section) to drop further if the byte ceiling is still not met once the
-    token budget is satisfied. If dropping every droppable item still is not
-    enough, and the skeleton alone (rulings, the four panels, external,
-    active_topic, contradictions) exceeds the ceiling, falls back to
-    `truncate_preserving_sections` in byte mode on everything AFTER the
-    protected head (`_head_lines`: the greeting, the #204 note, and the
-    standing rulings). The head is never touched by that final cut: rulings
-    are a human-ratified constraint and must not fade because a render ran
-    long; the HANDOFF block (printed separately, ahead of this text
-    entirely, by `render.render_brief`) is untouched by construction for the
-    same reason."""
-    if not max_bytes or _byte_len(text) <= max_bytes:
-        return text
-    b = dict(b)
-    trimmed = dict(trimmed) if trimmed else {key: 0 for key, _ in _DROP_ORDER}
-    for key, end in _DROP_ORDER:
-        while _byte_len(text) > max_bytes and b.get(key):
-            items = list(b[key])
-            items.pop(_drop_index(items, end))
-            b[key] = items
-            trimmed[key] = trimmed.get(key, 0) + 1
-            text = _render_parts(b, trimmed, degraded, rulings,
-                                 request_lines, verdict_lines, owed_lines,
-                                 decision_count)
-        if _byte_len(text) <= max_bytes:
-            return text
-    head = "\n".join(_head_lines(degraded, rulings))
-    available = max(0, max_bytes - _byte_len(head))
-    rest = text[len(head):]
-    return head + truncate_preserving_sections(rest, available, measure=_byte_len)
-
-
 def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
                  decision_count: str | None = None, *,
                  max_bytes: int | None = None) -> str:
-    """The deterministic briefing text. Under the #79 budget this is
-    BYTE-IDENTICAL to the legacy render(); over it, long items truncate
-    (sections preserved) and then whole items drop, lowest value first,
-    each cut announced with a trim note. `degraded` (#204) downgrades every
+    """The deterministic briefing text: a thin wrapper over `select` and
+    `render_selection` (#1128), kept so its many call sites keep working.
+
+    Under budget this is the full briefing (the decision cap aside). Over it,
+    long non-verbatim items shorten first (#30: verbatim is never rewritten),
+    then whole candidates drop in the one global order `select` documents,
+    each section announcing what it lost. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable.
-    `decision_count` (#766 slice 5) is the single count line or None —
-    outside `_DROP_ORDER` like every skeleton block, never trimmed.
+    `decision_count` (#766 slice 5) and the request/verdict/owed panels are
+    protected furniture.
 
-    #1044: after the token budget above is satisfied (or found disabled), a
-    SEPARATE hard ceiling in bytes is applied to the result (see
-    `_apply_byte_ceiling`). Both checks run on every call; neither replaces
-    the other. `max_bytes` overrides `config.brief_max_bytes()` for this call
-    only; the default `None` reads the config, which is what every caller
-    except `render.render_brief`'s non-rich path uses (that path passes a
-    budget reduced by what it prints beside this body, so the ceiling covers
-    a host's whole stdout rather than only this return value)."""
-    budget = config.brief_max_tokens()
-    eff_max_bytes = config.brief_max_bytes() if max_bytes is None else max_bytes
-    text = _render_parts(b, {}, degraded, rulings, request_lines,
-                         verdict_lines, owed_lines, decision_count)
-    if not budget or estimate_tokens(text) <= budget:
-        text = _apply_byte_ceiling(text, b, {}, degraded, rulings,
-                                   request_lines, verdict_lines, owed_lines,
-                                   decision_count, max_bytes=eff_max_bytes)
-        _log_render_size(text, budget, eff_max_bytes)
-        return text
-
-    # Stage 1: shorten monster items in place of dropping them. Verbatim text
-    # is exempt (#30) — the #23 freeze made it immutable in carry, and a
-    # render that rewrites it under budget pressure breaks the same guarantee.
-    # An oversized verbatim item can still be DROPPED whole in stage 2
-    # (announced by the trim note); it is never rewritten.
-    b = dict(b)
-    for key, _end in _DROP_ORDER:
-        b[key] = [
-            i if i.get("trust") == "verbatim"
-            else {**i, "text": truncate_preserving_sections(
-                i.get("text", ""), _ITEM_TRUNCATE_CHARS)}
-            for i in (b.get(key) or [])
-        ]
-    trimmed = {key: 0 for key, _ in _DROP_ORDER}
-    text = _render_parts(b, trimmed, degraded, rulings, request_lines,
-                         verdict_lines, owed_lines, decision_count)
-
-    # Stage 2: drop whole items, least valuable first, until the budget holds
-    # or only the skeleton remains.
-    for key, end in _DROP_ORDER:
-        while estimate_tokens(text) > budget and b.get(key):
-            items = list(b[key])
-            items.pop(_drop_index(items, end))
-            b[key] = items
-            trimmed[key] += 1
-            text = _render_parts(b, trimmed, degraded, rulings,
-                                 request_lines, verdict_lines, owed_lines,
-                                 decision_count)
-        if estimate_tokens(text) <= budget:
-            break
-    text = _apply_byte_ceiling(text, b, trimmed, degraded, rulings,
-                               request_lines, verdict_lines, owed_lines,
-                               decision_count, max_bytes=eff_max_bytes)
-    _log_render_size(text, budget, eff_max_bytes)
+    One budget: `effective_budget(max_bytes)`, min(brief_max_bytes,
+    brief_max_tokens * 4) in UTF-8 bytes, the unit the hosts that spill
+    measure (#1044). `max_bytes` overrides the byte side for this call only;
+    `render.render_brief` passes the room left once the blocks printed beside
+    the body are counted."""
+    budget = effective_budget(max_bytes)
+    sel = select(b, budget, degraded=degraded, rulings=rulings,
+                 request_lines=request_lines, verdict_lines=verdict_lines,
+                 owed_lines=owed_lines, decision_count=decision_count)
+    text = render_selection(sel)
+    _log_render_size(text, budget)
     return text
+
 
 
 def _head_lines(degraded: bool, rulings) -> list[str]:
@@ -1949,7 +1786,7 @@ def _head_lines(degraded: bool, rulings) -> list[str]:
     panels and the cognitive body. #1044's byte ceiling protects exactly this
     prefix: it is the closest this render gets to a human-ratified constraint
     (rulings) plus the one line every render opens with, and the ceiling must
-    never silently eat either. Shared with `_render_parts` so the two can
+    never silently eat either. Shared with `render_selection` so the two can
     never drift apart on what "the head" is."""
     parts = ["While you were away — here's where we left off."]
     if degraded:
@@ -1958,80 +1795,12 @@ def _head_lines(degraded: bool, rulings) -> list[str]:
         parts.append("")
         parts.append(DEGRADE_NOTE)
     if rulings:
-        # #693: skeleton furniture at the top, outside _DROP_ORDER — the
+        # #693: skeleton furniture at the top, never a drop candidate — the
         # budget loops re-render with the same lines and can only trim the
         # sections below.
         parts.append("")
         parts.extend(rulings)
     return parts
-
-
-def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
-                  rulings=(), request_lines=(), verdict_lines=(),
-                  owed_lines=(), decision_count: str | None = None) -> str:
-    parts = _head_lines(degraded, rulings)
-    if decision_count:
-        # #766 slice 5: sits directly above the request panel when it
-        # renders, and in its position when it does not — so it is placed
-        # here, between the rulings block and the request panel.
-        parts.append("")
-        parts.append(decision_count)
-    if request_lines:
-        # #694 PR 2: same posture as rulings above — skeleton furniture, the
-        # budget loops re-render with the same lines and can only trim the
-        # sections below.
-        parts.append("")
-        parts.extend(request_lines)
-    if verdict_lines:
-        # #694 PR 3: same posture — skeleton furniture, outside _DROP_ORDER.
-        parts.append("")
-        parts.extend(verdict_lines)
-    if owed_lines:
-        # #885: same posture — skeleton furniture, outside _DROP_ORDER. Last
-        # of the four so the reader meets decisions owed TO them before work
-        # owed BY them.
-        parts.append("")
-        parts.extend(owed_lines)
-
-    def _section(header: str, key: str) -> None:
-        items = b.get(key) or []
-        note = trimmed.get(key, 0)
-        if not items and not note:
-            return
-        parts.append("")
-        parts.append(header)
-        briefable = key in BRIEFABLE_SECTIONS
-        parts.extend(_line(i, degraded, briefable) for i in items)
-        if key == "decisions":
-            overflow = _overflow_note(b.get("decisions_overflow", 0))
-            if overflow:
-                parts.append(f"  {overflow}")
-        if note:
-            parts.append(_trim_note(note))
-
-    if b["external"]:
-        parts.append("")
-        parts.append("VERIFY BEFORE TRUSTING (state may have changed outside this session):")
-        parts.extend(_line(i, degraded, "external" in BRIEFABLE_SECTIONS) for i in b["external"])
-
-    _section("Open loops:", "open_loops")
-    _section("Decisions made:", "decisions")
-
-    if b["active_topic"]:
-        parts.append("")
-        parts.append(f'Active topic: {b["active_topic"].get("text", "").strip()}')
-
-    _section("Beliefs held:", "beliefs")
-    _section("Was uncertain about:", "uncertainties")
-
-    # .get(): hand-built b dicts predating #101 may lack the key (defensive,
-    # same spirit as decisions_overflow).
-    if b.get("contradictions"):
-        parts.append("")
-        parts.append("Contradictions flagged:")
-        parts.extend(_line(i, degraded) for i in b["contradictions"])
-
-    return "\n".join(parts)
 
 
 # ---- #1128: one ranked budget — select, then render ----
@@ -2077,6 +1846,11 @@ _BACKGROUND = frozenset({"beliefs", "uncertainties"})
 # command, so their notes carry no pointer. Plain `daimon loops` until the
 # age column and --stale land (#1128 PR 2).
 _NOTE_POINTER = {"external": "daimon loops", "open_loops": "daimon loops"}
+
+# When two candidates tie on every key above (equal percentile), the section
+# the reader needs least goes first: the old drop order, kept as the tie-break.
+_TIE_SECTION_RANK = {"beliefs": 0, "uncertainties": 1, "decisions": 2,
+                     "open_loops": 3, "external": 4, "contradictions": 5}
 
 _DECISION_FLOOR = 3
 # The panels in print order, with the command that lists what a collapsed
@@ -2232,7 +2006,8 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
       3. background sections (beliefs, uncertainties) before actionable ones;
       4. carried before native;
       5. within-section #78 weight percentile, lightest first;
-      6. older first, then position, so output is deterministic.
+      6. on a tie, the section the reader needs least (the old drop order),
+         then older first, then position, so output is deterministic.
 
     Over-budget protected set, in this order: panels collapse to count lines,
     the decision floor drops to one, then one marker line names the overage.
@@ -2279,6 +2054,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                    0 if s in _BACKGROUND else 1,
                    0 if _is_carried(it) else 1,
                    pct,
+                   _TIE_SECTION_RANK[s],
                    -_item_age_days(it, now),
                    ordinal,
                    SECTION_ORDER.index(s))
@@ -2352,7 +2128,11 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
     levels = [(floor_n, False), (floor_n, True), (min(1, floor_n), True)]
     for floor_keep, collapse in levels:
         if size(build_selection(full, floor_keep, collapse)) <= budget:
-            for n_dropped in range(0, full + 1):
+            # A lowered floor means every older decision goes first, whole:
+            # a newer decision never gives way to an older one.
+            start = (sum(1 for c in cands if c[1] == "decisions")
+                     if floor_keep < floor_n else 0)
+            for n_dropped in range(start, full + 1):
                 sel = build_selection(n_dropped, floor_keep, collapse)
                 if size(sel) <= budget:
                     return sel

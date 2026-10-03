@@ -74,7 +74,7 @@ def _annotated_b(cp=None, mutate=None):
     if mutate:
         mutate(cp)
     out = briefing.annotate(cp, briefing.AnnotateContext(route="/repo/x"), NOW)
-    return briefing.build(out.checkpoint, now=NOW, capped=False)
+    return briefing.build(out.checkpoint, now=NOW)
 
 
 @pytest.fixture(autouse=True)
@@ -389,3 +389,69 @@ def test_selection_is_a_pure_function_of_inputs(monkeypatch):
     a = briefing.render_selection(_sel(b, 6000))
     c = briefing.render_selection(_sel(b, 6000))
     assert a == c
+
+
+# ---- phase 3: render_plain / rich / teammates all go through select ----
+
+
+def test_render_plain_is_a_thin_wrapper_over_select(monkeypatch):
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "6000")
+    b = _annotated_b()
+    assert briefing.render_plain(b, rulings=RULINGS) == \
+        briefing.render_selection(
+            briefing.select(b, briefing.effective_budget(), rulings=RULINGS))
+    assert len(briefing.render_plain(b, rulings=RULINGS).encode()) <= 6000
+
+
+def test_effective_budget_is_one_byte_unit(monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "11264")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
+    assert briefing.effective_budget() == 11264   # tokens*4 = 12000 is looser
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "800")
+    assert briefing.effective_budget() == 3200
+    assert briefing.effective_budget(1000) == 1000
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
+    assert briefing.effective_budget() is None
+
+
+def test_plain_sections_follow_the_shared_order(monkeypatch):
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
+    b = _annotated_b()
+    text = briefing.render_plain(b)
+    heads = [briefing.SECTION_HEADERS[s] for s in briefing.SECTION_ORDER
+             if s in briefing.SECTION_HEADERS]
+    positions = [text.index(h) for h in heads if h in text]
+    assert positions == sorted(positions)
+    assert text.index("Decisions made:") < text.index("VERIFY BEFORE TRUSTING")
+
+
+def test_rich_path_uses_the_same_order_and_notes(monkeypatch, capsys):
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
+    b = _annotated_b()
+    render._rich_brief(b)
+    out = capsys.readouterr().out
+    assert out.index("Decisions made") < out.index("VERIFY BEFORE TRUSTING")
+    assert "10 of 43 shown; 9 over the 10-item cap, 24 older not shown" in out
+
+
+def test_teammate_blocks_carry_the_manifest_note(monkeypatch):
+    from daimon_briefing import render
+
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "2")
+    b = _annotated_b()
+    text = render._format_teammates([("grace", b)])
+    assert "(2 of 43 shown; 17 over the 2-item cap, 24 older not shown)" in text
+    assert "earlier decision" not in text
+
+
+def test_build_keeps_every_decision_and_stays_pure(monkeypatch):
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "3")
+    cp = _fixture_checkpoint()
+    b = briefing.build(cp, now=NOW)
+    assert len(b["decisions"]) == 43 and "decisions_overflow" not in b
+    assert briefing.build(cp, now=NOW) == b

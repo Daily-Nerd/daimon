@@ -224,7 +224,7 @@ def test_the_count_line_survives_budget_pressure(
         tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     # Same precedent as test_rulings_survive_budget_pressure
     # (test_ruling_briefing.py): the count line is skeleton furniture,
-    # outside _DROP_ORDER, so a budget tight enough to force every droppable
+    # protected furniture, so a budget tight enough to force every droppable
     # cognitive section to trim must not cost this line.
     recipient = "/p/dc-recipient-l"
     _open_ask(recipient, "publish the schema", "/p/dc-s17")
@@ -235,7 +235,7 @@ def test_the_count_line_survives_budget_pressure(
     assert "1 decision waiting on you here - daimon decide" in out
     # Budget pressure is real, not a no-op: at least one cognitive section
     # actually got trimmed under a 40-token budget.
-    assert "trimmed for budget" in out
+    assert "cut for budget" in out
 
 
 def test_cli_rich_brief_carries_the_count_line(tmp_checkpoint_dir,

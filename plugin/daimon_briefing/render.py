@@ -87,10 +87,12 @@ def _trust_key(item) -> str:
         return "verbatim"
     return "inferred" if trust else "untagged"
 
+# Titles and colours only: the ORDER lives in briefing.SECTION_ORDER (#1128),
+# shared with the plain render.
 _SECTIONS = [
+    ("decisions", "Decisions made", "green"),
     ("external", "⚠ VERIFY BEFORE TRUSTING", "red"),
     ("open_loops", "Open loops", "cyan"),
-    ("decisions", "Decisions made", "green"),
     ("beliefs", "Beliefs held", "blue"),
     ("uncertainties", "Was uncertain about", "magenta"),
     ("contradictions", "Contradictions flagged", "yellow"),
@@ -442,9 +444,26 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             body.append(f"{line}\n", style="bold")
         console.print(Panel(body, title=owed_lines[0],
                             border_style="magenta", title_align="left"))
-    for key, title, style in _SECTIONS:
-        items = b.get(key) or []
-        if not items:
+    # #1128: the rich path runs the same select as the plain one, with no
+    # budget (a TTY is never captured or spilled), so it gets the same
+    # section order, the same decision cap and the same notes.
+    sel = briefing.select(b, None, degraded=degraded)
+    section_style = {k: (t, s) for k, t, s in _SECTIONS}
+    for key in briefing.SECTION_ORDER:
+        if key == "active_topic":
+            if sel.kept.get("active_topic"):
+                console.print(
+                    Panel(
+                        Text(sel.kept["active_topic"].get("text", "").strip()),
+                        title="Active topic", border_style="white",
+                        title_align="left",
+                    )
+                )
+            continue
+        title, style = section_style[key]
+        items = sel.kept.get(key) or []
+        note = briefing.section_note(sel, key)
+        if not items and not note:
             continue
         body = Text()
         # #480 slice 1: whether THIS section's items earn a resolve handle —
@@ -562,18 +581,9 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                     body.append(
                         f"    … {overflow} earlier amendment(s) — "
                         f"daimon amend list\n", style="dim")
-        if key == "decisions":
-            note = briefing._overflow_note(b.get("decisions_overflow", 0))
-            if note:
-                body.append(f"{note}\n", style="dim")
+        if note:
+            body.append(f"{note.strip()}\n", style="dim")
         console.print(Panel(body, title=title, border_style=style, title_align="left"))
-    if b.get("active_topic"):
-        console.print(
-            Panel(
-                Text(b["active_topic"].get("text", "").strip()),
-                title="Active topic", border_style="white", title_align="left",
-            )
-        )
 
 
 def _print_teammates(teammates) -> None:
@@ -608,14 +618,17 @@ def _format_teammates(teammates) -> str:
                 # is built here, so the label has to be repeated.
                 line += f" {briefing.FOREIGN_VERBATIM_NOTE}"
             lines.append(line)
-        decisions = b.get("decisions") or []
+        # #1128: the decision cap and its note come from the same select the
+        # main body uses, so a teammate's section reads like our own.
+        sel = briefing.select(b, None)
+        decisions = sel.kept["decisions"]
         if decisions:
             lines.append("  Decisions made:")
             for i in decisions:
                 lines.append(f"  {briefing._line(i)}")
-            note = briefing._overflow_note(b.get("decisions_overflow", 0))
+            note = briefing.section_note(sel, "decisions")
             if note:
-                lines.append(f"    {note}")
+                lines.append(f"  {note}")
     return "\n".join(lines) + "\n"
 
 
@@ -636,7 +649,8 @@ def _rich_teammates(teammates) -> None:
             body.append(f"Active topic: {active.get('text', '').strip()}\n", style="white")
             if active.get("foreign_verbatim_claim"):
                 body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n", style="yellow")
-        decisions = b.get("decisions") or []
+        sel = briefing.select(b, None)
+        decisions = sel.kept["decisions"]
         if decisions:
             body.append("Decisions made:\n", style="bold")
             for i in decisions:
@@ -648,9 +662,9 @@ def _rich_teammates(teammates) -> None:
                     # repeated here (same reasoning as the #14 flag above).
                     body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n",
                                 style="yellow")
-            note = briefing._overflow_note(b.get("decisions_overflow", 0))
+            note = briefing.section_note(sel, "decisions")
             if note:
-                body.append(f"{note}\n", style="dim")
+                body.append(f"{note.strip()}\n", style="dim")
         console.print(Panel(body, title=f"Teammate — {author}",
                             border_style="white", title_align="left"))
 

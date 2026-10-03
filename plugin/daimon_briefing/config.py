@@ -172,7 +172,7 @@ def carry_max() -> int:
 
     Default 24 (#1035). The cut happens at merge, so this is a storage cut in
     the checkpoint chain, not a render cut: what the briefing injects is still
-    bounded by the render budget (max_briefing_decisions / _DROP_ORDER). At 8
+    bounded by the render budget (max_briefing_decisions / select). At 8
     the cap, not the carry_floor decay it was paired with, did all the
     forgetting, and unresolved open questions fell out of the chain in about a
     week. Unbounded is not the alternative: replayed over 45 real hops it

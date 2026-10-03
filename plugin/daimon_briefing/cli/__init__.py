@@ -688,7 +688,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
     the wrong repo context for those claims."""
     withheld: list = []
-    stale_items: list = []
+
     if checkpoint:
         # #1128: withhold (#103), corroboration (#268), stale stamping (#977)
         # and the optional worldcheck spot-check (#365/#397/#439) all live in
@@ -704,7 +704,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             time.time())
         checkpoint = annotated.checkpoint
         withheld = annotated.withheld
-        stale_items = annotated.stale_items
+
         if annotated.worldcheck is not None:
             try:
                 wc_stats = annotated.worldcheck
@@ -790,16 +790,10 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         if team_withheld:
             note += f" ({len(team_withheld)} a teammate's)"
         render.render_brief_note([note + " — `daimon status --suppressed` to list"])
-    # Staleness budget (#215): the classification already ran before the
-    # render (#977 stamps the stale items with their ages); this standing
-    # warning stays: the per-item substitution above is what makes it
-    # actionable, but the count orients the brief. House rule: zero stale
-    # items -> NO line at all, never a false alarm.
-    if stale_items:
-        render.render_brief_note([
-            f"⚠ {len(stale_items)} carried item(s) unverified for "
-            f">{config.stale_days():g} days — world-check before "
-            "repeating as true"])
+    # #1128: the standing ">N days unverified" footer is gone. The stale
+    # items carry [? unverified] marks in the body, and a section that hid
+    # stale carried items says so in its own note, so the footer repeated
+    # (and sometimes contradicted) what the sections already state.
     return 0
 
 
