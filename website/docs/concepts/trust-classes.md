@@ -156,7 +156,7 @@ rather than anything about the world.
 
 ## VERIFY BEFORE TRUSTING
 
-Briefings open with a section of items describing state that may have changed
+Briefings carry a section of items describing state that may have changed
 *outside* the session — merged PRs, rotated keys, moved files. A verbatim tag
 means the quote is faithful; it does not mean the world still looks like that.
 The intended reading protocol, for humans and agents alike:

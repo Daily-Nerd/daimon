@@ -198,8 +198,9 @@ def test_both_variants_state_silence_guard():
 
 
 def test_full_body_teaches_staleness_world_check():
-    # #215: the staleness-budget warning ("N carried item(s) unverified for
-    # >N days") is new surface in the brief — the skill must teach agents to
+    # #215: the staleness mark (`[? unverified]`, which replaced the
+    # "N carried item(s) unverified for >N days" footer in #1128) is new
+    # surface in the brief — the skill must teach agents to
     # world-check a carried claim before repeating it as true, not just note
     # it "may be stale" as the pre-#215 [carried] guidance already does.
     full = skill_content.render_full()

@@ -62,11 +62,27 @@ and an old checkpoint — is **not corroboration**; they are the same source
 repeated.
 
 So when a carried item's last-verified stamp ages past `DAIMON_STALE_DAYS`
-(default: 7 days), the briefing says so:
+(default: 7 days), the briefing marks that item itself. It renders as
+`[? unverified]` in place of its stored trust tag, with the stored tag and the
+age in a suffix:
 
 ```
-N carried item(s) unverified for >N days — world-check before repeating as true
+- [? unverified] The staging config drift needs an owner [carried] (was inferred, carried 12d)
 ```
+
+There is no separate footer. A stale carried item is also the first thing a
+briefing gives up when it runs out of room: every section shares one byte
+budget (`DAIMON_BRIEF_MAX_BYTES`), and stale carried items go before anything
+else, background sections before actionable ones. A section that hid some
+says so in its own note:
+
+```
+(4 of 13 shown; 9 carried checks unverified over 7d hidden. See: daimon loops)
+```
+
+Hidden items stay in the checkpoint, and `daimon loops` lists them with ids.
+Items you are expected to act on (a flagged supersession, an agent claim, an
+amendment) go last, and a note says when one was hidden.
 
 The intended response is to check the world — code, git, the issue tracker —
 and then either [resolve](./lifecycle.md) the item (it's done or wrong) or

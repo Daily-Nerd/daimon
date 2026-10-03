@@ -169,7 +169,7 @@ mostró un ítem a sí mismo, y nada sobre el mundo.
 
 ## VERIFY BEFORE TRUSTING
 
-Los briefings abren con una sección de ítems que describen estado que pudo
+Los briefings incluyen una sección de ítems que describen estado que pudo
 haber cambiado *fuera* de la sesión — PRs mergeados, llaves rotadas, archivos
 movidos. Una etiqueta verbatim significa que la cita es fiel; no significa
 que el mundo siga siendo así. El protocolo de lectura, para humanos y agentes
