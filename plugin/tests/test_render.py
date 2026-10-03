@@ -212,10 +212,12 @@ def test_render_brief_plain_total_stdout_bounded_by_byte_ceiling(
                         project_dir=project)
     out = capsys.readouterr().out
 
-    assert len(out.encode("utf-8")) <= 3200
+    # #1128: the HANDOFF, the rulings and the drift block are never cut, and
+    # here they alone use the budget. The body drops to its fixed furniture
+    # and SAYS how far over it is, instead of a blind tail cut.
     assert handoff_note in out
     assert "never let a briefing spill past the host's own preview limit" in out
-    assert "truncated" in out
+    assert "bytes over the" in out
     assert "CODE DRIFT" in out
     assert "Teammates — where they left off:" in out
 
@@ -993,20 +995,22 @@ def test_render_brief_drift_malformed_anchor_label(sample_checkpoint, capsys):
     assert "- [GONE] broken-item  (malformed anchor)\n" in out
 
 
-def test_rich_brief_shows_overflow_marker(capsys):
+def test_rich_brief_shows_overflow_marker(capsys, monkeypatch):
     import pytest
     pytest.importorskip("rich")
     from daimon_briefing import render
 
+    # #1128: the rich path runs the same select as the plain one, so the cap
+    # and its note come from the manifest.
+    monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     b = {
         "external": [], "open_loops": [],
-        "decisions": [{"text": f"d{i}", "trust": "inferred"} for i in range(8, 18)],
-        "decisions_overflow": 8,
+        "decisions": [{"text": f"d{i}", "trust": "inferred"} for i in range(18)],
         "active_topic": None, "beliefs": [], "uncertainties": [],
     }
     render._rich_brief(b)
     out = capsys.readouterr().out
-    assert "earlier decision" in out
+    assert "10 of 18 shown; 8 over the 10-item cap" in out
 
 
 def test_rich_brief_no_marker_when_not_capped(capsys):
@@ -1017,12 +1021,11 @@ def test_rich_brief_no_marker_when_not_capped(capsys):
     b = {
         "external": [], "open_loops": [],
         "decisions": [{"text": "d0", "trust": "inferred"}],
-        "decisions_overflow": 0,
         "active_topic": None, "beliefs": [], "uncertainties": [],
     }
     render._rich_brief(b)
     out = capsys.readouterr().out
-    assert "earlier decision" not in out
+    assert "shown;" not in out
 
 
 def test_rich_brief_shows_contradictions_section(capsys):

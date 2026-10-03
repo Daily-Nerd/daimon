@@ -11,9 +11,10 @@ as the CLI (#54) — the #257 demand counters must see MCP reads
 distinguishably or the gate they measure goes blind.
 """
 import json
+import time
 
-from . import (amendments, briefing, config, recall, recall_telemetry,
-               requests, store, trust)
+from . import (briefing, config, recall, recall_telemetry,
+               requests, store)
 
 
 class ToolError(Exception):
@@ -110,15 +111,13 @@ def _brief(arguments: dict) -> str:
                 "no projects have checkpoints yet — the first serialized "
                 "session creates one.")
         return f"{ruling_text}no checkpoint for this project. {hint}"
-    filtered, _withheld, _candidates = briefing.withhold(
-        checkpoint, store.resolutions(project_dir=target),
-        amendments=amendments.renderable(project_dir=target),
-        quarantine=trust.active_value_keys(project_dir=target))
-    # #268: the witness count rides the same strictly-scoped target as the
-    # withhold fold — an agent consumer reads the corroboration axis the human
-    # brief shows, from this project's ledger and no other.
-    filtered = briefing.mark_corroborated(
-        filtered, store.corroborations(project_dir=target))
+    # #1128: the same shared annotation step the CLI and Hermes run (withhold,
+    # the #268 witness count on the same strictly-scoped target, stale marks),
+    # so an agent consumer reads the world the human brief states. No
+    # worldcheck here: only the CLI same-project path sets that gate.
+    now = time.time()
+    filtered = briefing.annotate(
+        checkpoint, briefing.AnnotateContext(route=target), now).checkpoint
     b = briefing.build(filtered)
     if b is None:
         return f"{ruling_text}checkpoint exists but has nothing worth surfacing."

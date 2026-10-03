@@ -4105,7 +4105,9 @@ def test_cli_brief_team_respects_decision_cap(tmp_checkpoint_dir, sample_checkpo
     rc = cli.main(["brief", "--team", "--project", proj])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "earlier decision" in out  # overflow marker: cap dropped 1 of grace's 2
+    # #1128: the teammate's section carries the manifest note: the cap
+    # dropped 1 of grace's 2.
+    assert "(1 of 2 shown; 1 over the 1-item cap)" in out
 
 
 # --- #981: the Teammates section folds the READER's resolution ledger, the
@@ -6285,8 +6287,9 @@ def test_brief_warns_on_stale_carried_item(
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "carried item(s) unverified for >7 days" in out
-    assert "world-check before repeating as true" in out
+    # #1128: the standing footer is gone; the item's own mark carries it.
+    assert "carried item(s) unverified for" not in out
+    assert "world-check before repeating as true" not in out
     assert "[? unverified] an old carried loop nobody rechecked" in out
     assert "(was inferred, carried 10d)" in out
     # The render-time substitution never rewrites the stored trust value.

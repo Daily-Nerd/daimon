@@ -67,11 +67,28 @@ fuente repetida.
 
 Por eso, cuando el sello de última verificación de un ítem arrastrado
 envejece más allá de `DAIMON_STALE_DAYS` (por defecto: 7 días), el briefing
-lo dice:
+marca el ítem mismo. Se muestra como `[? unverified]` en lugar de su etiqueta
+de confianza guardada, con la etiqueta original y la edad en un sufijo:
 
 ```
-N carried item(s) unverified for >N days — world-check before repeating as true
+- [? unverified] The staging config drift needs an owner [carried] (was inferred, carried 12d)
 ```
+
+No hay un pie de página aparte. Un ítem arrastrado y vencido es además lo
+primero que el briefing suelta cuando se queda sin espacio: todas las
+secciones comparten un único presupuesto de bytes (`DAIMON_BRIEF_MAX_BYTES`),
+y los ítems arrastrados vencidos salen antes que cualquier otro, las secciones
+de fondo antes que las accionables. Una sección que ocultó alguno lo dice en
+su propia nota:
+
+```
+(4 of 13 shown; 9 carried checks unverified over 7d hidden. See: daimon loops)
+```
+
+Los ítems ocultos siguen en el checkpoint, y `daimon loops` los lista con sus
+ids. Los ítems sobre los que se espera que actúes (una supersesión marcada, una
+afirmación de un agente, una enmienda) salen al final, y una nota avisa cuando
+se ocultó alguno.
 
 La respuesta prevista es verificar el mundo — código, git, el issue
 tracker — y luego o [resolver](./lifecycle.md) el ítem (ya está hecho o está

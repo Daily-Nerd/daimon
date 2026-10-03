@@ -688,86 +688,44 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
     the wrong repo context for those claims."""
     withheld: list = []
-    events: dict = {}
-    stale_items: list = []
+
     if checkpoint:
-        # Withhold (#103): render-time derivation, fail-open — a briefing
-        # must never die over suppression machinery. #14: candidates ride
-        # along stamped on `checkpoint` itself — the deterministic path
-        # (render_plain via briefing._line) picks up the annotation; the
-        # opt-in LLM briefing path does not surface it (same pre-existing
-        # scope as [carried]), so nothing further is done with them here.
-        try:
-            events = store.resolutions(project_dir=route)
-            # #691: verified/ratified amendments annotate their items —
-            # renderable() refuses candidates, so nothing unverified can
-            # reach the render through this argument. Same fail-open.
-            checkpoint, withheld, _candidates = briefing.withhold(
-                checkpoint, events,
-                amendments=amendments.renderable(project_dir=route),
-                quarantine=trust_lib.active_value_keys(project_dir=route))
-        except Exception:
-            withheld = []
-            events = {}
-        # Corroboration (#268): a SEPARATE axis from the trust class — how many
-        # independent sessions have witnessed the claim, never what kind of
-        # evidence it is. Its own try: a failure here must cost the badge
-        # only, not the withheld list `events` still owes to the
-        # stamp_stale_carried pass below. Transient stamps on the in-memory checkpoint, same posture as
-        # the candidate flags above and the worldcheck flags below.
-        try:
-            checkpoint = briefing.mark_corroborated(
-                checkpoint, store.corroborations(project_dir=route))
-        except Exception:
-            pass
-        # #977: a carried item past the staleness budget (#215) renders as
-        # [? unverified] with its age, not as its stored trust tag. The stamp
-        # must land BEFORE render_brief below; it is transient (in-memory
-        # only, like the corroboration count above), so the stored trust
-        # value is never rewritten. Same resolutions fold as withhold, same
-        # fail-open try as stale_carried had: a broken classification must
-        # never take the briefing down. The warning note after the render
-        # reuses THIS list, so the age computation runs once.
-        try:
-            checkpoint, stale_items = briefing.stamp_stale_carried(
-                checkpoint, events, time.time())
-        except Exception:
-            stale_items = []
-    # Worldcheck (#365/#397/#439): opt-in, budget-bounded, read-only
-    # spot-check of carried claims — repo state via `gh`, on-disk state via
-    # the filesystem, and the origin checkpoint's signed receipt via the vitni
-    # CLI. Stamps contradicted items on the
-    # IN-MEMORY checkpoint before render (transient, like withhold's
-    # candidate stamps; never persisted). Fail-open like withhold above: a
-    # briefing must never block or die on the network. Counters ride the
-    # same usage.log every other counter uses, so `daimon stats` surfaces
-    # the fires-true rate with zero extra machinery.
-    if checkpoint and worldcheck_project and config.worldcheck_enabled():
-        try:
-            wc_stats = dict(worldcheck.check(checkpoint, worldcheck_project))
-            # Claim probes return evidence alongside counters under a
-            # reserved key. worldcheck writes nothing to
-            # disk by contract, so the rejection-ledger append happens HERE,
-            # where the project route is already resolved. Popped first: the
-            # counter loop below must see an all-ints dict.
-            ledger_rows = wc_stats.pop(worldcheck.LEDGER_KEY, ())
-            # #397: the dict carries the aggregate outcomes AND a
-            # "<class>:<outcome>" key per class, so one pass emits both the
-            # slice-1 counters (unchanged meaning) and the per-class
-            # fires-true rate the next expansion gate reads.
-            for counter, count in sorted(wc_stats.items()):
-                for _ in range(int(count)):
-                    _note_usage(f"worldcheck:{counter}")
-            # #919: the receipt-probe axis, project-scoped (see the helper's
-            # own docstring for why this one axis needs project scope where
-            # the loop above deliberately stays machine-wide).
-            _note_receipt_probe_usage(worldcheck_project, wc_stats)
-            # A POINTER and a REASON CODE, never the item's text (#376) — the
-            # same second stream capture writes, for the same reason: folded
-            # into events.jsonl a rejection would HIDE the item it describes.
-            _write_worldcheck_ledger(ledger_rows, route)
-        except Exception:
-            pass
+        # #1128: withhold (#103), corroboration (#268), stale stamping (#977)
+        # and the optional worldcheck spot-check (#365/#397/#439) all live in
+        # briefing.annotate now, shared with the MCP tool and the Hermes hook.
+        # Each step is fail-open inside it. Worldcheck is opt-in, budget-
+        # bounded and read-only; it only RETURNS its counters and ledger rows,
+        # and the writes below stay here, where the project route is already
+        # resolved (worldcheck writes nothing to disk by contract).
+        annotated = briefing.annotate(
+            checkpoint,
+            briefing.AnnotateContext(route=route,
+                                     worldcheck_project=worldcheck_project),
+            time.time())
+        checkpoint = annotated.checkpoint
+        withheld = annotated.withheld
+
+        if annotated.worldcheck is not None:
+            try:
+                wc_stats = annotated.worldcheck
+                # #397: the dict carries the aggregate outcomes AND a
+                # "<class>:<outcome>" key per class, so one pass emits both the
+                # slice-1 counters (unchanged meaning) and the per-class
+                # fires-true rate the next expansion gate reads.
+                for counter, count in sorted(wc_stats.items()):
+                    for _ in range(int(count)):
+                        _note_usage(f"worldcheck:{counter}")
+                # #919: the receipt-probe axis, project-scoped (see the
+                # helper's own docstring for why this one axis needs project
+                # scope where the loop above deliberately stays machine-wide).
+                _note_receipt_probe_usage(worldcheck_project, wc_stats)
+                # A POINTER and a REASON CODE, never the item's text (#376) —
+                # the same second stream capture writes, for the same reason:
+                # folded into events.jsonl a rejection would HIDE the item it
+                # describes.
+                _write_worldcheck_ledger(annotated.ledger_rows, route)
+            except Exception:
+                pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -780,9 +738,29 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         handoff = store.active_handoff(route)
     except Exception:
         handoff = None
-    render.render_brief(checkpoint, drift=drift, teammates=teammates,
-                        handoff=handoff, project_dir=route,
-                        worldcheck_project=worldcheck_project)
+    trailer = []
+    if withheld or team_withheld:
+        # #981: the count covers the Teammates section too, and says how
+        # many were a teammate's, since `status --suppressed` lists only the
+        # reader's own checkpoint.
+        note = f"{len(withheld) + len(team_withheld)} resolved item(s) withheld"
+        if team_withheld:
+            note += f" ({len(team_withheld)} a teammate's)"
+        trailer.append(note + " — `daimon status --suppressed` to list")
+    # #1128: the note rides INTO render_brief so it is charged to the same
+    # byte budget as the body, HANDOFF and teammates. `printed` is what the
+    # budgeted brief actually showed of each panel (None: everything).
+    printed = render.render_brief(checkpoint, drift=drift, teammates=teammates,
+                                  handoff=handoff, project_dir=route,
+                                  worldcheck_project=worldcheck_project,
+                                  trailer=trailer)
+
+    def _shown(panel, row) -> bool:
+        # #1128: `printed` is the manifest of card ids render_brief printed in
+        # full. A row the budget cut (its panel collapsed to a count line)
+        # never reached the reader, so it is not stamped as surfaced; no
+        # manifest means nothing is known to have been shown.
+        return row["request_id"] in ((printed or {}).get(panel) or ())
     # #694 PR 2 (D1): the surfaced stamp, AFTER the render+print pipeline
     # above completes — the card has already reached the terminal, so a
     # crash between here and the write below just re-renders it next brief
@@ -804,7 +782,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             # loop no longer stamps `surfaced` for one).
             for row in requests.decision_renderable(
                     project_dir=worldcheck_project).get("rows") or []:
-                if requests.needs_surfaced_stamp(row):
+                if requests.needs_surfaced_stamp(row) and _shown("request", row):
                     requests.stamp_surfaced(row["request_id"],
                                             project_dir=worldcheck_project)
         except Exception:
@@ -817,6 +795,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                     project_dir=worldcheck_project).get("rows") or []:
                 # #1117: one stamp row carries whichever of the epoch and the
                 # late reply the brief just showed.
+                if not _shown("verdict", row):
+                    continue
                 reply_id = requests.unseen_reply_id(row)
                 if requests.needs_verdict_surfaced_stamp(row) or reply_id:
                     requests.stamp_verdict_surfaced(
@@ -824,24 +804,10 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                         reply_event_id=reply_id)
         except Exception:
             pass
-    if withheld or team_withheld:
-        # #981: the count covers the Teammates section too, and says how
-        # many were a teammate's, since `status --suppressed` lists only the
-        # reader's own checkpoint.
-        note = f"{len(withheld) + len(team_withheld)} resolved item(s) withheld"
-        if team_withheld:
-            note += f" ({len(team_withheld)} a teammate's)"
-        render.render_brief_note([note + " — `daimon status --suppressed` to list"])
-    # Staleness budget (#215): the classification already ran before the
-    # render (#977 stamps the stale items with their ages); this standing
-    # warning stays: the per-item substitution above is what makes it
-    # actionable, but the count orients the brief. House rule: zero stale
-    # items -> NO line at all, never a false alarm.
-    if stale_items:
-        render.render_brief_note([
-            f"⚠ {len(stale_items)} carried item(s) unverified for "
-            f">{config.stale_days():g} days — world-check before "
-            "repeating as true"])
+    # #1128: the standing ">N days unverified" footer is gone. The stale
+    # items carry [? unverified] marks in the body, and a section that hid
+    # stale carried items says so in its own note, so the footer repeated
+    # (and sometimes contradicted) what the sections already state.
     return 0
 
 

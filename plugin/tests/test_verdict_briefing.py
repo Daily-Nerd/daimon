@@ -131,6 +131,13 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint):
     try:
         out = briefing.render(sample_checkpoint, project_dir=SENDER,
                               worldcheck_project=SENDER)
+        # #1128: over budget the panel collapses to its header and a count
+        # line; with room it shows the card again.
+        assert briefing._VERDICT_PANEL_HEADER in out
+        assert "1 cut for budget, see: daimon request list" in out
+        os.environ["DAIMON_BRIEF_MAX_TOKENS"] = "3000"
+        out = briefing.render(sample_checkpoint, project_dir=SENDER,
+                              worldcheck_project=SENDER)
     finally:
         del os.environ["DAIMON_BRIEF_MAX_TOKENS"]
     assert "publish the schema" in out

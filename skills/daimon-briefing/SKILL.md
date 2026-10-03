@@ -13,21 +13,27 @@ instead of a confident guess.
 
 ## What it surfaces, in order
 
-1. **Verify before trusting** — items whose state may have changed *outside* this
-   session (a PR you said you'd merge, a deploy, a file edited elsewhere). These come
-   first because they are the gap that produces confident-but-wrong assertions.
-2. **Open loops** — questions left unresolved at the end of last session.
-3. **Decisions made** — explicit choices, including assistant-side fixes/diagnoses.
-4. **Active topic / beliefs / uncertainties.**
+1. **Decisions made**: explicit choices, including assistant-side fixes/diagnoses.
+   The newest ones from the last session are always shown.
+2. **Verify before trusting**: items whose state may have changed *outside* this
+   session (a PR you said you'd merge, a deploy, a file edited elsewhere). The gap
+   that produces confident-but-wrong assertions, so check these before repeating them.
+3. **Open loops**: questions left unresolved at the end of last session.
+4. **Beliefs / uncertainties / active topic / contradictions flagged.**
+
+Every section shares one size budget. When a section had to leave items out it says
+so in a note, for example `(4 of 13 shown; 9 carried checks unverified over 7d
+hidden. See: daimon loops)`; the hidden items are still in the checkpoint, and
+`daimon loops` lists them with ids.
 
 Each item is marked `✓ verbatim` (pinned to an exact quote — trust it) or
 `~ inferred` (paraphrased — treat with appropriate caution).
 
-A briefing can also show a staleness warning: `N carried item(s) unverified
-for >N days — world-check before repeating as true`. A carried item that
-keeps getting restated session after session is not corroborated just
-because it agrees with itself — check the world (code, git, issue tracker)
-before treating it as current fact.
+A carried item that has gone unchecked for more than a week renders as
+`[? unverified]`, with its stored tag and age after it (`(was inferred, carried
+12d)`). A carried item that keeps getting restated session after session is not
+corroborated just because it agrees with itself, so world-check it (code, git,
+issue tracker) before treating it as current fact.
 
 ## Closing loops
 

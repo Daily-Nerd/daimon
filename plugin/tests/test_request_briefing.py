@@ -213,6 +213,14 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint,
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "40")
     out = briefing.render(sample_checkpoint, project_dir=RECIPIENT,
                           worldcheck_project=RECIPIENT)
+    # #1128: when the fixed sections alone exceed the budget the panel
+    # collapses to its frozen header and a count line (never silently gone);
+    # the card text returns as soon as the budget has room for it.
+    assert briefing._REQUEST_PANEL_HEADER in out
+    assert "1 cut for budget, see: daimon request inbox" in out
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
+    out = briefing.render(sample_checkpoint, project_dir=RECIPIENT,
+                          worldcheck_project=RECIPIENT)
     assert "publish the schema" in out
 
 
