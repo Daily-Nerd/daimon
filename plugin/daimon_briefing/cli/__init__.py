@@ -738,9 +738,27 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         handoff = store.active_handoff(route)
     except Exception:
         handoff = None
-    render.render_brief(checkpoint, drift=drift, teammates=teammates,
-                        handoff=handoff, project_dir=route,
-                        worldcheck_project=worldcheck_project)
+    trailer = []
+    if withheld or team_withheld:
+        # #981: the count covers the Teammates section too, and says how
+        # many were a teammate's, since `status --suppressed` lists only the
+        # reader's own checkpoint.
+        note = f"{len(withheld) + len(team_withheld)} resolved item(s) withheld"
+        if team_withheld:
+            note += f" ({len(team_withheld)} a teammate's)"
+        trailer.append(note + " — `daimon status --suppressed` to list")
+    # #1128: the note rides INTO render_brief so it is charged to the same
+    # byte budget as the body, HANDOFF and teammates. `printed` is what the
+    # budgeted brief actually showed of each panel (None: everything).
+    printed = render.render_brief(checkpoint, drift=drift, teammates=teammates,
+                                  handoff=handoff, project_dir=route,
+                                  worldcheck_project=worldcheck_project,
+                                  trailer=trailer)
+
+    def _shown(panel, row) -> bool:
+        # #1128: a row the budget cut (its panel collapsed to a count line)
+        # never reached the reader, so it is not stamped as surfaced.
+        return printed is None or row["request_id"] in printed.get(panel, "")
     # #694 PR 2 (D1): the surfaced stamp, AFTER the render+print pipeline
     # above completes — the card has already reached the terminal, so a
     # crash between here and the write below just re-renders it next brief
@@ -762,7 +780,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
             # loop no longer stamps `surfaced` for one).
             for row in requests.decision_renderable(
                     project_dir=worldcheck_project).get("rows") or []:
-                if requests.needs_surfaced_stamp(row):
+                if requests.needs_surfaced_stamp(row) and _shown("request", row):
                     requests.stamp_surfaced(row["request_id"],
                                             project_dir=worldcheck_project)
         except Exception:
@@ -775,6 +793,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                     project_dir=worldcheck_project).get("rows") or []:
                 # #1117: one stamp row carries whichever of the epoch and the
                 # late reply the brief just showed.
+                if not _shown("verdict", row):
+                    continue
                 reply_id = requests.unseen_reply_id(row)
                 if requests.needs_verdict_surfaced_stamp(row) or reply_id:
                     requests.stamp_verdict_surfaced(
@@ -782,14 +802,6 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                         reply_event_id=reply_id)
         except Exception:
             pass
-    if withheld or team_withheld:
-        # #981: the count covers the Teammates section too, and says how
-        # many were a teammate's, since `status --suppressed` lists only the
-        # reader's own checkpoint.
-        note = f"{len(withheld) + len(team_withheld)} resolved item(s) withheld"
-        if team_withheld:
-            note += f" ({len(team_withheld)} a teammate's)"
-        render.render_brief_note([note + " — `daimon status --suppressed` to list"])
     # #1128: the standing ">N days unverified" footer is gone. The stale
     # items carry [? unverified] marks in the body, and a section that hid
     # stale carried items says so in its own note, so the footer repeated

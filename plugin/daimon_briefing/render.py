@@ -181,16 +181,6 @@ def render_handoff(handoff) -> None:
     _print_handoff(handoff)
 
 
-# #1044: floor on the body's own budget once `render_brief`'s non-rich path
-# reserves bytes for the handoff/version-note/drift/teammates text around it.
-# Worst realistic surrounding text (a 2,000-char handoff near the cli.py
-# _HANDOFF_MAX_CHARS cap, plus a drift block and a teammates section) still
-# leaves most of the default 11264-byte ceiling for the body; this floor only
-# bites in a pathological case (e.g. a huge teammates roster), and exists so
-# that case degrades to a small body instead of an empty or negative one.
-_MIN_BODY_BYTES = 512
-
-
 def _no_checkpoint_lines(project_dir, worldcheck_project):
     """The day-one skeleton-only body (#693/#694) shared by every render
     path when there is no checkpoint yet: a standing ruling, an addressed
@@ -241,7 +231,8 @@ def _panel_lines(project_dir, worldcheck_project):
 
 
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
-                 project_dir=None, worldcheck_project=None) -> None:
+                 project_dir=None, worldcheck_project=None,
+                 trailer=None) -> dict | None:
     """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
     `project_dir` — the incoming-request panel's AND the sender-side
     verdict panel's `worldcheck_project` pattern (D2), never keyed on
@@ -259,7 +250,16 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     amount before it renders. Nothing is printed after the body without
     having been counted first. The rich branch is unchanged: it is
     TTY-interactive, never captured or spilled by a host, so the byte
-    ceiling does not apply to it."""
+    ceiling does not apply to it.
+
+    #1128: the non-rich branch is ONE allocator. The handoff, version note,
+    drift block and `trailer` (advisory lines printed last, e.g. the withheld
+    count) are fixed and counted first; the body and the teammates block share
+    what is left (`briefing.select`). Returns None when everything was printed
+    in full (the rich, LLM and no-checkpoint paths), or a dict of the panel
+    lines the budgeted brief actually printed, keyed "request" / "verdict" /
+    "owed", so the caller stamps `surfaced` only for rows the reader saw."""
+    trailer_text = "".join(f"{ln}\n" for ln in (trailer or ()))
     if supports_rich():
         _print_handoff(handoff)
         b = briefing.build(checkpoint)
@@ -279,7 +279,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                 print("")
             print(pointer)
             _print_teammates(teammates)
-            return
+            _print_trailer(trailer)
+            return None
         _print_version_note(checkpoint)
         # Honor the opt-in LLM briefing (DAIMON_LLM_BRIEFING) — same source
         # of truth as the hermes hook. Free-form LLM text can't be sectioned
@@ -293,7 +294,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                                   worldcheck_project=worldcheck_project))
             _print_drift(drift)
             _print_teammates(teammates)
-            return
+            _print_trailer(trailer)
+            return None
         rulings, decision_count, request_lines, verdict_lines, owed_lines = (
             _panel_lines(project_dir, worldcheck_project))
         # #204: degrade verbatim labels when the receipt can't be locally
@@ -303,7 +305,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                     owed_lines, decision_count)
         _print_drift(drift)
         _print_teammates(teammates)
-        return
+        _print_trailer(trailer)
+        return None
 
     # Non-rich path (#1044): see the docstring above. Format every
     # surrounding block BEFORE the body renders.
@@ -317,24 +320,15 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         text += pointer + "\n"
         print(text, end="")
         _print_teammates(teammates)
-        return
+        _print_trailer(trailer)
+        return None
     version_text = _format_version_note(checkpoint)
     drift_text = _format_drift(drift)
-    teammates_text = _format_teammates(teammates)
-    # +1 for the newline printed between the body and whatever follows it
-    # (drift_text/teammates_text, or nothing): the body's own trailing "\n"
-    # below is a byte this composition always spends, so it has to be
-    # reserved here rather than left for the body's budget to absorb.
-    surrounding_bytes = len((handoff_text + version_text + drift_text
-                             + teammates_text).encode("utf-8")) + 1
-    max_bytes = config.brief_max_bytes()
-    body_budget = (0 if not max_bytes
-                  else max(_MIN_BODY_BYTES, max_bytes - surrounding_bytes))
     if config.llm_briefing():
-        # #1044 scope: the LLM narrative is opt-in (off by default) and has
-        # no _DROP_ORDER structure to shrink safely, so it is not bounded by
-        # the byte ceiling here (pre-existing behavior, unchanged). Tries
-        # LLM, falls back to deterministic; #693 rulings and #694's two
+        # The LLM narrates the Selection's kept items (briefing.render), but
+        # the narrative itself is free text with nothing to shrink, so it
+        # is not bounded by the byte ceiling here (pre-existing behavior).
+        # Tries LLM, falls back to deterministic; #693 rulings and #694's two
         # request panels all ride inside.
         body = briefing.render(checkpoint, project_dir=project_dir,
                                worldcheck_project=worldcheck_project)
@@ -342,18 +336,38 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # own docstring's invariant): narrows `str | None` for the concat below.
         assert body is not None
         print(handoff_text + version_text + body + "\n"
-             + drift_text + teammates_text, end="")
-        return
+             + drift_text + _format_teammates(teammates) + trailer_text,
+             end="")
+        return None
     rulings, decision_count, request_lines, verdict_lines, owed_lines = (
         _panel_lines(project_dir, worldcheck_project))
     # #204: degrade verbatim labels when the receipt can't be locally
     # confirmed. Cheap check (sidecar + byte match).
     degraded = briefing.receipt_degraded(checkpoint)
-    body = briefing.render_plain(b, degraded, rulings, request_lines,
-                                 verdict_lines, owed_lines, decision_count,
-                                 max_bytes=body_budget)
-    print(handoff_text + version_text + body + "\n"
-         + drift_text + teammates_text, end="")
+    # One allocator (#1128). Fixed text first: the handoff, version note,
+    # drift block and trailer are never cut, so they are `reserved` bytes of
+    # the one budget. +1 for the newline printed after the body: a byte this
+    # composition always spends, reserved here rather than left for the
+    # body's share to absorb.
+    reserved = len((handoff_text + version_text + drift_text
+                    + trailer_text).encode("utf-8")) + 1
+    sel = briefing.select(
+        b, briefing.effective_budget(), degraded=degraded, rulings=rulings,
+        request_lines=request_lines, verdict_lines=verdict_lines,
+        owed_lines=owed_lines, decision_count=decision_count,
+        reserved=reserved, teammate_blocks=_teammate_blocks(teammates or ()),
+        teammate_header=_TEAMMATES_HEADER)
+    body = briefing.render_selection(sel)
+    briefing._log_render_size(body, sel.budget)
+    print(handoff_text + version_text + body + "\n" + drift_text
+          + briefing.teammates_text(sel) + trailer_text, end="")
+    return dict(zip(sel.panel_names, ("\n".join(p) for p in sel.panels)))
+
+
+def _print_trailer(trailer) -> None:
+    """The advisory lines `render_brief` prints last (the withheld count)."""
+    if trailer:
+        _render_lines(list(trailer))
 
 
 def _format_drift(drift) -> str:
@@ -599,17 +613,17 @@ def _print_teammates(teammates) -> None:
         _rich_teammates(teammates)
 
 
-def _format_teammates(teammates) -> str:
-    """Plain-path text for the Teammates section (#111, #1044): identical
-    bytes to what `_plain_teammates` used to print directly, extracted so
-    `render_brief`'s byte-ceiling accounting can measure it before the body
-    renders. "" when there are no teammates (nothing to reserve or print)."""
-    if not teammates:
-        return ""
-    lines = ["", "Teammates — where they left off:"]
+_TEAMMATES_HEADER = "Teammates — where they left off:"
+
+
+def _teammate_blocks(teammates) -> list[str]:
+    """One text per teammate (#1128), each starting with the blank line that
+    separates it from the previous block, so `briefing.teammates_text`
+    composes them byte-identically to the old single-pass formatter. The
+    allocator keeps the first two whole and drops the rest under budget."""
+    blocks = []
     for author, b in teammates:
-        lines.append("")
-        lines.append(f"[{author}]")
+        lines = ["", f"[{author}]"]
         active = b.get("active_topic")
         if active:
             line = f"  Active topic: {active.get('text', '').strip()}"
@@ -629,7 +643,18 @@ def _format_teammates(teammates) -> str:
             note = briefing.section_note(sel, "decisions")
             if note:
                 lines.append(f"  {note}")
-    return "\n".join(lines) + "\n"
+        blocks.append("\n" + "\n".join(lines))
+    return blocks
+
+
+def _format_teammates(teammates) -> str:
+    """Plain-path text for the Teammates section (#111, #1044): the whole
+    section, nothing dropped. "" when there are no teammates. The budgeted
+    path composes the same bytes through `briefing.teammates_text`."""
+    if not teammates:
+        return ""
+    return ("\n" + _TEAMMATES_HEADER + "".join(_teammate_blocks(teammates))
+            + "\n")
 
 
 def _plain_teammates(teammates) -> None:

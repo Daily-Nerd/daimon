@@ -1853,6 +1853,7 @@ _TIE_SECTION_RANK = {"beliefs": 0, "uncertainties": 1, "decisions": 2,
                      "open_loops": 3, "external": 4, "contradictions": 5}
 
 _DECISION_FLOOR = 3
+_TEAMMATE_FLOOR = 2
 # The panels in print order, with the command that lists what a collapsed
 # panel hid.
 _PANEL_POINTERS = ("daimon request inbox", "daimon request list",
@@ -1921,7 +1922,8 @@ class Selection:
 
     def __init__(self, kept, dropped, reasons, *, order, totals, cap,
                  stale_days, budget, degraded, rulings, count_line, panels,
-                 overage, now):
+                 overage, now, panel_names=(), reserved=0,
+                 teammate_blocks=(), teammate_header="", kept_teammates=()):
         self.kept = kept
         self.dropped = dropped
         self.reasons = reasons
@@ -1936,6 +1938,15 @@ class Selection:
         self.panels = panels
         self.overage = overage
         self.now = now
+        # parallel to `panels`: "request" / "verdict" / "owed". The CLI reads
+        # what was printed from here, so `surfaced` follows the print.
+        self.panel_names = list(panel_names)
+        # Bytes the caller prints beside the body (HANDOFF, version note,
+        # drift block, withheld note), charged to the same budget.
+        self.reserved = reserved
+        self.teammate_blocks = list(teammate_blocks)
+        self.teammate_header = teammate_header
+        self.kept_teammates = list(kept_teammates)
         self._lines: dict = {}
 
     def dropped_for(self, section, reason=None):
@@ -1989,7 +2000,8 @@ def _split_decisions(decisions, cap, now):
 
 def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
            request_lines=(), verdict_lines=(), owed_lines=(),
-           decision_count: str | None = None) -> Selection:
+           decision_count: str | None = None, reserved: int = 0,
+           teammate_blocks=(), teammate_header: str = "") -> Selection:
     """#1128: decide what the briefing shows. Pure: a function of the
     annotated items in `b`, the byte `budget` (None = unbounded: the decision
     cap still applies, nothing else is dropped) and `now`.
@@ -2011,7 +2023,14 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
 
     Over-budget protected set, in this order: panels collapse to count lines,
     the decision floor drops to one, then one marker line names the overage.
-    Greeting, degrade note and rulings are never cut."""
+    Greeting, degrade note and rulings are never cut.
+
+    One allocator for everything `daimon brief` prints: `budget` bounds the
+    body, `reserved` bytes (HANDOFF, version note, drift block, withheld note,
+    never cut) and the teammates block together. `teammate_blocks` are the
+    pre-rendered per-teammate texts, newest first; the first two are protected
+    (a floor of two, plus the header) and the rest are candidates in the
+    background class, dropped before anything actionable and announced."""
     if now is None:
         now = b.get("now") if isinstance(b.get("now"), (int, float)) \
             else time.time()
@@ -2040,7 +2059,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
     # Candidates, with their drop key. `ordinal` keeps the order stable: a
     # section's earlier items drop first for decisions (chronological, oldest
     # first), its tail first elsewhere (sorted heaviest-first by build()).
-    cands = []
+    cands: list[tuple] = []
     for s in _ITEM_SECTIONS:
         pool = [(i, it) for i, it in entries[s]
                 if not (s == "decisions" and i in floor_ids)]
@@ -2059,14 +2078,20 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                    ordinal,
                    SECTION_ORDER.index(s))
             cands.append((key, s, idx, it))
+    blocks = list(teammate_blocks)
+    floor_teammates = min(_TEAMMATE_FLOOR, len(blocks))
+    for ti in range(floor_teammates, len(blocks)):
+        # Background class, lightest of all: later (older) teammates first.
+        cands.append(((0, 1, 0, 1, -1.0, -1, 0.0, -ti, len(SECTION_ORDER)),
+                      "teammates", ti, None))
     cands.sort(key=lambda c: c[0])
 
     active = b.get("active_topic")
     active = active if isinstance(active, dict) else None
     line_cache: dict = {}
-    panel_sets = [(list(request_lines), _PANEL_POINTERS[0]),
-                  (list(verdict_lines), _PANEL_POINTERS[1]),
-                  (list(owed_lines), _PANEL_POINTERS[2])]
+    panel_sets = [(list(request_lines), _PANEL_POINTERS[0], "request"),
+                  (list(verdict_lines), _PANEL_POINTERS[1], "verdict"),
+                  (list(owed_lines), _PANEL_POINTERS[2], "owed")]
 
     def build_selection(n_dropped, floor_keep, collapse, overage=0):
         seq = cands
@@ -2092,14 +2117,20 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
             kept[s] = keep
         kept["active_topic"] = active
         panels = [_collapse_panel(lines, ptr) if collapse else lines
-                  for lines, ptr in panel_sets if lines]
+                  for lines, ptr, _ in panel_sets if lines]
+        names = [name for lines, _, name in panel_sets if lines]
+        kept_team = [ti for ti in range(len(blocks))
+                     if ("teammates", ti) not in drop_ids]
         sel = Selection(kept, d, r,
                         order=[(s, it) for _, s, _, it in seq],
                         totals=totals, cap=cap,
                         stale_days=stale_days, budget=budget,
                         degraded=degraded, rulings=list(rulings),
                         count_line=decision_count, panels=panels,
-                        overage=overage, now=now)
+                        overage=overage, now=now, panel_names=names,
+                        reserved=reserved, teammate_blocks=blocks,
+                        teammate_header=teammate_header,
+                        kept_teammates=kept_team)
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 
@@ -2108,7 +2139,9 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
         return build_selection(0, floor_n, False)
 
     def size(sel):
-        return _byte_len(render_selection(sel))
+        # Everything printed: the body, the blocks beside it, the teammates.
+        return (_byte_len(render_selection(sel)) + reserved
+                + _byte_len(teammates_text(sel)))
 
     # Stage 1 (kept from #79): shorten monster non-verbatim items before any
     # item is dropped; verbatim text is never rewritten (#30).
@@ -2120,7 +2153,8 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                      it.get("text", ""), _ITEM_TRUNCATE_CHARS)})
                 for idx, it in entries[s]]
         lookup = {s: dict(entries[s]) for s in _ITEM_SECTIONS}
-        cands = [(k, s, idx, lookup[s][idx]) for k, s, idx, _ in cands]
+        cands = [(k, s, idx, it if s == "teammates" else lookup[s][idx])
+                 for k, s, idx, it in cands]
 
     # Pick the protection level: full panels and the full floor; collapsed
     # panels; floor of one. The first that fits with EVERY candidate dropped
@@ -2184,6 +2218,23 @@ def section_note(sel: Selection, section: str) -> str | None:
     if pointer:
         body += f". See: {pointer}"
     return f"  ({body})"
+
+
+def teammates_text(sel: Selection) -> str:
+    """The Teammates block for a Selection: the header, the kept per-teammate
+    blocks, and one line saying how many were left out for budget. "" when
+    there are no teammates. Each block starts with a blank line, so the
+    composed text is byte-identical to the old single-pass formatter when
+    nothing is dropped."""
+    if not sel.teammate_blocks:
+        return ""
+    out = "\n" + sel.teammate_header
+    out += "".join(sel.teammate_blocks[i] for i in sel.kept_teammates)
+    lost = len(sel.teammate_blocks) - len(sel.kept_teammates)
+    if lost:
+        out += (f"\n\n  ({lost} more teammate{'s' if lost != 1 else ''} "
+                "not shown for budget)")
+    return out + "\n"
 
 
 def _sel_line(sel: Selection, section: str, item) -> str:
