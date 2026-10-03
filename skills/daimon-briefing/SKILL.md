@@ -23,8 +23,8 @@ instead of a confident guess.
 
 Every section shares one size budget. When a section had to leave items out it says
 so in a note, for example `(4 of 13 shown; 9 carried checks unverified over 7d
-hidden. See: daimon loops)`; the hidden items are still in the checkpoint, and
-`daimon loops` lists them with ids.
+hidden. See: daimon loops --stale)`; the hidden items are still in the
+checkpoint, and `daimon loops --stale` lists them with ids and ages.
 
 Each item is marked `✓ verbatim` (pinned to an exact quote — trust it) or
 `~ inferred` (paraphrased — treat with appropriate caution).
