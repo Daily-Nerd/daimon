@@ -365,7 +365,7 @@ def _select_decisions(decisions, n, now):
     return kept
 
 
-def build(checkpoint, now=None) -> dict | None:
+def build(checkpoint, now=None, *, capped: bool = True) -> dict | None:
     """Structured briefing sections, or None if nothing is worth surfacing.
     Deterministic — no LLM; `now` is injectable for tests. Sections order by #78
     effective weight EXCEPT recent_decisions, whose NATIVE block stays
@@ -395,7 +395,8 @@ def build(checkpoint, now=None) -> dict | None:
 
     # Cap to N decisions: this session's own first, carried ones in the room
     # left over (#1034). 0 = unbounded. Render-time only.
-    kept = _select_decisions(decisions, config.max_briefing_decisions(), now)
+    kept = _select_decisions(
+        decisions, config.max_briefing_decisions() if capped else 0, now)
 
     return {
         "external": [i for i in open_qs if i.get("external_state")],
@@ -2030,6 +2031,424 @@ def _render_parts(b: dict, trimmed: dict, degraded: bool = False,
         parts.append("Contradictions flagged:")
         parts.extend(_line(i, degraded) for i in b["contradictions"])
 
+    return "\n".join(parts)
+
+
+# ---- #1128: one ranked budget — select, then render ----
+#
+# The briefing used to have a per-section drop order, an unexplained
+# never-trimmed set, and a text-level backstop that knew about neither. This
+# is the replacement allocation model (design: "Briefing Budget Allocation
+# (#1128)", revision 3):
+#   * `select` is a PURE function of (annotated items, budget, now). It
+#     returns a `Selection`: what is kept, what is dropped, and WHY.
+#   * `render_selection` turns a Selection into text; plain and rich output
+#     share its section order and its notes.
+#   * One byte budget, min(brief_max_bytes, brief_max_tokens * 4).
+
+# Reader-need order, shared by the plain and rich renders (one constant, so
+# the two can never drift). Decisions sit above VERIFY in EVERY render.
+SECTION_ORDER = ("decisions", "external", "open_loops", "beliefs",
+                 "uncertainties", "active_topic", "contradictions")
+
+_ITEM_SECTIONS = ("decisions", "external", "open_loops", "beliefs",
+                  "uncertainties", "contradictions")
+
+SECTION_HEADERS = {
+    "decisions": "Decisions made:",
+    "external": "VERIFY BEFORE TRUSTING (state may have changed outside "
+                "this session):",
+    "open_loops": "Open loops:",
+    "beliefs": "Beliefs held:",
+    "uncertainties": "Was uncertain about:",
+    "contradictions": "Contradictions flagged:",
+}
+
+# #78 weights are only ever compared INSIDE a section, never across types.
+_WEIGHT_TYPE = {"decisions": "recent_decision", "external": "open_question",
+                "open_loops": "open_question", "beliefs": "strong_belief",
+                "uncertainties": "uncertainty",
+                "contradictions": "contradiction"}
+
+# Background content goes before actionable content within a tier.
+_BACKGROUND = frozenset({"beliefs", "uncertainties"})
+
+# Where a hidden-items note points. beliefs/uncertainties have no listing
+# command, so their notes carry no pointer. Plain `daimon loops` until the
+# age column and --stale land (#1128 PR 2).
+_NOTE_POINTER = {"external": "daimon loops", "open_loops": "daimon loops"}
+
+_DECISION_FLOOR = 3
+# The panels in print order, with the command that lists what a collapsed
+# panel hid.
+_PANEL_POINTERS = ("daimon request inbox", "daimon request list",
+                   "daimon request inbox")
+
+
+def _decision_floor(cap: int) -> int:
+    """How many of the newest native decisions are protected: min(3, cap).
+    cap == 0 is unbounded, so the plain 3. Protected because the decisions the
+    session just made are what a resumed session most needs, and a budget that
+    is spent on older carried items must never be allowed to eat them."""
+    return _DECISION_FLOOR if not cap else min(_DECISION_FLOOR, cap)
+
+
+def _is_flagged(item) -> bool:
+    """An item carrying an ACTION flag: the reader has something to do about
+    it (confirm or reject a claim, a supersede, an amendment, a state change
+    worldcheck saw). Flagged items form the top candidate tier: they drop
+    last among candidates and never silently. `_worldcheck_confirmed` is not
+    a flag, it asks nothing of the reader."""
+    if not isinstance(item, dict):
+        return False
+    wc = item.get("_worldcheck")
+    return bool(item.get("_agent_claim") or item.get("_supersede_candidate")
+                or item.get("_amend")
+                or (isinstance(wc, dict) and wc.get("note")))
+
+
+def _stale_days_of(item):
+    value = item.get("_stale_carried_days") if isinstance(item, dict) else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _item_age_days(item, now) -> float:
+    """Age for the drop key's tie-break only. A stamped stale age wins; else
+    first_seen; no parseable stamp (or a future one) is age 0, never an
+    error."""
+    stale = _stale_days_of(item)
+    if stale is not None:
+        return stale
+    epoch = store._created_epoch(item.get("first_seen"))
+    if epoch is None:
+        return 0.0
+    return max(0.0, (now - epoch) / 86400.0)
+
+
+def _rank_pcts(items, section, now) -> list[float]:
+    """Within-section rank percentile of each item's #78 effective weight,
+    0.0 = lightest. Ties share a percentile, so equal weights fall through to
+    the age and ordinal keys instead of an arbitrary order."""
+    weights = [scoring.effective_weight(i, _WEIGHT_TYPE[section], now)
+               for i in items]
+    n = len(weights)
+    return [sum(1 for other in weights if other < w) / n for w in weights]
+
+
+class Selection:
+    """What `select` decided. `kept` maps each section to its kept items
+    (active_topic to its item or None); `dropped` and `reasons` are parallel
+    per-section lists, a reason being "cap" (over the decision cap) or
+    "budget". `order` is every droppable candidate in drop order, so the
+    dropped-for-budget candidates are always a prefix of it. The rest is what
+    `render_selection` needs to print the same thing `select` measured."""
+
+    def __init__(self, kept, dropped, reasons, *, order, totals, cap,
+                 stale_days, budget, degraded, rulings, count_line, panels,
+                 overage, now):
+        self.kept = kept
+        self.dropped = dropped
+        self.reasons = reasons
+        self.order = order
+        self.totals = totals
+        self.cap = cap
+        self.stale_days = stale_days
+        self.budget = budget
+        self.degraded = degraded
+        self.rulings = rulings
+        self.count_line = count_line
+        self.panels = panels
+        self.overage = overage
+        self.now = now
+        self._lines: dict = {}
+
+    def dropped_for(self, section, reason=None):
+        return [i for i, r in zip(self.dropped.get(section, []),
+                                  self.reasons.get(section, []))
+                if reason is None or r == reason]
+
+
+def effective_budget(max_bytes=None) -> int | None:
+    """The ONE byte budget: min(brief_max_bytes, brief_max_tokens * 4). The
+    token figure is a chars//4 estimate and bytes are never fewer than chars,
+    so a single byte figure is never looser than the token budget it replaces.
+    0 or None on a side means that side is unbounded; both unbounded is None.
+    `max_bytes` overrides the byte side for one call (a caller that prints
+    other blocks beside the body passes the room it has left)."""
+    byte_side = config.brief_max_bytes() if max_bytes is None else max_bytes
+    token_side = config.brief_max_tokens() * 4
+    sides = [s for s in (byte_side, token_side) if s]
+    return min(sides) if sides else None
+
+
+def _collapse_panel(lines, pointer) -> list[str]:
+    """A request/verdict/owed panel reduced to its frozen header and one
+    count line. Cards are the unindented lines after the header."""
+    cards = sum(1 for ln in lines[1:] if ln and not ln.startswith(" "))
+    return [lines[0], f"  ({cards} cut for budget, see: {pointer})"]
+
+
+def _split_decisions(decisions, cap, now):
+    """Apply the decision cap (the per-section limit that used to live in
+    build): this session's own decisions first (the chronological tail), the
+    room left to carried ones by #78 weight. Returns (kept_entries,
+    capped_entries), each a list of (index, item). cap == 0 is unbounded."""
+    entries = list(enumerate(decisions))
+    native = [(i, d) for i, d in entries if not _is_carried(d)]
+    carried = [(i, d) for i, d in entries if _is_carried(d)]
+    if not cap or len(decisions) <= cap:
+        return native + carried, []
+    kept_native = native[-cap:]
+    room = cap - len(kept_native)
+    kept_carried = []
+    if room > 0:
+        ranked = sorted(carried, key=lambda e: scoring.effective_weight(
+            e[1], "recent_decision", now), reverse=True)
+        kept_carried = ranked[:room]
+    kept = kept_native + kept_carried
+    kept_idx = {i for i, _ in kept}
+    capped = [(i, d) for i, d in entries if i not in kept_idx]
+    return kept, capped
+
+
+def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
+           request_lines=(), verdict_lines=(), owed_lines=(),
+           decision_count: str | None = None) -> Selection:
+    """#1128: decide what the briefing shows. Pure: a function of the
+    annotated items in `b`, the byte `budget` (None = unbounded: the decision
+    cap still applies, nothing else is dropped) and `now`.
+
+    Protected, charged first and never dropped (they give way only in a fixed
+    order when they alone exceed the budget, see below): the greeting, the
+    degrade note, standing rulings, the decision count and the
+    request/verdict/owed panels (each bounded by its own render cap), the
+    active topic, the `min(3, cap)` newest native decisions, and the
+    per-section count lines. Everything else is a candidate. Candidates drop
+    lowest key first, whole items only, in one global order:
+      1. action-flagged items last (they ask something of the reader);
+      2. stale carried before everything else;
+      3. background sections (beliefs, uncertainties) before actionable ones;
+      4. carried before native;
+      5. within-section #78 weight percentile, lightest first;
+      6. older first, then position, so output is deterministic.
+
+    Over-budget protected set, in this order: panels collapse to count lines,
+    the decision floor drops to one, then one marker line names the overage.
+    Greeting, degrade note and rulings are never cut."""
+    if now is None:
+        now = b.get("now") if isinstance(b.get("now"), (int, float)) \
+            else time.time()
+    cap = config.max_briefing_decisions()
+    stale_days = config.stale_days()
+    dropped: dict[str, list] = {s: [] for s in _ITEM_SECTIONS}
+    reasons: dict[str, list] = {s: [] for s in _ITEM_SECTIONS}
+    totals = {}
+    entries = {}
+    for s in _ITEM_SECTIONS:
+        raw = [i for i in (b.get(s) or []) if isinstance(i, dict)]
+        totals[s] = len(raw)
+        entries[s] = list(enumerate(raw))
+    kept_entries, capped_entries = _split_decisions(
+        [it for _, it in entries["decisions"]], cap, now)
+    for _, d in capped_entries:
+        dropped["decisions"].append(d)
+        reasons["decisions"].append("cap")
+    entries["decisions"] = kept_entries
+
+    floor_n = _decision_floor(cap)
+    native_kept = [(i, d) for i, d in kept_entries if not _is_carried(d)]
+    floor_order = [i for i, _ in native_kept[-floor_n:]] if floor_n else []
+    floor_ids = set(floor_order)
+
+    # Candidates, with their drop key. `ordinal` keeps the order stable: a
+    # section's earlier items drop first for decisions (chronological, oldest
+    # first), its tail first elsewhere (sorted heaviest-first by build()).
+    cands = []
+    for s in _ITEM_SECTIONS:
+        pool = [(i, it) for i, it in entries[s]
+                if not (s == "decisions" and i in floor_ids)]
+        if not pool:
+            continue
+        pcts = _rank_pcts([it for _, it in pool], s, now)
+        for (idx, it), pct in zip(pool, pcts):
+            ordinal = idx if s == "decisions" else -idx
+            key = (1 if _is_flagged(it) else 0,
+                   0 if _stale_days_of(it) is not None else 1,
+                   0 if s in _BACKGROUND else 1,
+                   0 if _is_carried(it) else 1,
+                   pct,
+                   -_item_age_days(it, now),
+                   ordinal,
+                   SECTION_ORDER.index(s))
+            cands.append((key, s, idx, it))
+    cands.sort(key=lambda c: c[0])
+
+    active = b.get("active_topic")
+    active = active if isinstance(active, dict) else None
+    line_cache: dict = {}
+    panel_sets = [(list(request_lines), _PANEL_POINTERS[0]),
+                  (list(verdict_lines), _PANEL_POINTERS[1]),
+                  (list(owed_lines), _PANEL_POINTERS[2])]
+
+    def build_selection(n_dropped, floor_keep, collapse, overage=0):
+        seq = cands
+        if floor_keep < floor_n:
+            # The floor gave way, so every older decision candidate goes
+            # before any other candidate: a newer decision never gives way
+            # to an older one.
+            seq = sorted(cands, key=lambda c: 0 if c[1] == "decisions" else 1)
+        drop_ids = {(s, idx) for _, s, idx, _ in seq[:n_dropped]}
+        floor_cut = set(floor_order[:max(0, len(floor_order) - floor_keep)])
+        kept = {}
+        d = {s: list(dropped[s]) for s in _ITEM_SECTIONS}
+        r = {s: list(reasons[s]) for s in _ITEM_SECTIONS}
+        for s in _ITEM_SECTIONS:
+            keep = []
+            for idx, it in entries[s]:
+                if (s, idx) in drop_ids or (s == "decisions"
+                                            and idx in floor_cut):
+                    d[s].append(it)
+                    r[s].append("budget")
+                else:
+                    keep.append(it)
+            kept[s] = keep
+        kept["active_topic"] = active
+        panels = [_collapse_panel(lines, ptr) if collapse else lines
+                  for lines, ptr in panel_sets if lines]
+        sel = Selection(kept, d, r,
+                        order=[(s, it) for _, s, _, it in seq],
+                        totals=totals, cap=cap,
+                        stale_days=stale_days, budget=budget,
+                        degraded=degraded, rulings=list(rulings),
+                        count_line=decision_count, panels=panels,
+                        overage=overage, now=now)
+        sel._lines = line_cache  # the search below re-renders many times
+        return sel
+
+    full = len(cands)
+    if budget is None:
+        return build_selection(0, floor_n, False)
+
+    def size(sel):
+        return _byte_len(render_selection(sel))
+
+    # Stage 1 (kept from #79): shorten monster non-verbatim items before any
+    # item is dropped; verbatim text is never rewritten (#30).
+    if size(build_selection(0, floor_n, False)) > budget:
+        for s in _ITEM_SECTIONS:
+            entries[s] = [
+                (idx, it if it.get("trust") == "verbatim" else
+                 {**it, "text": truncate_preserving_sections(
+                     it.get("text", ""), _ITEM_TRUNCATE_CHARS)})
+                for idx, it in entries[s]]
+        lookup = {s: dict(entries[s]) for s in _ITEM_SECTIONS}
+        cands = [(k, s, idx, lookup[s][idx]) for k, s, idx, _ in cands]
+
+    # Pick the protection level: full panels and the full floor; collapsed
+    # panels; floor of one. The first that fits with EVERY candidate dropped
+    # wins, and candidates then keep as many as fit.
+    levels = [(floor_n, False), (floor_n, True), (min(1, floor_n), True)]
+    for floor_keep, collapse in levels:
+        if size(build_selection(full, floor_keep, collapse)) <= budget:
+            for n_dropped in range(0, full + 1):
+                sel = build_selection(n_dropped, floor_keep, collapse)
+                if size(sel) <= budget:
+                    return sel
+    floor_keep, collapse = levels[-1]
+    base = build_selection(full, floor_keep, collapse)
+    over = size(base) - budget
+    return build_selection(full, floor_keep, collapse, overage=max(over, 1))
+
+
+def section_note(sel: Selection, section: str) -> str | None:
+    """The one note line for a section that lost items, generated from the
+    manifest alone (so its counts cannot disagree with it). None when
+    nothing was lost. Shared by the plain render, the rich render and the
+    teammates block."""
+    lost = sel.dropped.get(section) or []
+    if not lost:
+        return None
+    reasons = sel.reasons[section]
+    shown = len(sel.kept.get(section) or [])
+    total = shown + len(lost)
+    flagged = sum(1 for i in lost if _is_flagged(i))
+    if section == "decisions":
+        native_budget = sum(1 for i, r in zip(lost, reasons)
+                            if r == "budget" and not _is_carried(i))
+        native_cap = sum(1 for i, r in zip(lost, reasons)
+                         if r == "cap" and not _is_carried(i))
+        older = sum(1 for i in lost if _is_carried(i))
+        parts = []
+        if native_budget:
+            parts.append(f"{native_budget} from the last session cut for budget")
+        if native_cap:
+            parts.append(f"{native_cap} over the {sel.cap}-item cap")
+        if older:
+            parts.append(f"{older} older not shown")
+    else:
+        stale = sum(1 for i in lost if _stale_days_of(i) is not None)
+        other = len(lost) - stale
+        noun = "checks" if section == "external" else "items"
+        parts = []
+        if stale:
+            parts.append(f"{stale} carried {noun} unverified over "
+                         f"{sel.stale_days:g}d hidden")
+        if other:
+            parts.append(f"{other} cut for budget")
+    body = f"{shown} of {total} shown; " + ", ".join(parts)
+    if flagged:
+        body += f"; {flagged} flagged item{'s' if flagged != 1 else ''} hidden"
+    pointer = _NOTE_POINTER.get(section)
+    if pointer:
+        body += f". See: {pointer}"
+    return f"  ({body})"
+
+
+def _sel_line(sel: Selection, section: str, item) -> str:
+    key = id(item)
+    line = sel._lines.get(key)
+    if line is None:
+        line = _line(item, sel.degraded, section in BRIEFABLE_SECTIONS)
+        sel._lines[key] = line
+    return line
+
+
+def render_selection(sel: Selection) -> str:
+    """The deterministic briefing text for a Selection. The head (greeting,
+    degrade note, rulings) comes first, then the decision count and the
+    panels, then the sections in `SECTION_ORDER`, each followed by its note
+    when it lost items; a final marker line when the protected set alone was
+    over budget."""
+    parts = _head_lines(sel.degraded, sel.rulings)
+    if sel.count_line:
+        parts.append("")
+        parts.append(sel.count_line)
+    for panel in sel.panels:
+        parts.append("")
+        parts.extend(panel)
+    for section in SECTION_ORDER:
+        if section == "active_topic":
+            if sel.kept.get("active_topic"):
+                parts.append("")
+                parts.append("Active topic: "
+                             + sel.kept["active_topic"].get("text", "").strip())
+            continue
+        items = sel.kept.get(section) or []
+        note = section_note(sel, section)
+        if not items and not note:
+            continue
+        parts.append("")
+        parts.append(SECTION_HEADERS[section])
+        parts.extend(_sel_line(sel, section, i) for i in items)
+        if note:
+            parts.append(note)
+    if sel.overage:
+        parts.append("")
+        parts.append(f"(daimon: the fixed sections alone are {sel.overage} "
+                     f"bytes over the {sel.budget}-byte budget; "
+                     "DAIMON_BRIEF_MAX_BYTES raises it)")
     return "\n".join(parts)
 
 
