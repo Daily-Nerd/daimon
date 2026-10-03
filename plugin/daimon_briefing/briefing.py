@@ -1562,14 +1562,13 @@ _REQUEST_PANEL_HEADER = "Requests waiting on you (from other projects):"
 # meant to be skimmable, not the full record — `daimon request inbox` has the
 # rest. Same display-cap idiom as `_truncate_agent_claim` above, and the
 # reason the worst-case-cap test can bound the section's cost at all.
-_REQUEST_ASK_CHARS = 160
+# #1127: the bound and the cut live in `requests.short_ask` so the decide
+# headline and the hook inject lines share this single limit.
+_REQUEST_ASK_CHARS = requests.ASK_CHARS
 
 
 def _truncate_request_ask(ask: str) -> str:
-    text = str(ask or "").strip()
-    if len(text) <= _REQUEST_ASK_CHARS:
-        return text
-    return text[:_REQUEST_ASK_CHARS].rstrip() + "…"
+    return requests.short_ask(ask)
 
 
 def request_panel_lines(project_dir=None) -> list[str]:

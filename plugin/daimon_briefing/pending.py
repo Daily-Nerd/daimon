@@ -62,12 +62,18 @@ _KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2,
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
          commands, context="", blocking=False,
-         claimed=False, request_state=None, amend=None) -> dict:
+         claimed=False, request_state=None, amend=None,
+         detail=None) -> dict:
     return {
         "kind": kind,
         "id": record_id,
         "slug": slug,
         "headline": headline,
+        # #1127: a generic slot for the full text when `headline` was
+        # shortened from it (None otherwise, and for every lane that does not
+        # shorten). The decide card prints it under the header; a consumer
+        # rendering `headline` as a title never has to show the wall.
+        "detail": detail,
         # What the headline alone cannot carry: who is waiting, or which
         # item a claim is about. A decision needs both, and neither belongs
         # in the header line a reader scans.
@@ -165,9 +171,12 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
             # owner's own "not now". Counted, never listed.
             suppressed += 1
             continue
+        ask = record.get("ask") or ""
+        short = requests.short_ask(ask)
         rows.append((_row(
             kind="request", record_id=rid, slug=slug,
-            headline=record.get("ask") or "",
+            headline=short,
+            detail=ask if short != ask else None,
             context=(f"from {record['from_label']}"
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",

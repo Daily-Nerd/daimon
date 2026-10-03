@@ -7,6 +7,7 @@ keeps working on moved code.
 
 import datetime
 import sys
+import textwrap
 
 import daimon_briefing.cli as _cli
 
@@ -943,6 +944,12 @@ def _generic_card(row: dict) -> list:
     card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
     if row.get("context"):
         card.append(f"  {row['context']}")
+    # #1127: the header carries the bounded headline; the full text, when
+    # it was shortened, is a wrapped body under it. Header shape unchanged.
+    if row.get("detail"):
+        card.extend(textwrap.wrap(row["detail"], width=76,
+                                  initial_indent="  ",
+                                  subsequent_indent="  "))
     # #978: `row["claimed"]` is the request lane's `done_pending`, from
     # the FOLDED record — same guard shape the LANE split above already
     # established (a non-request lane never carries this), and a

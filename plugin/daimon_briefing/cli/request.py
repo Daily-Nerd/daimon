@@ -259,6 +259,16 @@ def _cmd_request_inbox(args) -> int:
     return 0
 
 
+def _ask_line(ask) -> str:
+    """#1127: the bounded `Ask:` line for the inject surfaces, with a pointer
+    to the full text when it was shortened."""
+    short = requests.short_ask(ask)
+    line = f"  Ask: {short}"
+    if short != str(ask or "").strip():
+        line += " (full text: daimon request inbox)"
+    return line
+
+
 def _inject_lines(record: dict) -> list[str]:
     """One delivered ask, compressed to what decides it. Deliberately
     thinner than `_inbox_lines`: this lands mid-session on the agent's
@@ -277,7 +287,7 @@ def _inject_lines(record: dict) -> list[str]:
              # and redoes the work — same placement rule as the two markers
              # above, read from the folded record only.
              + (" [done claimed]" if record.get("done_pending") else "")]
-    lines.append(f"  Ask: {record.get('ask', '')}")
+    lines.append(_ask_line(record.get("ask")))
     if record.get("why"):
         lines.append(f"  Why: {record['why']}")
     return lines
@@ -310,7 +320,7 @@ def _verdict_inject_lines(record: dict) -> list[str]:
                    else state)
     lines = [f"daimon verdict: {mark} {state_label}  {record['request_id']} "
              f"(to {record.get('to') or '?'})"]
-    lines.append(f"  Ask: {record.get('ask', '')}")
+    lines.append(_ask_line(record.get("ask")))
     note = str(record.get("note") or "").strip()
     if note:
         lines.append(f"  Note: {note}")
@@ -335,7 +345,7 @@ def _owed_inject_lines(record: dict) -> list[str]:
              + (" [info]" if record.get("kind") == "info" else "")
              + (" [blocking: the sender is waiting]"
                 if record.get("blocking") else "")]
-    lines.append(f"  Ask: {record.get('ask', '')}")
+    lines.append(_ask_line(record.get("ask")))
     note = str(record.get("note") or "").strip()
     if note:
         lines.append(f"  Accepted with: {note}")
