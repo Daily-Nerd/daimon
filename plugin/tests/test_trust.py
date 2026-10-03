@@ -688,7 +688,7 @@ def test_privacy_audit_finds_forgotten_trust_reason(project):
     _propose(project, reason=reason_text)
     key = normalize.content_key(reason_text)
     store.append_event("x-irrelevant", f"forgotten:{key}",
-                       project_dir=project)
+                       project_dir=project, tombstone=True)
 
     result = privacy.audit_project(project_dir=project)
     hits = [f for f in result["findings"] if f["surface"] == "trust-ledger"]

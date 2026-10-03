@@ -5948,7 +5948,7 @@ def test_candidate_emission_skips_forgotten_value(tmp_checkpoint_dir, monkeypatc
     # never tombstoned, so the human-speaks-once gate cannot save us here.
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
-                       project_dir=project)
+                       project_dir=project, tombstone=True)
 
     pairs = [("r-old0001", "r-new0001", _FORGOTTEN_TEXT),
              ("r-old0002", "r-new0002", _CONTROL_TEXT)]
@@ -6022,7 +6022,7 @@ def test_serialize_supersede_candidate_never_leaks_forgotten_text(
     # human-speaks-once gate blocks the pair.
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
-                       project_dir=project)
+                       project_dir=project, tombstone=True)
 
     # 3. New session supersedes BOTH prev decisions by free-text target.
     # Native texts share no salient vocabulary with prev texts (no twin
@@ -8559,7 +8559,7 @@ def test_stats_resolutions_human_excludes_forget_and_log_events(
     # asserting it via a hand-picked literal.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A")
+    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A", tombstone=True)
     assert cli.main(["log", "--text", "an ordinary log line", "--kind", "note",
                      "--project", "/p/A"]) == 0
     capsys.readouterr()

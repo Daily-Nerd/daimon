@@ -393,7 +393,7 @@ def test_forget_item_id_keeps_uninterpretable_rows_byte_identical(bucket):
 
 def test_erased_comes_from_tombstones_not_absence(bucket):
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket)
+                       kind="tombstone", project_dir=bucket, tombstone=True)
     erased = relations.tombstoned_item_ids(project_dir=bucket)
     assert "r-abc123456789" in erased
     # absent-but-never-tombstoned is NOT erased
@@ -410,7 +410,7 @@ def test_listing_sorts_candidates_first_and_withholds_erased(bucket):
     doomed = _propose(bucket, frm=_endpoint("S4", item="r-ccc777888999"),
                       to=_endpoint("S1", item="r-ddd000111222"))
     store.append_event("r-ccc777888999", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket)
+                       kind="tombstone", project_dir=bucket, tombstone=True)
     rows, withheld = relations.listing(project_dir=bucket)
     ids = [r["relation_id"] for r in rows]
     assert doomed not in ids
@@ -443,7 +443,7 @@ def test_for_item_withholds_chains_touching_erased_endpoints(bucket):
     rel_id = _propose(bucket)
     relations.confirm(rel_id, channel="cli-tty", project_dir=bucket)
     store.append_event("r-def123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket)
+                       kind="tombstone", project_dir=bucket, tombstone=True)
     rows, withheld = relations.for_item("r-abc123456789", project_dir=bucket)
     assert rows == [] and withheld == 1
 
@@ -499,7 +499,7 @@ def test_audit_reports_relations_counts_and_stays_provable(bucket):
 def test_audit_finds_residue_when_scrub_missed_a_tombstoned_endpoint(bucket):
     _propose(bucket)  # endpoint r-abc123456789 lands in the ledger
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket)
+                       kind="tombstone", project_dir=bucket, tombstone=True)
     results = privacy.audit_project(project_dir=bucket)
     hits = [f for f in results["findings"]
             if f.get("surface") == "relations-ledger"]
@@ -674,7 +674,7 @@ def test_forget_empty_target_absent_ledger_and_no_match(bucket):
 
 def test_reopen_lifts_the_tombstone(bucket):
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket)
+                       kind="tombstone", project_dir=bucket, tombstone=True)
     store.append_event("r-abc123456789", "reopen", project_dir=bucket)
     assert "r-abc123456789" not in relations.tombstoned_item_ids(
         project_dir=bucket)

@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from daimon_briefing import amendments
+from daimon_briefing import amendments, jsonl
 
 
 @pytest.fixture
@@ -848,7 +848,8 @@ def test_rewrite_preserves_foreign_rows_byte_identical(project):
     assert removed == [a_id]
     survivors = path.read_text(encoding="utf-8")
     assert future_row in survivors
-    assert "not json" not in survivors
+    # #1138: a line that does not parse is kept verbatim, never dropped.
+    assert survivors.endswith("\nnot json\n")
 
 
 def test_cli_amend_verdict_refusal_prints_and_exits_one(project, capsys):
@@ -999,7 +1000,7 @@ def test_rewrite_without_handles_missing_and_unreadable_ledger(
                                            project_dir=project) == []
     finally:
         path.chmod(0o644)
-    monkeypatch.setattr(amendments.os, "replace",
+    monkeypatch.setattr(jsonl.os, "replace",
                         lambda *a: (_ for _ in ()).throw(OSError("disk")))
     assert amendments._rewrite_without({a_id}, project_dir=project) == []
     assert amendments.get(a_id, project_dir=project) is not None

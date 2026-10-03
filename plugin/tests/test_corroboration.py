@@ -727,7 +727,7 @@ def test_a_forgotten_claim_is_never_corroborated_end_to_end(
     _seed_prev()
     store.append_event("o-sibling1",
                        f"forgotten:{normalize.content_key(_PREV_TEXT)}",
-                       project_dir=E2E_PROJECT)
+                       project_dir=E2E_PROJECT, tombstone=True)
 
     monkeypatch.setattr(cli, "_chat",
                         fake_chat_factory(_extraction(session, _PREV_TEXT)))

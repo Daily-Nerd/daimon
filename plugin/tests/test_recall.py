@@ -2004,7 +2004,7 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
                                 admit=store.Admit.ANY)
     iid = cp["working_context"]["recent_decisions"][0]["id"]
     store.append_event(iid, "forgotten:deadbeef1234", kind="tombstone",
-                       project_dir="/repo/x")
+                       project_dir="/repo/x", tombstone=True)
     recall.rebuild()
     hits = recall.search("sqlite", all_projects=True)
     assert not any("recall index" in h["text"] for h in hits)
@@ -2258,7 +2258,7 @@ def test_rebuild_drops_locally_forgotten_value_from_foreign(tmp_checkpoint_dir, 
     forgotten_text = "Adopt the flamingo cache for ingest"
     store.append_event(
         "d-dead02", f"forgotten:{normalize.content_key(forgotten_text)}",
-        kind="tombstone", project_dir="/repo/x")
+        kind="tombstone", project_dir="/repo/x", tombstone=True)
     remote = _clone_remote(toml_text=_GRANT_X)
     _write_clone_team_file(
         remote, "grace", "S-g",

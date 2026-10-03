@@ -239,11 +239,11 @@ def write_audit(monkeypatch):
 
     orig_atomic = store._atomic_write
 
-    def rec_atomic(path, blob):
+    def rec_atomic(path, blob, **kwargs):
         audit.record(path)
         audit._local.in_atomic = True    # its inner write_text re-opens the
         try:                             # .tmp twin — one write, one record
-            return orig_atomic(path, blob)
+            return orig_atomic(path, blob, **kwargs)
         finally:
             audit._local.in_atomic = False
 

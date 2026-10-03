@@ -173,3 +173,20 @@ def test_read_rows_strict_raises_on_undecodable_and_default_does_not(tmp_path):
     assert len(jsonl.read_rows(path)) == 1
     with pytest.raises(ValueError):
         jsonl.read_rows(path, errors="strict")
+
+
+def test_rewrite_hands_the_text_to_a_caller_supplied_writer(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    keep, drop = _dump({"id": "k"}), _dump({"id": "drop"})
+    path.write_text(keep + "\n" + drop + "\n", encoding="utf-8")
+    seen = []
+
+    def write(target, text):
+        seen.append((target, text))
+
+    n = jsonl.rewrite(
+        path, lambda line, row: None if row.get("id") == "drop" else line,
+        write=write)
+    assert n == 1
+    assert seen == [(path, keep + "\n")]
+    assert path.read_text(encoding="utf-8") == keep + "\n" + drop + "\n"

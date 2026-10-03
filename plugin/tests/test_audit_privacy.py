@@ -47,7 +47,7 @@ def test_residue_in_prev_n_detected(tmp_checkpoint_dir):
     # plaintext demonstrably remains and the audit must find it.
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     hits = [f for f in result["findings"] if f["content_hash"] == key]
     assert hits
@@ -66,7 +66,7 @@ def test_residue_in_quote_field_detected(tmp_checkpoint_dir):
     }, project_dir=PROJECT)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["content_hash"] == key for f in result["findings"])
 
@@ -85,7 +85,7 @@ def test_residue_in_active_topic_detected(tmp_checkpoint_dir):
     }, project_dir=PROJECT)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["content_hash"] == key for f in result["findings"]), \
         "active_topic residue must be detected"
@@ -103,7 +103,7 @@ def test_residue_in_link_target_detected(tmp_checkpoint_dir):
     }, project_dir=PROJECT)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["content_hash"] == key for f in result["findings"]), \
         "links[].target residue must be detected"
@@ -121,7 +121,7 @@ def test_reopened_tombstone_not_flagged(tmp_checkpoint_dir):
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     store.append_event("i-x", "reopened", project_dir=PROJECT)
     result = privacy.audit_project(project_dir=PROJECT)
     assert not any(f["content_hash"] == key for f in result["findings"])
@@ -133,7 +133,7 @@ def test_other_projects_residue_not_flagged(tmp_checkpoint_dir):
     _write("S2", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)   # tombstoned HERE, lives THERE
+                       project_dir=PROJECT, tombstone=True)   # tombstoned HERE, lives THERE
     result = privacy.audit_project(project_dir=PROJECT)
     assert not any(f["content_hash"] == key for f in result["findings"])
 
@@ -189,7 +189,7 @@ def test_recall_residue_with_current_fingerprint_is_a_finding(tmp_checkpoint_dir
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)], recall._fingerprint())
     result = privacy.audit_project(project_dir=PROJECT)
@@ -201,7 +201,7 @@ def test_recall_residue_with_stale_fingerprint_is_informational(tmp_checkpoint_d
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)], "stale-fp")
     result = privacy.audit_project(project_dir=PROJECT)
@@ -216,7 +216,7 @@ def test_null_slug_row_reported_as_unattributed(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     _make_recall_db(tmp_checkpoint_dir, [(CANARY, None)], recall._fingerprint())
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["surface"] == "unattributed"
@@ -236,7 +236,7 @@ def test_foreign_author_row_with_matching_tombstone_is_residue(tmp_checkpoint_di
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     # Foreign author (different from self_author project slug)
     _make_recall_db(tmp_checkpoint_dir, [(CANARY, "other-slug", "foreign@example.com")],
                     recall._fingerprint())
@@ -255,7 +255,7 @@ def test_different_local_project_row_not_flagged(tmp_checkpoint_dir):
     key = normalize.content_key(CANARY)
     # Tombstone in THIS project
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     # But the row belongs to the OTHER local project with a local author
     other_slug = store.project_slug(other)
     local_author = config.author()  # local author
@@ -270,7 +270,7 @@ def test_null_slug_row_with_stale_fingerprint_is_informational(tmp_checkpoint_di
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     # NULL slug row with stale fingerprint
     _make_recall_db(tmp_checkpoint_dir, [(CANARY, None)], "stale-fp")
     result = privacy.audit_project(project_dir=PROJECT)
@@ -286,7 +286,7 @@ def test_residue_in_orphan_tmp_detected(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     db = _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)],
                          recall._fingerprint())
@@ -310,7 +310,7 @@ def test_residue_in_team_copy_detected(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     team_file = (config.team_dir() / "github-com-example-memories" / "projects"
                  / "x" / "y" / "authors" / "someone" / "S9.json")
@@ -330,7 +330,7 @@ def test_team_cross_project_leak_prevented(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     other_slug = "different-project-slug"
     # Author dir named SAME as audited project's slug, but payload is different project
@@ -363,7 +363,7 @@ def test_team_findings_dont_count_toward_surfaces_scanned(tmp_checkpoint_dir):
     # Project with NO local checkpoints, one matching team file
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     team_file = (config.team_dir() / "github-com-example-memories" / "projects"
                  / "x" / "y" / "authors" / "someone" / "S9.json")
@@ -388,7 +388,7 @@ def test_verbatim_note_detected(tmp_checkpoint_dir):
     key = normalize.content_key(CANARY)
     store.append_event("i-y", "resolved", note=CANARY, project_dir=PROJECT)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     found = [f for f in result["findings"]
              if f["surface"] == "events-note" and f["content_hash"] == key]
@@ -412,7 +412,7 @@ def test_tombstone_own_note_detected(tmp_checkpoint_dir):
     key = normalize.content_key(CANARY)
     # User pasted the value as --reason when forgetting
     store.append_event("i-x", f"forgotten:{key}", note=CANARY, kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     found = [f for f in result["findings"]
              if f["surface"] == "events-note" and f["content_hash"] == key]
@@ -449,7 +449,7 @@ def test_audit_all_uses_per_project_tombstones(tmp_checkpoint_dir):
     _write("S3", CANARY, project_dir=other)    # project B
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     results = privacy.audit_all()
     b = next(r for r in results
              if r["slug"] == store.project_slug(other))
@@ -460,7 +460,7 @@ def test_render_never_prints_plaintext(tmp_checkpoint_dir, capsys):
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     assert result["findings"], "fixture must produce residue"
     render.render_privacy_audit([result])
@@ -483,7 +483,7 @@ def test_cli_audit_privacy_runs_and_exits_by_contract(tmp_checkpoint_dir):
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 1
     # After a REAL forget (which scrubs), audit proves clean.
     _forget(CANARY)
@@ -499,7 +499,7 @@ def test_cli_audit_is_read_only_outside_logs(tmp_checkpoint_dir):
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     db = _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)],
                          recall._fingerprint())
@@ -531,7 +531,7 @@ def test_event_item_text_carrying_value_detected(tmp_checkpoint_dir):
     key = normalize.content_key(CANARY)
     store.append_event("i-y", "resolved", item_text=CANARY, project_dir=PROJECT)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     found = [f for f in result["findings"]
              if f["surface"] == "events-note" and f["content_hash"] == key]
@@ -546,7 +546,7 @@ def test_event_status_carrying_value_detected(tmp_checkpoint_dir):
     key = normalize.content_key(CANARY)
     store.append_event("i-y", CANARY, project_dir=PROJECT)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     found = [f for f in result["findings"]
              if f["surface"] == "events-note" and f["content_hash"] == key]
@@ -561,7 +561,7 @@ def test_tombstone_status_never_self_reports(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     assert result["findings"] == []
     assert privacy.exit_code([result]) == 0
@@ -585,7 +585,7 @@ def test_torn_and_non_dict_event_lines_are_skipped(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     events = tmp_checkpoint_dir / store.project_slug(PROJECT) / "events.jsonl"
     with events.open("a", encoding="utf-8") as f:
         f.write('{"kind": "resolution", "item_ref": "i-t\n')   # torn
@@ -746,7 +746,7 @@ def test_teammate_copy_under_shared_project_path_detected(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     slug = store.project_slug(PROJECT)
     segs = ("acme", "backend")
     mine = store.project_slug(config.author()) or "me"
@@ -766,7 +766,7 @@ def test_teammate_copy_under_resolved_team_path_detected(
     _write("S1", KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     theirs = _team_file(("acme", "backend"), "other-author", "S9",
                         "-home-them-checkouts-backend", CANARY)
     result = privacy.audit_project(project_dir=PROJECT)
@@ -786,7 +786,7 @@ def test_residue_in_scene_field_detected(tmp_checkpoint_dir):
     }, project_dir=PROJECT)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["content_hash"] == key and f["surface"] == "checkpoint"
                for f in result["findings"])
@@ -889,7 +889,7 @@ def test_usage_tag_distinguishes_the_three_outcomes(tmp_checkpoint_dir):
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 1
     assert usage.read_text(encoding="utf-8").rstrip().endswith(
         "audit-privacy:residue")
@@ -993,7 +993,7 @@ def test_suppressed_present_never_double_counts_a_local_tombstone(
     _write("S1", CANARY, KEEPER)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     _publish_foreign_tombstone(key)
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["content_hash"] == key for f in result["findings"])

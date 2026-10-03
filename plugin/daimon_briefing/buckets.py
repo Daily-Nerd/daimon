@@ -28,7 +28,7 @@ import os
 import time
 from pathlib import Path
 
-from . import config, store
+from . import config, jsonl, store
 
 
 class MigrationError(RuntimeError):
@@ -303,7 +303,7 @@ def _read_lines(path: Path) -> tuple[list[str], bool]:
         return [], False
     except ValueError:  # UnicodeDecodeError is one
         return [], False
-    return [ln for ln in text.splitlines() if ln.strip()], True
+    return jsonl.split_rows(text), True
 
 
 def _lines(path: Path) -> list[str]:

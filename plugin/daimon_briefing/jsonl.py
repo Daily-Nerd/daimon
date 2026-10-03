@@ -79,7 +79,8 @@ def read_rows(path: Path, *, errors: str = "surrogateescape") -> list[str]:
     return split_rows(path.read_text(encoding="utf-8", errors=errors))
 
 
-def rewrite(path: Path, transform: Callable[[str, object], str | None]) -> int:
+def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
+            write: Callable[[Path, str], None] | None = None) -> int:
     """Atomically rewrite a ledger row by row. Returns the number of rows
     dropped or changed; 0 means the file was not touched.
 
@@ -90,7 +91,12 @@ def rewrite(path: Path, transform: Callable[[str, object], str | None]) -> int:
 
     Raises OSError when the file cannot be read or the swap fails; the ledger
     is then untouched and the temp file removed. Staged beside the ledger and
-    swapped with os.replace, so a crash leaves the old file or the new one."""
+    swapped with os.replace, so a crash leaves the old file or the new one.
+
+    `write(path, text)` replaces that stager for a caller that already owns
+    one (store's `_atomic_write`, which the write-audit guard observes); it
+    receives the surrogateescape-decoded text and must encode it the same
+    way."""
     text = path.read_text(encoding="utf-8", errors="surrogateescape")
     out: list[str] = []
     changed = 0
@@ -109,6 +115,9 @@ def rewrite(path: Path, transform: Callable[[str, object], str | None]) -> int:
         out.append(new)
     if not changed:
         return 0
+    if write is not None:
+        write(path, "".join(row + "\n" for row in out))
+        return changed
     tmp = path.with_name(path.name + ".forget-tmp")
     try:
         tmp.write_text("".join(row + "\n" for row in out), encoding="utf-8",

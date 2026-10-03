@@ -53,7 +53,7 @@ def test_case_a_forgotten_item_never_reaches_the_brief(tmp_path):
     with adapter._env(env):
         # tombstone the value BEFORE capture (value-keyed forget, #402)
         store.append_event("x-000000", f"forgotten:{normalize.content_key(secret)}",
-                           project_dir=proj)
+                           project_dir=proj, tombstone=True)
         # one benign item that DOES match the query + the forbidden one alongside it
         store.write_checkpoint(
             "a1", _cp("migration rollback runbook overview", decisions=[secret]),

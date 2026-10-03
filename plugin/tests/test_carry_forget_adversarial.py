@@ -103,7 +103,7 @@ def _arm_adversarial_state():
     ref = _sibling_ref()
     assert ref != x_id
     assert store.append_event(ref, f"forgotten:{normalize.content_key(_S)}",
-                              kind="tombstone", project_dir=_P)
+                              kind="tombstone", project_dir=_P, tombstone=True)
 
     # Preconditions that make this ADVERSARIAL, not a re-run of #400/#407:
     # the ledger holds the value key, but the id the prev stores S under was

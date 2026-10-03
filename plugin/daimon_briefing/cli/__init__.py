@@ -1634,6 +1634,11 @@ def _cmd_log(args) -> int:
     """Freeform zero-LLM event append (#102): a timeline fact worth keeping
     that is not tied to one item. The fold ignores ref-less lines; readers
     of the raw log get the audit trail."""
+    if store.is_tombstone_status(args.status):
+        print("a forgotten: status is a tombstone and only `daimon forget` "
+              "writes one (it also removes the value) — refused, nothing "
+              "written")
+        return 1
     project = _resolve_project(args.project)
     ok = store.append_event("", args.status, note=args.text,
                             kind=args.kind, project_dir=project)
