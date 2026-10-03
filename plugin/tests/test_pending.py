@@ -145,6 +145,41 @@ def test_a_quote_verified_amendment_is_owed(project):
     assert any("amend reject" in c for c in _commands(row))
 
 
+def test_amendment_headline_is_composed_not_the_raw_quote(project):
+    """The headline reads as a sentence about the change; the raw quote
+    rides in `amend.evidence`, untruncated."""
+    a_id = amendments.propose(
+        item_id="o-1234567890ab", change="progressed",
+        evidence='"at":"2026-09-16T02:02:15Z"', channel="cli-agent",
+        project_dir=project)
+    amendments.verify(a_id, role="user", project_dir=project)
+
+    row = pending.queue(project_dir=project)["rows"][0]
+
+    # No checkpoint item behind the id here: loop text is unavailable, so
+    # the headline falls back to the loop id.
+    assert row["headline"] == (
+        "o-1234567890ab: open to progressed (found: in a user turn)")
+    assert row["amend"]["evidence"] == '"at":"2026-09-16T02:02:15Z"'
+
+
+def test_amendment_headline_omits_found_when_role_is_empty():
+    assert pending._amendment_headline({
+        "loop_id": "o-1", "loop_text": "ship the fix",
+        "state_from": "open", "state_to": "progressed",
+        "role": "", "found": "source unknown ⚠"}
+    ) == "ship the fix: open to progressed"
+
+
+def test_amendment_headline_uses_loop_text_when_available():
+    assert pending._amendment_headline({
+        "loop_id": "o-1", "loop_text": "ship the fix",
+        "state_from": "open", "state_to": "progressed",
+        "role": "assistant", "found": "agent's own words ⚠"}
+    ) == ("ship the fix: open to progressed "
+          "(found: agent's own words ⚠)")
+
+
 # --- requests ----------------------------------------------------------------
 
 def test_an_addressed_undecided_request_is_owed(project):

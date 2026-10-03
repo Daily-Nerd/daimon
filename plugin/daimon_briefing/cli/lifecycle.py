@@ -982,7 +982,7 @@ def _amendment_card(row: dict) -> list:
                f"\"{amend.get('loop_text') or '(loop text unavailable)'}\"")
     card.append(f"  state  {amend.get('state_from') or '?'} → "
                f"{amend.get('state_to') or '?'}")
-    card.append(f'  quote  "{row.get("headline") or ""}"')
+    card.append(f'  quote  "{amend.get("evidence") or ""}"')
     card.append(f"  found  {amend.get('found') or ''}")
     if amend.get("note"):
         card.append(f"  note   {amend['note']}")
@@ -1006,7 +1006,7 @@ def _amendment_fanout_card(group: list) -> list:
         tag += f" · {age}"
     amend0 = first.get("amend") or {}
     card = [f"[{tag}]"]
-    card.append(f'  quote  "{first.get("headline") or ""}"')
+    card.append(f'  quote  "{amend0.get("evidence") or ""}"')
     card.append(f"  found  {amend0.get('found') or ''}")
     for row in group:
         amend = row.get("amend") or {}
@@ -1023,19 +1023,19 @@ def _amendment_fanout_card(group: list) -> list:
 
 def _decide_cards(rows: list) -> list:
     """One card per queue row, grouping amendment rows that share identical
-    evidence text into a single fan-out card (#1087). Every other lane keeps
+    evidence text (`amend.evidence`) into a single fan-out card (#1087). Every other lane keeps
     its existing one-row-one-card shape (`_generic_card`)."""
     amend_groups: dict[str, list] = {}
     for row in rows:
         if row.get("kind") == "amendment":
-            amend_groups.setdefault(row.get("headline") or "", []).append(row)
+            amend_groups.setdefault((row.get("amend") or {}).get("evidence") or "", []).append(row)
     emitted: set = set()
     cards = []
     for row in rows:
         if row.get("kind") != "amendment":
             cards.append(_generic_card(row))
             continue
-        key = row.get("headline") or ""
+        key = (row.get("amend") or {}).get("evidence") or ""
         if key in emitted:
             continue  # already emitted as part of this group's card
         emitted.add(key)
