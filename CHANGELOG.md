@@ -5,6 +5,16 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.1](https://github.com/Daily-Nerd/daimon/compare/v0.52.0...v0.52.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **briefing:** one allocation model for every briefing host ([#1133](https://github.com/Daily-Nerd/daimon/issues/1133)) ([3619c00](https://github.com/Daily-Nerd/daimon/commit/3619c00b32071c9ac9c13cf03337e508f55bf533))
+* **decide:** compose a readable headline for amendment rows ([#1125](https://github.com/Daily-Nerd/daimon/issues/1125)) ([e53b285](https://github.com/Daily-Nerd/daimon/commit/e53b28521ca7db70afcb9590e455daf33f625381))
+* **loops:** show age and stale marker, add --stale, point briefing notes at it ([#1134](https://github.com/Daily-Nerd/daimon/issues/1134)) ([6f0faee](https://github.com/Daily-Nerd/daimon/commit/6f0faee1666e56fc5828f89ce74fbcc767b89f5a))
+* **request:** bound the ask shown as a title and in hook injection ([#1130](https://github.com/Daily-Nerd/daimon/issues/1130)) ([d08dcb4](https://github.com/Daily-Nerd/daimon/commit/d08dcb4ab2c905d458e9ef72d365e3ce329cf4a5))
+
 ## [0.52.0](https://github.com/Daily-Nerd/daimon/compare/v0.51.0...v0.52.0) (2026-10-01)
 
 
