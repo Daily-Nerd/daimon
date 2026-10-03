@@ -22,7 +22,7 @@ from pathlib import Path
 # with "\n". A row can hold several separators, so the rejoin accumulates;
 # the bound keeps a wall of unrelated torn rows from going quadratic.
 _MAX_FRAGMENTS = 32
-_REJOIN = " "
+_REJOIN = "\u2028"  # LINE SEPARATOR, escaped so it is visible
 
 
 def _is_object(text: str) -> bool:
