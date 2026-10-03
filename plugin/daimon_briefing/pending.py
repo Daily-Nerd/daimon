@@ -42,7 +42,16 @@ its outgoing asks to someone else) stays behind the explicit flag.
 
 from __future__ import annotations
 
-from . import amendments, config, recall, refutations, requests, store, trust
+from . import (
+    amendments,
+    config,
+    display,
+    recall,
+    refutations,
+    requests,
+    store,
+    trust,
+)
 
 # #1087: per-loop text cap on the decide row — the quote alone is not
 # decidable without knowing what it is claimed to change, but the loop's own
@@ -51,13 +60,8 @@ from . import amendments, config, recall, refutations, requests, store, trust
 _LOOP_TEXT_CAP = 120
 
 
-# Requests first: someone else is blocked on them. Then quote-verified
-# amendments, which are already rendering in briefings as unconfirmed claims.
-# Ledger candidates last: nothing renders them yet, so nothing is misleading
-# while they wait. `trust` ranks WITH ruling/refutation for the identical
-# reason (#1109 Slice 1: nothing reads the quarantine ledger yet either).
-_KIND_RANK = {"request": 0, "amendment": 1, "ruling": 2, "refutation": 2,
-             "trust": 2}
+# #1129: the headline bound for every lane, pinned equal to the ask bound.
+HEADLINE_CHARS = 160
 
 
 def _row(*, kind, record_id, slug, headline, waiting_since,
@@ -69,10 +73,12 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         "id": record_id,
         "slug": slug,
         "headline": headline,
-        # #1127: a generic slot for the full text when `headline` was
-        # shortened from it (None otherwise, and for every lane that does not
-        # shorten). The decide card prints it under the header; a consumer
-        # rendering `headline` as a title never has to show the wall.
+        # #1127/#1129: a generic slot for the full text when `headline` was
+        # shortened from it (None otherwise). A STRING: one labeled line per
+        # shortened field, joined by "\n", each `"<Label>: <one-lined full
+        # text>"` (see `_detail`). The decide card prints each line under
+        # the header; a consumer rendering `headline` as a title never has
+        # to show the wall. JSON-serializable as is.
         "detail": detail,
         # What the headline alone cannot carry: who is waiting, or which
         # item a claim is about. A decision needs both, and neither belongs
@@ -112,6 +118,19 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         # for every lane but `amendment`, same guard shape as the two above.
         "amend": amend,
     }
+
+
+def _detail(*fields) -> str | None:
+    """Labeled full-text lines for the fields a row shortened (#1129).
+
+    Each field is `(label, full_text, shown)`. A line `"<Label>: <full
+    text, one-lined>"` is present only when `shown` differs from the full
+    text beyond whitespace; no such field means None. Lines join with
+    "\n" so `detail` stays a plain string."""
+    lines = [f"{label}: {display.one_line(full)}"
+             for label, full, shown in fields
+             if display.one_line(full) != shown]
+    return "\n".join(lines) or None
 
 
 def _order_key(row: dict, seq: int) -> tuple:
@@ -176,7 +195,7 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
         rows.append((_row(
             kind="request", record_id=rid, slug=slug,
             headline=short,
-            detail=ask if short != ask else None,
+            detail=_detail(("Ask", ask, short)),
             context=(f"from {record['from_label']}"
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",
@@ -237,9 +256,12 @@ def _trust_rows(project_dir, slug) -> list:
     for tid, record in records.items():
         if record.get("state") != "candidate":
             continue
+        reason = record.get("reason") or ""
+        shown = display.shorten(reason, HEADLINE_CHARS)
         rows.append((_row(
             kind="trust", record_id=tid, slug=slug,
-            headline=record.get("reason") or "",
+            headline=shown,
+            detail=_detail(("Reason", reason, shown)),
             context=f"kind={record.get('kind')}",
             waiting_since=record.get("created_at") or "",
             commands=[
@@ -308,11 +330,13 @@ def _amendment_headline(amend: dict) -> str:
     loop = amend.get("loop_text")
     if not loop or loop == _LOOP_TEXT_UNAVAILABLE:
         loop = amend.get("loop_id") or "?"
-    headline = (f"{loop}: {amend.get('state_from') or '?'} to "
-                f"{amend.get('state_to') or '?'}")
+    # #1129: compose the suffix first, then bound only the foreign loop
+    # text to what is left, so the state pair and the found label survive.
+    suffix = (f": {amend.get('state_from') or '?'} to "
+              f"{amend.get('state_to') or '?'}")
     if amend.get("role"):
-        headline += f" (found: {amend.get('found')})"
-    return headline
+        suffix += f" (found: {amend.get('found')})"
+    return display.shorten(loop, HEADLINE_CHARS - len(suffix)) + suffix
 
 
 def _amendment_rows(project_dir, slug) -> list:
@@ -365,6 +389,27 @@ def _amendment_rows(project_dir, slug) -> list:
     return rows
 
 
+# #1129: the lane registry. ONE place says which kinds each source emits
+# and how they rank (`_ledger_rows` emits both ruling and refutation);
+# `_KIND_RANK` and `queue`'s source list derive from it, and a census test
+# holds it equal to what the lanes really emit.
+#
+# Requests first: someone else is blocked on them. Then quote-verified
+# amendments, which are already rendering in briefings as unconfirmed claims.
+# Ledger candidates last: nothing renders them yet, so nothing is misleading
+# while they wait. `trust` ranks WITH ruling/refutation for the identical
+# reason (#1109 Slice 1: nothing reads the quarantine ledger yet either).
+# `_request_rows` returns `(rows, suppressed)` and runs first in `queue`.
+_LANES = (
+    (_request_rows, {"request": 0}),
+    (_ledger_rows, {"ruling": 2, "refutation": 2}),
+    (_amendment_rows, {"amendment": 1}),
+    (_trust_rows, {"trust": 2}),
+)
+_KIND_RANK = {kind: rank for _source, ranks in _LANES
+              for kind, rank in ranks.items()}
+
+
 def queue(*, project_dir=None) -> dict:
     """{"rows": [...], "excluded": {...}} for this project.
 
@@ -383,7 +428,9 @@ def queue(*, project_dir=None) -> dict:
         pairs += request_pairs
     except Exception:
         pass
-    for source in (_ledger_rows, _amendment_rows, _trust_rows):
+    for source, _ranks in _LANES:
+        if source is _request_rows:
+            continue
         try:
             pairs += source(project_dir, slug)
         except Exception:
