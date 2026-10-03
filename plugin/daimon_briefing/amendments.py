@@ -212,7 +212,9 @@ def events(project_dir=None) -> list[dict]:
         return []
     rows = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        # #1138: "\n"-only split; strict decoding stays (a non-UTF-8 ledger
+        # reads as empty, callers and tests rely on that).
+        lines = jsonl.read_rows(path, errors="strict")
     except (OSError, UnicodeDecodeError):
         return []
     for index, line in enumerate(lines):

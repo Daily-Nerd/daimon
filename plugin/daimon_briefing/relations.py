@@ -286,7 +286,8 @@ def events(project_dir=None) -> list[dict]:
     # dir (EACCES is not in pathlib's ignored set), which would crash the
     # read-only auditor on exactly the tree it must report on.
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        # #1138: "\n"-only split; strict decoding stays (see amendments).
+        lines = jsonl.read_rows(path, errors="strict")
     except (OSError, UnicodeDecodeError):
         return []
     rows = []

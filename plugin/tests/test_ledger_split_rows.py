@@ -302,3 +302,70 @@ def test_refutations_forget_survives_an_unreadable_ledger(
 
     monkeypatch.setattr(type(refutations._path(PROJECT)), "read_text", flaky)
     assert refutations.forget_content_key(KEY, project_dir=PROJECT) == []
+
+
+# ---- forget finds a value inside a separator row (readers, #1138) ----------
+
+
+def _inject_sep(path, sep):
+    """Add a field holding the separator raw to every row on disk."""
+    rows = [json.loads(ln) for ln in path.read_text(encoding="utf-8").split("\n")
+            if ln]
+    for row in rows:
+        row["x_note"] = f"left{sep}right"
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n"
+                            for r in rows), encoding="utf-8")
+
+
+@sep_param
+def test_amendments_forget_deletes_a_separator_row_by_value(tmp_checkpoint_dir,
+                                                            sep):
+    amendments.propose(item_id="o-1234567890ab", change="progressed",
+                       evidence=CANARY, channel="cli-agent",
+                       project_dir=PROJECT)
+    path = amendments._path(PROJECT)
+    _inject_sep(path, sep)
+    keeper = amendments.propose(item_id="o-1234567890ab", change="blocked",
+                                evidence="an unrelated piece of evidence",
+                                channel="cli-agent", project_dir=PROJECT)
+    assert amendments.forget_content_key(KEY, project_dir=PROJECT)
+    assert CANARY not in path.read_text(encoding="utf-8")
+    assert amendments.get(keeper, project_dir=PROJECT) is not None
+
+
+@sep_param
+def test_requests_forget_deletes_a_separator_row_by_value(tmp_checkpoint_dir,
+                                                          sep):
+    requests.open_request(to="-p-recipient", ask=CANARY, why="because",
+                          channel="cli-agent", project_dir=PROJECT)
+    path = requests._path(PROJECT)
+    _inject_sep(path, sep)
+    keeper = requests.open_request(to="-p-recipient", ask="an unrelated ask",
+                                   why="because", channel="cli-agent",
+                                   project_dir=PROJECT)
+    assert requests.forget_content_key(KEY, project_dir=PROJECT)
+    assert CANARY not in path.read_text(encoding="utf-8")
+    assert keeper in requests.records(project_dir=PROJECT)
+
+
+@sep_param
+def test_relations_forget_deletes_a_separator_row_by_item(tmp_checkpoint_dir,
+                                                          sep):
+    def end(session, item):
+        return {"session_id": session, "field": "recent_decisions",
+                "item_id": item}
+
+    def propose(frm, to):
+        return relations.propose(
+            type_="revision-of", from_endpoint=frm, to_endpoint=to,
+            matched_by=["carry-absolute"], matcher_version="lineage-v1",
+            channel="lab-import", project_dir=PROJECT)
+
+    doomed = propose(end("S2", "r-abc123456789"), end("S1", "r-def123456789"))
+    path = relations._path(PROJECT)
+    _inject_sep(path, sep)
+    keeper = propose(end("S2", "r-aaa111222333"), end("S1", "r-bbb444555666"))
+    assert relations.forget_item_id("r-abc123456789", project_dir=PROJECT) \
+        == [doomed]
+    assert "r-abc123456789" not in path.read_text(encoding="utf-8")
+    assert keeper in relations.records(project_dir=PROJECT)
