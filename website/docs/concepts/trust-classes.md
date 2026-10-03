@@ -24,6 +24,11 @@ rendering, not by budget truncation. When a briefing shows
 the trailing quote is the actual text from the transcript, and it stays
 byte-identical for as long as the item lives.
 
+The briefing line is a skimmable view, not the record. A long quote is shown
+on one line, cut at a word to at most 120 characters ending in `…`, and it is
+left out when the item's text already says it. The stored quote is never cut, and the
+viewer's "why" page for the entry shows it whole.
+
 An agent reading the briefing should repeat verbatim items exactly, never
 summarize or paraphrase them.
 

@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from daimon_briefing import briefing
+from daimon_briefing import briefing, display
 
 NOW = 1_800_000_000.0
 
@@ -196,7 +196,8 @@ def test_budget_sweep_invariants(monkeypatch):
         for s, i in kept_all:
             if i.get("trust") == "verbatim":
                 assert i["text"] == originals[i["text"]]["text"]
-                assert i["quote"].strip() in text
+                # #1129: the quote shows as a bounded one-line span
+                assert f'"{display.quote_span(i["quote"], i["text"])}"' in text
             assert briefing._line(i, False, s in briefing.BRIEFABLE_SECTIONS) \
                 in text
         # 6. note counts equal the manifest

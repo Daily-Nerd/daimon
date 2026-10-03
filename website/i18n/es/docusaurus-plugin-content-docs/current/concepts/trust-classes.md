@@ -25,6 +25,12 @@ presupuesto. Cuando un briefing muestra
 la cita final es el texto real del transcript, y se mantiene idéntica byte a
 byte mientras el ítem viva.
 
+La línea del briefing es una vista para leer rápido, no el registro. Una cita
+larga se muestra en una sola línea, cortada en una palabra a 120 caracteres
+como máximo, con `…` al final, y se omite cuando el texto del ítem ya la dice. La cita guardada
+nunca se corta, y la página "why" de la entrada en el visor la muestra
+completa.
+
 Un agente que lee el briefing debe repetir los ítems verbatim exactamente,
 nunca resumirlos ni parafrasearlos.
 

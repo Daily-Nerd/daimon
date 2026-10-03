@@ -1,0 +1,44 @@
+{
+  "arms": {
+    "A": "quote whole",
+    "B": "quote_span"
+  },
+  "briefings_changed": 734,
+  "briefings_changed_by_horizon": {
+    "1": 364,
+    "30": 370
+  },
+  "briefings_measured": 980,
+  "briefings_over_budget_whole": 746,
+  "bytes_saved_unbounded": {
+    "max": 5404,
+    "median": 1376.0,
+    "n": 980
+  },
+  "bytes_saved_unbounded_when_quoted": {
+    "max": 5404,
+    "median": 1419.0,
+    "n": 968
+  },
+  "checkpoints_scanned": 636,
+  "empty": 0,
+  "horizons_days": [
+    1,
+    30
+  ],
+  "inputs": {
+    "files": 636,
+    "sha256": "6bc0078e24d381a57a79d9076c1f25c89b98ec121778fd0cc53d902a12fd7b0f"
+  },
+  "issue": 1129,
+  "items_capped": 20342,
+  "items_gained_by_class": {
+    "inferred": 1158,
+    "verbatim": 1699
+  },
+  "items_hidden": 3748,
+  "items_lost_by_class": {},
+  "items_quoted": 44074,
+  "rows": 1126,
+  "skipped": 146
+}

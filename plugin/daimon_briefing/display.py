@@ -13,6 +13,11 @@ _SPACE_RE = re.compile(r"\s+")
 _MIN_SENTENCE = 20
 _SENTENCE_END_RE = re.compile(r"[.?!](?= [A-Z])")
 
+# The cap on an evidence quote shown beside its item. One number with the
+# agent-claim cap (`briefing._AGENT_CLAIM_EVIDENCE_CHARS`, pinned equal by a
+# test): both are copy-pasted transcript spans shown as a skimmable hint.
+QUOTE_CHARS = 120
+
 
 def one_line(text) -> str:
     """`text` on one line: every whitespace run becomes one space, ends
@@ -52,3 +57,22 @@ def shorten(text, limit: int, *, sentence: bool = False,
     # long token after a short prefix): hard cut instead.
     body = window[:cut] if cut >= limit // 2 else window
     return body.rstrip() + "…"
+
+
+def quote_span(quote, text, limit: int = QUOTE_CHARS) -> str:
+    """The quote as shown beside an item's text: "" when there is none or
+    when the text already contains it (showing it twice is noise), else the
+    quote on one line, cut to `limit` with `…`. Containment compares the
+    one-lined forms; a word character at either edge of the quote must sit on
+    a word edge in the text ("merge" is not contained in "merged"), while a
+    punctuation edge needs no guard, so `(a, b)` is found inside `f(a, b)`.
+    The caller passes the item's ORIGINAL text, never a budget-shortened
+    copy. Display only: the stored quote is untouched."""
+    flat = one_line(quote)
+    if not flat:
+        return ""
+    head = r"(?<!\w)" if re.match(r"\w", flat[0]) else ""
+    tail = r"(?!\w)" if re.match(r"\w", flat[-1]) else ""
+    if re.search(head + re.escape(flat) + tail, one_line(text)):
+        return ""
+    return shorten(flat, limit)

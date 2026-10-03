@@ -525,6 +525,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
         briefable = key in briefing.BRIEFABLE_SECTIONS
         for i in items:
             trust = _trust_key(i)
+            text = str(i.get("text") or "").strip()
             stale_days = i.get("_stale_carried_days")
             if isinstance(stale_days, (int, float)) \
                     and not isinstance(stale_days, bool):
@@ -533,7 +534,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 # stored trust color; yellow states "needs a world-check"
                 # without borrowing the verbatim green (the stored tag is
                 # named in the suffix instead).
-                body.append(f"• [? unverified] {i.get('text', '').strip()}"
+                body.append(f"• [? unverified] {text}"
                             f"{briefing.corroboration_badge(i)}"
                             f" (was {trust}, carried {stale_days:.0f}d)",
                             style="yellow")
@@ -547,7 +548,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 # position it holds on the plain path (after the annotations,
                 # before the quote): one shared literal, so the two renders state
                 # the witness count in identical bytes.
-                body.append(f"• {i.get('text', '').strip()}"
+                body.append(f"• {text}"
                             f"{briefing.corroboration_badge(i)}", style=item_style)
             # #480 slice 1: the id handle, dim like the quote below — it is
             # a supplementary resolve target, not part of the claim itself.
@@ -555,7 +556,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             if handle:
                 body.append(handle, style="dim")
             body.append("\n", style=item_style)
-            quote = i.get("quote", "").strip()
+            quote = briefing.item_quote(i, text)
             if quote:
                 body.append(f'    "{quote}"\n', style="dim italic")
             candidate = i.get("_supersede_candidate")
