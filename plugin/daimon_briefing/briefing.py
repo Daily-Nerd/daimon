@@ -2296,6 +2296,26 @@ def _iter_trusted_quotes(checkpoint):
                 yield str(item["quote"]).strip()
 
 
+def _kept_checkpoint(sel: Selection) -> dict:
+    """A checkpoint-shaped view of ONLY what the Selection kept (#1128), the
+    one thing the LLM briefing path is allowed to narrate or be validated
+    against. Item dicts are passed through untouched."""
+    kept = sel.kept
+    return {
+        "working_context": {
+            "active_topic": kept.get("active_topic"),
+            "open_questions": list(kept.get("external") or [])
+            + list(kept.get("open_loops") or []),
+            "recent_decisions": list(kept.get("decisions") or []),
+        },
+        "epistemic_snapshot": {
+            "strong_beliefs": list(kept.get("beliefs") or []),
+            "uncertainties": list(kept.get("uncertainties") or []),
+            "contradictions_flagged": list(kept.get("contradictions") or []),
+        },
+    }
+
+
 def _validate_llm_render(rendered: str, checkpoint) -> bool:
     """The mechanical check the deterministic render gets for free (#30): every
     verbatim quote must survive the LLM's prose INTACT. Whitespace-normalized
@@ -2353,9 +2373,18 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
         return "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
     degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
-        rendered = _render_llm(checkpoint)
+        # #1128: the LLM narrates only what `select` kept under the same
+        # budget the deterministic render uses (the rulings and panels it is
+        # handed are charged as protected furniture), and the verbatim-quote
+        # check runs over that same set, so this path obeys the same model.
+        sel = select(b, effective_budget(), degraded=degraded,
+                     rulings=rulings, request_lines=request_lines,
+                     verdict_lines=verdict_lines, owed_lines=owed_lines,
+                     decision_count=decision_count)
+        kept_checkpoint = _kept_checkpoint(sel)
+        rendered = _render_llm(kept_checkpoint)
         if rendered:
-            if _validate_llm_render(rendered, checkpoint):
+            if _validate_llm_render(rendered, kept_checkpoint):
                 # The LLM render carries no per-item marks to degrade; the one
                 # header note stays FIRST on every path (#204 — the loudest
                 # line never moves below another section). #693/#694: the LLM
