@@ -2546,9 +2546,7 @@ def latest_reply_line(record: dict) -> str:
     if not replies:
         return ""
     latest = replies[-1]
-    note = str(latest.get("note") or "").strip()
-    if len(note) > _REPLY_LINE_MAX:
-        note = note[:_REPLY_LINE_MAX].rstrip() + "…"
+    note = display.shorten(latest.get("note"), _REPLY_LINE_MAX, hard=True)
     label = ("Reply (agent, unverified)" if latest.get("authority") == "agent"
              else "Reply")
     line = f"{label}: {note}"

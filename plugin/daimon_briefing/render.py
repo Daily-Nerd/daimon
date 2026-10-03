@@ -11,7 +11,7 @@ import re
 import sys
 from contextlib import contextmanager
 
-from . import briefing, config, redact, requests, schema, serializer
+from . import briefing, config, display, redact, requests, schema, serializer
 from .amendments import found_label as _amend_found_label
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -931,9 +931,7 @@ def _failure_cause(line) -> str | None:
     if not text:
         return None
     text, _ = redact.redact_text(text)
-    if len(text) > _CAUSE_MAX_CHARS:
-        text = text[:_CAUSE_MAX_CHARS].rstrip() + "…"
-    return text
+    return display.shorten(text, _CAUSE_MAX_CHARS, hard=True)
 
 
 def _outstanding_lines(outstanding) -> list:

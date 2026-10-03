@@ -292,11 +292,13 @@ def _loop_text(item_id: str, slug: str) -> str:
         return unavailable
     if not row:
         return unavailable
-    text = str(row.get("text") or "").strip()
+    text = display.one_line(row.get("text"))
     if not text:
         return unavailable
     if len(text) > _LOOP_TEXT_CAP:
-        text = text[:_LOOP_TEXT_CAP - 1].rstrip() + "…"
+        # Fits in CAP chars total, "…" included; the guard keeps a text of
+        # exactly CAP chars whole, as it has always been.
+        text = display.shorten(text, _LOOP_TEXT_CAP - 1, hard=True)
     return text
 
 

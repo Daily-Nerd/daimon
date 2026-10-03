@@ -146,10 +146,7 @@ def _truncate_agent_claim(evidence: str | None) -> str:
     # missing one through `or ""` — an absent claim renders as empty, which is
     # the behavior three render paths depend on. Declaring `str` described a
     # contract the function never enforced and no caller ever kept.
-    text = str(evidence or "").strip()
-    if len(text) <= _AGENT_CLAIM_EVIDENCE_CHARS:
-        return text
-    return text[:_AGENT_CLAIM_EVIDENCE_CHARS].rstrip() + "…"
+    return display.shorten(evidence, _AGENT_CLAIM_EVIDENCE_CHARS, hard=True)
 
 
 # ---- #480 slice 1: resolve handles on open-loop-class items ----
