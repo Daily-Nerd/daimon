@@ -42,6 +42,7 @@ from .. import amendments, anchor, briefing, buckets, capture, carry, config, co
 # active_value_keys() for withhold's quarantine pool.
 from .. import trust as trust_lib
 from .. import __version__
+from ..display import one_line
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
 # moves). EVERY moved name is re-imported here — including the ones cli.py no
@@ -1144,6 +1145,17 @@ def _cmd_serve(args) -> int:
 _TOPIC_TEASER_CHARS = 60
 
 
+def _topic_teaser(topic) -> str:
+    """The topic on one line, at most `_TOPIC_TEASER_CHARS` wide. Kept off
+    `display.shorten`: this cut is `[:CHARS - 1]` with NO rstrip and fires
+    only above CHARS, a contract `shorten(hard=True)` cannot reproduce byte
+    for byte."""
+    flat = one_line(topic)
+    if len(flat) > _TOPIC_TEASER_CHARS:
+        flat = flat[:_TOPIC_TEASER_CHARS - 1] + "…"
+    return flat
+
+
 def projects_rows(project_arg=None) -> list:
     """One JSON-ready row per checkpoint bucket, newest first. Single
     assembler for `daimon projects --json` AND the MCP projects tool (#261) —
@@ -1358,9 +1370,7 @@ def _cmd_projects(args) -> int:
     for r in rows:
         epoch = store._created_epoch(r["created"])
         age = f"{_format_age(now - epoch)} ago" if epoch else "?"
-        topic = (r["topic"] or "").strip()
-        if len(topic) > _TOPIC_TEASER_CHARS:
-            topic = topic[:_TOPIC_TEASER_CHARS - 1] + "…"
+        topic = _topic_teaser(r["topic"])
         display.append({
             "mark": "*" if r["current"] else " ",
             "name": r["name"] or "—",
@@ -1918,7 +1928,11 @@ def _fit_item_text(raw, width: int) -> tuple[str, bool]:
 
     The second return value is not derivable after the fact — a rendered
     length equal to the width could be an item that exactly fits — and #1030's
-    whole read-back rests on telling a short claim from a truncated one."""
+    whole read-back rests on telling a short claim from a truncated one.
+
+    Stays a local cut on purpose, not a `display.shorten` call (#1129): the
+    rendered length, the `truncated` flag and the ASCII `...` all feed recall
+    telemetry, and changing any of them would split the soak series."""
     text = " ".join(str(raw).split())
     if len(text) <= width:
         return text, False
