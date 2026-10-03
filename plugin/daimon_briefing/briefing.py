@@ -17,7 +17,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 # store/carry import graph checked (#103): neither store, carry, recall,
 # scoring, nor serializer imports briefing — no cycle, so this stays a normal
@@ -754,6 +754,18 @@ def _carried_age_days(item, resolutions, now):
     return max(0.0, (now - max(candidates)) / 86400.0)
 
 
+def listing_age_days(item, resolutions, now):
+    """#1128: the age `daimon loops` prints per row, from the same rule the
+    stale classification uses. A carried item gets its effective last-verified
+    age (`_carried_age_days`); a native one has no carry history, so its age
+    is time since `first_seen`. None when nothing parses (fail-open, the row
+    prints no age)."""
+    if item.get("carried_from"):
+        return _carried_age_days(item, resolutions, now)
+    born = store._created_epoch(item.get("first_seen"))
+    return None if born is None else max(0.0, (now - born) / 86400.0)
+
+
 def stale_carried(checkpoint, resolutions: dict, now, threshold_days=None) -> list:
     """Carried items whose EFFECTIVE last-verified age exceeds
     `threshold_days`, or [] if none. Pure — `now` is injected (mirrors
@@ -854,7 +866,7 @@ class AnnotateContext(NamedTuple):
 
 
 class Annotated(NamedTuple):
-    checkpoint: object
+    checkpoint: Any
     withheld: list
     events: dict
     stale_items: list
@@ -1753,7 +1765,8 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
 def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
                  decision_count: str | None = None, *,
-                 max_bytes: int | None = None) -> str:
+                 max_bytes: int | None = None,
+                 loops_pointer: bool = True) -> str:
     """The deterministic briefing text: a thin wrapper over `select` and
     `render_selection` (#1128), kept so its many call sites keep working.
 
@@ -1773,7 +1786,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     budget = effective_budget(max_bytes)
     sel = select(b, budget, degraded=degraded, rulings=rulings,
                  request_lines=request_lines, verdict_lines=verdict_lines,
-                 owed_lines=owed_lines, decision_count=decision_count)
+                 owed_lines=owed_lines, decision_count=decision_count,
+                 loops_pointer=loops_pointer)
     text = render_selection(sel)
     _log_render_size(text, budget)
     return text
@@ -1843,9 +1857,11 @@ _WEIGHT_TYPE = {"decisions": "recent_decision", "external": "open_question",
 _BACKGROUND = frozenset({"beliefs", "uncertainties"})
 
 # Where a hidden-items note points. beliefs/uncertainties have no listing
-# command, so their notes carry no pointer. Plain `daimon loops` until the
-# age column and --stale land (#1128 PR 2).
+# command, so their notes carry no pointer. `daimon loops --stale` lists what
+# the stale rule hid (the same annotate() set); a note that also lost items
+# for plain budget points at the whole listing, whose rows carry an age.
 _NOTE_POINTER = {"external": "daimon loops", "open_loops": "daimon loops"}
+_STALE_POINTER_SUFFIX = " --stale"
 
 # When two candidates tie on every key above (equal percentile), the section
 # the reader needs least goes first: the old drop order, kept as the tie-break.
@@ -1924,7 +1940,7 @@ class Selection:
                  stale_days, budget, degraded, rulings, count_line, panels,
                  overage, now, panel_names=(), reserved=0,
                  teammate_blocks=(), teammate_header="", kept_teammates=(),
-                 collapsed=False):
+                 collapsed=False, loops_pointer=True):
         self.kept = kept
         self.dropped = dropped
         self.reasons = reasons
@@ -1950,6 +1966,10 @@ class Selection:
         self.teammate_blocks = list(teammate_blocks)
         self.teammate_header = teammate_header
         self.kept_teammates = list(kept_teammates)
+        # False on any route where `daimon loops` would list a DIFFERENT
+        # project than the one briefed (global fallback, --slug): the note
+        # then carries no pointer at all.
+        self.loops_pointer = loops_pointer
         self._lines: dict = {}
 
     def dropped_for(self, section, reason=None):
@@ -2004,7 +2024,8 @@ def _split_decisions(decisions, cap, now):
 def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
            request_lines=(), verdict_lines=(), owed_lines=(),
            decision_count: str | None = None, reserved: int = 0,
-           teammate_blocks=(), teammate_header: str = "") -> Selection:
+           teammate_blocks=(), teammate_header: str = "",
+           loops_pointer: bool = True) -> Selection:
     """#1128: decide what the briefing shows. Pure: a function of the
     annotated items in `b`, the byte `budget` (None = unbounded: the decision
     cap still applies, nothing else is dropped) and `now`.
@@ -2133,7 +2154,8 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                         overage=overage, now=now, panel_names=names,
                         reserved=reserved, teammate_blocks=blocks,
                         teammate_header=teammate_header,
-                        kept_teammates=kept_team, collapsed=collapse)
+                        kept_teammates=kept_team, collapsed=collapse,
+                        loops_pointer=loops_pointer)
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 
@@ -2217,8 +2239,10 @@ def section_note(sel: Selection, section: str) -> str | None:
     body = f"{shown} of {total} shown; " + ", ".join(parts)
     if flagged:
         body += f"; {flagged} flagged item{'s' if flagged != 1 else ''} hidden"
-    pointer = _NOTE_POINTER.get(section)
+    pointer = _NOTE_POINTER.get(section) if sel.loops_pointer else None
     if pointer:
+        if stale and not other:
+            pointer += _STALE_POINTER_SUFFIX
         body += f". See: {pointer}"
     return f"  ({body})"
 
@@ -2332,7 +2356,8 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
     return True
 
 
-def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str | None:
+def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
+           loops_pointer: bool = True) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
     quote integrity, and falls back to deterministic on any doubt.
@@ -2383,7 +2408,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
         sel = select(b, effective_budget(), degraded=degraded,
                      rulings=rulings, request_lines=request_lines,
                      verdict_lines=verdict_lines, owed_lines=owed_lines,
-                     decision_count=decision_count)
+                     decision_count=decision_count,
+                     loops_pointer=loops_pointer)
         kept_checkpoint = _kept_checkpoint(sel)
         rendered = _render_llm(kept_checkpoint)
         if rendered:
@@ -2402,7 +2428,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None) -> str |
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
     return render_plain(b, degraded, rulings, request_lines, verdict_lines,
-                        owed_lines, decision_count)
+                        owed_lines, decision_count,
+                        loops_pointer=loops_pointer)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

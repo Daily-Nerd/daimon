@@ -132,6 +132,14 @@ def _resolve_project(arg, *, for_write: bool = False) -> str:
     return config.resolve_project_dir(project, allow_slug=False)
 
 
+def loops_lists_project(project: str) -> bool:
+    """True when a bare `daimon loops` run from here would list `project`'s
+    items: the pointer in a briefing note is only honest then. An explicit
+    --project (or --slug) that names a different project than the caller's own
+    resolution means the reader would be sent to the wrong listing."""
+    return project == _resolve_project(None)
+
+
 def _note_usage(command: str) -> None:
     """One LOCAL line per deliberate read command (#54): `<iso> <command>` to
     usage.log. Never transmitted anywhere — `daimon stats` aggregates it so a
@@ -674,7 +682,8 @@ def _team_briefings(project, withheld: list | None = None) -> list:
 
 
 def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
-                          worldcheck_project=None, team_withheld=()) -> int:
+                          worldcheck_project=None, team_withheld=(),
+                          loops_pointer=True) -> int:
     """Shared tail of `brief` and `brief --slug`: withhold, worldcheck, drift,
     render, footnotes. `route` is whatever the events ledger should be keyed
     by — a project dir on the normal path, a bare slug on the --slug path (the
@@ -753,7 +762,8 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     printed = render.render_brief(checkpoint, drift=drift, teammates=teammates,
                                   handoff=handoff, project_dir=route,
                                   worldcheck_project=worldcheck_project,
-                                  trailer=trailer)
+                                  trailer=trailer,
+                                  loops_pointer=loops_pointer)
 
     def _shown(panel, row) -> bool:
         # #1128: `printed` is the manifest of card ids render_brief printed in
@@ -840,8 +850,10 @@ def _cmd_brief(args) -> int:
                 "`daimon projects` lists what exists"])
             return 1
         render.render_brief_note([f"cross-project briefing — project: {slug}"])
+        # A named bucket is somebody else's listing: no `daimon loops` pointer.
         return _render_briefing_body(checkpoint, slug,
-                                     drift_project=None, teammates=None)
+                                     drift_project=None, teammates=None,
+                                     loops_pointer=False)
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _resolve_project(args.project)
@@ -924,7 +936,9 @@ def _cmd_brief(args) -> int:
     return _render_briefing_body(checkpoint, project,
                                  drift_project=project, teammates=teammates,
                                  worldcheck_project=None if fallback_used
-                                 else project, team_withheld=team_withheld)
+                                 else project, team_withheld=team_withheld,
+                                 loops_pointer=(not fallback_used
+                                                and loops_lists_project(project)))
 
 
 # ---- recall: FTS search over local + team checkpoint history (#112) ----

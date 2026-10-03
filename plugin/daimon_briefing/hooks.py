@@ -243,7 +243,13 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # process cwd). Note read_latest above keeps its global fallback, so
         # the checkpoint may be another project's — the rulings are still
         # this project's own.
-        text = briefing.render(checkpoint, project_dir=project)
+        # OWN_ELSE_GLOBAL may have served another project's checkpoint (the
+        # body read does not say), so `daimon loops` is only pointed at when
+        # the read was strictly this project's own.
+        text = briefing.render(
+            checkpoint, project_dir=project,
+            loops_pointer=(briefing.injection_read_route(project)
+                           is store.Route.OWN))
         if not text:
             return None
         return {"context": text}

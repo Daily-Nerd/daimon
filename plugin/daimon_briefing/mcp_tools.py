@@ -123,8 +123,11 @@ def _brief(arguments: dict) -> str:
         return f"{ruling_text}checkpoint exists but has nothing worth surfacing."
     # Deterministic render only over MCP — the opt-in LLM re-render is a
     # human-display affordance, and a machine consumer wants stable bytes.
-    return briefing.render_plain(b, briefing.receipt_degraded(filtered),
-                                 rulings)
+    # The note's `daimon loops` pointer only when that command would list
+    # this same project: never for a named slug or a foreign --project.
+    return briefing.render_plain(
+        b, briefing.receipt_degraded(filtered), rulings,
+        loops_pointer=not slug and cli.loops_lists_project(target))
 
 
 def _projects(arguments: dict) -> str:

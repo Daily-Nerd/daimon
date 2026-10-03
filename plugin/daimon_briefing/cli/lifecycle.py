@@ -8,6 +8,7 @@ keeps working on moved code.
 import datetime
 import sys
 import textwrap
+import time
 
 import daimon_briefing.cli as _cli
 
@@ -25,7 +26,6 @@ from .. import (
     requests,
     serializer,
     store,
-    trust,
 )
 from ._ledger import _check_sync_warning
 
@@ -836,18 +836,15 @@ def _cmd_loops(args) -> int:
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to list")
         return 0
-    try:
-        events = store.resolutions(project_dir=project)
-        # #691: amendments ride along so the listing agrees with the
-        # briefing — an agent discovering targets here must see that an
-        # item is already amended, or its cheapest probe is a duplicate
-        # proposal.
-        checkpoint, _, _ = briefing.withhold(
-            checkpoint, events,
-            amendments=amendments.renderable(project_dir=project),
-            quarantine=trust.active_value_keys(project_dir=project))
-    except Exception:
-        pass  # fail-open, same stance as _print_suppressed
+    # #1128: the shared annotation step (withhold with amendments and
+    # quarantine, #691/#1109; corroboration; stale stamps), so the listing and
+    # the briefing cannot disagree about which items are stale. Fail-open per
+    # step inside annotate, same stance as _print_suppressed.
+    now = time.time()
+    annotated = briefing.annotate(
+        checkpoint, briefing.AnnotateContext(route=project), now)
+    checkpoint = annotated.checkpoint
+    stale_ids = {id(i) for i in annotated.stale_items}
     rows = []
     for section, key in store._ITEM_LISTS:
         if key not in briefing.BRIEFABLE_ITEM_KEYS:
@@ -869,13 +866,23 @@ def _cmd_loops(args) -> int:
                      + (amend_stamp.get("overflow") or 0))
                 if n:
                     text += f" (amended ×{n})"
-            rows.append((item["id"], key, text, briefing._mark(item)))
+            stale = id(item) in stale_ids
+            if args.stale and not stale:
+                continue
+            age = briefing.listing_age_days(item, annotated.events, now)
+            age_label = "" if age is None else f"{age:.0f}d"
+            if stale:
+                age_label = f"{age_label} stale".strip()
+            rows.append((item["id"], key, text, briefing._mark(item),
+                         age_label))
     if not rows:
-        render.render_lifecycle_lines(["no open loops"])
+        render.render_lifecycle_lines(
+            ["no stale carried loops" if args.stale else "no open loops"])
         return 0
     render.render_lifecycle_lines(
-        [f"  {item_id}  [{key}] [{mark}] {text}"
-         for item_id, key, text, mark in rows])
+        [f"  {item_id}  [{key}] [{mark}] [{age}] {text}" if age else
+         f"  {item_id}  [{key}] [{mark}] {text}"
+         for item_id, key, text, mark, age in rows])
     return 0
 
 
@@ -1181,9 +1188,14 @@ def register(sub, fmt) -> None:
     p_loops = sub.add_parser(
         "loops", help="list open, briefable loop items with ids for this "
         "project (#480) — the read counterpart to daimon resolve's write path",
-        epilog="Examples:\n  daimon loops\n  daimon loops --project .\n",
+        epilog="Examples:\n  daimon loops\n  daimon loops --stale\n"
+               "  daimon loops --project .\n",
     )
     p_loops.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_loops.add_argument(
+        "--stale", action="store_true",
+        help="list only the carried items past the staleness budget, the set "
+             "the briefing may drop")
     p_loops.set_defaults(func=_cli._cmd_loops)
 
     p_decide = sub.add_parser(
