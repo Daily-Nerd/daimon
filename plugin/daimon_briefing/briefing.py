@@ -25,8 +25,8 @@ from typing import Any, NamedTuple
 # don't apply here). checks_runtime is the #943 stdlib-only runtime module —
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
-from . import (capture, carry, checks_host, checks_runtime, config, llm,
-               normalize, pending, receipts, refutations, requests, schema,
+from . import (capture, carry, checks_host, checks_runtime, config, display,
+               llm, normalize, pending, receipts, refutations, requests, schema,
                scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
@@ -184,13 +184,28 @@ def _handle_suffix(item, briefable: bool) -> str:
     return f" [{item_id}]" if item_id else ""
 
 
-def _line(item, degraded: bool = False, briefable: bool = False) -> str:
+def item_quote(item, text: str, full_quotes: bool = False) -> str:
+    """#1129: the quote shown beside an item, one rule for the plain line and
+    the rich panel. A bounded span, hidden when the item's text already holds
+    it. A budget-shortened copy (select stage 1) carries the verdict taken
+    against its ORIGINAL text in `_quote_in_text`, so shortening never brings
+    a quote back. `full_quotes` (the LLM path's sizing) charges the stored
+    quote whole."""
+    if full_quotes:
+        return str(item.get("quote") or "").strip()
+    if item.get("_quote_in_text"):
+        return ""
+    return display.quote_span(item.get("quote"), text)
+
+
+def _line(item, degraded: bool = False, briefable: bool = False,
+          full_quotes: bool = False) -> str:
     # #134: dict.get returns the stored None for a present-but-null key (the
     # default only fires for an ABSENT key), so a torn/legacy checkpoint could
     # crash the whole render here. Use the codebase's str(x or "") idiom
     # (store.py, carry.py) — tolerant of null, same as iter_items' stance.
     text = str(item.get("text") or "").strip()
-    quote = str(item.get("quote") or "").strip()
+    quote = item_quote(item, text, full_quotes)
     mark = _mark(item, degraded)
     stale_days = item.get("_stale_carried_days")
     was_label = None
@@ -1940,7 +1955,7 @@ class Selection:
                  stale_days, budget, degraded, rulings, count_line, panels,
                  overage, now, panel_names=(), reserved=0,
                  teammate_blocks=(), teammate_header="", kept_teammates=(),
-                 collapsed=False, loops_pointer=True):
+                 collapsed=False, loops_pointer=True, full_quotes=False):
         self.kept = kept
         self.dropped = dropped
         self.reasons = reasons
@@ -1970,6 +1985,9 @@ class Selection:
         # project than the one briefed (global fallback, --slug): the note
         # then carries no pointer at all.
         self.loops_pointer = loops_pointer
+        # The opt-in LLM path must reproduce verbatim quotes whole, so its
+        # sizing charges them whole; the deterministic render shows a span.
+        self.full_quotes = full_quotes
         self._lines: dict = {}
 
     def dropped_for(self, section, reason=None):
@@ -2025,7 +2043,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
            request_lines=(), verdict_lines=(), owed_lines=(),
            decision_count: str | None = None, reserved: int = 0,
            teammate_blocks=(), teammate_header: str = "",
-           loops_pointer: bool = True) -> Selection:
+           loops_pointer: bool = True, full_quotes: bool = False) -> Selection:
     """#1128: decide what the briefing shows. Pure: a function of the
     annotated items in `b`, the byte `budget` (None = unbounded: the decision
     cap still applies, nothing else is dropped) and `now`.
@@ -2054,7 +2072,13 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
     never cut) and the teammates block together. `teammate_blocks` are the
     pre-rendered per-teammate texts, newest first; the first two are protected
     (a floor of two, plus the header) and the rest are candidates in the
-    background class, dropped before anything actionable and announced."""
+    background class, dropped before anything actionable and announced.
+
+    Quote length (#1129): the deterministic render shows an evidence quote
+    as a bounded span (`display.quote_span`), so that is what it costs. The
+    opt-in LLM path must reproduce verbatim quotes whole, so it passes
+    `full_quotes=True` and is charged the stored quote. The two paths differ
+    in quote length on purpose; this stays pure, no config read."""
     if now is None:
         now = b.get("now") if isinstance(b.get("now"), (int, float)) \
             else time.time()
@@ -2155,7 +2179,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                         reserved=reserved, teammate_blocks=blocks,
                         teammate_header=teammate_header,
                         kept_teammates=kept_team, collapsed=collapse,
-                        loops_pointer=loops_pointer)
+                        loops_pointer=loops_pointer, full_quotes=full_quotes)
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 
@@ -2175,7 +2199,10 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
             entries[s] = [
                 (idx, it if it.get("trust") == "verbatim" else
                  {**it, "text": truncate_preserving_sections(
-                     it.get("text", ""), _ITEM_TRUNCATE_CHARS)})
+                     it.get("text", ""), _ITEM_TRUNCATE_CHARS),
+                  # #1129: decided against the text as stored
+                  "_quote_in_text": bool(it.get("quote")) and not
+                  display.quote_span(it.get("quote"), it.get("text"))})
                 for idx, it in entries[s]]
         lookup = {s: dict(entries[s]) for s in _ITEM_SECTIONS}
         cands = [(k, s, idx, it if s == "teammates" else lookup[s][idx])
@@ -2268,7 +2295,8 @@ def _sel_line(sel: Selection, section: str, item) -> str:
     key = id(item)
     line = sel._lines.get(key)
     if line is None:
-        line = _line(item, sel.degraded, section in BRIEFABLE_SECTIONS)
+        line = _line(item, sel.degraded, section in BRIEFABLE_SECTIONS,
+                     sel.full_quotes)
         sel._lines[key] = line
     return line
 
@@ -2409,7 +2437,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                      rulings=rulings, request_lines=request_lines,
                      verdict_lines=verdict_lines, owed_lines=owed_lines,
                      decision_count=decision_count,
-                     loops_pointer=loops_pointer)
+                     loops_pointer=loops_pointer, full_quotes=True)
         kept_checkpoint = _kept_checkpoint(sel)
         rendered = _render_llm(kept_checkpoint)
         if rendered:

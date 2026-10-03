@@ -985,6 +985,14 @@ def _generic_card(row: dict) -> list:
     return card
 
 
+def _quote_lines(evidence) -> list:
+    """#1129: the amendment quote, wrapped to the card width with a hanging
+    indent under the quote text. Never cut: the human judges the quote here."""
+    return textwrap.wrap(f'"{evidence or ""}"', width=76,
+                         initial_indent="  quote  ",
+                         subsequent_indent=" " * 11)
+
+
 def _amendment_card(row: dict) -> list:
     """#1087: a judgeable amendment row — the loop it targets, its current
     state and the claimed change, the quote, and a neutral `found` line
@@ -999,7 +1007,7 @@ def _amendment_card(row: dict) -> list:
                f"\"{amend.get('loop_text') or '(loop text unavailable)'}\"")
     card.append(f"  state  {amend.get('state_from') or '?'} → "
                f"{amend.get('state_to') or '?'}")
-    card.append(f'  quote  "{amend.get("evidence") or ""}"')
+    card += _quote_lines(amend.get("evidence"))
     card.append(f"  found  {amend.get('found') or ''}")
     if amend.get("note"):
         card.append(f"  note   {amend['note']}")
@@ -1023,7 +1031,7 @@ def _amendment_fanout_card(group: list) -> list:
         tag += f" · {age}"
     amend0 = first.get("amend") or {}
     card = [f"[{tag}]"]
-    card.append(f'  quote  "{amend0.get("evidence") or ""}"')
+    card += _quote_lines(amend0.get("evidence"))
     card.append(f"  found  {amend0.get('found') or ''}")
     for row in group:
         amend = row.get("amend") or {}

@@ -82,3 +82,58 @@ def test_property_default_mode_bound_and_ellipsis_rule(seed):
             assert flat.startswith(out[:-1])
         hard = display.shorten(text, limit, hard=True)
         assert len(hard) <= limit + 1
+
+
+# ---- #1129 PR B: quote_span ----
+
+def test_quote_chars_is_the_agent_claim_cap():
+    from daimon_briefing import briefing
+    assert display.QUOTE_CHARS == briefing._AGENT_CLAIM_EVIDENCE_CHARS == 120
+
+
+def test_quote_span_empty_for_missing_quote():
+    assert display.quote_span("", "text") == ""
+    assert display.quote_span(None, "text") == ""
+    assert display.quote_span("  \n ", "text") == ""
+
+
+def test_quote_span_shown_when_not_in_text():
+    assert display.quote_span("the exact words", "a summary") \
+        == "the exact words"
+
+
+def test_quote_span_hidden_when_text_contains_it():
+    assert display.quote_span("use  uv", "we agreed to use uv\nalways") == ""
+
+
+def test_quote_span_containment_is_on_word_edges():
+    assert display.quote_span("merge", "it was merged") == "merge"
+    assert display.quote_span("merge", "please merge it") == ""
+    assert display.quote_span("merge", "pre-merge") == ""
+
+
+def test_quote_span_punctuation_edges_still_match():
+    assert display.quote_span('"quoted"', 'he said "quoted" twice') == ""
+    assert display.quote_span("(a, b)", "call f(a, b) now") == ""
+
+
+def test_quote_span_none_text_is_safe():
+    assert display.quote_span("words", None) == "words"
+
+
+def test_quote_span_caps_long_quote_with_ellipsis():
+    out = display.quote_span("word " * 100, "unrelated")
+    assert out.endswith("…")
+    assert len(out) <= display.QUOTE_CHARS
+
+
+def test_quote_span_prefix_property():
+    rng = random.Random(1129)
+    alphabet = "ab cd\n\tef.  gh"
+    for _ in range(300):
+        q = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 300)))
+        out = display.quote_span(q, "zz")
+        if out.endswith("…"):
+            out = out[:-1]
+        assert display.one_line(q).startswith(out)
+        assert len(display.quote_span(q, "zz")) <= display.QUOTE_CHARS
