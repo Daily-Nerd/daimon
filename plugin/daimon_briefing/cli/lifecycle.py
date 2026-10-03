@@ -951,12 +951,15 @@ def _generic_card(row: dict) -> list:
     card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
     if row.get("context"):
         card.append(f"  {row['context']}")
-    # #1127: the header carries the bounded headline; the full text, when
-    # it was shortened, is a wrapped body under it. Header shape unchanged.
-    if row.get("detail"):
-        card.extend(textwrap.wrap(row["detail"], width=76,
-                                  initial_indent="  ",
-                                  subsequent_indent="  "))
+    # #1127/#1129: the header carries the bounded headline; each shortened
+    # field is a labeled line under it ("Ask: ..."), wrapped with a hanging
+    # indent under its label. Header shape unchanged.
+    for line in (row.get("detail") or "").split("\n"):
+        if not line:
+            continue
+        hang = " " * (len(line.split(": ", 1)[0]) + 2)
+        card.extend(textwrap.wrap(line, width=76, initial_indent="  ",
+                                  subsequent_indent="  " + hang))
     # #978: `row["claimed"]` is the request lane's `done_pending`, from
     # the FOLDED record — same guard shape the LANE split above already
     # established (a non-request lane never carries this), and a

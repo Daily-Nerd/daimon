@@ -98,7 +98,7 @@ def test_pending_row_bounds_headline_and_keeps_detail(project):
     _open(project, REALISTIC_ASK)
     row = pending.queue(project_dir=project)["rows"][0]
     assert len(row["headline"]) <= LIMIT
-    assert row["detail"] == REALISTIC_ASK
+    assert row["detail"] == "Ask: " + " ".join(REALISTIC_ASK.split())
 
 
 def test_pending_row_detail_is_none_for_a_short_ask(project):
