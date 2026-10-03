@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (amendments, briefing, capture, config, harvest, ledger, llm,
-               recall, serializer, store, transcript, trust)
+from . import (briefing, capture, config, harvest, ledger, llm,
+               recall, serializer, store, transcript)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -233,22 +233,12 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # falls back to the unfiltered checkpoint, never blocks injection. No
         # withheld-count note here — this is context injection, not a human-
         # facing brief, so suppression stays clean (no note to render).
-        try:
-            events = store.resolutions(project_dir=project)
-            # #691: same amendment annotations as `daimon brief` — the
-            # injected context and the human brief must state the same world.
-            checkpoint, _withheld, _candidates = briefing.withhold(
-                checkpoint, events,
-                amendments=amendments.renderable(project_dir=project),
-                quarantine=trust.active_value_keys(project_dir=project))
-            # #268: the witness count is a reason to weight a claim, so the
-            # injected context states it exactly as the human brief does.
-            # Rides the same fail-open try — the badge is advisory, and no
-            # annotation is worth losing the injection over.
-            checkpoint = briefing.mark_corroborated(
-                checkpoint, store.corroborations(project_dir=project))
-        except Exception:
-            pass
+        # #1128: one shared annotation step (withhold, #268 witness count,
+        # stale marks), fail-open per step inside briefing.annotate, so the
+        # injected context carries the same marks the human brief does.
+        checkpoint = briefing.annotate(
+            checkpoint, briefing.AnnotateContext(route=project),
+            time.time()).checkpoint
         # #693: rulings are scoped to the RESOLVED project (never the raw
         # process cwd). Note read_latest above keeps its global fallback, so
         # the checkpoint may be another project's — the rulings are still

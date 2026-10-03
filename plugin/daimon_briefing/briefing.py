@@ -776,7 +776,10 @@ def _carried_age_days(item, resolutions, now):
         candidates.append(fs)
     if not candidates:
         return None  # no parseable stamp at all: fail open, not stale
-    return (now - max(candidates)) / 86400.0
+    # #1128: a stamp in the future (clock skew, a teammate's machine) clamps
+    # to age 0, never a negative age that a threshold compare or a sort key
+    # would have to special-case.
+    return max(0.0, (now - max(candidates)) / 86400.0)
 
 
 def stale_carried(checkpoint, resolutions: dict, now, threshold_days=None) -> list:
@@ -863,6 +866,85 @@ def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None)
         item["_stale_carried_days"] = age_days
         stale.append(item)
     return out, stale
+
+
+# ---- #1128: the one annotation step every host shares ----
+
+
+class AnnotateContext(NamedTuple):
+    """Where a briefing's annotations are read from. `route` keys the events,
+    amendment, quarantine and corroboration ledgers (a project dir on the
+    normal path, a bare slug on --slug). `worldcheck_project` is the one
+    optional annotator's gate: set only on the CLI same-project path, exactly
+    like the request panels (D2); None means the spot-check never runs."""
+    route: object
+    worldcheck_project: object = None
+
+
+class Annotated(NamedTuple):
+    checkpoint: object
+    withheld: list
+    events: dict
+    stale_items: list
+    # worldcheck.check's counters (LEDGER_KEY popped) or None when it did not
+    # run; `ledger_rows` are the rejection-ledger rows the CALLER writes
+    # (worldcheck itself writes nothing, by contract).
+    worldcheck: dict | None
+    ledger_rows: list
+
+
+def annotate(checkpoint, ctx: AnnotateContext, now) -> Annotated:
+    """#1128: withhold, corroboration and stale stamping in one place, so the
+    CLI brief, the MCP daimon_brief tool and the Hermes pre_llm_call hook all
+    hand the selector the same annotated items. Each step is fail-open on its
+    own (a broken ledger costs that annotation, never the briefing), exactly
+    the posture the per-host copies had. `build()` stays pure and runs after
+    this; `now` is injected so the stale ages are deterministic.
+
+    Worldcheck is the one optional annotator: it runs only where the caller
+    set `ctx.worldcheck_project` AND the flag is on, and it only RETURNS its
+    stats and ledger rows. Marks it stamps never change selection protection
+    differently per host beyond being present or absent."""
+    withheld: list = []
+    events: dict = {}
+    stale_items: list = []
+    wc_stats = None
+    ledger_rows: list = []
+    if not checkpoint or not isinstance(checkpoint, dict):
+        return Annotated(checkpoint, withheld, events, stale_items, None, [])
+    route = ctx.route
+    # Local imports: trust and amendments import the briefing constants, the
+    # same reason withhold() takes `amendments` as a parameter.
+    from . import amendments as amendments_lib
+    from . import trust as trust_lib
+    try:
+        events = store.resolutions(project_dir=route)
+        checkpoint, withheld, _candidates = withhold(
+            checkpoint, events,
+            amendments=amendments_lib.renderable(project_dir=route),
+            quarantine=trust_lib.active_value_keys(project_dir=route))
+    except Exception:
+        withheld = []
+        events = {}
+    try:
+        checkpoint = mark_corroborated(
+            checkpoint, store.corroborations(project_dir=route))
+    except Exception:
+        pass
+    try:
+        checkpoint, stale_items = stamp_stale_carried(checkpoint, events, now)
+    except Exception:
+        stale_items = []
+    if ctx.worldcheck_project and config.worldcheck_enabled():
+        try:
+            from . import worldcheck
+            wc_stats = dict(worldcheck.check(checkpoint, ctx.worldcheck_project))
+            ledger_rows = list(wc_stats.pop(worldcheck.LEDGER_KEY, ()))
+        except Exception:
+            wc_stats = None
+            ledger_rows = []
+    return Annotated(checkpoint, withheld, events, stale_items, wc_stats,
+                     ledger_rows)
 
 
 # ---- #79: token budget — section-preserving truncation ----
