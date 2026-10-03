@@ -336,6 +336,30 @@ def found_label(role: str | None) -> str:
     return _FOUND_LABELS.get(str(role or "").strip(), _FOUND_UNKNOWN)
 
 
+_PROSE_RUN = 3  # consecutive plain words that make a quote read as a sentence
+_WORD_EDGE = ".,;:!?()'\"“”‘’"
+
+
+def evidence_lacks_prose(quote: str | None) -> bool:
+    """#1124: True when an evidence quote looks like a log or JSON fragment rather
+    than something a person said: it opens with `{`, `[` or `"`, or it has no
+    run of `_PROSE_RUN` consecutive alphabetic words. Advisory only — the
+    caller warns, it never refuses, because the byte-check is what decides
+    whether a quote is real; this only flags a quote a human cannot judge."""
+    text = str(quote or "").strip()
+    if not text or text[0] in '{["':
+        return True
+    run = 0
+    for token in text.split():
+        if token.strip(_WORD_EDGE).isalpha():
+            run += 1
+            if run >= _PROSE_RUN:
+                return False
+        else:
+            run = 0
+    return True
+
+
 def renderable(project_dir=None) -> dict[str, dict]:
     """Render-worthy amendments grouped by target item id.
 

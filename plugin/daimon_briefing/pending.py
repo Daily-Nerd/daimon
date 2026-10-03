@@ -252,7 +252,7 @@ def _loop_text(item_id: str, slug: str) -> str:
     toward the unavailable placeholder on any miss or read trouble: the row
     stays in the queue either way (amendments.py's own fail-open posture),
     it just cannot show what it is about."""
-    unavailable = "(loop text unavailable)"
+    unavailable = _LOOP_TEXT_UNAVAILABLE
     if not item_id:
         return unavailable
     try:
@@ -289,6 +289,23 @@ def _current_state(records: dict, item_id: str, exclude_id: str) -> str:
         return "?"
 
 
+_LOOP_TEXT_UNAVAILABLE = "(loop text unavailable)"
+
+
+def _amendment_headline(amend: dict) -> str:
+    """#1124: `<loop text>: <from> to <to>`, plus `(found: <label>)` when the row
+    has an evidence role. A missed loop-text lookup falls back to the loop
+    id, so the headline never reads `(loop text unavailable): ...`."""
+    loop = amend.get("loop_text")
+    if not loop or loop == _LOOP_TEXT_UNAVAILABLE:
+        loop = amend.get("loop_id") or "?"
+    headline = (f"{loop}: {amend.get('state_from') or '?'} to "
+                f"{amend.get('state_to') or '?'}")
+    if amend.get("role"):
+        headline += f" (found: {amend.get('found')})"
+    return headline
+
+
 def _amendment_rows(project_dir, slug) -> list:
     """Quote-verified amendments only.
 
@@ -300,10 +317,12 @@ def _amendment_rows(project_dir, slug) -> list:
 
     #1087: each row now carries the loop's own text, its current state, the
     claimed change, and a neutral `found` label — see `_loop_text`,
-    `_current_state`, and `amendments.found_label`. `headline` stays the raw
-    evidence quote (never truncated here): the fan-out card in
-    `cli/lifecycle.py` groups rows on this exact value, and the CLI render is
-    what truncates for display.
+    `_current_state`, and `amendments.found_label`. `headline` is composed at
+    read time from those fields (`_amendment_headline`), so it reads as a
+    sentence about the change (#1124) even when the quote is a log fragment. The raw
+    evidence quote rides in `amend["evidence"]` (never truncated here): the
+    fan-out card in `cli/lifecycle.py` groups rows on this exact value, and
+    the CLI render is what truncates for display.
     """
     records = amendments.records(project_dir=project_dir)
     seen = [row.get("amendment_id") for row in amendments.events(
@@ -314,23 +333,25 @@ def _amendment_rows(project_dir, slug) -> list:
             continue
         item_id = str(record.get("item_id") or "")
         role = str(record.get("evidence_role") or "")
+        amend = {
+            "loop_id": item_id or "?",
+            "loop_text": _loop_text(item_id, slug),
+            "state_from": _current_state(records, item_id, aid),
+            "state_to": record.get("change") or "?",
+            "evidence": record.get("evidence") or "",
+            "role": role,
+            "found": amendments.found_label(role),
+            "note": str(record.get("note") or "").strip(),
+        }
         rows.append((_row(
             kind="amendment", record_id=aid, slug=slug,
-            headline=record.get("evidence") or "",
+            headline=_amendment_headline(amend),
             waiting_since=record.get("created_at") or "",
             commands=[
                 ("confirm", f"daimon amend ratify {aid}"),
                 ("reject", f"daimon amend reject {aid}"),
             ],
-            amend={
-                "loop_id": item_id or "?",
-                "loop_text": _loop_text(item_id, slug),
-                "state_from": _current_state(records, item_id, aid),
-                "state_to": record.get("change") or "?",
-                "role": role,
-                "found": amendments.found_label(role),
-                "note": str(record.get("note") or "").strip(),
-            }),
+            amend=amend),
             seen.index(aid) if aid in seen else 0))
     return rows
 

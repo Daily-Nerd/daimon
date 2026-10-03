@@ -1016,3 +1016,55 @@ def test_torn_last_line_costs_only_the_torn_row(project):
     records = amendments.records(project_dir=project)
     assert a_id in records and second in records
     assert "a-feedfeedfeed" not in records
+
+
+# ---- prose heuristic for the evidence quote ---------------------------------
+
+
+@pytest.mark.parametrize("quote", [
+    '"at":"2026-09-16T02:02:15Z","surface":"recall-inject"',
+    '{"at": "2026-09-16", "surface": "recall-inject"}',
+    '["a", "b", "c"]',
+    '"just a quoted fragment of some text here"',
+    "2026-09-16T02:02:15Z",
+    "merged",
+    "two words",
+    "",
+])
+def test_evidence_without_prose_is_flagged(quote):
+    assert amendments.evidence_lacks_prose(quote) is True
+
+
+@pytest.mark.parametrize("quote", [
+    "the PR merged and the tests pass",
+    "yes, ship it today",
+    "  the PR merged this morning  ",
+])
+def test_evidence_with_prose_is_not_flagged(quote):
+    assert amendments.evidence_lacks_prose(quote) is False
+
+
+def test_cli_amend_propose_warns_on_log_fragment_but_still_records(
+        project, capsys):
+    from daimon_briefing import cli, store
+    store.write_checkpoint("S-1", _checkpoint_with_item(),
+                           project_dir=project)
+    rc = cli.main(["amend", ITEM, "--change", "progressed", "--evidence",
+                   '"at":"2026-09-16T02:02:15Z","surface":"recall-inject"',
+                   "--by", "agent", "--project", project])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert len(amendments.records(project_dir=project)) == 1
+    assert "sentence from the transcript" in captured.err
+    assert "sentence from the transcript" not in captured.out
+
+
+def test_cli_amend_propose_prose_quote_prints_no_warning(project, capsys):
+    from daimon_briefing import cli, store
+    store.write_checkpoint("S-1", _checkpoint_with_item(),
+                           project_dir=project)
+    rc = cli.main(["amend", ITEM, "--change", "progressed", "--evidence",
+                   "the PR merged and the tests pass", "--by", "agent",
+                   "--project", project])
+    assert rc == 0
+    assert capsys.readouterr().err == ""

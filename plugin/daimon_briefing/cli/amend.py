@@ -104,6 +104,14 @@ def _cmd_amend_propose(args) -> int:
             ["  evidence is byte-checked against the transcript at session "
              "end; a human settles it earlier with `daimon amend ratify` "
              "or `daimon amend reject`"])
+    if amendments.evidence_lacks_prose(args.evidence):
+        # #1124: non-blocking, the amendment is already recorded. The quote is what
+        # a human reads on `daimon decide`, so a log fragment is recorded but
+        # nudged toward a sentence.
+        print("warning: the evidence quote carries no prose (it looks like a "
+              "log or JSON fragment); cite a sentence from the transcript "
+              "rather than a log fragment, so a human can judge it",
+              file=sys.stderr)
     return 0
 
 

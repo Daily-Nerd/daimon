@@ -326,17 +326,42 @@ def test_fanout_of_five_renders_one_card_no_confirm_all(project, capsys):
 def test_amendment_card_shows_note_line_when_present():
     from daimon_briefing.cli import lifecycle
     row = {"kind": "amendment", "id": "a-abcabcabcabc",
-          "headline": "the PR merged this morning",
+          "headline": "ship the fix: open to progressed",
           "waiting_since": "", "commands": [
               ("confirm", "daimon amend ratify a-abcabcabcabc"),
               ("reject", "daimon amend reject a-abcabcabcabc")],
           "amend": {"loop_id": ITEM, "loop_text": "ship the fix",
                     "state_from": "open", "state_to": "progressed",
+                    "evidence": "the PR merged this morning",
                     "found": "agent's own words ⚠",
                     "note": "left over from a rejected-then-reproposed claim"}}
     card = lifecycle._amendment_card(row)
     assert any("note   left over from a rejected-then-reproposed claim" in ln
               for ln in card)
+    # The quote line shows the evidence, not the composed headline.
+    assert '  quote  "the PR merged this morning"' in card
+
+
+def test_fanout_groups_on_evidence_not_headline():
+    from daimon_briefing.cli import lifecycle
+
+    def make(aid, loop):
+        return {"kind": "amendment", "id": aid,
+                "headline": f"{loop}: open to progressed",
+                "waiting_since": "", "commands": [
+                    ("confirm", f"daimon amend ratify {aid}"),
+                    ("reject", f"daimon amend reject {aid}")],
+                "amend": {"loop_id": ITEM, "loop_text": loop,
+                          "state_from": "open", "state_to": "progressed",
+                          "evidence": "one shared quote",
+                          "found": "in a user turn", "note": ""}}
+
+    cards = lifecycle._decide_cards(
+        [make("a-aaaaaaaaaaaa", "first loop"),
+         make("a-bbbbbbbbbbbb", "second loop")])
+
+    assert len(cards) == 1
+    assert '  quote  "one shared quote"' in cards[0]
 
 
 def test_fanout_differing_evidence_renders_separately(project, capsys):
