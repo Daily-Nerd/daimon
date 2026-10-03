@@ -756,9 +756,11 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                                   trailer=trailer)
 
     def _shown(panel, row) -> bool:
-        # #1128: a row the budget cut (its panel collapsed to a count line)
-        # never reached the reader, so it is not stamped as surfaced.
-        return printed is None or row["request_id"] in printed.get(panel, "")
+        # #1128: `printed` is the manifest of card ids render_brief printed in
+        # full. A row the budget cut (its panel collapsed to a count line)
+        # never reached the reader, so it is not stamped as surfaced; no
+        # manifest means nothing is known to have been shown.
+        return row["request_id"] in ((printed or {}).get(panel) or ())
     # #694 PR 2 (D1): the surfaced stamp, AFTER the render+print pipeline
     # above completes — the card has already reached the terminal, so a
     # crash between here and the write below just re-renders it next brief

@@ -1923,7 +1923,8 @@ class Selection:
     def __init__(self, kept, dropped, reasons, *, order, totals, cap,
                  stale_days, budget, degraded, rulings, count_line, panels,
                  overage, now, panel_names=(), reserved=0,
-                 teammate_blocks=(), teammate_header="", kept_teammates=()):
+                 teammate_blocks=(), teammate_header="", kept_teammates=(),
+                 collapsed=False):
         self.kept = kept
         self.dropped = dropped
         self.reasons = reasons
@@ -1941,6 +1942,8 @@ class Selection:
         # parallel to `panels`: "request" / "verdict" / "owed". The CLI reads
         # what was printed from here, so `surfaced` follows the print.
         self.panel_names = list(panel_names)
+        # the panels printed with their cards, i.e. not collapsed to a count
+        self.panel_names_whole = [] if collapsed else list(panel_names)
         # Bytes the caller prints beside the body (HANDOFF, version note,
         # drift block, withheld note), charged to the same budget.
         self.reserved = reserved
@@ -2130,7 +2133,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                         overage=overage, now=now, panel_names=names,
                         reserved=reserved, teammate_blocks=blocks,
                         teammate_header=teammate_header,
-                        kept_teammates=kept_team)
+                        kept_teammates=kept_team, collapsed=collapse)
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 

@@ -11,7 +11,7 @@ import re
 import sys
 from contextlib import contextmanager
 
-from . import briefing, config, redact, schema, serializer
+from . import briefing, config, redact, requests, schema, serializer
 from .amendments import found_label as _amend_found_label
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -230,9 +230,35 @@ def _panel_lines(project_dir, worldcheck_project):
     return rulings, decision_count, request_lines, verdict_lines, owed_lines
 
 
+def _card_ids(worldcheck_project) -> dict:
+    """The request and verdict ids whose cards the panels print IN FULL
+    (#1128), read from the same rows the panels render. The CLI stamps
+    `surfaced` from this set, never by searching the printed text. Empty
+    without a `worldcheck_project` (no panel was rendered), and on any read
+    failure (stamp nothing rather than something that was not shown)."""
+    out = {"request": frozenset(), "verdict": frozenset()}
+    if worldcheck_project is None:
+        return out
+    try:
+        out["request"] = frozenset(
+            r["request_id"] for r in
+            requests.decision_renderable(project_dir=worldcheck_project)
+            .get("rows") or [])
+    except Exception:
+        pass
+    try:
+        out["verdict"] = frozenset(
+            r["request_id"] for r in
+            requests.verdict_renderable(project_dir=worldcheck_project)
+            .get("rows") or [])
+    except Exception:
+        pass
+    return out
+
+
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None, worldcheck_project=None,
-                 trailer=None) -> dict | None:
+                 trailer=None) -> dict:
     """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
     `project_dir` — the incoming-request panel's AND the sender-side
     verdict panel's `worldcheck_project` pattern (D2), never keyed on
@@ -255,10 +281,12 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     #1128: the non-rich branch is ONE allocator. The handoff, version note,
     drift block and `trailer` (advisory lines printed last, e.g. the withheld
     count) are fixed and counted first; the body and the teammates block share
-    what is left (`briefing.select`). Returns None when everything was printed
-    in full (the rich, LLM and no-checkpoint paths), or a dict of the panel
-    lines the budgeted brief actually printed, keyed "request" / "verdict" /
-    "owed", so the caller stamps `surfaced` only for rows the reader saw."""
+    what is left (`briefing.select`). Returns the manifest of card ids
+    printed in full, {"request": frozenset, "verdict": frozenset}: every card
+    on the rich, LLM and no-checkpoint paths (panels print whole there), only
+    the uncollapsed ones on the budgeted path, empty with no
+    `worldcheck_project`. The caller stamps `surfaced` from it, never by
+    searching the printed text."""
     trailer_text = "".join(f"{ln}\n" for ln in (trailer or ()))
     if supports_rich():
         _print_handoff(handoff)
@@ -280,7 +308,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             print(pointer)
             _print_teammates(teammates)
             _print_trailer(trailer)
-            return None
+            return _card_ids(worldcheck_project)
         _print_version_note(checkpoint)
         # Honor the opt-in LLM briefing (DAIMON_LLM_BRIEFING) — same source
         # of truth as the hermes hook. Free-form LLM text can't be sectioned
@@ -295,7 +323,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             _print_drift(drift)
             _print_teammates(teammates)
             _print_trailer(trailer)
-            return None
+            return _card_ids(worldcheck_project)
         rulings, decision_count, request_lines, verdict_lines, owed_lines = (
             _panel_lines(project_dir, worldcheck_project))
         # #204: degrade verbatim labels when the receipt can't be locally
@@ -306,7 +334,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         _print_drift(drift)
         _print_teammates(teammates)
         _print_trailer(trailer)
-        return None
+        return _card_ids(worldcheck_project)
 
     # Non-rich path (#1044): see the docstring above. Format every
     # surrounding block BEFORE the body renders.
@@ -321,7 +349,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         print(text, end="")
         _print_teammates(teammates)
         _print_trailer(trailer)
-        return None
+        return _card_ids(worldcheck_project)
     version_text = _format_version_note(checkpoint)
     drift_text = _format_drift(drift)
     if config.llm_briefing():
@@ -338,7 +366,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         print(handoff_text + version_text + body + "\n"
              + drift_text + _format_teammates(teammates) + trailer_text,
              end="")
-        return None
+        return _card_ids(worldcheck_project)
     rulings, decision_count, request_lines, verdict_lines, owed_lines = (
         _panel_lines(project_dir, worldcheck_project))
     # #204: degrade verbatim labels when the receipt can't be locally
@@ -361,7 +389,9 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     briefing._log_render_size(body, sel.budget)
     print(handoff_text + version_text + body + "\n" + drift_text
           + briefing.teammates_text(sel) + trailer_text, end="")
-    return dict(zip(sel.panel_names, ("\n".join(p) for p in sel.panels)))
+    printed = _card_ids(worldcheck_project)
+    return {name: (ids if name in sel.panel_names_whole else frozenset())
+            for name, ids in printed.items()}
 
 
 def _print_trailer(trailer) -> None:

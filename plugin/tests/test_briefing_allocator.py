@@ -132,3 +132,75 @@ def test_a_request_row_that_was_printed_is_stamped(
     assert "publish the schema" in capsys.readouterr().out
     record = requests.recipient_join(project_dir=RECIPIENT)[q_id]
     assert requests.needs_surfaced_stamp(record) is False
+
+
+# ---- surfaced comes from the manifest, never from text matching ----
+
+
+def _checkpoint_for(route):
+    return briefing.annotate(_fixture_checkpoint(),
+                             briefing.AnnotateContext(route=route), NOW).checkpoint
+
+
+def test_render_brief_returns_the_ids_of_printed_cards(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    q_id = _open_ask()
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
+    cp = _checkpoint_for(RECIPIENT)
+    printed = render.render_brief(cp, project_dir=RECIPIENT,
+                                  worldcheck_project=RECIPIENT)
+    capsys.readouterr()
+    assert printed == {"request": frozenset({q_id}), "verdict": frozenset()}
+    # collapsed to a count line under budget: no card, no id
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "200")
+    printed = render.render_brief(cp, project_dir=RECIPIENT,
+                                  worldcheck_project=RECIPIENT)
+    capsys.readouterr()
+    assert printed == {"request": frozenset(), "verdict": frozenset()}
+
+
+def test_no_worldcheck_project_means_no_cards_and_nothing_to_stamp(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    _open_ask()
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
+    printed = render.render_brief(_checkpoint_for(RECIPIENT),
+                                  project_dir=RECIPIENT)
+    capsys.readouterr()
+    assert printed == {"request": frozenset(), "verdict": frozenset()}
+
+
+def test_rich_path_reports_the_full_cards_it_printed(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    pytest.importorskip("rich")
+    q_id = _open_ask()
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    printed = render.render_brief(_checkpoint_for(RECIPIENT),
+                                  project_dir=RECIPIENT,
+                                  worldcheck_project=RECIPIENT)
+    capsys.readouterr()
+    assert printed["request"] == frozenset({q_id})
+
+
+def test_a_missing_manifest_stamps_nothing(tmp_checkpoint_dir, monkeypatch):
+    # The old rule read "no manifest means everything was shown".
+    q_id = _open_ask()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", RECIPIENT)
+    monkeypatch.setattr(render, "render_brief", lambda *a, **k: None)
+    assert cli.main(["brief"]) == 0
+    record = requests.recipient_join(project_dir=RECIPIENT)[q_id]
+    assert requests.needs_surfaced_stamp(record) is True
+
+
+def test_an_id_quoted_in_printed_text_is_not_a_printed_card(
+        tmp_checkpoint_dir, monkeypatch):
+    q_id = _open_ask()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", RECIPIENT)
+
+    def fake(*a, **k):
+        # the id appears in printed text (a note), but no card was printed
+        print(f"note mentioning {q_id}")
+        return {"request": frozenset(), "verdict": frozenset()}
+    monkeypatch.setattr(render, "render_brief", fake)
+    assert cli.main(["brief"]) == 0
+    record = requests.recipient_join(project_dir=RECIPIENT)[q_id]
+    assert requests.needs_surfaced_stamp(record) is True
