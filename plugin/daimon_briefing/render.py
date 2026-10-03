@@ -259,7 +259,7 @@ def _card_ids(worldcheck_project) -> dict:
 
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None, worldcheck_project=None,
-                 trailer=None) -> dict:
+                 trailer=None, loops_pointer: bool = True) -> dict:
     """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
     `project_dir` — the incoming-request panel's AND the sender-side
     verdict panel's `worldcheck_project` pattern (D2), never keyed on
@@ -287,7 +287,11 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     on the rich, LLM and no-checkpoint paths (panels print whole there), only
     the uncollapsed ones on the budgeted path, empty with no
     `worldcheck_project`. The caller stamps `surfaced` from it, never by
-    searching the printed text."""
+    searching the printed text.
+
+    `loops_pointer=False` drops the "See: daimon loops" pointer from the
+    section notes: the caller sets it on a route where that command would list
+    a different project than the one briefed (global fallback, --slug)."""
     trailer_text = "".join(f"{ln}\n" for ln in (trailer or ()))
     if supports_rich():
         _print_handoff(handoff)
@@ -320,7 +324,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             # #694's two request panels all ride inside. Unconditional
             # return: `b` is non-None here, so render() always yields text.
             print(briefing.render(checkpoint, project_dir=project_dir,
-                                  worldcheck_project=worldcheck_project))
+                                  worldcheck_project=worldcheck_project,
+                                  loops_pointer=loops_pointer))
             _print_drift(drift)
             _print_teammates(teammates)
             _print_trailer(trailer)
@@ -331,7 +336,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # confirmed. Cheap check (sidecar + byte match).
         degraded = briefing.receipt_degraded(checkpoint)
         _rich_brief(b, degraded, rulings, request_lines, verdict_lines,
-                    owed_lines, decision_count)
+                    owed_lines, decision_count, loops_pointer)
         _print_drift(drift)
         _print_teammates(teammates)
         _print_trailer(trailer)
@@ -360,7 +365,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # Tries LLM, falls back to deterministic; #693 rulings and #694's two
         # request panels all ride inside.
         body = briefing.render(checkpoint, project_dir=project_dir,
-                               worldcheck_project=worldcheck_project)
+                               worldcheck_project=worldcheck_project,
+                               loops_pointer=loops_pointer)
         # `b` is non-None here, so `briefing.render` always returns text (its
         # own docstring's invariant): narrows `str | None` for the concat below.
         assert body is not None
@@ -385,7 +391,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         request_lines=request_lines, verdict_lines=verdict_lines,
         owed_lines=owed_lines, decision_count=decision_count,
         reserved=reserved, teammate_blocks=_teammate_blocks(teammates or ()),
-        teammate_header=_TEAMMATES_HEADER)
+        teammate_header=_TEAMMATES_HEADER, loops_pointer=loops_pointer)
     body = briefing.render_selection(sel)
     briefing._log_render_size(body, sel.budget)
     print(handoff_text + version_text + body + "\n" + drift_text
@@ -441,7 +447,8 @@ def _print_drift(drift) -> None:
 
 def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 request_lines=(), verdict_lines=(), owed_lines=(),
-                decision_count: str | None = None) -> None:
+                decision_count: str | None = None,
+                loops_pointer: bool = True) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -492,7 +499,8 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
     # #1128: the rich path runs the same select as the plain one, with no
     # budget (a TTY is never captured or spilled), so it gets the same
     # section order, the same decision cap and the same notes.
-    sel = briefing.select(b, None, degraded=degraded)
+    sel = briefing.select(b, None, degraded=degraded,
+                          loops_pointer=loops_pointer)
     section_style = {k: (t, s) for k, t, s in _SECTIONS}
     for key in briefing.SECTION_ORDER:
         if key == "active_topic":

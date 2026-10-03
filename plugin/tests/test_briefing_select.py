@@ -342,6 +342,33 @@ def test_flagged_stale_item_drops_last_and_is_announced():
     assert seen_gone_note
 
 
+def _external_notes(**kw):
+    b = _annotated_b()
+    full = _bytes(_sel(b, None))
+    for budget in range(full, 400, -97):
+        note = briefing.section_note(_sel(b, budget, **kw), "external")
+        if note:
+            yield note
+
+
+def test_note_points_at_the_stale_listing_when_only_stale_items_were_lost():
+    only_stale = [n for n in _external_notes() if " cut for budget" not in n]
+    assert only_stale
+    assert all(n.endswith("See: daimon loops --stale)") for n in only_stale)
+
+
+def test_note_points_at_the_full_listing_once_fresh_items_were_cut_too():
+    mixed = [n for n in _external_notes() if " cut for budget" in n]
+    assert mixed
+    assert all(n.endswith("See: daimon loops)") for n in mixed)
+
+
+def test_note_has_no_pointer_when_the_route_is_not_the_listed_project():
+    notes = list(_external_notes(loops_pointer=False))
+    assert notes
+    assert all("See:" not in n for n in notes)
+
+
 def test_missing_and_future_stamps_are_not_stale():
     def strip(cp):
         loops = cp["working_context"]["open_questions"]

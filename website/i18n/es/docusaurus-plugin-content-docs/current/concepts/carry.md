@@ -82,13 +82,17 @@ de fondo antes que las accionables. Una sección que ocultó alguno lo dice en
 su propia nota:
 
 ```
-(4 of 13 shown; 9 carried checks unverified over 7d hidden. See: daimon loops)
+(4 of 13 shown; 9 carried checks unverified over 7d hidden. See: daimon loops --stale)
 ```
 
-Los ítems ocultos siguen en el checkpoint, y `daimon loops` los lista con sus
-ids. Los ítems sobre los que se espera que actúes (una supersesión marcada, una
-afirmación de un agente, una enmienda) salen al final, y una nota avisa cuando
-se ocultó alguno.
+Los ítems ocultos siguen en el checkpoint. `daimon loops --stale` lista con sus
+ids los ítems arrastrados que pasaron el presupuesto de vencimiento, y
+`daimon loops` a secas muestra cada loop abierto con su edad y una marca
+`stale`. Cuando una sección también recortó ítems solo por presupuesto, la nota
+apunta a `daimon loops` a secas, y un briefing del checkpoint de otro proyecto
+(un fallback o `--slug`) no lleva puntero. Los ítems sobre los que se espera
+que actúes (una supersesión marcada, una afirmación de un agente, una
+enmienda) salen al final, y una nota avisa cuando se ocultó alguno.
 
 La respuesta prevista es verificar el mundo — código, git, el issue
 tracker — y luego o [resolver](./lifecycle.md) el ítem (ya está hecho o está

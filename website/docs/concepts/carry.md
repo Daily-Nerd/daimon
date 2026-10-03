@@ -77,10 +77,14 @@ else, background sections before actionable ones. A section that hid some
 says so in its own note:
 
 ```
-(4 of 13 shown; 9 carried checks unverified over 7d hidden. See: daimon loops)
+(4 of 13 shown; 9 carried checks unverified over 7d hidden. See: daimon loops --stale)
 ```
 
-Hidden items stay in the checkpoint, and `daimon loops` lists them with ids.
+Hidden items stay in the checkpoint. `daimon loops --stale` lists the carried
+items past the staleness budget with their ids, and plain `daimon loops` shows
+every open loop with its age and a `stale` marker. When a section also cut
+items for plain budget, the note points at plain `daimon loops`, and a briefing
+of another project's checkpoint (a fallback or `--slug`) carries no pointer.
 Items you are expected to act on (a flagged supersession, an agent claim, an
 amendment) go last, and a note says when one was hidden.
 
