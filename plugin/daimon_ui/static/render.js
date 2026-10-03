@@ -336,16 +336,6 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '" data-bio-toggle data-item-id="' + escapeHtml(itemId) + '">View history</button>' +
       '<div class="bio-panel" id="' + bioId + '" hidden></div>';
   }
-  export function renderEvidence(it, meta) {
-    var label = it.quote_verified === false
-      ? "EVIDENCE — UNVERIFIED QUOTE"
-      : "EVIDENCE — EXACT QUOTE · " + escapeHtml(fmtDate(meta.created));
-    var because = it.because
-      ? '<div class="ev-because">Because: ' + escapeHtml(it.because) + "</div>"
-      : "";
-    return '<div class="ev-tag">' + label + '</div><div class="ev-quote">“' +
-      escapeHtml(it.quote) + '”</div>' + because;
-  }
   export function compressBioEvents(events) {
     var out = [];
     var i = 0;

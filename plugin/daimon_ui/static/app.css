@@ -353,28 +353,6 @@
     max-width: 65ch;
   }
 
-  .ev-tag {
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    color: var(--accent);
-  }
-
-  .ev-quote {
-    font-family: var(--mono);
-    font-style: italic;
-    font-size: var(--fs-sm);
-    color: var(--ink);
-    margin-top: var(--s1);
-  }
-
-  .ev-because {
-    font-size: var(--fs-sm);
-    color: var(--ink-secondary);
-    margin-top: var(--s2);
-  }
-
   .skeleton {
     display: flex;
     flex-direction: column;
