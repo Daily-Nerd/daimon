@@ -236,7 +236,8 @@ def _card_ids(worldcheck_project) -> dict:
     `surfaced` from this set, never by searching the printed text. Empty
     without a `worldcheck_project` (no panel was rendered), and on any read
     failure (stamp nothing rather than something that was not shown)."""
-    out = {"request": frozenset(), "verdict": frozenset()}
+    out: dict[str, frozenset] = {"request": frozenset(),
+                                 "verdict": frozenset()}
     if worldcheck_project is None:
         return out
     try:
