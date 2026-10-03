@@ -46,7 +46,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import buckets, config, normalize, policy, redact, refutations, store
+from . import buckets, config, display, normalize, policy, redact, refutations, store
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. Importing the table keeps a
 # future channel tier ("ui", "signed") consistent across ledgers instead of
@@ -175,8 +175,6 @@ _MAX_TEXT = 2000
 # #1127: the display bound for an ask shown as a title or a skimmable line.
 # One limit for every surface (decide headline, briefing panels, hook inject).
 ASK_CHARS = 160
-_MIN_SENTENCE = 20
-_SENTENCE_END_RE = re.compile(r"[.?!](?= [A-Z])")
 _LABEL_MAX = 64
 # The verify_done transcript-speaker role, same bound amendments.py's
 # _ROLE_MAX uses for the identical session-end byte-check shape.
@@ -189,19 +187,8 @@ def short_ask(text) -> str:
     Whitespace collapses; a short text is returned whole; else the first
     sentence if it fits (and is not a stub); else a cut at the last word
     boundary (when one sits in the back half) with an ellipsis. Never longer
-    than `ASK_CHARS`."""
-    flat = _SPACE_RE.sub(" ", str(text or "")).strip()
-    if len(flat) <= ASK_CHARS:
-        return flat
-    first = _SENTENCE_END_RE.search(flat)
-    if first and _MIN_SENTENCE <= first.end() <= ASK_CHARS:
-        return flat[:first.end()]
-    window = flat[:ASK_CHARS - 1]
-    cut = window.rfind(" ") if flat[ASK_CHARS - 1] != " " else len(window)
-    # A boundary in the first half would throw away most of the text (an ask
-    # that is one long token after a short prefix): hard cut instead.
-    body = window[:cut] if cut >= ASK_CHARS // 2 else window
-    return body.rstrip() + "…"
+    than `ASK_CHARS`. The cut itself lives in `display.shorten` (#1129)."""
+    return display.shorten(text, ASK_CHARS, sentence=True)
 
 
 # Every field of a ledger row that can hold plaintext (#645 discipline).
