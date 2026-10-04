@@ -1053,7 +1053,8 @@ def test_status_json_carries_checks_at_the_tail(tmp_path, monkeypatch,
     payload = json.loads(capsys.readouterr().out)
     # #963 appended `identity` after it, on the same tail rule: the pin is
     # that a new key lands at the END, never in the middle of the contract.
-    assert list(payload)[-2:] == ["checks", "identity"]
+    # #1132 appended `ledgers` after that, on the same rule.
+    assert list(payload)[-3:] == ["checks", "identity", "ledgers"]
     assert payload["checks"]["armed"] == 1
     assert payload["checks"]["last_ts"] == ""
 
