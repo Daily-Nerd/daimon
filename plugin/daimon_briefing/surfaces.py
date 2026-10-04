@@ -549,8 +549,7 @@ def bucket_ledger_names(*, plaintext: bool | None = None) -> tuple[str, ...]:
 
 
 def mergeable_ledgers() -> tuple[str, ...]:
-    """Ledger names a legacy-bucket migration moves, in registry order.
-    buckets.LEDGERS was this view."""
+    """Ledger names a legacy-bucket migration moves, in registry order."""
     return tuple(n for n, s in _bucket_ledger_rows() if s.mergeable)
 
 

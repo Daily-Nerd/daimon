@@ -28,7 +28,7 @@ import os
 import time
 from pathlib import Path
 
-from . import config, jsonl, store
+from . import config, jsonl, store, surfaces
 
 
 class MigrationError(RuntimeError):
@@ -39,25 +39,13 @@ class MigrationError(RuntimeError):
 MIGRATIONS_NAME = "migrations.jsonl"
 RECORD_VERSION = 1
 
-# Every JSONL ledger that lives inside a bucket. Kept as a literal tuple
-# rather than derived from `surfaces.SURFACES`: the registry declares FILE
-# SHAPES with deletion contracts, and a merge needs the narrower fact "this
-# file is an append-only ledger whose fold is order-tolerant", which is a
-# property of the three folds (refutations.fold and amendments.fold both sort
-# by an explicit key; store.latest_receipt_verdicts / store.resolutions are
-# latest-by-ts, never line order). A shape added to the registry must be
-# considered here deliberately, and the test pins the two lists against each
-# other so a new bucket ledger cannot land unnoticed.
-LEDGERS = (
-    "events.jsonl",
-    "refutations.jsonl",
-    "amendments.jsonl",
-    "requests.jsonl",
-    "verification.jsonl",
-    "forget-hits.jsonl",
-    "relations.jsonl",
-    "trust.jsonl",
-)
+# Which ledgers a merge moves is the registry's `mergeable` column
+# (surfaces.mergeable_ledgers): "this file is an append-only ledger whose fold
+# is order-tolerant", which is a property of the folds (refutations.fold and
+# amendments.fold both sort by an explicit key; store.latest_receipt_verdicts
+# / store.resolutions are latest-by-ts, never line order), and is independent
+# of `plaintext`. A bucket ledger declared without it is left behind by every
+# migration, so the registry test pins the set.
 
 
 # Files a merge may DELETE from the legacy bucket even though they are not
@@ -349,13 +337,14 @@ def legacy_leftovers(project_dir) -> tuple[str, ...]:
     # send a reader deleting a pointer the next run would have absorbed.
     attempted = any(pair[0] == legacy and not _is_complete(row)
                     for pair, row in latest_rows().items())
+    mergeable = surfaces.mergeable_ledgers()
     out = []
     for name in _leftovers(d):
         if name in _REMOVABLE:
             continue  # the verb deletes this one
         if store._POINTER_RE.match(name) and not attempted:
             continue  # pending, not stranded
-        if name in LEDGERS and _read_lines(d / name)[1]:
+        if name in mergeable and _read_lines(d / name)[1]:
             continue  # a READABLE ledger is exactly what the verb moves
         out.append(name)
     return tuple(out)
@@ -686,7 +675,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
 
     ledgers: dict[str, int] = {}
     unreadable: list[str] = []
-    for name in LEDGERS:
+    for name in surfaces.mergeable_ledgers():
         source = legacy_dir / name
         if not source.is_file():
             continue

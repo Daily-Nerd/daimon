@@ -330,8 +330,8 @@ def test_trust_jsonl_is_declared_in_surfaces():
 
 
 def test_trust_jsonl_is_a_ledger_for_bucket_migration():
-    from daimon_briefing import buckets
-    assert "trust.jsonl" in buckets.LEDGERS
+    from daimon_briefing import surfaces
+    assert "trust.jsonl" in surfaces.mergeable_ledgers()
 
 
 def test_trust_jsonl_is_not_removable_by_migration():
