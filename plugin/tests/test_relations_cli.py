@@ -171,7 +171,7 @@ def test_rich_list_marks_contradictions(seeded, monkeypatch, capsys):
 def test_list_withholds_edges_touching_erased_endpoints(seeded, capsys):
     doomed = seeded["item_ids"][0]
     store.append_event(doomed, "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=PROJECT)
+                       kind="tombstone", project_dir=PROJECT, tombstone=True)
     assert cli.main(["relations", "list"]) == 0
     out = capsys.readouterr().out
     assert seeded["rel_id"] not in out

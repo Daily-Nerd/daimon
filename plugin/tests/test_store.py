@@ -1018,7 +1018,7 @@ def test_read_team_foreign_cannot_reassert_forgotten_value(tmp_checkpoint_dir, s
     forgotten_text = "Adopt the D-007 prompt for the serializer"
     store.append_event(
         "d-dead01", f"forgotten:{normalize.content_key(forgotten_text)}",
-        kind="tombstone", project_dir="/repo/x")
+        kind="tombstone", project_dir="/repo/x", tombstone=True)
     remote = _clone_remote()
     _foreign_file(remote, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
                   logical="core/x")

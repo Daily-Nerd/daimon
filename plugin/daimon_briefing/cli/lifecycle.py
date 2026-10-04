@@ -90,6 +90,14 @@ def _cmd_resolve(args) -> int:
         print("--by agent requires --evidence \"<verbatim transcript quote>\" "
               "— refused, nothing written")
         return 1
+    if not by_agent and store.is_tombstone_status(args.status):
+        # #1138: a `forgotten:` status is a tombstone, and only `forget`
+        # writes one AND scrubs the value. Free-form here it would hide the
+        # item while leaving the value on disk.
+        print("a forgotten: status is a tombstone and only `daimon forget` "
+              "writes one (it also removes the value) — refused, nothing "
+              "written")
+        return 1
     if by_agent:
         event_source = "agent"
     else:
@@ -485,7 +493,8 @@ def _cmd_forget(args) -> int:
     # below, which #418 chains to it) must land even while daimon is disabled.
     ok = store.append_event(str(target["id"]), f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
-                            project_dir=project, allow_disabled=True)
+                            project_dir=project, allow_disabled=True,
+                            tombstone=True)
     if not ok:
         print("tombstone event not written (project unknown or ledger unwritable)")
         return 1

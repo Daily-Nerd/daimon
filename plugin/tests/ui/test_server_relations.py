@@ -98,7 +98,7 @@ def test_candidates_never_reach_the_wire(rel_proj, rel_srv):
 
 def test_erased_chains_are_withheld_with_a_safe_count(rel_proj, rel_srv):
     store.append_event(rel_proj["ids"][1], "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=rel_proj["proj"])
+                       kind="tombstone", project_dir=rel_proj["proj"], tombstone=True)
     out = _get(rel_srv, f"/api/relations?id={rel_proj['ids'][0]}")
     assert out["rows"] == []
     assert out["withheld"] == 1

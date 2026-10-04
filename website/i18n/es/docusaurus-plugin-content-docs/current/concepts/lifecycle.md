@@ -33,7 +33,9 @@ Resolver registra un evento de solo-anexado; desde entonces, los briefings
 **retienen** el ítem en lugar de arrastrarlo desactualizado. El ítem no se
 borra — su historia sigue siendo buscable, y el rastro de eventos muestra
 cuándo y por qué se cerró. `--status` acepta un estado de ciclo de vida
-libre; cualquier estado que empiece con `reopen` revive el ítem.
+libre; cualquier estado que empiece con `reopen` revive el ítem. Un estado
+que empiece con `forgotten:` se rechaza: es una lápida, y solo `daimon forget`
+la escribe (además quita el valor de los archivos).
 
 ## `daimon reverify` — afirmar que sigue siendo cierto
 

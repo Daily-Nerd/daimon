@@ -37,7 +37,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
-from . import config, normalize, policy, receipts, redact, schema, serializer, teamproject
+from . import (config, jsonl, normalize, policy, receipts, redact, schema,
+               serializer, teamproject)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -245,9 +246,9 @@ def _contained_path(d: Path, session_id: str) -> Path:
     return path
 
 
-def _atomic_write(path: Path, blob: str) -> None:
+def _atomic_write(path: Path, blob: str, *, errors: str = "strict") -> None:
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(blob, encoding="utf-8")
+    tmp.write_text(blob, encoding="utf-8", errors=errors)
     os.replace(tmp, path)  # atomic on POSIX
 
 
@@ -2454,10 +2455,17 @@ def forget_hit_stats(project_dir=None) -> dict:
 HUMAN_EVENT_SOURCES = frozenset({"cli", "cli-tty", "ui"})
 
 
+def is_tombstone_status(status) -> bool:
+    """Whether a free-form status would read back as a forget tombstone: the
+    same prefix test `forgotten_content_keys` applies (stripped, any case)."""
+    return str(status or "").strip().lower().startswith("forgotten:")
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "",
-                 allow_disabled: bool = False) -> bool:
+                 allow_disabled: bool = False,
+                 tombstone: bool = False) -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. The ONE exception is
@@ -2469,7 +2477,16 @@ def append_event(item_ref: str, status: str, note: str = "",
     passed ONLY by cli._cmd_forget's tombstone append — forget must work
     while disabled, and #418 mandates its tombstone lands before the
     rewrite, so the tombstone shares the rewrite's exemption. No other
-    caller may pass it."""
+    caller may pass it.
+
+    `tombstone` (#1138) is the same single-caller carve-out for the status:
+    a `forgotten:` status IS a tombstone (forgotten_content_keys reads it
+    case-insensitively), and only forget writes one, AFTER which it scrubs
+    the value everywhere. A free-form `resolve --status` or `log --status`
+    that reached here would tombstone with no scrub, so the status is
+    refused unless the caller is the forget path."""
+    if is_tombstone_status(status) and not tombstone:
+        return False
     if config.is_disabled() and not allow_disabled:
         return False
     project_dir = _resolved(project_dir)
@@ -2560,22 +2577,12 @@ def scrub_event_fields(content_hash: str, project_dir=None) -> int:
     path = _events_path(project_dir)
     if path is None:
         return 0
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return 0
     marker = _FORGOTTEN_FIELD_MARKER.format(content_hash)
-    out_lines = []
-    scrubbed = 0
-    for line in raw.splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            out_lines.append(line)
-            continue
+    admitted: dict | None = None
+
+    def redact_row(line, row):
         if not isinstance(row, dict):
-            out_lines.append(line)
-            continue
+            return line
         changed = False
         for field in ("item_text", "status", "note"):
             value = row.get(field)
@@ -2584,24 +2591,36 @@ def scrub_event_fields(content_hash: str, project_dir=None) -> int:
                 row[field] = (_class_preserving_marker(value, marker)
                               if field == "status" else marker)
                 changed = True
-        if changed:
-            scrubbed += 1
-            # Same admission seam the append took (#431): the rewrite is
-            # governed for real, not merely correlated — the write-audit
-            # guard can bind the row that lands on disk to this admission,
-            # and any secret shape the row carried pre-#141 is re-scrubbed.
-            row = policy.admit_row(row, redact_fields=("status", "note",
-                                                       "item_text"))
-            out_lines.append(json.dumps(row, ensure_ascii=False))
-        else:
-            out_lines.append(line)
-    if not scrubbed:
-        return 0
+        if not changed:
+            return line
+        # Same admission seam the append took (#431): the rewrite is
+        # governed for real, not merely correlated — the write-audit
+        # guard can bind the row that lands on disk to this admission,
+        # and any secret shape the row carried pre-#141 is re-scrubbed.
+        row = policy.admit_row(row, redact_fields=("status", "note",
+                                                   "item_text"))
+        # Held in THIS frame (a closure cell) until the swap lands, so the
+        # write-audit guard can still bind the bytes written beneath
+        # jsonl.rewrite to the admission, as it did when the dump and the
+        # write shared one frame.
+        nonlocal admitted
+        admitted = row
+        return json.dumps(row, ensure_ascii=False)
+
+    # #1138: jsonl.rewrite splits on "\n" only (a row holding U+2028/U+2029/
+    # U+0085 stays ONE row and is scrubbed whole, instead of being torn into
+    # fragments no scan could match), reads with surrogateescape (a
+    # non-UTF-8 byte neither aborts the forget nor changes on write-back) and
+    # copies every uninterpretable line through verbatim. A changed row is
+    # re-dumped, so `changed` counts exactly the rows redacted: the only rows
+    # `redact_row` rewrites.
+    def write(target, text):
+        _atomic_write(target, text, errors="surrogateescape")
+
     try:
-        _atomic_write(path, "\n".join(out_lines) + "\n")
+        return jsonl.rewrite(path, redact_row, write=write)
     except OSError:
         return 0
-    return scrubbed
 
 
 def _tie_rank(evt: dict) -> int:

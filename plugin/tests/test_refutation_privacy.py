@@ -57,7 +57,7 @@ def _tombstone(value):
     the audit has to find it — the same device the checkpoint suites use."""
     key = normalize.content_key(value)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, tombstone=True)
     return key
 
 

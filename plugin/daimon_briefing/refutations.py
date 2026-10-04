@@ -27,14 +27,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import channels, config, normalize, policy, redact, store
+from . import channels, config, jsonl, normalize, policy, redact, store
 
 
 VERSION = 1
@@ -846,8 +845,8 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     # event name; the rewrite below already walks raw lines for this reason.
     doomed = set()
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+        lines = jsonl.read_rows(path)
+    except OSError:
         return []
     for line in lines:
         try:
@@ -875,32 +874,22 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     # `_line` into the ledger. Scars 0025 and 0042 are both this shape: a
     # forgiving read feeding a write. `lines` is the single read above — the
     # doomed set and the rewrite see the same bytes.
-    kept: list[str] = []
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            # Already invisible to every read path, and `_is_torn` establishes
-            # that a torn row is expendable. Keeping it would leave forgotten
-            # bytes on disk for no reachable benefit.
-            continue
+    #
+    # #1138: split on "\n" only. `splitlines()` also breaks on U+2028/U+2029/
+    # U+0085, which this ledger writes raw, so a row holding one used to be
+    # torn into two "unparseable" fragments and DROPPED by an unrelated
+    # forget. jsonl.rewrite writes every other line back BYTE-IDENTICAL,
+    # including rows this version cannot interpret and lines that do not
+    # parse at all.
+    def drop(line, row):
         if (isinstance(row, dict)
                 and str(row.get("refutation_id") or "") in doomed):
-            continue
-        # Anything else is written back BYTE-IDENTICAL, including rows this
-        # version cannot interpret.
-        kept.append(line)
-    tmp = path.with_name(path.name + ".forget-tmp")
+            return None
+        return line
+
     try:
-        tmp.write_text("".join(line + "\n" for line in kept), encoding="utf-8")
-        os.replace(tmp, path)
+        jsonl.rewrite(path, drop)
     except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
         return []
     # A forgotten ruling's check must leave the disk with it. The dropped
     # records are already gone from the ledger here, so the manifest is

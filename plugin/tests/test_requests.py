@@ -4071,18 +4071,20 @@ def test_a_deletion_aimed_at_a_bucket_with_no_ledger_removes_nothing(project):
 
 
 def test_the_rewrite_drops_blank_and_torn_lines_it_passes_over(project):
-    """Torn rows are expendable — keeping one would leave bytes behind that
-    the deletion was asked to remove."""
+    """Blank lines go. A line that does not parse is KEPT verbatim (#1138):
+    it may be a row the splitter could not recognise, and dropping bytes the
+    caller never asked about is the defect this rewrite used to have."""
     doomed = _open(project)
     kept = _open(project, ask="an unrelated ask about the docs site")
     path = requests._path(project)
+    torn = '{"request_id": "q-abcabcabcabc", "ask": "half a r'
     with path.open("a", encoding="utf-8") as handle:
         handle.write("\n")
-        handle.write('{"request_id": "q-abcabcabcabc", "ask": "half a r')
+        handle.write(torn)
     assert requests.forget_content_key(normalize.content_key(ASK),
                                        project_dir=project) == [doomed]
     text = path.read_text(encoding="utf-8")
-    assert "half a r" not in text
+    assert text.split("\n")[-2] == torn
     assert "" not in text.splitlines()
     assert set(requests.records(project_dir=project)) == {kept}
 

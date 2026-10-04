@@ -25,8 +25,8 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import (amendments, config, normalize, refutations, relations, requests,
-               store, surfaces, teamproject, trust)
+from . import (amendments, config, jsonl, normalize, refutations, relations,
+               requests, store, surfaces, teamproject, trust)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -429,7 +429,7 @@ def audit_project(project_dir=None) -> dict:
         # crash the auditor on exactly the tree it must report on.
         # UnicodeDecodeError IS a ValueError: a non-UTF-8 ledger is
         # cannot-check, not a traceback out of a read-only auditor.
-        lines = events.read_text(encoding="utf-8").splitlines()
+        lines = jsonl.read_rows(events, errors="strict")
     except FileNotFoundError:
         lines = []                  # no ledger written yet — nothing to scan
     except (OSError, ValueError):
@@ -461,7 +461,7 @@ def audit_project(project_dir=None) -> dict:
     # reads it too, so a value the audit reports is a value forget can reach.
     ledger = config.checkpoint_dir() / slug / _REFUTATIONS_NAME
     try:
-        lines = ledger.read_text(encoding="utf-8").splitlines()
+        lines = jsonl.read_rows(ledger, errors="strict")
     except FileNotFoundError:
         lines = []                  # no refutation recorded yet
     except (OSError, ValueError):
@@ -514,7 +514,7 @@ def audit_project(project_dir=None) -> dict:
     # scan is what proves the deletion reached the edges.
     rel_path = config.checkpoint_dir() / slug / _RELATIONS_NAME
     try:
-        lines = rel_path.read_text(encoding="utf-8").splitlines()
+        lines = jsonl.read_rows(rel_path, errors="strict")
     except FileNotFoundError:
         lines = []                  # no relation recorded yet
     except (OSError, ValueError):
@@ -570,7 +570,7 @@ def audit_project(project_dir=None) -> dict:
     # so reordering these blocks does not silently sever it.
     amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
     try:
-        lines = amend_path.read_text(encoding="utf-8").splitlines()
+        lines = jsonl.read_rows(amend_path, errors="strict")
     except FileNotFoundError:
         lines = []                  # no amendment recorded yet
     except (OSError, ValueError):
@@ -619,7 +619,7 @@ def audit_project(project_dir=None) -> dict:
     # declaration, so a value the audit reports is a value forget can reach.
     req_path = config.checkpoint_dir() / slug / _REQUESTS_NAME
     try:
-        lines = req_path.read_text(encoding="utf-8").splitlines()
+        lines = jsonl.read_rows(req_path, errors="strict")
     except FileNotFoundError:
         lines = []                  # no request recorded yet
     except (OSError, ValueError):
@@ -662,7 +662,7 @@ def audit_project(project_dir=None) -> dict:
     # concern, which is all this block answers.
     trust_path = config.checkpoint_dir() / slug / _TRUST_NAME
     try:
-        lines = trust_path.read_text(encoding="utf-8").splitlines()
+        lines = jsonl.read_rows(trust_path, errors="strict")
     except FileNotFoundError:
         lines = []                  # no quarantine recorded yet
     except (OSError, ValueError):

@@ -24,13 +24,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import time
 import uuid
 from datetime import datetime, timezone
 
-from . import channels, config, policy, provenance, schema, store
+from . import channels, config, jsonl, policy, provenance, schema, store
 
 
 VERSION = 1
@@ -287,7 +286,8 @@ def events(project_dir=None) -> list[dict]:
     # dir (EACCES is not in pathlib's ignored set), which would crash the
     # read-only auditor on exactly the tree it must report on.
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        # #1138: "\n"-only split; strict decoding stays (see amendments).
+        lines = jsonl.read_rows(path, errors="strict")
     except (OSError, UnicodeDecodeError):
         return []
     rows = []
@@ -613,30 +613,17 @@ def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     doomed.discard("")
     if not doomed:
         return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-    kept: list[str] = []
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
+
+    def drop(line, row):
         if (isinstance(row, dict)
                 and str(row.get("relation_id") or "") in doomed):
-            continue
-        kept.append(line)
-    tmp = path.with_name(path.name + ".forget-tmp")
+            return None
+        return line
+
+    # #1138: "\n"-only split, unparseable lines kept verbatim (jsonl.rewrite).
     try:
-        tmp.write_text("".join(line + "\n" for line in kept), encoding="utf-8")
-        os.replace(tmp, path)
+        if not jsonl.rewrite(path, drop):
+            return []
     except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
         return []
     return sorted(doomed)

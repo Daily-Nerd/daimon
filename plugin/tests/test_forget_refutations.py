@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, normalize, refutations, store
+from daimon_briefing import cli, jsonl, normalize, refutations, store
 
 
 PROJECT = "/repo/forget-refutations"
@@ -331,7 +331,7 @@ def test_ledger_rewrite_is_atomic_under_a_failed_write(
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(refutations.os, "replace", boom)
+    monkeypatch.setattr(jsonl.os, "replace", boom)
     removed = refutations.forget_content_key(
         normalize.content_key(SUBJECT), project_dir=PROJECT)
 
@@ -443,12 +443,12 @@ def test_rewrite_bails_when_the_ledger_cannot_be_read(
     assert path.read_bytes() == unreadable
 
 
-def test_rewrite_drops_blank_and_unparseable_lines_and_keeps_the_rest(
+def test_rewrite_drops_blank_lines_and_keeps_unparseable_ones_verbatim(
         tmp_checkpoint_dir, monkeypatch):
-    # A torn append leaves bytes no read path can see. `_is_torn` establishes
-    # such a row is expendable, so the rewrite drops it rather than preserving
-    # forgotten bytes for no reachable benefit — but a KEEPER row on the same
-    # pass must survive byte-identical.
+    # #1138: a line that does not parse is no licence to delete it. It may be
+    # a row this splitter could not recognise, and every forget used to drop
+    # such bytes unasked. Blank lines still go; a KEEPER row on the same pass
+    # survives byte-identical.
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     doomed = _refute()
     keeper = _refute(subject="sharding the audit table by tenant",
@@ -462,7 +462,7 @@ def test_rewrite_drops_blank_and_unparseable_lines_and_keeps_the_rest(
         normalize.content_key(SUBJECT), project_dir=PROJECT) == [doomed]
 
     text = path.read_text(encoding="utf-8")
-    assert "{not json at all" not in text
+    assert text.endswith("{not json at all\n")
     assert "\n\n" not in text
     assert refutations.get(keeper, project_dir=PROJECT) is not None
 
@@ -479,7 +479,7 @@ def test_a_failed_rewrite_reports_nothing_even_when_the_tmp_survives(
     def boom(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(refutations.os, "replace", boom)
+    monkeypatch.setattr(jsonl.os, "replace", boom)
     monkeypatch.setattr(Path, "unlink", boom)
 
     assert refutations.forget_content_key(

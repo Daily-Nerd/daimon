@@ -32,7 +32,9 @@ Resolving records an append-only event; from then on, briefings **withhold**
 the item instead of carrying it stale. The item is not deleted — its history
 stays searchable, and the event trail shows when and why it closed.
 `--status` accepts a free-form lifecycle status; any status starting with
-`reopen` revives the item.
+`reopen` revives the item. A status starting with `forgotten:` is refused:
+that is a tombstone, and only `daimon forget` writes one (it also removes
+the value from the files).
 
 ## `daimon reverify` — assert it's still true
 
