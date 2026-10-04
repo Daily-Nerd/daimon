@@ -170,9 +170,10 @@ def _record_ledger_census(slug: str) -> None:
     """Run the ledger census once for a bucket and stamp the result (#1132).
 
     Best-effort in the strictest sense: any failure, from the census or the
-    marker write, is logged at debug and dropped, because this rides along
-    with a checkpoint write that has already succeeded and must stay the same
-    write. A failure leaves no marker, so the next write retries."""
+    marker write, is logged at debug and dropped. It runs inside
+    `write_checkpoint` before the pointer is written, so no failure here may
+    fail or change that write. A failure leaves no marker, so the next write
+    retries."""
     if config.is_disabled():
         return
     try:

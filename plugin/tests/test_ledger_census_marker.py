@@ -124,3 +124,16 @@ def test_the_marker_name_is_one_constant_for_store_and_census():
     assert store._LEDGER_CENSUS_NAME == ".ledger-census"
     assert ledger_census.MARKER_NAME == store._LEDGER_CENSUS_NAME
     assert os.sep not in ledger_census.MARKER_NAME
+
+
+def test_the_marker_carries_the_unavailable_forgotten_check():
+    from daimon_briefing import normalize
+    (_bucket() / "events.jsonl").write_bytes(
+        json.dumps({"item_ref": "i-1", "ts": "2026-01-01T00:00:00Z",
+                    "status": "forgotten:" + normalize.content_key(SECRET)}
+                   ).encode() + b'\n{"note": "\xff"}\n')
+    (_bucket() / "trust.jsonl").write_bytes(json.dumps({"reason": SECRET}).encode())
+    _write()
+    marker = json.loads(_marker().read_text(encoding="utf-8"))
+    assert marker["forgotten_check"] == "unavailable"
+    assert marker["ledgers"]["trust.jsonl"]["tombstoned_present"] is None

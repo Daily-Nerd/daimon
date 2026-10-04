@@ -1078,11 +1078,21 @@ def _ledger_lines(data: dict) -> list:
     for name, entry in (census.get("other") or {}).items():
         if entry["state"] not in ("ok", "absent"):
             lines.append(f"⚠ ledger file {name}: {_ledger_state_text(entry)}")
-    residue = (census.get("checkpoints") or {}).get("tombstoned_present") or 0
+    if census.get("forgotten_check") == "unavailable":
+        state = (census.get("ledgers") or {}).get(
+            "events.jsonl", {}).get("state")
+        lines.append("⚠ forgotten-value check unavailable: "
+                     f"events.jsonl is {state}")
+    checkpoints = census.get("checkpoints") or {}
+    residue = checkpoints.get("tombstoned_present") or 0
     if residue:
         lines.append("⚠ checkpoint surfaces: " + _plural(
             residue, "item still carries", "items still carry")
             + " a forgotten value")
+    unscannable = checkpoints.get("unscannable") or 0
+    if unscannable:
+        lines.append("⚠ checkpoint surfaces: " + _plural(
+            unscannable, "file", "files") + " could not be scanned")
     if census.get("undeclared"):
         lines.append("⚠ undeclared ledger file: "
                      + ", ".join(census["undeclared"]))

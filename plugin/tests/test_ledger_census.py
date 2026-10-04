@@ -101,7 +101,8 @@ def test_a_checkpoint_surface_still_holding_a_forgotten_value_is_counted():
                                {"id": "i-2", "text": "fine"}]}}
     (_bucket() / "S1.json").write_text(json.dumps(payload), encoding="utf-8")
     result = ledger_census.census_bucket(SLUG)
-    assert result["checkpoints"] == {"tombstoned_present": 1}
+    assert result["checkpoints"] == {"tombstoned_present": 1, "unscannable": 0}
+    assert result["forgotten_check"] == "ok"
     assert SECRET not in json.dumps(result)
 
 
@@ -137,3 +138,76 @@ def test_machine_census_survives_a_missing_team_dir():
 def test_a_missing_bucket_dir_is_all_absent_not_an_error():
     result = ledger_census.census_bucket("-never-written")
     assert {e["state"] for e in result["ledgers"].values()} == {"absent"}
+
+
+def _undecodable_events_with_a_real_tombstone():
+    """A genuine forget tombstone, then one undecodable byte in the same file.
+    `store.forgotten_content_keys` reads events.jsonl strictly and returns an
+    empty set for it, so a census that trusts it would call the leak clean."""
+    (_bucket() / "events.jsonl").write_bytes(
+        _line(ts="2026-01-01T00:00:00Z", kind="resolution", item_ref="i-gone",
+              status=f"forgotten:{normalize.content_key(SECRET)}", source="cli")
+        + b'{"note": "\xff"}\n')
+
+
+def test_an_unreadable_events_ledger_makes_the_forgotten_check_unavailable():
+    _undecodable_events_with_a_real_tombstone()
+    (_bucket() / "trust.jsonl").write_bytes(_line(reason=SECRET))
+    result = ledger_census.census_bucket(SLUG)
+    assert result["forgotten_check"] == "unavailable"
+    assert result["ledgers"]["events.jsonl"]["state"] == "unreadable"
+    for name, entry in result["ledgers"].items():
+        assert entry["tombstoned_present"] is None, name
+    assert result["checkpoints"] == {"tombstoned_present": None,
+                                     "unscannable": None}
+    assert SECRET not in json.dumps(result)
+
+
+def test_an_unavailable_check_never_walks_the_checkpoint_files(monkeypatch):
+    _undecodable_events_with_a_real_tombstone()
+
+    def must_not_walk(*_a, **_k):
+        raise AssertionError("the walk was skipped when keys are untrusted")
+
+    monkeypatch.setattr(ledger_census, "_checkpoint_residue", must_not_walk)
+    ledger_census.census_bucket(SLUG)
+
+
+def test_a_transient_events_ledger_also_makes_it_unavailable(monkeypatch):
+    from daimon_briefing import jsonl
+    (_bucket() / "events.jsonl").write_bytes(_line(a=1))
+    real = jsonl.read
+
+    def flaky(path, **kw):
+        if path.name == "events.jsonl":
+            return jsonl.Read(jsonl.Health.TRANSIENT, [], detail="EAGAIN")
+        return real(path, **kw)
+
+    monkeypatch.setattr(jsonl, "read", flaky)
+    result = ledger_census.census_bucket(SLUG, checkpoints=False)
+    assert result["forgotten_check"] == "unavailable"
+    assert result["ledgers"]["trust.jsonl"]["tombstoned_present"] is None
+
+
+def test_a_degraded_events_ledger_still_checks_forgotten_values():
+    (_bucket() / "events.jsonl").write_bytes(
+        _line(ts="2026-01-01T00:00:00Z", kind="resolution", item_ref="i-gone",
+              status=f"forgotten:{normalize.content_key(SECRET)}", source="cli")
+        + b'{"cut\n')
+    (_bucket() / "trust.jsonl").write_bytes(_line(reason=SECRET))
+    result = ledger_census.census_bucket(SLUG)
+    assert result["forgotten_check"] == "ok"
+    assert result["ledgers"]["trust.jsonl"]["tombstoned_present"] == 1
+
+
+def test_an_unreadable_checkpoint_file_is_counted_unscannable_not_clean():
+    from daimon_briefing import store
+    section, key = store._ITEM_LISTS[0]
+    _forget(normalize.content_key(SECRET))
+    (_bucket() / "S1.json").write_text(json.dumps({
+        "project_slug": SLUG, section: {key: [{"id": "i-1", "text": "fine"}]}}),
+        encoding="utf-8")
+    (_bucket() / "S2.json").write_bytes(b'{"project_slug": "\xff\xfe')
+    (_bucket() / "S3.json").write_bytes(b"not json at all")
+    result = ledger_census.census_bucket(SLUG)
+    assert result["checkpoints"] == {"tombstoned_present": 0, "unscannable": 2}

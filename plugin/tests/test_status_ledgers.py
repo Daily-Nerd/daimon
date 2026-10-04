@@ -35,7 +35,8 @@ def test_payload_gains_ledgers_at_the_tail_and_keeps_every_field(proj):
                 "identity", "requests", "handoff"):
         assert key in payload
     ledgers = payload["ledgers"]
-    assert set(ledgers) == {"ledgers", "undeclared", "checkpoints", "other"}
+    assert set(ledgers) == {"ledgers", "undeclared", "forgotten_check",
+                           "checkpoints", "other"}
     assert ledgers["ledgers"]["trust.jsonl"] == {
         "state": "absent", "torn": 0, "split": 0, "garbage": 0,
         "tombstoned_present": 0}
@@ -152,3 +153,29 @@ def test_rich_status_prints_the_same_ledger_lines(proj, capsys, monkeypatch):
 
 def test_no_bucket_name_means_no_census():
     assert cli._status_ledgers(None) is None
+
+
+def test_human_status_says_the_forgotten_check_could_not_run(proj, capsys):
+    d = _bucket(proj)
+    (d / "events.jsonl").write_bytes(
+        _line(ts="2026-01-01T00:00:00Z", kind="resolution", item_ref="i-1",
+              status=f"forgotten:{normalize.content_key(SECRET)}", source="cli")
+        + b'{"note": "\xff"}\n')
+    (d / "trust.jsonl").write_bytes(_line(reason=SECRET))
+    cli.main(["status", "--project", str(proj)])
+    out = capsys.readouterr().out
+    assert ("⚠ forgotten-value check unavailable: events.jsonl is unreadable"
+            in out)
+    assert "ledgers: " not in out
+    assert SECRET not in out
+
+
+def test_human_status_counts_checkpoint_files_it_could_not_scan(proj, capsys):
+    d = _bucket(proj)
+    (d / "events.jsonl").write_bytes(_line(
+        ts="2026-01-01T00:00:00Z", kind="resolution", item_ref="i-1",
+        status=f"forgotten:{normalize.content_key(SECRET)}", source="cli"))
+    (d / "S1.json").write_bytes(b"not json")
+    cli.main(["status", "--project", str(proj)])
+    out = capsys.readouterr().out
+    assert "⚠ checkpoint surfaces: 1 file could not be scanned" in out

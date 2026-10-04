@@ -40,45 +40,66 @@ def _tombstoned_rows(rows: list, prose: tuple, keys: set) -> int:
                for v in surfaces.prose_values(prose, row)))
 
 
-def _checkpoint_residue(slug: str, keys: set) -> int:
-    """Items in this bucket's checkpoint JSON that still hold a forgotten
-    value. The walk and the scan are the privacy audit's own."""
+def _checkpoint_residue(slug: str, keys: set) -> tuple[int, int]:
+    """(items in this bucket's checkpoint JSON that still hold a forgotten
+    value, files that could not be read at all). The walk and the scan are
+    the privacy audit's own. An unreadable file has no knowable bucket, so it
+    counts against every bucket's census: "could not check" must not fold
+    into "clean". With no forgotten key there is nothing to look for and the
+    walk is skipped, so both numbers are 0."""
     if not keys:
-        return 0
+        return 0, 0
     known, _unknown = privacy._checkpoint_candidates()
-    found = 0
+    found = unscannable = 0
     for path in known:
-        findings, _suppressed, _member = privacy._scan_json_surface(
+        findings, _suppressed, member = privacy._scan_json_surface(
             path, slug, keys, "checkpoint")
+        if member is None:
+            unscannable += 1
         found += len(findings)
-    return found
+    return found, unscannable
 
 
 def census_bucket(slug: str, *, checkpoints: bool = True) -> dict:
     """One bucket: {"ledgers": {name: {state, torn, split, garbage,
-    tombstoned_present}}, "undeclared": [names], "checkpoints":
-    {"tombstoned_present": n}}. `checkpoints=False` skips the walk over
-    checkpoint JSON, the one part whose cost grows with the whole store."""
+    tombstoned_present}}, "undeclared": [names], "forgotten_check": "ok" |
+    "unavailable", "checkpoints": {"tombstoned_present": n, "unscannable":
+    m}}. `checkpoints=False` skips the walk over checkpoint JSON, the one
+    part whose cost grows with the whole store.
+
+    The forget tombstones live in events.jsonl, and `forgotten_content_keys`
+    answers with an empty set when that file cannot be decoded. So when
+    events.jsonl is unreadable or transient the keys cannot be trusted:
+    `forgotten_check` is "unavailable" and every `tombstoned_present` is None
+    (never 0), the checkpoint walk is skipped and its numbers are None."""
     bucket = config.checkpoint_dir() / slug
-    keys = store.forgotten_content_keys(slug)
     declared = surfaces.bucket_ledger_names()
+    reads = {name: jsonl.read(bucket / name) for name in declared}
+    trusted = reads["events.jsonl"].health not in (
+        jsonl.Health.UNREADABLE, jsonl.Health.TRANSIENT)
+    keys = store.forgotten_content_keys(slug) if trusted else set()
     ledgers: dict = {}
-    for name in declared:
-        result = jsonl.read(bucket / name)
-        ledgers[name] = {**_counts(result), "tombstoned_present":
-                         _tombstoned_rows(result.rows,
-                                          surfaces.bucket_ledger(name).prose,
-                                          keys)}
+    for name, result in reads.items():
+        present = _tombstoned_rows(
+            result.rows, surfaces.bucket_ledger(name).prose, keys
+        ) if trusted else None
+        ledgers[name] = {**_counts(result), "tombstoned_present": present}
     try:
         undeclared = sorted(p.name for p in bucket.iterdir()
                             if p.name.endswith(".jsonl")
                             and p.name not in declared)
     except OSError:
         undeclared = []
-    out: dict = {"ledgers": ledgers, "undeclared": undeclared}
+    out: dict = {"ledgers": ledgers, "undeclared": undeclared,
+                 "forgotten_check": "ok" if trusted else "unavailable"}
     if checkpoints:
-        out["checkpoints"] = {
-            "tombstoned_present": _checkpoint_residue(slug, keys)}
+        if trusted:
+            found, unscannable = _checkpoint_residue(slug, keys)
+            out["checkpoints"] = {"tombstoned_present": found,
+                                  "unscannable": unscannable}
+        else:
+            out["checkpoints"] = {"tombstoned_present": None,
+                                  "unscannable": None}
     return out
 
 
@@ -109,5 +130,6 @@ def record_marker(slug: str) -> None:
     census = census_bucket(slug, checkpoints=False)
     marker = {"version": MARKER_VERSION,
               "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "forgotten_check": census["forgotten_check"],
               "ledgers": census["ledgers"]}
     store._atomic_write(path, json.dumps(marker, indent=2) + "\n")
