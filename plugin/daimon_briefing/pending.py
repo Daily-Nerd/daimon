@@ -50,6 +50,7 @@ from . import (
     refutations,
     requests,
     store,
+    surfaces,
     trust,
 )
 
@@ -247,8 +248,8 @@ def _ledger_rows(project_dir, slug) -> list:
 
 def _trust_rows(project_dir, slug) -> list:
     """Agent-proposed quarantines awaiting a human confirm/dismiss (#1109
-    Slice 1). The one place a human sees a proposed quarantine at all in
-    this slice — nothing else reads this ledger yet."""
+    Slice 1). The one place a human sees a PROPOSED quarantine; the
+    withholding passes read only the confirmed ones (`active_value_keys`)."""
     records = trust.records(project_dir=project_dir)
     seen = [row.get("quarantine_id") for row in trust.events(
         project_dir=project_dir)]
@@ -400,7 +401,7 @@ def _amendment_rows(project_dir, slug) -> list:
 # amendments, which are already rendering in briefings as unconfirmed claims.
 # Ledger candidates last: nothing renders them yet, so nothing is misleading
 # while they wait. `trust` ranks WITH ruling/refutation for the identical
-# reason (#1109 Slice 1: nothing reads the quarantine ledger yet either).
+# reason: a proposed quarantine withholds nothing until a human confirms it.
 # `_request_rows` returns `(rows, suppressed)` and runs first in `queue`.
 _LANES = (
     (_request_rows, {"request": 0}),
@@ -457,7 +458,8 @@ def queue(*, project_dir=None) -> dict:
 
 
 def _strip_plaintext(row: dict) -> dict:
-    """Presence sentinel for every field `requests._PLAINTEXT_FIELDS` names:
+    """Presence sentinel for every scalar field the requests ledger's registry
+    `prose` column names:
     `"x"` if the original held non-whitespace content, `""` otherwise. Every
     other key passes through untouched. Applied at the READ boundary, before
     folding, so a foreign bucket's ask/why/note/evidence/from_label never
@@ -469,7 +471,7 @@ def _strip_plaintext(row: dict) -> dict:
     `decide` shows inside the owning project.
     """
     out = dict(row)
-    for field in requests._PLAINTEXT_FIELDS:
+    for field in surfaces.scalar_prose_fields(requests._LEDGER):
         if field in out:
             out[field] = "x" if str(out.get(field) or "").strip() else ""
     return out

@@ -532,7 +532,7 @@ def test_the_per_act_author_is_a_plaintext_surface(project):
     """#645 discipline: a host-supplied name is authored prose this project
     never derived, so forget must reach it by value and the audit must hash
     it. The process identity beside it stays out of the pool, for the reason
-    `_PLAINTEXT_FIELDS` already states."""
+    requests.py's `prose` comment already states."""
     q_id = _open(project, channel="ui", author="alice")
     row = next(r for r in requests.events(project_dir=project)
                if r["request_id"] == q_id)

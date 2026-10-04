@@ -85,7 +85,7 @@ def _scalars(*names: str) -> tuple[FieldPath, ...]:
 SURFACES: tuple[Surface, ...] = (
     # -- per-project bucket ledgers (specific before the *.json generics) --
     Surface("checkpoints/{slug}/events.jsonl", "store.append_event",
-            True, "append-tombstone", "audit",
+            True, "append-tombstone", "forget",
             prose=_scalars("note", "item_text", "status"),
             index_content=True, mergeable=True),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
@@ -152,7 +152,7 @@ SURFACES: tuple[Surface, ...] = (
     #    match) and amendments.forget_item_id (rows about a forgotten item
     #    go with it — unlike relations, these rows carry prose that can
     #    paraphrase the removed content). Never audit_exempt: the audit
-    #    hashes the module's own _PLAINTEXT_FIELDS declaration and checks
+    #    hashes the ledger's own `prose` column and checks
     #    target ids against tombstones (privacy.audit_project). Honest
     #    limit, stated because this ledger's defining field is a VERBATIM
     #    QUOTE: forget and the audit match whole values, so a quote merely
@@ -182,7 +182,7 @@ SURFACES: tuple[Surface, ...] = (
     #    side's to delete, which is the whole point of mutual read-through.
     #
     #    Never audit_exempt: the audit hashes the module's own
-    #    _PLAINTEXT_FIELDS declaration (privacy.audit_project) and prints
+    #    `prose` column (privacy.audit_project) and prints
     #    record/row/byte counts, so growth is measured, never silent. Same
     #    honest limit as the amendment ledger — forget matches a WHOLE
     #    value, so an ask merely CONTAINING a forgotten value is beyond the
@@ -237,11 +237,11 @@ SURFACES: tuple[Surface, ...] = (
     #    item text on its own). `rewrite` is trust.forget_content_key,
     #    matching the same whole-value canonical key refutations.py uses.
     #    Never audit_exempt: growth must be measured, never silent, the same
-    #    posture every other plaintext ledger here holds. Nothing reads this
-    #    ledger yet (PR 2 wires the briefing/recall/MCP/carry/daimon_ui
-    #    withholding read paths); this slice is write-only and registered
-    #    here so it can never repeat #645's unknown->unscannable->exit-3 arc
-    #    the moment the first `daimon trust propose` runs. --
+    #    posture every other plaintext ledger here holds. Readers: the briefing,
+    #    recall's rebuild (hence `index_content`) and the cli withhold pool
+    #    read the ACTIVE quarantines through trust.active_value_keys, and
+    #    pending.queue lists the PROPOSED ones for a human. Registered so it
+    #    can never repeat #645's unknown->unscannable->exit-3 arc. --
     Surface("checkpoints/{slug}/trust.jsonl", "trust.append",
             True, "rewrite", "forget", fold="trust.fold",
             prose=(FieldPath(("reason",)), FieldPath(("evidence",), True)),
@@ -428,7 +428,7 @@ SURFACES: tuple[Surface, ...] = (
             "none"),
     # -- #943 armed checks. Both shapes carry AUTHORED text: the manifest
     #    holds `check.match` and each body IS `check.body`, and refutations
-    #    already declares that pair plaintext (_PLAINTEXT_NESTED) so forget
+    #    already declares that pair plaintext (its `prose` column) so forget
     #    reaches it in the ledger. Declaring these exempt would be the same
     #    claim contradicting itself one directory over.
     #
@@ -546,6 +546,33 @@ def bucket_ledger_names(*, plaintext: bool | None = None) -> tuple[str, ...]:
     `plaintext` given, only the ledgers whose declaration matches."""
     return tuple(n for n, s in _bucket_ledger_rows()
                  if plaintext is None or s.plaintext == plaintext)
+
+
+def scalar_prose_fields(name: str) -> tuple[str, ...]:
+    """Top-level non-list prose keys of a ledger, in declaration order."""
+    return tuple(fp.path[0] for fp in bucket_ledger(name).prose
+                 if len(fp.path) == 1 and not fp.is_list)
+
+
+def prose_values(prose: tuple[FieldPath, ...], row: dict, *,
+                 scalars_only: bool = False) -> list[str]:
+    """The non-blank string values of `row` at the declared prose paths, in
+    declaration order, unstripped. `scalars_only` keeps top-level non-list
+    paths: the by-value forget MENU offers those and nothing shared across
+    records (anchors, check bodies)."""
+    out: list[str] = []
+    for fp in prose:
+        if scalars_only and (fp.is_list or len(fp.path) != 1):
+            continue
+        holder: object = row
+        for key in fp.path:
+            holder = holder.get(key) if isinstance(holder, dict) else None
+        if fp.is_list:
+            values = holder if isinstance(holder, list) else []
+        else:
+            values = [holder]
+        out.extend(v for v in values if isinstance(v, str) and v.strip())
+    return out
 
 
 def mergeable_ledgers() -> tuple[str, ...]:

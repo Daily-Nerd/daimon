@@ -47,7 +47,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import (buckets, config, display, jsonl, normalize, policy, redact,
-                refutations, store)
+                refutations, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. Importing the table keeps a
 # future channel tier ("ui", "signed") consistent across ledgers instead of
@@ -210,10 +210,9 @@ def short_ask(text) -> str:
 # the one field on this surface that names a person who is NOT the operator,
 # so the audit must hash it, and reaching every act somebody signed is what a
 # forget aimed at that name is FOR on a surface that exists to serve several
-# people. `pending._strip_plaintext` reads this same declaration, so a
+# people. `pending._strip_plaintext` reads this same `prose` column, so a
 # foreign bucket's names stop at the read boundary for free (scar 0055).
-_PLAINTEXT_FIELDS = ("ask", "why", "note", "evidence", "from_label",
-                     "act_author")
+_LEDGER = "requests.jsonl"
 
 
 class RequestError(ValueError):
@@ -1985,26 +1984,18 @@ def plaintext_values(row: dict) -> list[str]:
     The forget TARGETING pool reads this instead of hand-copying the field
     tuple — the same one-declaration discipline row_content_keys below gives
     the deleter and the auditor."""
-    out: list[str] = []
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.append(value)
-    return out
+    return surfaces.prose_values(surfaces.bucket_ledger(_LEDGER).prose, row,
+                                 scalars_only=True)
 
 
 def row_content_keys(row: dict) -> set[str]:
     """Canonical keys for every plaintext field this row carries (#645).
 
-    The one reader of _PLAINTEXT_FIELDS besides plaintext_values, so the
+    The one reader of the registry's `prose` column besides plaintext_values, so the
     deleter below and `privacy.audit_project` cannot drift apart about what
     counts as plaintext on this surface."""
-    out: set[str] = set()
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.add(normalize.content_key(value))
-    return out
+    return {normalize.content_key(value) for value in surfaces.prose_values(
+        surfaces.bucket_ledger(_LEDGER).prose, row)}
 
 
 def _rewrite_without(doomed: set[str], project_dir=None) -> list[str]:

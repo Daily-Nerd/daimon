@@ -38,7 +38,7 @@ from pathlib import Path
 from types import ModuleType
 
 from . import (config, jsonl, normalize, policy, receipts, redact, schema,
-               serializer, teamproject)
+               serializer, surfaces, teamproject)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -2563,13 +2563,14 @@ def scrub_event_fields(content_hash: str, project_dir=None) -> int:
     if path is None:
         return 0
     marker = _FORGOTTEN_FIELD_MARKER.format(content_hash)
+    event_prose = surfaces.scalar_prose_fields("events.jsonl")
     admitted: dict | None = None
 
     def redact_row(line, row):
         if not isinstance(row, dict):
             return line
         changed = False
-        for field in ("item_text", "status", "note"):
+        for field in event_prose:
             value = row.get(field)
             if (isinstance(value, str) and value
                     and normalize.content_key(value) == content_hash):

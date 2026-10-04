@@ -372,6 +372,11 @@ def test_the_index_content_ledgers_are_pinned_and_cover_what_recall_folds():
         {"events.jsonl", "verification.jsonl", "trust.jsonl"})
 
 
+def test_events_are_walked_by_forget_through_the_ratified_carve_out():
+    """store.scrub_event_fields is what cli forget calls on events.jsonl."""
+    assert surfaces.bucket_ledger("events.jsonl").walker == "forget"
+
+
 def test_bucket_ledger_lookup_refuses_an_undeclared_name():
     import pytest
 
@@ -398,3 +403,109 @@ def test_the_prose_declarations_are_pinned():
         "ask", "why", "note", "evidence", "from_label", "act_author")
     assert surfaces.bucket_ledger("events.jsonl").prose == scalars(
         "note", "item_text", "status")
+
+
+# ---- every prose consumer reads the registry (#1132) ----------------------
+
+
+def _with_prose(monkeypatch, name, prose):
+    monkeypatch.setattr(surfaces, "SURFACES", tuple(
+        s._replace(prose=prose) if s.shape.endswith("/" + name) else s
+        for s in surfaces.SURFACES))
+
+
+def test_prose_values_walks_scalars_lists_and_nested_paths():
+    fp = surfaces.FieldPath
+    ledger = (fp(("a",)), fp(("b",), True), fp(("c", "d")))
+    row = {"a": " x ", "b": ["y", "", 3, "z"], "c": {"d": "w"},
+           "e": "ignored"}
+    assert surfaces.prose_values(ledger, row) == [" x ", "y", "z", "w"]
+    assert surfaces.prose_values(ledger, row, scalars_only=True) == [" x "]
+    assert surfaces.prose_values(ledger, {"a": "  ", "c": "notadict"}) == []
+
+
+def test_scalar_prose_fields_are_the_top_level_non_list_keys():
+    assert surfaces.scalar_prose_fields("requests.jsonl") == (
+        "ask", "why", "note", "evidence", "from_label", "act_author")
+    assert surfaces.scalar_prose_fields("refutations.jsonl") == (
+        "subject", "verdict", "scope", "revisit_when", "note")
+    assert surfaces.scalar_prose_fields("trust.jsonl") == ("reason",)
+    assert surfaces.scalar_prose_fields("relations.jsonl") == ()
+
+
+def test_each_ledger_module_reads_its_own_registry_row(monkeypatch):
+    from daimon_briefing import amendments, normalize, refutations, requests, trust
+
+    row = {"zz": "probe text", "ask": "old ask", "reason": "old reason",
+           "subject": "old subject", "evidence": "old ev"}
+    for mod, name in ((refutations, "refutations.jsonl"),
+                      (amendments, "amendments.jsonl"),
+                      (trust, "trust.jsonl"),
+                      (requests, "requests.jsonl")):
+        assert mod.plaintext_values(row) != ["probe text"], name
+        with monkeypatch.context() as m:
+            _with_prose(m, name, (surfaces.FieldPath(("zz",)),))
+            assert mod.plaintext_values(row) == ["probe text"], name
+            assert mod.row_content_keys(row) == {
+                normalize.content_key("probe text")}, name
+
+
+def test_pending_strips_exactly_the_registry_request_prose(monkeypatch):
+    from daimon_briefing import pending
+
+    row = {"ask": "a", "why": "b", "zz": "c", "other": "kept"}
+    assert pending._strip_plaintext(row)["zz"] == "c"
+    _with_prose(monkeypatch, "requests.jsonl", (surfaces.FieldPath(("zz",)),))
+    out = pending._strip_plaintext(row)
+    assert out == {"ask": "a", "why": "b", "zz": "x", "other": "kept"}
+
+
+def test_privacy_candidates_exclude_the_registry_plaintext_ledgers(
+        tmp_path, monkeypatch):
+    """A plaintext jsonl ledger declared in the registry is not an UNKNOWN
+    bucket file: no hand-kept tuple to forget (scar 0105)."""
+    monkeypatch.setattr(surfaces, "SURFACES", surfaces.SURFACES + (
+        surfaces.Surface("checkpoints/{slug}/zz-new.jsonl", "x.y", True,
+                         "rewrite", "forget"),))
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path))
+    bucket = tmp_path / "some-bucket"
+    bucket.mkdir()
+    (bucket / "zz-new.jsonl").write_text("{}\n", encoding="utf-8")
+    (bucket / "stranger.jsonl").write_text("{}\n", encoding="utf-8")
+    _known, unknown = privacy._checkpoint_candidates()
+    assert [p.name for p, _slug in unknown] == ["stranger.jsonl"]
+
+
+def test_event_scrub_redacts_exactly_the_registry_event_prose(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import normalize
+
+    value = "an event note that must go"
+    store.append_event("o-111aaa", "resolved", note=value, project_dir=_P)
+    _with_prose(monkeypatch, "events.jsonl", ())
+    assert store.scrub_event_fields(normalize.content_key(value),
+                                    project_dir=_P) == 0
+
+
+def test_every_plaintext_bucket_ledger_has_an_audit_scan_block():
+    """privacy no longer lists these names by hand, so a plaintext ledger
+    the registry declares but audit_project never scans would pass the audit
+    in silence. Its own scan block must name the file."""
+    import ast
+    import inspect
+    import textwrap
+
+    # Real Name nodes, never a substring: a comment naming the constant must
+    # not satisfy this (scar 0054).
+    tree = ast.parse(textwrap.dedent(inspect.getsource(privacy.audit_project)))
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    names = {"events.jsonl": "_EVENTS_NAME",
+             "refutations.jsonl": "_REFUTATIONS_NAME",
+             "amendments.jsonl": "_AMENDMENTS_NAME",
+             "requests.jsonl": "_REQUESTS_NAME",
+             "relations.jsonl": "_RELATIONS_NAME",
+             "trust.jsonl": "_TRUST_NAME"}
+    assert set(names) == set(surfaces.bucket_ledger_names(plaintext=True))
+    for const in names.values():
+        assert const in used, f"audit_project never scans {const}"
+

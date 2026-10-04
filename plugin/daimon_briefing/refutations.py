@@ -33,7 +33,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import channels, config, jsonl, normalize, policy, redact, store
+from . import (channels, config, jsonl, normalize, policy, redact, store,
+               surfaces)
 
 
 VERSION = 1
@@ -183,24 +184,20 @@ _POLICY_KEYS_ACCEPT = frozenset({"sender", "kind", "verb", "by"})
 _POLICY_KEYS_OPEN = frozenset({"to", "kind", "verb", "by"})
 
 # Every field of a ledger row that can hold ITEM plaintext, flat then nested
-# (#645). One declaration, two consumers: `forget_content_key` below decides
-# which records a deletion reaches, and `privacy.audit_project` decides which
-# fields it hashes when proving the deletion happened. Hand-maintaining those
-# two lists separately is the exact shape #601 built the surface registry to
-# stop — a field the auditor reports but forget cannot reach is a permanent
-# exit 1, and a field forget reaches but the auditor ignores is a silent exit
-# 0 over live plaintext.
+# (#645), is the `prose` column of this ledger's registry row. One
+# declaration, two consumers: `forget_content_key` below decides which records
+# a deletion reaches, and `privacy.audit_project` decides which fields it
+# hashes when proving the deletion happened. Hand-maintaining those two lists
+# separately is the exact shape #601 built the surface registry to stop — a
+# field the auditor reports but forget cannot reach is a permanent exit 1, and
+# a field forget reaches but the auditor ignores is a silent exit 0 over live
+# plaintext.
 #
 # `author` is deliberately absent: it is a person's name, not item text, and
 # matching a tombstone against it would let one forgotten value delete every
-# record a given author ever wrote.
-_PLAINTEXT_FIELDS = ("subject", "verdict", "scope", "revisit_when", "note")
-_PLAINTEXT_LISTS = ("anchors", "evidence")
-
-# #943: the check's body and match are script text an author wrote, so they
-# are plaintext for the same two consumers. Nested because the check is one
-# object on the row; declared here so the deleter and the auditor agree.
-_PLAINTEXT_NESTED = (("check", "match"), ("check", "body"))
+# record a given author ever wrote. #943: the check's body and match are
+# script text an author wrote, so they are in it, nested.
+_LEDGER = "refutations.jsonl"
 
 
 class RefutationError(ValueError):
@@ -260,7 +257,7 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
     already returns — so the merge `request_policy_history` does at read
     time is a plain union, never a special case. All six grant fields are
     structural (a bucket slug, closed-enum strings, an opaque id, a hash),
-    none of them in `_PLAINTEXT_FIELDS`.
+    none of them in the ledger's `prose` column.
 
     A still-OPEN interval (`active_until is None`) is closed at the
     forget's own `order` here, never left open: `overturn`/`retire` both
@@ -765,39 +762,19 @@ def plaintext_values(row: dict) -> list[str]:
     reach, and a multi-line script makes poor selector text besides.
     `row_content_keys` still reaches them, so a deletion aimed at the body's
     own text lands — only the by-value MENU declines to suggest it."""
-    out: list[str] = []
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.append(value)
-    return out
+    return surfaces.prose_values(surfaces.bucket_ledger(_LEDGER).prose, row,
+                                 scalars_only=True)
 
 
 def row_content_keys(row: dict) -> set[str]:
     """Canonical keys for every plaintext field this row carries (#645).
 
-    The one reader of _PLAINTEXT_FIELDS/_PLAINTEXT_LISTS, so the deleter below
+    The one reader of the registry's `prose` column, so the deleter below
     and `privacy.audit_project` cannot drift apart about what counts as
     plaintext on this surface.
     """
-    out: set[str] = set()
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.add(normalize.content_key(value))
-    for field in _PLAINTEXT_LISTS:
-        values = row.get(field)
-        if isinstance(values, list):
-            for value in values:
-                if isinstance(value, str) and value.strip():
-                    out.add(normalize.content_key(value))
-    for parent, field in _PLAINTEXT_NESTED:
-        holder = row.get(parent)
-        if isinstance(holder, dict):
-            value = holder.get(field)
-            if isinstance(value, str) and value.strip():
-                out.add(normalize.content_key(value))
-    return out
+    return {normalize.content_key(value) for value in surfaces.prose_values(
+        surfaces.bucket_ledger(_LEDGER).prose, row)}
 
 
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
