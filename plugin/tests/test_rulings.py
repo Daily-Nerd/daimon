@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import config, redact, refutations, store
+from daimon_briefing import config, redact, refutations, store, surfaces
 
 
 PROJECT = "/p/rulings"
@@ -2527,7 +2527,7 @@ def test_a_tombstone_carries_no_field_in_plaintext_fields(tmp_checkpoint_dir):
         project_dir=PROJECT)
     path = refutations._tombstone_path(PROJECT)
     row = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
-    assert set(row.keys()) & set(refutations._PLAINTEXT_FIELDS) == set()
+    assert set(row.keys()) & set(surfaces.scalar_prose_fields("refutations.jsonl")) == set()
     assert row["ruling_id"] == ruling_id
 
 
@@ -2649,7 +2649,7 @@ def test_a_ruling_revised_twice_then_forgotten_tombstones_both_intervals(
     matching = [r for r in tombstone_rows if r.get("ruling_id") == ruling_id]
     assert len(matching) == 2
     for row in matching:
-        assert set(row.keys()) & set(refutations._PLAINTEXT_FIELDS) == set()
+        assert set(row.keys()) & set(surfaces.scalar_prose_fields("refutations.jsonl")) == set()
 
 
 def test_write_policy_tombstones_survives_request_policy_history_raising(

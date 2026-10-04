@@ -35,12 +35,12 @@ from . import (amendments, config, jsonl, normalize, refutations, relations,
 # misses one side surfaces as a finding, not silence.
 _FIELDS = ("text", "quote", "scene")
 
-# Free-text fields store.append_event writes to events.jsonl. `note` alone was
-# a third of the surface: `resolve`/`reopen` pass the item's WHOLE text as
-# `item_text` with no forget gate, and `status` is free-form by design (readers
-# prefix-match), so a user's own resolution wording can BE the value. The file
-# is append-only and never rewritten, so forget cannot reach any of the three.
-_EVENT_FIELDS = ("note", "item_text", "status")
+# Free-text fields store.append_event writes to events.jsonl are that row's
+# `prose` column in the registry. `note` alone was a third of the surface:
+# `resolve`/`reopen` pass the item's WHOLE text as `item_text` with no forget
+# gate, and `status` is free-form by design (readers prefix-match), so a
+# user's own resolution wording can BE the value. The file is append-only, so
+# forget reaches all three only through store.scrub_event_fields.
 
 _EVENTS_NAME = "events.jsonl"
 
@@ -110,6 +110,9 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
         entries = list(d.iterdir())
     except OSError:
         return [], []
+    # Every plaintext ledger the registry declares is scanned by its own
+    # block in audit_project, so it is a known name here, not an unknown file.
+    plaintext_ledgers = surfaces.bucket_ledger_names(plaintext=True)
     for entry in entries:
         try:
             if entry.is_file():
@@ -123,9 +126,7 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                         unknown.append((p, entry.name))
                     elif p.suffix == ".json":
                         known.append(p)
-                    elif p.name not in (_EVENTS_NAME, _REFUTATIONS_NAME,
-                                        _RELATIONS_NAME, _AMENDMENTS_NAME,
-                                        _REQUESTS_NAME, _TRUST_NAME) \
+                    elif p.name not in plaintext_ledgers \
                             and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
@@ -442,7 +443,7 @@ def audit_project(project_dir=None) -> dict:
             continue
         if not isinstance(evt, dict):
             continue
-        for field in _EVENT_FIELDS:
+        for field in surfaces.scalar_prose_fields(_EVENTS_NAME):
             value = evt.get(field)
             if not (isinstance(value, str) and value.strip()):
                 continue

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import buckets, cli, store
+from daimon_briefing import buckets, cli, store, surfaces
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -274,16 +274,57 @@ def test_every_bucket_ledger_the_census_lists_is_merged(linked,
     link, real = linked
     legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
     target = tmp_checkpoint_dir / store.project_bucket(real)
-    for name in buckets.LEDGERS:
+    ledgers = surfaces.mergeable_ledgers()
+    for name in ledgers:
         _plant(legacy, {name: _row(f"{name}-1")})
     _plant(target, {"events.jsonl": _row("keep")})
 
     record = buckets.migrate(link)
 
-    assert set(record["ledgers"]) == set(buckets.LEDGERS)
-    for name in buckets.LEDGERS:
+    assert set(record["ledgers"]) == set(ledgers)
+    for name in ledgers:
         assert _row(f"{name}-1").strip() in (target / name).read_text(
             encoding="utf-8")
+
+
+def test_a_legacy_bucket_s_policy_tombstones_move_with_it(
+        linked, tmp_checkpoint_dir):
+    """request_policy_tombstones.jsonl outlives a forgotten ruling's rows, so
+    stranding it in the legacy bucket re-flips past `info` asks to `work`."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    name = "request_policy_tombstones.jsonl"
+    _plant(legacy, {name: _row("tomb-1")})
+    _plant(target, {"events.jsonl": _row("keep")})
+
+    record = buckets.migrate(link)
+
+    assert record["ledgers"] == {name: 1}
+    assert record["leftovers"] == []
+    assert _row("tomb-1").strip() in (target / name).read_text(
+        encoding="utf-8")
+    assert not (legacy / name).exists()
+
+
+def test_the_merge_set_is_the_registry_mergeable_column(
+        linked, tmp_checkpoint_dir, monkeypatch):
+    """Drop trust.jsonl's `mergeable` flag and the migration treats it as a
+    file it does not understand: left in place and reported, not moved."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    _plant(legacy, {"events.jsonl": _row("e1"), "trust.jsonl": _row("t1")})
+    _plant(target, {"events.jsonl": _row("e0")})
+    monkeypatch.setattr(surfaces, "SURFACES", tuple(
+        s._replace(mergeable=False) if s.shape.endswith("/trust.jsonl")
+        else s for s in surfaces.SURFACES))
+
+    record = buckets.migrate(link)
+
+    assert "trust.jsonl" not in record["ledgers"]
+    assert record["leftovers"] == ["trust.jsonl"]
+    assert (legacy / "trust.jsonl").exists()
 
 
 def test_a_merge_leaves_an_unknown_file_alone_and_reports_it(
@@ -861,13 +902,11 @@ def test_a_legacy_bucket_with_no_pointers_leaves_the_chain_alone(
 def test_every_bucket_ledger_shape_the_registry_declares_is_merged():
     """The registry is the single declaration of what daimon writes; this
     verb has to move all of it. A new bucket ledger that lands there and not
-    in LEDGERS would be left behind by every migration, silently."""
-    from daimon_briefing import surfaces
-
+    unmergeable would be left behind by every migration, silently."""
     declared = {s.shape.rsplit("/", 1)[-1] for s in surfaces.SURFACES
                 if s.shape.startswith("checkpoints/{slug}/")
                 and s.shape.endswith(".jsonl")}
-    assert declared == set(buckets.LEDGERS)
+    assert declared == set(surfaces.mergeable_ledgers())
 
 
 def test_a_flat_checkpoint_file_is_never_touched(linked, tmp_checkpoint_dir):

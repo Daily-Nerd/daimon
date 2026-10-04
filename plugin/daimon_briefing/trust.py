@@ -9,9 +9,9 @@ act on, such as a planted instruction or a fabricated decision.
 
 This module is the discrete, human-only, LATCHED exception: a value a human
 has quarantined stays quarantined until a human releases it, no matter what
-machine signal fires. Nothing reads this ledger yet — it is written, folded,
-and registered here only. Wiring it into the briefing, recall, suggest, the
-MCP tools, carry, and `daimon_ui` is PR 2.
+machine signal fires. The briefing, recall (so suggest and the MCP recall
+tools too) and the cli withhold pool read the active quarantines through
+`active_value_keys` below (#1109 PR 2).
 
 Identity is VALUE-keyed, not id-keyed, and this is the module's central
 design fact (design doc §2): an item id a quarantine names can be bypassed
@@ -42,7 +42,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import channels, config, jsonl, normalize, policy, redact, schema, store
+from . import (channels, config, jsonl, normalize, policy, redact, schema, store,
+               surfaces)
 
 VERSION = 1
 EVENTS = frozenset({"quarantined", "confirmed", "dismissed", "released"})
@@ -92,11 +93,11 @@ _MAX_EVIDENCE = 24
 _MIN_VALUE_TEXT = 20
 
 # Every field of a ledger row that can hold plaintext (#645 discipline, same
-# declaration shape as refutations.py/amendments.py): one list, two
-# consumers — the deleter below and a future privacy auditor. `value_key` is
-# deliberately absent: it is a hash, never the text itself.
-_PLAINTEXT_FIELDS = ("reason",)
-_PLAINTEXT_LISTS = ("evidence",)
+# shape as refutations.py/amendments.py) is the `prose` column of this
+# ledger's registry row: one list, two consumers — the deleter below and the
+# privacy auditor. `value_key` is deliberately absent: it is a hash, never
+# the text itself.
+_LEDGER = "trust.jsonl"
 
 
 class TrustError(ValueError):
@@ -386,10 +387,8 @@ def active_value_keys(project_dir=None) -> set[tuple[str, str]]:
     Scoped by kind, not a bare set of value keys: a decision and a belief
     that happen to canonicalize identically are two distinct quarantines
     (design §2), and collapsing them into one flat key set here would let
-    quarantining one silently withhold the other once something reads this.
-    Exported now, unread by anything in this PR, so the one read a future
-    withholding pass (PR 2: briefing/recall/MCP/carry/`daimon_ui`) needs can
-    be added without touching this module's fold again."""
+    quarantining one silently withhold the other. The one read every
+    withholding pass (briefing, recall, cli) shares."""
     return {(record["kind"], record["value_key"])
             for record in records(project_dir=project_dir).values()
             if record["state"] == "active" and record.get("value_key")}
@@ -496,32 +495,18 @@ def plaintext_values(row: dict) -> list[str]:
     that keeps `refutations.py`'s `anchors`/`evidence` out of its own
     by-value menu (offering one by value would understate the deleter's
     reach)."""
-    out: list[str] = []
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.append(value)
-    return out
+    return surfaces.prose_values(surfaces.bucket_ledger(_LEDGER).prose, row,
+                                 scalars_only=True)
 
 
 def row_content_keys(row: dict) -> set[str]:
     """Canonical keys for every plaintext field this row carries (#645).
 
-    The one reader of `_PLAINTEXT_FIELDS`/`_PLAINTEXT_LISTS`, so the deleter
+    The one reader of the registry's `prose` column, so the deleter
     below and a future privacy auditor cannot drift apart about what counts
     as plaintext on this surface."""
-    out: set[str] = set()
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.add(normalize.content_key(value))
-    for field in _PLAINTEXT_LISTS:
-        values = row.get(field)
-        if isinstance(values, list):
-            for value in values:
-                if isinstance(value, str) and value.strip():
-                    out.add(normalize.content_key(value))
-    return out
+    return {normalize.content_key(value) for value in surfaces.prose_values(
+        surfaces.bucket_ledger(_LEDGER).prose, row)}
 
 
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:

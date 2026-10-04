@@ -41,7 +41,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import config, jsonl, normalize, policy, redact, store
+from . import config, jsonl, normalize, policy, redact, store, surfaces
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself (see the refutations table for the
 # full argument). Importing the table keeps a future channel tier ("ui",
@@ -93,11 +93,12 @@ _ITEM_ID_RE = re.compile(r"[orsuc]-[0-9a-f]{6,40}(?:-\d+)?")
 _SPACE_RE = re.compile(r"\s+")
 _MAX_TEXT = 2000
 
-# Every field of a ledger row that can hold plaintext (#645 discipline).
-# One declaration, two consumers: `forget_content_key` decides which records
-# a deletion reaches, and `privacy.audit_project` decides which fields it
-# hashes when proving the deletion happened.
-_PLAINTEXT_FIELDS = ("evidence", "note")
+# Every field of a ledger row that can hold plaintext (#645 discipline) is the
+# `prose` column of this ledger's registry row. One declaration, two
+# consumers: `forget_content_key` decides which records a deletion reaches,
+# and `privacy.audit_project` decides which fields it hashes when proving the
+# deletion happened.
+_LEDGER = "amendments.jsonl"
 
 
 class AmendmentError(ValueError):
@@ -557,26 +558,18 @@ def plaintext_values(row: dict) -> list[str]:
     is deliberately absent everywhere here: it is a bounded transcript role
     token (_ROLE_MAX), not item text, the same reasoning that keeps `author`
     out of the refutation ledger's set."""
-    out: list[str] = []
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.append(value)
-    return out
+    return surfaces.prose_values(surfaces.bucket_ledger(_LEDGER).prose, row,
+                                 scalars_only=True)
 
 
 def row_content_keys(row: dict) -> set[str]:
     """Canonical keys for every plaintext field this row carries (#645).
 
-    The one reader of _PLAINTEXT_FIELDS, so the deleter below and
+    The one reader of the registry's `prose` column, so the deleter below and
     `privacy.audit_project` cannot drift apart about what counts as
     plaintext on this surface."""
-    out: set[str] = set()
-    for field in _PLAINTEXT_FIELDS:
-        value = row.get(field)
-        if isinstance(value, str) and value.strip():
-            out.add(normalize.content_key(value))
-    return out
+    return {normalize.content_key(value) for value in surfaces.prose_values(
+        surfaces.bucket_ledger(_LEDGER).prose, row)}
 
 
 def _rewrite_without(doomed: set[str], project_dir=None) -> list[str]:

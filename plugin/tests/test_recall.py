@@ -387,6 +387,54 @@ def test_event_resolution_sets_superseded_flag(tmp_checkpoint_dir, monkeypatch):
     assert by_text["does the gannet importer need locks"]["superseded_by"] is None
 
 
+def test_search_notices_an_event_resolved_after_the_index_was_built(
+        tmp_checkpoint_dir, monkeypatch):
+    """Scar 0107's shape for events.jsonl: build the index FIRST, write the
+    ledger through the real writer SECOND, query with no manual rebuild."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint("S-old", _cp(
+        "S-old", questions=[
+            {"text": "should the gannet exporter batch writes",
+             "trust": "inferred", "id": "o-111aaa"}],
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/fp-ev")
+    recall.warm()
+    hits = recall.search("gannet", project_dir="/repo/fp-ev")
+    assert hits and hits[0]["superseded_by"] is None
+
+    store.append_event("o-111aaa", "resolved", project_dir="/repo/fp-ev")
+
+    hits = recall.search("gannet", project_dir="/repo/fp-ev")
+    assert hits and hits[0]["superseded_by"] == "resolved"
+
+
+def test_fingerprint_reads_the_registry_not_a_hand_kept_tuple(
+        tmp_checkpoint_dir, monkeypatch):
+    """The fingerprint's ledger set is surfaces.SURFACES: drop trust.jsonl's
+    index_content flag and a trust write no longer moves the fingerprint."""
+    from daimon_briefing import surfaces
+
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    store.write_checkpoint(
+        "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
+        project_dir="/repo/fp-reg")
+    before = recall._fingerprint()
+    trust.propose(text=_QVALUE, kind="decision", reason="fabricated finding",
+                  evidence=["issue:1109"], channel="cli-tty",
+                  project_dir="/repo/fp-reg")
+    assert recall._fingerprint() != before
+
+    undeclared = tuple(
+        s._replace(index_content=False) if s.shape.endswith("/trust.jsonl")
+        else s for s in surfaces.SURFACES)
+    monkeypatch.setattr(surfaces, "SURFACES", undeclared)
+    stale = recall._fingerprint()
+    # a second trust write: invisible once the registry stops declaring it
+    trust.propose(text=_QVALUE + " again", kind="decision",
+                  reason="fabricated again", evidence=["issue:1109"],
+                  channel="cli-tty", project_dir="/repo/fp-reg")
+    assert recall._fingerprint() == stale
+
+
 def test_supersede_candidate_status_never_marks(tmp_checkpoint_dir, monkeypatch):
     # Candidates are the UNCONFIRMED tier (#111) — only a confirmed
     # resolution may flag.
@@ -2124,8 +2172,8 @@ def test_suggest_withholds_quarantined_value(tmp_checkpoint_dir, monkeypatch):
 # full rebuild that already reflects it — they give zero signal about
 # staleness. These build/warm the index through the NORMAL read path FIRST,
 # confirm (or release) the quarantine through the real write path SECOND,
-# and never call rebuild() manually anywhere below — only store.INDEX_CONTENT_LEDGERS
-# listing trust.jsonl (recall._fingerprint's own contract) makes the second
+# and never call rebuild() manually anywhere below — only the registry's
+# index_content column listing trust.jsonl (recall._fingerprint's own contract) makes the second
 # read notice anything changed.
 
 

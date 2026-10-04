@@ -38,7 +38,7 @@ from pathlib import Path
 from types import ModuleType
 
 from . import (config, jsonl, normalize, policy, receipts, redact, schema,
-               serializer, teamproject)
+               serializer, surfaces, teamproject)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -2110,21 +2110,6 @@ def append_verification(item_ref: str, check: str, reason: str,
         return False
 
 
-# Ledgers recall's rebuild folds into index COLUMNS or drops ROWS by reading:
-# events.jsonl -> superseded_by (the resolutions fold, #234), verification.jsonl
-# -> invalidated_by (#835), trust.jsonl -> row deletion by (kind, value_key)
-# (#1109 PR 2's _apply_quarantine_withholding). Every name here must be
-# fingerprint INPUT in recall._fingerprint (#245's lesson) — a fold-able ledger
-# missing from that walk serves stale rows until an unrelated checkpoint write
-# happens to invalidate the db. Confirming a quarantine AFTER the index was
-# built is exactly this failure: the ledger changed, the fingerprint didn't,
-# and search/suggest/MCP recall keep serving the item until something else
-# touches the bucket. recall references this tuple, so adding a fourth
-# fold-able ledger without wiring the fingerprint fails loudly in its tests
-# instead of dodging the walk.
-INDEX_CONTENT_LEDGERS = ("events.jsonl", "verification.jsonl", "trust.jsonl")
-
-
 def verification_rows(project_dir=None, *, bucket=None) -> list:
     """Parsed rejection-ledger rows, oldest first (#835) — the read half of
     append_verification, for recall's invalidated_by fold (and the parse
@@ -2578,13 +2563,14 @@ def scrub_event_fields(content_hash: str, project_dir=None) -> int:
     if path is None:
         return 0
     marker = _FORGOTTEN_FIELD_MARKER.format(content_hash)
+    event_prose = surfaces.scalar_prose_fields("events.jsonl")
     admitted: dict | None = None
 
     def redact_row(line, row):
         if not isinstance(row, dict):
             return line
         changed = False
-        for field in ("item_text", "status", "note"):
+        for field in event_prose:
             value = row.get(field)
             if (isinstance(value, str) and value
                     and normalize.content_key(value) == content_hash):

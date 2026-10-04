@@ -117,7 +117,7 @@ def test_every_plaintext_ledger_field_is_scanned_not_only_the_subject(
     """The scanner and the deleter must agree on WHICH fields hold plaintext.
     A field the audit reports but forget cannot reach is a permanent exit 1;
     a field forget reaches but the audit ignores is a silent exit 0 over live
-    plaintext. Both sides read refutations._PLAINTEXT_FIELDS."""
+    plaintext. Both sides read the registry's refutations `prose` column."""
     _checkpoint()
     _refute(verdict=CANARY)
     key = _tombstone(CANARY)
