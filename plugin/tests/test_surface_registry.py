@@ -511,6 +511,21 @@ def test_every_plaintext_bucket_ledger_has_an_audit_scan_block():
         assert const in used, f"audit_project never scans {const}"
 
 
+def test_bucket_ledger_lookups_skip_globbed_and_nested_jsonl_shapes(
+        monkeypatch):
+    """Only fixed-name ledgers directly under the bucket are ledgers: a
+    wildcard or deeper jsonl shape must not become a lookup name."""
+    monkeypatch.setattr(surfaces, "SURFACES", (
+        surfaces.Surface("checkpoints/{slug}/*.jsonl", "x.y", True,
+                         "rewrite", "forget", mergeable=True),
+        surfaces.Surface("checkpoints/{slug}/sub/deep.jsonl", "x.y", True,
+                         "rewrite", "forget", mergeable=True),
+        surfaces.Surface("checkpoints/{slug}/ok.jsonl", "x.y", True,
+                         "rewrite", "forget", mergeable=True)))
+    assert surfaces.bucket_ledger_names() == ("ok.jsonl",)
+    assert surfaces.mergeable_ledgers() == ("ok.jsonl",)
+
+
 
 # ---- request_policy_tombstones.jsonl is declared (#1132) -------------------
 
