@@ -13,9 +13,14 @@ reader treats a file; enforcement is a later stage.
 """
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, jsonl, normalize, privacy, store, surfaces
+
+MARKER_NAME = store._LEDGER_CENSUS_NAME
+MARKER_VERSION = 1
 
 _MIGRATIONS = "migrations.jsonl"
 _LOG_LEDGERS = ("checks.jsonl", "recall-delivery.jsonl")
@@ -89,3 +94,20 @@ def census_machine() -> dict:
     for path in sorted(root.rglob("tombstones.jsonl")):
         found[f"team/{path.relative_to(root).as_posix()}"] = path
     return {key: _counts(jsonl.read(path)) for key, path in found.items()}
+
+
+def record_marker(slug: str) -> None:
+    """Stamp `checkpoints/<slug>/.ledger-census` with this bucket's census,
+    once. An existing marker is left alone and costs one stat. The marker
+    carries a version, a UTC stamp and the per-ledger state and counts: no
+    row content, no checkpoint-surface walk (that part of the census grows
+    with the whole store, and a first write should not pay for it). Raises on
+    failure; the caller (`store._record_ledger_census`) owns the swallowing."""
+    path = config.checkpoint_dir() / slug / MARKER_NAME
+    if path.exists():
+        return
+    census = census_bucket(slug, checkpoints=False)
+    marker = {"version": MARKER_VERSION,
+              "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "ledgers": census["ledgers"]}
+    store._atomic_write(path, json.dumps(marker, indent=2) + "\n")

@@ -212,6 +212,15 @@ SURFACES: tuple[Surface, ...] = (
     #    exists for it. `config.layer_scopes` is the one reader. --
     Surface("checkpoints/{slug}/root", "store.record_bucket_root",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
+    # -- the ledger census marker (#1132 PR 2b): written once per bucket, on
+    #    its first checkpoint write, by ledger_census.record_marker. A version,
+    #    a UTC stamp, and per bucket-ledger FILE NAME -> {state, torn, split,
+    #    garbage, tombstoned_present}: closed-vocabulary states and integer
+    #    counts. `record_marker` builds the whole document from the census,
+    #    which returns names, states and counts and no row content, so there is
+    #    no path from item text into it and nothing for forget to reach. --
+    Surface("checkpoints/{slug}/.ledger-census", "ledger_census.record_marker",
+            False, "exempt-no-plaintext", "none", audit_exempt=True),
     # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
     #    only — no field can carry item text (relations.py refuses at the
     #    seam). plaintext=True anyway, deliberately: an edge is an

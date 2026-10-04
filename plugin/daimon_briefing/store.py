@@ -129,6 +129,7 @@ def project_bucket(project_dir) -> str | None:
 
 
 _BUCKET_ROOT_NAME = "root"
+_LEDGER_CENSUS_NAME = ".ledger-census"  # #1132: see ledger_census.record_marker
 
 
 def record_bucket_root(project_dir) -> None:
@@ -163,6 +164,22 @@ def record_bucket_root(project_dir) -> None:
         _atomic_write(root_path, f"{resolved}\n")
     except OSError:
         pass
+
+
+def _record_ledger_census(slug: str) -> None:
+    """Run the ledger census once for a bucket and stamp the result (#1132).
+
+    Best-effort in the strictest sense: any failure, from the census or the
+    marker write, is logged at debug and dropped, because this rides along
+    with a checkpoint write that has already succeeded and must stay the same
+    write. A failure leaves no marker, so the next write retries."""
+    if config.is_disabled():
+        return
+    try:
+        from . import ledger_census  # local: census imports this module
+        ledger_census.record_marker(slug)
+    except Exception:
+        log.debug("ledger census marker failed", exc_info=True)
 
 
 def bucket_root(project_dir_or_slug) -> str | None:
@@ -1426,6 +1443,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
         pdir = d / slug
         pdir.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        _record_ledger_census(slug)  # #1132: one census per bucket, ever
         with _pointer_lock(pdir):
             if not _pointer_regresses(pdir, new_epoch):
                 if rotate:
