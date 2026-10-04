@@ -1042,6 +1042,56 @@ def _requests_line(data: dict) -> str | None:
             "daimon request list / inbox")
 
 
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _ledger_state_text(entry: dict) -> str:
+    counts = ", ".join(f"{entry[k]} {k}" for k in ("torn", "split", "garbage")
+                       if entry.get(k))
+    return f"{entry['state']} ({counts})" if counts else str(entry["state"])
+
+
+def _ledger_lines(data: dict) -> list:
+    """#1132 PR 2b: the ledger census on `daimon status`.
+
+    One compact line when every bucket ledger is ok or absent. Otherwise one
+    line per ledger that is not, or that still carries a forgotten value, and
+    one for undeclared files. Counts and names only: the census never holds a
+    value, so there is nothing here to leak. Read-only, and it never changes
+    status's exit code."""
+    census = data.get("ledgers")
+    if not isinstance(census, dict):
+        return []
+    lines = []
+    tally: dict = {}
+    for name, entry in (census.get("ledgers") or {}).items():
+        tombstoned = entry.get("tombstoned_present") or 0
+        if entry["state"] in ("ok", "absent") and not tombstoned:
+            tally[entry["state"]] = tally.get(entry["state"], 0) + 1
+            continue
+        text = _ledger_state_text(entry)
+        if tombstoned:
+            text += ", " + _plural(tombstoned, "row still carries",
+                                   "rows still carry") + " a forgotten value"
+        lines.append(f"⚠ ledger {name}: {text}")
+    for name, entry in (census.get("other") or {}).items():
+        if entry["state"] not in ("ok", "absent"):
+            lines.append(f"⚠ ledger file {name}: {_ledger_state_text(entry)}")
+    residue = (census.get("checkpoints") or {}).get("tombstoned_present") or 0
+    if residue:
+        lines.append("⚠ checkpoint surfaces: " + _plural(
+            residue, "item still carries", "items still carry")
+            + " a forgotten value")
+    if census.get("undeclared"):
+        lines.append("⚠ undeclared ledger file: "
+                     + ", ".join(census["undeclared"]))
+    if not lines and tally:
+        lines.append("ledgers: " + ", ".join(
+            f"{tally[s]} {s}" for s in ("ok", "absent") if s in tally))
+    return lines
+
+
 def _ruling_echo_line(data: dict) -> str | None:
     """#693: one line when the admission filter has dropped a ruling echo on
     this install; silent otherwise. Its own counter, never folded into the
@@ -1186,6 +1236,8 @@ def _plain_status(data: dict) -> None:
     ck_line = _checks_status_line(data)
     if ck_line:
         print(ck_line)  # #943: one line, only when a check exists
+    for line in _ledger_lines(data):
+        print(line)  # #1132: compact when fine, one line per finding
     proj, glob, last = data["proj"], data["glob"], data["last"]
     print(f"project: {data['project']}")
     if proj["exists"]:
@@ -1296,6 +1348,8 @@ def _rich_status(data: dict) -> None:
     ck_line = _checks_status_line(data)
     if ck_line:
         console.print(ck_line)  # #943: one line, only when a check exists
+    for line in _ledger_lines(data):
+        console.print(line, markup=False)  # #1132: same lines as plain
     proj, glob, last = data["proj"], data["glob"], data["last"]
     table = Table(title=f"daimon status — {data['project']}", title_justify="left",
                   show_header=True, header_style="bold")

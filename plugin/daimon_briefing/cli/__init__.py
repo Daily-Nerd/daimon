@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 # Aliased: `trust` below (from . import (..., trust)) already binds the
 # `cli.trust` VERB submodule at this scope — this is the LIBRARY ledger
 # module (daimon_briefing.trust), needed here only to read
@@ -2867,6 +2867,16 @@ def _status_checks(project_dir, now: float):
             "drift": checks.audit(project_dir).drift}
 
 
+def _status_ledgers(slug) -> dict | None:
+    """The ledger census for `status`: this bucket's ledgers plus the
+    machine-level ledger files under "other". None when the project has no
+    bucket name to census."""
+    if not slug:
+        return None
+    return {**ledger_census.census_bucket(slug),
+            "other": ledger_census.census_machine()}
+
+
 def _status_world(project_arg=None) -> dict:
     """Every status fact, computed once — the single source for the plain
     render, `status --json`, and the MCP status tool (#261)."""
@@ -3010,6 +3020,12 @@ def _status_world(project_arg=None) -> dict:
         checks_fact = _status_checks(project, now)
     except Exception:
         checks_fact = None
+    # #1132 PR 2b: the ledger census. Read-only and fail-open like every other
+    # best-effort status fact; None drops the lines and nulls the payload field.
+    try:
+        ledgers = _status_ledgers(identity["slug"])
+    except Exception:
+        ledgers = None
     # 0 = some checkpoint would back a briefing; 1 = neither pointer exists
     # (cheap existence test for scripts / the FR #23 hook guard).
     rc = 0 if (proj["exists"] or glob["exists"]) else 1
@@ -3025,7 +3041,8 @@ def _status_world(project_arg=None) -> dict:
         "rescue_gap": rescue_gap,
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "requests": request_counts,
-        "handoff": handoff, "checks": checks_fact, "rc": rc,
+        "handoff": handoff, "checks": checks_fact, "ledgers": ledgers,
+        "rc": rc,
     }
 
 
@@ -3057,6 +3074,9 @@ def status_payload(project_arg=None) -> tuple:
         # unmigrated legacy bucket (null when there is none) and the slugs
         # this bucket absorbed.
         "identity": w["identity"],
+        # #1132 PR 2b: the ledger census, appended at the tail for the same
+        # reason. Counts and states only; `null` when the census could not run.
+        "ledgers": w["ledgers"],
     }
     return payload, w["rc"]
 
@@ -3086,6 +3106,7 @@ def _cmd_status(args) -> int:
         "requests": w["requests"],
         "handoff": w["handoff"],
         "checks": w["checks"],
+        "ledgers": w["ledgers"],
     })
     return w["rc"]
 

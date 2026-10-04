@@ -808,7 +808,7 @@ def test_cli_status_json_shape(
                          "plugin_drift", "skill_drift", "rescue_gap",
                          "rescue_posture",
                          "forget_hits", "requests", "handoff", "checks",
-                         "identity"}
+                         "identity", "ledgers"}
     # #694 PR 3: the requests summary — {open_sent, awaiting_you}, always
     # present (zeros when nothing is recorded, never absent/null).
     assert data["requests"] == {"open_sent": 0, "awaiting_you": 0}
