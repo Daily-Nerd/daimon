@@ -246,6 +246,23 @@ SURFACES: tuple[Surface, ...] = (
             True, "rewrite", "forget", fold="trust.fold",
             prose=(FieldPath(("reason",)), FieldPath(("evidence",), True)),
             index_content=True, mergeable=True),
+    # -- the request-policy tombstones (#961 slice 5): one row per activation
+    #    interval of a ruling that forget has since removed, so a forgotten
+    #    ruling's `info` asks do not silently flip to `work` (refutations.
+    #    _write_policy_tombstones writes, _read_policy_tombstones reads).
+    #    A row is {sender, to, kind, verb, by, ruling_id, policy_sha256,
+    #    active_from, active_until}: two bucket slugs, three closed-enum
+    #    strings, an opaque ruling id, a hash and two integer stamps. The
+    #    writer states that none of it is ruling prose, so nothing here is
+    #    reachable by value and exempt-no-plaintext is the true class.
+    #    Mergeable because the reader folds the rows into a SET of tuples:
+    #    order never matters and a duplicated line adds nothing, so a
+    #    legacy-bucket merge by concatenation is safe. Left undeclared until
+    #    #1132, so a migration stranded it and the audit called it unknown. --
+    Surface("checkpoints/{slug}/request_policy_tombstones.jsonl",
+            "refutations._write_policy_tombstones", False,
+            "exempt-no-plaintext", "none", audit_exempt=True,
+            mergeable=True),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,

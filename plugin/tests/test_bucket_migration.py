@@ -287,6 +287,26 @@ def test_every_bucket_ledger_the_census_lists_is_merged(linked,
             encoding="utf-8")
 
 
+def test_a_legacy_bucket_s_policy_tombstones_move_with_it(
+        linked, tmp_checkpoint_dir):
+    """request_policy_tombstones.jsonl outlives a forgotten ruling's rows, so
+    stranding it in the legacy bucket re-flips past `info` asks to `work`."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    name = "request_policy_tombstones.jsonl"
+    _plant(legacy, {name: _row("tomb-1")})
+    _plant(target, {"events.jsonl": _row("keep")})
+
+    record = buckets.migrate(link)
+
+    assert record["ledgers"] == {name: 1}
+    assert record["leftovers"] == []
+    assert _row("tomb-1").strip() in (target / name).read_text(
+        encoding="utf-8")
+    assert not (legacy / name).exists()
+
+
 def test_the_merge_set_is_the_registry_mergeable_column(
         linked, tmp_checkpoint_dir, monkeypatch):
     """Drop trust.jsonl's `mergeable` flag and the migration treats it as a

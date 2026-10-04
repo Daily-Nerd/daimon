@@ -13,6 +13,7 @@ its exemptions from it; the write-audit guard refuses shapes it has never
 seen declared; a plaintext shape with no reachable deletion must name the
 tracking issue for its gap.
 """
+import json
 import os
 import time
 
@@ -362,7 +363,7 @@ def test_the_mergeable_ledgers_are_pinned_in_order():
     assert surfaces.mergeable_ledgers() == (
         "events.jsonl", "refutations.jsonl", "amendments.jsonl",
         "requests.jsonl", "verification.jsonl", "forget-hits.jsonl",
-        "relations.jsonl", "trust.jsonl")
+        "relations.jsonl", "trust.jsonl", "request_policy_tombstones.jsonl")
 
 
 def test_the_index_content_ledgers_are_pinned_and_cover_what_recall_folds():
@@ -509,3 +510,34 @@ def test_every_plaintext_bucket_ledger_has_an_audit_scan_block():
     for const in names.values():
         assert const in used, f"audit_project never scans {const}"
 
+
+
+# ---- request_policy_tombstones.jsonl is declared (#1132) -------------------
+
+_TOMBSTONE_ROW = {
+    "sender": "a-bucket", "to": "b-bucket", "kind": "info", "verb": "open",
+    "by": "human", "ruling_id": "r-0123456789ab",
+    "policy_sha256": "0" * 64, "active_from": 1, "active_until": 2}
+
+
+def test_request_policy_tombstones_are_declared_structural_and_mergeable():
+    row = surfaces.bucket_ledger("request_policy_tombstones.jsonl")
+    assert row.owner == "refutations._write_policy_tombstones"
+    assert row.plaintext is False and row.audit_exempt is True
+    assert row.delete == "exempt-no-plaintext"
+    assert row.mergeable is True and row.index_content is False
+    assert row.prose == ()
+    # every field is a bucket slug, a closed-enum string, an opaque id, a
+    # hash or an integer stamp: nothing a forget could be asked to reach
+    assert surfaces.match("checkpoints/{slug}/request_policy_tombstones.jsonl")
+
+
+def test_the_audit_does_not_classify_policy_tombstones_as_unknown(
+        tmp_checkpoint_dir):
+    from daimon_briefing import refutations
+
+    _write_min_checkpoint()
+    path = refutations._tombstone_path(_P)
+    path.write_text(json.dumps(_TOMBSTONE_ROW) + "\n", encoding="utf-8")
+    result = privacy.audit_project(project_dir=_P)
+    assert not any(path.name in u for u in result["unscannable"])
