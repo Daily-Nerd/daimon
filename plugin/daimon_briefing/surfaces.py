@@ -555,8 +555,9 @@ def mergeable_ledgers() -> tuple[str, ...]:
 
 
 def index_content_ledgers() -> frozenset:
-    """Bucket file NAMES whose mtime/size feed recall's index fingerprint
-    (store.INDEX_CONTENT_LEDGERS was this view; scar 0107)."""
+    """Bucket file NAMES whose mtime/size feed recall's index fingerprint:
+    the ledgers rebuild() folds into index columns or row drops (#245,
+    scar 0107). Names, never a glob."""
     return frozenset(n for n, s in _bucket_ledger_rows() if s.index_content)
 
 

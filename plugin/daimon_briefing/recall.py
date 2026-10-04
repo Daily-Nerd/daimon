@@ -60,7 +60,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (buckets, config, normalize, policy, redact, schema, scoring,
-               store, teamproject, trust)
+               store, surfaces, teamproject, trust)
 
 log = logging.getLogger("daimon.recall")
 
@@ -321,6 +321,7 @@ def _fingerprint() -> str:
     that visible. Computed BEFORE a scan so a race errs toward one extra
     rebuild, never toward serving stale rows."""
     paths: list[Path] = []
+    index_ledgers = surfaces.index_content_ledgers()
     d = config.checkpoint_dir()
     try:
         for e in d.iterdir():
@@ -334,13 +335,12 @@ def _fingerprint() -> str:
                 # verification.jsonl joined the same club in #835
                 # (_apply_verification_invalidations folds it into
                 # invalidated_by): new contradiction evidence must rebuild,
-                # never serve stale NULLs. The name set is store's contract
-                # (INDEX_CONTENT_LEDGERS), so a third fold-able ledger
-                # cannot dodge this walk unnoticed.
+                # never serve stale NULLs. The name set is the registry's
+                # `index_content` column (surfaces.index_content_ledgers).
                 paths.extend(p for p in e.iterdir()
                              if p.is_file()
                              and (p.suffix == ".json"
-                                  or p.name in store.INDEX_CONTENT_LEDGERS))
+                                  or p.name in index_ledgers))
     except OSError:
         pass
     try:

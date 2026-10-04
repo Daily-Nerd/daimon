@@ -2110,21 +2110,6 @@ def append_verification(item_ref: str, check: str, reason: str,
         return False
 
 
-# Ledgers recall's rebuild folds into index COLUMNS or drops ROWS by reading:
-# events.jsonl -> superseded_by (the resolutions fold, #234), verification.jsonl
-# -> invalidated_by (#835), trust.jsonl -> row deletion by (kind, value_key)
-# (#1109 PR 2's _apply_quarantine_withholding). Every name here must be
-# fingerprint INPUT in recall._fingerprint (#245's lesson) — a fold-able ledger
-# missing from that walk serves stale rows until an unrelated checkpoint write
-# happens to invalidate the db. Confirming a quarantine AFTER the index was
-# built is exactly this failure: the ledger changed, the fingerprint didn't,
-# and search/suggest/MCP recall keep serving the item until something else
-# touches the bucket. recall references this tuple, so adding a fourth
-# fold-able ledger without wiring the fingerprint fails loudly in its tests
-# instead of dodging the walk.
-INDEX_CONTENT_LEDGERS = ("events.jsonl", "verification.jsonl", "trust.jsonl")
-
-
 def verification_rows(project_dir=None, *, bucket=None) -> list:
     """Parsed rejection-ledger rows, oldest first (#835) — the read half of
     append_verification, for recall's invalidated_by fold (and the parse
