@@ -50,6 +50,13 @@ DELETE_STRATEGIES = frozenset({
 })
 
 
+class FieldPath(NamedTuple):
+    """One prose field of a ledger row: a key path into the row dict.
+    `is_list` marks a top-level key holding a list of strings."""
+    path: tuple[str, ...]
+    is_list: bool = False
+
+
 class Surface(NamedTuple):
     shape: str          # path pattern relative to ~/.daimon (syntax above)
     owner: str          # writer, as module.function
@@ -58,12 +65,29 @@ class Surface(NamedTuple):
     walker: str         # who walks it: forget | audit | recall | reaper | none
     issue: str = ""     # required when delete == "known-gap"
     audit_exempt: bool = False  # feeds privacy's name/suffix exemption sets
+    # -- ledger columns (#1132), jsonl shapes under checkpoints/{slug}/ only.
+    #    A column is filled only where its consumer already reads it here;
+    #    read, write, deleter and phase stay empty until theirs do. --
+    fold: str = ""                    # dotted pure fold, e.g. "trust.fold"
+    prose: tuple[FieldPath, ...] = ()  # plaintext row fields
+    read: tuple[str, ...] = ()        # health read policy (later PR)
+    write: tuple[str, ...] = ()       # health write policy (later PR)
+    index_content: bool = False       # recall._fingerprint input (scar 0107)
+    mergeable: bool = False           # a legacy-bucket migration moves it
+    deleter: str = ""                 # forget registry (later PR)
+    phase: str = ""                   # forget registry (later PR)
+
+
+def _scalars(*names: str) -> tuple[FieldPath, ...]:
+    return tuple(FieldPath((n,)) for n in names)
 
 
 SURFACES: tuple[Surface, ...] = (
     # -- per-project bucket ledgers (specific before the *.json generics) --
     Surface("checkpoints/{slug}/events.jsonl", "store.append_event",
-            True, "append-tombstone", "audit"),
+            True, "append-tombstone", "audit",
+            prose=_scalars("note", "item_text", "status"),
+            index_content=True, mergeable=True),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
     #    carries item PLAINTEXT by design (subject, verdict, scope, note,
     #    revisit_when, anchors, evidence), so it sits in the checkpoint's
@@ -110,8 +134,16 @@ SURFACES: tuple[Surface, ...] = (
     #    already allows candidates to expire (research/experiments/
     #    refutation-573/README.md). An active-record reaper would falsify a
     #    published claim and needs the contract amended first. --
+    #    `subject`..`note` are scalar prose; `anchors`/`evidence` are lists;
+    #    `check.match`/`check.body` (#943) are nested. `author` is absent on
+    #    purpose: a person's name, not item text. --
     Surface("checkpoints/{slug}/refutations.jsonl", "refutations.append",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget", fold="refutations.fold",
+            prose=_scalars("subject", "verdict", "scope", "revisit_when",
+                           "note") + (
+                FieldPath(("anchors",), True), FieldPath(("evidence",), True),
+                FieldPath(("check", "match")), FieldPath(("check", "body"))),
+            mergeable=True),
     # -- the amendment ledger (#691): the fourth bucket ledger — evidence
     #    quotes and human-channel notes, both length-capped, both plaintext
     #    by design, so it sits in the checkpoint's deletion category with
@@ -132,7 +164,8 @@ SURFACES: tuple[Surface, ...] = (
     #    is forgotten; the audit computes AND prints record/row/byte counts
     #    (render_privacy_audit) so growth is measured, never silent. --
     Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget", fold="amendments.fold",
+            prose=_scalars("evidence", "note"), mergeable=True),
     # -- the request ledger (#694): the fifth bucket ledger — one project's
     #    ask of another, so its rows carry the ask, its rationale, a human
     #    verdict note, and a completion quote: plaintext by design, in the
@@ -157,17 +190,19 @@ SURFACES: tuple[Surface, ...] = (
     #    render time and deliberately never deletes a record — a request
     #    that stopped mattering still happened. --
     Surface("checkpoints/{slug}/requests.jsonl", "requests.append",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget", fold="requests.fold",
+            prose=_scalars("ask", "why", "note", "evidence", "from_label",
+                           "act_author"), mergeable=True),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",
             "store.append_verification", False, "exempt-no-plaintext",
-            "none", audit_exempt=True),
+            "none", audit_exempt=True, index_content=True, mergeable=True),
     # store.record_forget_hits: {ts, key, reason?} — "NEVER the text or any
     # prefix"; reason (#693) is a closed-vocabulary code ("ruling-echo").
     Surface("checkpoints/{slug}/forget-hits.jsonl",
             "store.record_forget_hits", False, "exempt-no-plaintext",
-            "none", audit_exempt=True),
+            "none", audit_exempt=True, mergeable=True),
     # -- the bucket root record (#1092): one line, the absolute resolved
     #    directory that FIRST wrote to this bucket. store.record_bucket_root
     #    stamps it once, on the first ledger/checkpoint write, and never
@@ -191,7 +226,8 @@ SURFACES: tuple[Surface, ...] = (
     #    reports records/rows/bytes/by_state, so residue is a finding and
     #    growth is measured, never silent. --
     Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget", fold="relations.fold",
+            mergeable=True),
     # -- the trust ledger (#1109 Slice 1): a human-only quarantine verdict on
     #    a checkpoint value, append-only like refutations.jsonl, and in the
     #    same category — it carries item PLAINTEXT by design (`reason`,
@@ -207,7 +243,9 @@ SURFACES: tuple[Surface, ...] = (
     #    here so it can never repeat #645's unknown->unscannable->exit-3 arc
     #    the moment the first `daimon trust propose` runs. --
     Surface("checkpoints/{slug}/trust.jsonl", "trust.append",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget", fold="trust.fold",
+            prose=(FieldPath(("reason",)), FieldPath(("evidence",), True)),
+            index_content=True, mergeable=True),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,
@@ -474,6 +512,52 @@ def match(pattern: str) -> Surface | None:
         if _parts_match(tuple(s.shape.split("/")), parts):
             return s
     return None
+
+
+_BUCKET_LEDGER_PREFIX = "checkpoints/{slug}/"
+
+
+def _bucket_ledger_rows() -> list[tuple[str, Surface]]:
+    """(file name, row) for every fixed-name jsonl ledger in a bucket."""
+    out = []
+    for s in SURFACES:
+        if not (s.shape.startswith(_BUCKET_LEDGER_PREFIX)
+                and s.shape.endswith(".jsonl")):
+            continue
+        name = s.shape[len(_BUCKET_LEDGER_PREFIX):]
+        if "/" in name or any(c in name for c in "*?[{"):
+            continue
+        out.append((name, s))
+    return out
+
+
+def bucket_ledger(name: str) -> Surface:
+    """The registry row for a bucket ledger file name, e.g. "trust.jsonl".
+    Raises LookupError on an undeclared name: a consumer asking about a
+    ledger the registry never declared is a bug, not an empty answer."""
+    for ledger_name, s in _bucket_ledger_rows():
+        if ledger_name == name:
+            return s
+    raise LookupError(f"undeclared bucket ledger: {name!r}")
+
+
+def bucket_ledger_names(*, plaintext: bool | None = None) -> tuple[str, ...]:
+    """Every declared bucket ledger file name, in registry order; with
+    `plaintext` given, only the ledgers whose declaration matches."""
+    return tuple(n for n, s in _bucket_ledger_rows()
+                 if plaintext is None or s.plaintext == plaintext)
+
+
+def mergeable_ledgers() -> tuple[str, ...]:
+    """Ledger names a legacy-bucket migration moves, in registry order.
+    buckets.LEDGERS was this view."""
+    return tuple(n for n, s in _bucket_ledger_rows() if s.mergeable)
+
+
+def index_content_ledgers() -> frozenset:
+    """Bucket file NAMES whose mtime/size feed recall's index fingerprint
+    (store.INDEX_CONTENT_LEDGERS was this view; scar 0107)."""
+    return frozenset(n for n, s in _bucket_ledger_rows() if s.index_content)
 
 
 def exempt_names() -> frozenset:

@@ -297,3 +297,104 @@ def _write_min_checkpoint():
         "working_context": {"recent_decisions": [
             {"text": "a decision that stays", "trust": "inferred"}]},
     }, project_dir=_P)
+
+
+# ---- ledger columns (#1132) ------------------------------------------------
+
+
+def _bucket_jsonl():
+    return [s for s in surfaces.SURFACES
+            if s.shape.startswith("checkpoints/{slug}/")
+            and s.shape.endswith(".jsonl")]
+
+
+def test_field_paths_are_nonempty_tuples_of_str():
+    for s in surfaces.SURFACES:
+        for fp in s.prose:
+            assert isinstance(fp, surfaces.FieldPath), s.shape
+            assert isinstance(fp.path, tuple) and fp.path, s.shape
+            assert all(isinstance(p, str) and p for p in fp.path), s.shape
+            assert isinstance(fp.is_list, bool)
+            if fp.is_list:
+                assert len(fp.path) == 1, \
+                    f"{s.shape}: a list field is a top-level key"
+
+
+def test_no_ledger_column_is_filled_on_a_non_jsonl_shape():
+    jsonl = {s.shape for s in _bucket_jsonl()}
+    for s in surfaces.SURFACES:
+        filled = (s.fold or s.prose or s.read or s.write or s.index_content
+                  or s.mergeable or s.deleter or s.phase)
+        if filled:
+            assert s.shape in jsonl, f"{s.shape}: ledger column on a non-ledger"
+
+
+def test_every_nonempty_fold_resolves_to_a_callable():
+    import importlib
+
+    seen = 0
+    for s in surfaces.SURFACES:
+        if not s.fold:
+            continue
+        module, _, attr = s.fold.rpartition(".")
+        assert module and attr, f"{s.shape}: fold {s.fold!r} is not dotted"
+        fn = getattr(importlib.import_module(f"daimon_briefing.{module}"),
+                     attr, None)
+        assert callable(fn), f"{s.shape}: {s.fold} does not resolve"
+        seen += 1
+    assert seen, "at least one ledger declares a fold"
+
+
+def test_every_plaintext_value_keyed_bucket_ledger_declares_prose():
+    """relations.jsonl forgets by item id, so it is the one plaintext
+    ledger with a deleter and no prose columns."""
+    by_id = {"relations.jsonl"}
+    for s in _bucket_jsonl():
+        name = s.shape.rsplit("/", 1)[-1]
+        if s.plaintext and s.delete in ("rewrite", "append-tombstone") \
+                and name not in by_id:
+            assert s.prose, f"{s.shape}: value-keyed deleter, no prose"
+    assert surfaces.bucket_ledger("relations.jsonl").prose == ()
+
+
+def test_the_mergeable_ledgers_are_pinned_in_order():
+    """A literal on purpose: a silent registry edit must fail here."""
+    assert surfaces.mergeable_ledgers() == (
+        "events.jsonl", "refutations.jsonl", "amendments.jsonl",
+        "requests.jsonl", "verification.jsonl", "forget-hits.jsonl",
+        "relations.jsonl", "trust.jsonl")
+
+
+def test_the_index_content_ledgers_are_pinned_and_cover_what_recall_folds():
+    """recall folds events (resolutions), verification (invalidated_by) and
+    trust (quarantine withholding) into the index. Scar 0107."""
+    assert surfaces.index_content_ledgers() == frozenset(
+        {"events.jsonl", "verification.jsonl", "trust.jsonl"})
+
+
+def test_bucket_ledger_lookup_refuses_an_undeclared_name():
+    import pytest
+
+    with pytest.raises(LookupError):
+        surfaces.bucket_ledger("nonesuch.jsonl")
+    assert surfaces.bucket_ledger("trust.jsonl").fold == "trust.fold"
+
+
+def test_the_prose_declarations_are_pinned():
+    fp = surfaces.FieldPath
+
+    def scalars(*names):
+        return tuple(fp((n,)) for n in names)
+
+    assert surfaces.bucket_ledger("refutations.jsonl").prose == (
+        scalars("subject", "verdict", "scope", "revisit_when", "note")
+        + (fp(("anchors",), True), fp(("evidence",), True),
+           fp(("check", "match")), fp(("check", "body"))))
+    assert surfaces.bucket_ledger("amendments.jsonl").prose == scalars(
+        "evidence", "note")
+    assert surfaces.bucket_ledger("trust.jsonl").prose == (
+        fp(("reason",)), fp(("evidence",), True))
+    assert surfaces.bucket_ledger("requests.jsonl").prose == scalars(
+        "ask", "why", "note", "evidence", "from_label", "act_author")
+    assert surfaces.bucket_ledger("events.jsonl").prose == scalars(
+        "note", "item_text", "status")
