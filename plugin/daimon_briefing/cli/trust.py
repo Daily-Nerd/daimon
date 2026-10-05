@@ -59,7 +59,8 @@ def _record_line(record: dict) -> str:
     mark = {"candidate": "?", "active": "⛔", "dismissed": "×",
            "released": "✓"}.get(record["state"], "?")
     return (f"[{mark} {record['state']}] {record['quarantine_id']}  "
-            f"{record.get('kind')}  {record.get('reason', '')}")
+            f"{record.get('kind')}  "
+            f"{trust.display_text(record.get('reason', ''))}")
 
 
 def _cmd_trust_propose(args) -> int:
@@ -129,7 +130,7 @@ def _cmd_trust_show(args) -> int:
         lines.append(f"  Item: {record['item_id']}")
     lines.append(f"  Scope: {record.get('scope_slug', '')}")
     for item in record.get("evidence") or []:
-        lines.append(f"  Evidence: {item}")
+        lines.append(f"  Evidence: {trust.display_text(item)}")
     render.render_ledger_lines(lines)
     return 0
 
