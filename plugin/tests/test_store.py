@@ -342,10 +342,12 @@ def test_write_project_latest_is_atomic(tmp_checkpoint_dir, sample_checkpoint, m
     monkeypatch.setattr(store.os, "replace", spy)
     store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA")
     # session file + global latest + project latest + the #1092 bucket-root
-    # record (this is the FIRST write to this bucket), all via os.replace
-    assert len(calls) == 4
+    # record + the #1132 ledger-census marker (both stamped on the FIRST
+    # write to this bucket), all via os.replace
+    assert len(calls) == 5
     assert any(c.endswith("-Users-x-projA/latest.json") for c in calls)
     assert any(c.endswith("-Users-x-projA/root") for c in calls)
+    assert any(c.endswith("-Users-x-projA/.ledger-census") for c in calls)
 
 
 def test_read_latest_prefers_project(tmp_checkpoint_dir, sample_checkpoint):

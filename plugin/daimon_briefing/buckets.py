@@ -62,8 +62,12 @@ RECORD_VERSION = 1
 # into. The target either already carries its own record or gets one, first
 # writer wins, the next time anything writes to it: this migration is not
 # that writer, so it leaves the target's record alone and simply drops the
-# legacy one. Nothing else is ever removed on this list's word.
-_REMOVABLE = frozenset({store._LOCK_NAME, store._BUCKET_ROOT_NAME})
+# legacy one. `.ledger-census` (#1132) is the same shape: a once-per-bucket
+# stamp of the census run on the first checkpoint write, so every real legacy
+# bucket carries one and it describes a directory this merge is retiring.
+# Nothing else is ever removed on this list's word.
+_REMOVABLE = frozenset({store._LOCK_NAME, store._BUCKET_ROOT_NAME,
+                        store._LEDGER_CENSUS_NAME})
 
 
 def climbs_out(project_dir) -> bool:

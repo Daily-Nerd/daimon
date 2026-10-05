@@ -2397,3 +2397,22 @@ def test_status_dedupes_a_migration_pair_named_by_two_receipt_rows(
     assert slugs.count("-a") == 1, \
         "the same (from, to) pair reached through two rows prints once"
     assert sorted(slugs) == ["-a", "-mid"]
+
+
+def test_a_merge_removes_the_ledger_census_marker_of_the_legacy_bucket(
+        linked, tmp_checkpoint_dir):
+    """`.ledger-census` (#1132) is stamped into every bucket on its first
+    checkpoint write, so every real legacy bucket carries one. Left off the
+    removable list it is an unknown leftover: the directory survives forever
+    and the merge is not idempotent (the `.pointer.lock` failure shape)."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    _plant(legacy, {"events.jsonl": _row("e1"),
+                    store._LEDGER_CENSUS_NAME: "{}"})
+    _plant(tmp_checkpoint_dir / store.project_bucket(real),
+           {"events.jsonl": _row("e0")})
+
+    record = buckets.migrate(link)
+
+    assert record["leftovers"] == []
+    assert not legacy.exists()

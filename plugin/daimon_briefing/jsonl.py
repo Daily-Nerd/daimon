@@ -13,10 +13,16 @@ is what REWRITERS and scans use, because a rewrite must not lose a byte.
 
 from __future__ import annotations
 
+import enum
+import errno
 import json
 import os
+import re
+import stat
+import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 # A past `scrub_event_fields` split such a row and rejoined the fragments
 # with "\n". A row can hold several separators, so the rejoin accumulates;
@@ -50,8 +56,14 @@ def split_rows(text: str) -> list[str]:
     falls inside a JSON string, so a torn tail followed by a healed append
     never satisfies that: the second line would have to close the first
     line's open string. Lines that never join are returned untouched."""
+    return _split(text)[0]
+
+
+def _split(text: str) -> tuple[list[str], int]:
+    """`split_rows` plus how many rows it had to rejoin, for the health read."""
     pieces = text.split("\n")
     rows: list[str] = []
+    rejoined = 0
     i = 0
     n = len(pieces)
     while i < n:
@@ -65,10 +77,11 @@ def split_rows(text: str) -> list[str]:
                 joined = joined + _REJOIN + pieces[j]
                 if _is_object(joined):
                     line, i = joined, j
+                    rejoined += 1
                     break
         rows.append(line)
         i += 1
-    return rows
+    return rows, rejoined
 
 
 def read_rows(path: Path, *, errors: str = "surrogateescape") -> list[str]:
@@ -77,6 +90,122 @@ def read_rows(path: Path, *, errors: str = "surrogateescape") -> list[str]:
     a scan that wants "cannot check" for a non-UTF-8 file passes
     errors="strict" and gets the UnicodeDecodeError (a ValueError)."""
     return split_rows(path.read_text(encoding="utf-8", errors=errors))
+
+
+class Health(str, enum.Enum):
+    """What a ledger file is, judged per line (#1132). `str` so a payload
+    carries the value without a custom encoder."""
+    ABSENT = "absent"          # ENOENT: no file, no bucket
+    OK = "ok"                  # every line is a row
+    DEGRADED = "degraded"      # torn lines or split rows, folded around
+    TRANSIENT = "transient"    # still failing after the retries; never repair
+    UNREADABLE = "unreadable"  # non-transient OSError or a garbage line
+
+
+class Read(NamedTuple):
+    """`read`'s answer. `rows` is whatever could be parsed (split rows
+    rejoined in memory), so a degraded or unreadable file still yields its
+    good rows. `detail` is an errno name or a short reason, NEVER content."""
+    health: Health
+    rows: list
+    torn: int = 0
+    split: int = 0
+    garbage: int = 0
+    detail: str = ""
+
+
+_TRANSIENT_ERRNOS = frozenset({errno.EAGAIN, errno.EBUSY, errno.EINTR,
+                               errno.ETIMEDOUT})
+_WINERROR_SHARING = frozenset({32, 33})  # sharing / lock violation
+# macOS: the file's bytes live in the cloud and reading would download them.
+# `stat.SF_DATALESS` only exists on newer Pythons and only on macOS.
+_SF_DATALESS = getattr(stat, "SF_DATALESS", 0x40000000)
+# surrogateescape maps an undecodable byte to one of these lone surrogates.
+_UNDECODABLE = re.compile("[\udc80-\udcff]")
+
+
+def _is_dataless(st: os.stat_result) -> bool:
+    return bool(getattr(st, "st_flags", 0) & _SF_DATALESS)
+
+
+def _read_bytes(path: Path) -> bytes:
+    return path.read_bytes()
+
+
+def _transient_reason(exc: OSError) -> str:
+    """The reason an OSError is worth retrying, or "" when it is not."""
+    if getattr(exc, "winerror", None) in _WINERROR_SHARING:
+        return "sharing"
+    if exc.errno in _TRANSIENT_ERRNOS:
+        return errno.errorcode[exc.errno]
+    return ""
+
+
+def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
+         sleep: Callable[[float], None] = time.sleep) -> Read:
+    """Judge one ledger file, per line, without raising.
+
+    Bytes are decoded per line with surrogateescape, so one bad byte costs
+    its own line's classification and never the file's. A line is a row when
+    it parses as a JSON object. Otherwise it is TORN when it opens like an
+    object (`{`) and does not parse, which is what an append that died
+    mid-line leaves, and GARBAGE for anything else: undecodable bytes, a
+    sync-conflict marker, text that is not JSON, JSON that is not an object.
+    Two adjacent fragments that parse once joined (`split_rows`) are a
+    SPLIT row, rejoined in memory.
+
+    Garbage makes the file UNREADABLE, else torn or split makes it
+    DEGRADED, else OK. A failed open or read is retried `retries` times with
+    `backoff` seconds between attempts; a transient errno, a Windows sharing
+    violation or a cloud placeholder that still fails is TRANSIENT (never a
+    reason to repair), any other OSError is UNREADABLE. ENOENT is ABSENT."""
+    reason = ""
+    for attempt in range(retries + 1):
+        if attempt:
+            sleep(backoff)
+        try:
+            if _is_dataless(os.stat(path)):
+                reason = "dataless"
+                continue
+            data = _read_bytes(path)
+        except FileNotFoundError:
+            return Read(Health.ABSENT, [])
+        except OSError as exc:
+            reason = _transient_reason(exc)
+            if not reason:
+                name = errno.errorcode.get(exc.errno or 0, "OSError")
+                return Read(Health.UNREADABLE, [], detail=name)
+            continue
+        break
+    else:
+        return Read(Health.TRANSIENT, [], detail=reason)
+    lines, split = _split(data.decode("utf-8", errors="surrogateescape"))
+    rows: list = []
+    torn = garbage = 0
+    for line in lines:
+        if _UNDECODABLE.search(line):
+            garbage += 1
+            continue
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            if line.lstrip().startswith("{"):
+                torn += 1
+            else:
+                garbage += 1
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+        else:
+            garbage += 1
+    if garbage:
+        health, detail = Health.UNREADABLE, "garbage"
+    elif torn or split:
+        health = Health.DEGRADED
+        detail = "+".join(n for n, c in (("torn", torn), ("split", split)) if c)
+    else:
+        health, detail = Health.OK, ""
+    return Read(health, rows, torn, split, garbage, detail)
 
 
 def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
