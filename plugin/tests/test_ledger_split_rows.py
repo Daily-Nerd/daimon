@@ -91,7 +91,7 @@ def test_trust_forget_keeps_a_row_with_a_separator(tmp_checkpoint_dir, sep):
     path = trust._path(PROJECT)
     alien = _alien("quarantine_id", sep)
     _append(path, alien)
-    assert trust.forget_content_key(KEY, project_dir=PROJECT)
+    assert trust.redact_content_key(KEY, project_dir=PROJECT)
     assert alien in _rows(path)
 
 

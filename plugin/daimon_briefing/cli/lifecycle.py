@@ -26,6 +26,7 @@ from .. import (
     requests,
     serializer,
     store,
+    trust,
 )
 from ._ledger import _check_sync_warning
 
@@ -583,6 +584,11 @@ def _cmd_forget(args) -> int:
     # deletion contract for a new ledger is a hand-wired line here.
     forgotten_requests = requests.forget_content_key(content_hash,
                                                      project_dir=project)
+    # #1132: the trust ledger holds prose (`reason`/`evidence`) too, but a
+    # quarantine is a human verdict that WITHHOLDS a value, so it is redacted
+    # in place and never dropped: removing the record would lift the withhold.
+    redacted_quarantines = trust.redact_content_key(content_hash,
+                                                    project_dir=project)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -661,6 +667,10 @@ def _cmd_forget(args) -> int:
     if events_scrubbed:
         report.append(f"redacted {events_scrubbed} event-ledger field(s) "
                       "carrying the value (rows kept, field replaced)")
+    if redacted_quarantines:
+        report.append(f"redacted prose in {len(redacted_quarantines)} "
+                      f"quarantine(s) ({', '.join(redacted_quarantines)}); "
+                      "records kept, the quarantine still withholds")
     if purge_err is not None:
         report.append(f"warning: chunk cache purge failed: {purge_err} — "
                       "cached pre-redaction chunks may persist up to "

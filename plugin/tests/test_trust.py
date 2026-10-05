@@ -259,23 +259,6 @@ def test_value_key_matches_normalize_content_key():
 # ---- forget reachability: reason/evidence are plaintext --------------------
 
 
-def test_forget_content_key_removes_the_record(project):
-    tid = _propose(project, reason="a very specific fabricated claim here")
-    key = trust.row_content_keys(
-        {"reason": "a very specific fabricated claim here"})
-    removed = trust.forget_content_key(next(iter(key)), project_dir=project)
-    assert removed == [tid]
-    assert trust.get(tid, project_dir=project) is None
-
-
-def test_forget_content_key_no_match_removes_nothing(project):
-    _propose(project)
-    from daimon_briefing import normalize
-    removed = trust.forget_content_key(
-        normalize.content_key("nothing matches this"), project_dir=project)
-    assert removed == []
-
-
 def test_plaintext_values_reports_reason_not_value_key(project):
     tid = _propose(project)
     record = trust.get(tid, project_dir=project)
@@ -473,63 +456,71 @@ def test_propose_rejects_a_malformed_item_id(project):
         _propose(project, item_id="not-a-valid-item-id")
 
 
-# ---- forget_content_key: internal branches -----------------------------
+# ---- redact_content_key: internal branches -----------------------------
 
 
-def test_forget_content_key_missing_ledger_returns_empty(project):
+def test_redact_content_key_missing_ledger_returns_empty(project):
     from daimon_briefing import normalize
-    assert trust.forget_content_key(
+    assert trust.redact_content_key(
         normalize.content_key("anything"), project_dir=project) == []
 
 
-def test_forget_content_key_unresolvable_project_returns_empty(monkeypatch):
+def test_redact_content_key_unresolvable_project_returns_empty(monkeypatch):
     from daimon_briefing import store
     monkeypatch.setattr(store, "project_slug", lambda p: None)
-    assert trust.forget_content_key("deadbeef", project_dir="/p/x") == []
+    assert trust.redact_content_key("deadbeef", project_dir="/p/x") == []
 
 
-def test_forget_content_key_unreadable_ledger_returns_empty(
+def test_redact_content_key_unreadable_ledger_returns_empty(
         project, tmp_checkpoint_dir, monkeypatch):
     from pathlib import Path
     _propose(project)
     monkeypatch.setattr(
         Path, "read_text",
         lambda self, *a, **k: (_ for _ in ()).throw(OSError("boom")))
-    assert trust.forget_content_key("deadbeef", project_dir=project) == []
+    assert trust.redact_content_key("deadbeef", project_dir=project) == []
 
 
-def test_forget_content_key_skips_malformed_scan_lines(
+def test_redact_content_key_keeps_malformed_and_non_object_lines(
         project, tmp_checkpoint_dir):
     from daimon_briefing import config, normalize, store
-    _propose(project, reason="the specific reason text to forget")
-    slug = store.project_slug(project)
-    path = config.checkpoint_dir() / slug / "trust.jsonl"
+    tid = _propose(project, reason="the specific reason text to forget")
+    path = config.checkpoint_dir() / store.project_slug(project) / "trust.jsonl"
     with path.open("a", encoding="utf-8") as handle:
-        handle.write("not json\n")
-        handle.write("[1, 2]\n")
-        handle.write("\n")
+        handle.write("not json\n[1, 2]\n")
     key = normalize.content_key("the specific reason text to forget")
-    removed = trust.forget_content_key(key, project_dir=project)
-    assert len(removed) == 1
+    assert trust.redact_content_key(key, project_dir=project) == [tid]
+    lines = path.read_text(encoding="utf-8").split("\n")
+    assert "not json" in lines and "[1, 2]" in lines
 
 
-def test_forget_content_key_keeps_the_other_record(project, tmp_checkpoint_dir):
-    """A ledger with TWO records, only one matched: the survivor's line must
-    be written back (the `kept.append(line)` branch)."""
+def test_redact_content_key_leaves_a_non_matching_ledger_byte_identical(
+        project, tmp_checkpoint_dir):
+    from daimon_briefing import config, normalize, store
+    _propose(project)
+    path = config.checkpoint_dir() / store.project_slug(project) / "trust.jsonl"
+    before = path.read_bytes()
+    assert trust.redact_content_key(
+        normalize.content_key("nothing matches this"),
+        project_dir=project) == []
+    assert path.read_bytes() == before
+
+
+def test_redact_content_key_keeps_the_other_record(project, tmp_checkpoint_dir):
     from daimon_briefing import normalize
     kept_reason = "a totally unrelated survivor reason text"
     doomed_tid = _propose(project, reason="the doomed reason text right here")
-    _propose(project, text="a second, unrelated quarantined value here",
-             reason=kept_reason)
+    other_tid = _propose(
+        project, text="a second, unrelated quarantined value here",
+        reason=kept_reason)
     key = normalize.content_key("the doomed reason text right here")
-    removed = trust.forget_content_key(key, project_dir=project)
-    assert removed == [doomed_tid]
+    assert trust.redact_content_key(key, project_dir=project) == [doomed_tid]
     remaining = trust.records(project_dir=project)
-    assert doomed_tid not in remaining
-    assert any(r["reason"] == kept_reason for r in remaining.values())
+    assert set(remaining) == {doomed_tid, other_tid}
+    assert remaining[other_tid]["reason"] == kept_reason
 
 
-def test_forget_content_key_atomic_write_failure_returns_empty(
+def test_redact_content_key_atomic_write_failure_returns_empty(
         project, tmp_checkpoint_dir, monkeypatch):
     import os as _os
     _propose(project, reason="a very specific reason to try to forget")
@@ -538,25 +529,15 @@ def test_forget_content_key_atomic_write_failure_returns_empty(
     monkeypatch.setattr(
         _os, "replace",
         lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-    assert trust.forget_content_key(key, project_dir=project) == []
+    assert trust.redact_content_key(key, project_dir=project) == []
 
 
-def test_forget_content_key_cleanup_unlink_also_fails(
-        project, tmp_checkpoint_dir, monkeypatch):
-    """Both the replace AND the tmp-file cleanup fail: the second `except
-    OSError: pass` must swallow it too, still returning []."""
-    import os as _os
-    from pathlib import Path
-    _propose(project, reason="a very specific reason to try to forget too")
-    from daimon_briefing import normalize
-    key = normalize.content_key("a very specific reason to try to forget too")
-    monkeypatch.setattr(
-        _os, "replace",
-        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-    monkeypatch.setattr(
-        Path, "unlink",
-        lambda self, *a, **k: (_ for _ in ()).throw(OSError("boom too")))
-    assert trust.forget_content_key(key, project_dir=project) == []
+def test_display_text_renders_the_marker_as_value_forgotten():
+    assert trust.display_text("[forgotten:0f89df85d4927bec]") == (
+        "(value forgotten)")
+    assert trust.display_text("a reason that mentions [forgotten:ab] inside") \
+        == "a reason that mentions [forgotten:ab] inside"
+    assert trust.display_text(None) == ""
 
 
 # ---- append/events/fold: remaining defensive branches ----------------------
