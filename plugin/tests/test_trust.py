@@ -675,3 +675,14 @@ def test_privacy_audit_finds_forgotten_trust_reason(project):
     hits = [f for f in result["findings"] if f["surface"] == "trust-ledger"]
     assert len(hits) == 1
     assert hits[0]["content_hash"] == key
+
+
+def test_trust_prose_paths_are_single_segment():
+    """`trust.redact_content_key` walks only single-segment prose paths; a
+    nested path would be scanned by the auditor and skipped by the deleter."""
+    from daimon_briefing import surfaces
+    for fp in surfaces.bucket_ledger("trust.jsonl").prose:
+        assert len(fp.path) == 1, (
+            f"trust prose path {fp.path!r} is nested: "
+            "trust.redact_content_key only reaches single-segment paths, so "
+            "teach it the nested walk before declaring one")
