@@ -442,6 +442,13 @@ def _cmd_forget(args) -> int:
         if also:
             preview.append("also removed — ledger records reached by value "
                            "or by doomed item id: " + ", ".join(also))
+        quarantines = trust.redact_content_key(value_key, project_dir=project,
+                                               dry_run=True)
+        if quarantines:
+            preview.append(
+                f"would redact prose in {len(quarantines)} quarantine(s) "
+                f"({', '.join(quarantines)}); records kept, the quarantine "
+                "still withholds")
         render.render_lifecycle_lines(preview)
         return 0
     # #402: key the tombstone on the CANONICAL value (normalize.content_key),

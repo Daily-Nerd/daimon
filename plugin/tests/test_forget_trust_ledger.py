@@ -166,3 +166,37 @@ def test_audit_and_census_report_the_trust_ledger_clean(tmp_checkpoint_dir):
 def test_the_trust_module_exposes_no_forget_function():
     assert [n for n in dir(trust)
             if n.startswith("forget") and callable(getattr(trust, n))] == []
+
+
+# ---- value_key and forget's key agree for a secret-shaped value --------------
+
+SECRET_SHAPED = "the deploy key is api_key=abcd1234efgh5678 for prod right now"
+
+
+def test_forgetting_a_secret_shaped_quarantined_value_redacts_all_prose(
+        tmp_checkpoint_dir):
+    _checkpoint_with(SECRET_SHAPED)
+    tid = _quarantine(text=SECRET_SHAPED, reason="the claim about the deploy key",
+                      evidence=["issue:1109", "message:deploy key claim"])
+    latch = trust.active_value_keys(project_dir=PROJECT)
+    _forget(SECRET_SHAPED)
+    record = _record(tid)
+    assert record["reason"].startswith("[forgotten:")
+    assert all(e.startswith("[forgotten:") for e in record["evidence"])
+    assert trust.active_value_keys(project_dir=PROJECT) == latch
+
+
+# ---- --dry-run previews the quarantines it would redact ----------------------
+
+
+def test_dry_run_names_the_quarantines_and_writes_nothing(
+        tmp_checkpoint_dir, capsys):
+    _checkpoint_with(CANARY)
+    tid = _quarantine(reason=CANARY)
+    before = _ledger().read_bytes()
+    capsys.readouterr()
+    assert cli.main(["forget", CANARY, "--dry-run", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert f"would redact prose in 1 quarantine(s) ({tid})" in out
+    assert _ledger().read_bytes() == before
+    assert "[forgotten:" not in out

@@ -95,8 +95,8 @@ _MIN_VALUE_TEXT = 20
 # Every field of a ledger row that can hold plaintext (#645 discipline, same
 # shape as refutations.py/amendments.py) is the `prose` column of this
 # ledger's registry row: one list, two consumers: the deleter below
-# (`redact_content_key`) and the privacy auditor. `value_key` is deliberately absent: it is a hash, never
-# the text itself.
+# (`redact_content_key`) and the privacy auditor. `value_key` is deliberately
+# absent: it is a hash, never the text itself.
 _LEDGER = "trust.jsonl"
 
 
@@ -522,7 +522,8 @@ def display_text(value) -> str:
     return _FORGOTTEN_SHOWN if _FORGOTTEN_RE.fullmatch(text) else text
 
 
-def redact_content_key(content_key: str, *, project_dir=None) -> list[str]:
+def redact_content_key(content_key: str, *, project_dir=None,
+                       dry_run: bool = False) -> list[str]:
     """Redact, in place, the prose a forget of `content_key` reaches (#1132).
 
     Never deletes a record. A quarantine is a human verdict that WITHHOLDS a
@@ -547,7 +548,10 @@ def redact_content_key(content_key: str, *, project_dir=None) -> list[str]:
 
     Returns the quarantine ids redacted, or [] when nothing matched, the
     ledger is absent or unreadable, or the rewrite failed (the contract the
-    sibling deleters hold: forget never aborts over one ledger)."""
+    sibling deleters hold: forget never aborts over one ledger).
+
+    `dry_run` decides the same ids from the same rows and writes nothing
+    (the `forget --dry-run` preview)."""
     path = _path(project_dir)
     if path is None or not path.exists():
         return []
@@ -578,6 +582,8 @@ def redact_content_key(content_key: str, *, project_dir=None) -> list[str]:
         if not changed:
             return line
         redacted.add(str(row.get("quarantine_id") or ""))
+        if dry_run:
+            return line
         row = policy.admit_row(row, redact_fields=("reason", "author"))
         return json.dumps(row, ensure_ascii=False)
 
