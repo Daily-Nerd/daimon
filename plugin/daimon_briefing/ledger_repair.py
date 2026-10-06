@@ -81,13 +81,10 @@ def forget_quarantined_lines(content_key: str, *, text: str = "",
         kept += 1
         return line
 
-    def write(target, blob):
-        store._atomic_write(target, blob, errors="surrogateescape")
-
     for path in sidecars(bucket):
         before = kept
         try:
-            purged += jsonl.rewrite(path, drop, write=write)
+            purged += jsonl.rewrite(path, drop, write=_stage)
         except OSError:
             kept = before
     return Purged(purged, kept)
@@ -208,6 +205,13 @@ def _envelope(ledger: str, kind: str, line: str) -> dict:
             "text": raw.decode("utf-8", errors="backslashreplace")}
 
 
+def _stage(target: Path, blob: str) -> None:
+    """The stager `jsonl.replace` and `jsonl.rewrite` hand text to: store's
+    `_atomic_write`, which the write-audit guard observes, with undecodable
+    bytes written back as they were."""
+    store._atomic_write(target, blob, errors="surrogateescape")
+
+
 def _quarantine(path: Path, sidecar: Path, part: jsonl.Partition
                 ) -> tuple[int, int]:
     """Move `part.moved` into the sidecar, then rewrite the ledger with the
@@ -236,9 +240,9 @@ def _quarantine(path: Path, sidecar: Path, part: jsonl.Partition
             fresh.append(json.dumps(env, ensure_ascii=False))
     if fresh:
         body = "".join(line + "\n" for line in held + fresh)
-        store._atomic_write(sidecar, body, errors="surrogateescape")
-    store._atomic_write(path, "".join(row + "\n" for row in part.rows),
-                        errors="surrogateescape")
+        jsonl.replace(sidecar, body, write=_stage)
+    jsonl.replace(path, "".join(row + "\n" for row in part.rows),
+                  write=_stage)
     return len(held), len(held) + len(fresh)
 
 

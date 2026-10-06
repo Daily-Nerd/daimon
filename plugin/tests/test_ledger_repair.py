@@ -193,6 +193,22 @@ def test_repair_rejoins_quarantines_and_leaves_a_readable_ledger(capsys):
     assert "quarantined 1 torn + 3 garbage line(s)" in out
 
 
+def test_repair_swaps_the_sidecar_then_the_ledger_through_jsonl_replace(
+        monkeypatch):
+    """Both swaps run under the ledger lock, which an append also takes."""
+    seen = []
+    real = jsonl.replace
+
+    def spy(path, text, **kwargs):
+        seen.append(path.name)
+        return real(path, text, **kwargs)
+
+    monkeypatch.setattr(jsonl, "replace", spy)
+    _messy_trust()
+    assert _repair("trust") == 0
+    assert seen == ["trust.quarantined-lines", "trust.jsonl"]
+
+
 def test_repair_rescrubs_a_forgotten_value_a_split_row_still_carried(capsys):
     head, tail = _trust_row("tr-aaa", VALUE).split(" ")
     path = _write("trust.jsonl", _line(head), _line(tail),
