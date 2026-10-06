@@ -159,14 +159,6 @@ def _truncate_agent_claim(evidence: str | None) -> str:
 # which is out of this slice's scope.
 BRIEFABLE_SECTIONS = frozenset({"external", "open_loops", "uncertainties"})
 
-# The raw checkpoint field keys underlying BRIEFABLE_SECTIONS above — build()
-# splits ONE field (open_questions) into "external"/"open_loops" by the
-# external_state flag, so the raw-checkpoint view collapses back to two keys.
-# `daimon loops` walks store._ITEM_LISTS (raw section/key pairs), not the
-# built briefing dict, so it needs this mapping rather than BRIEFABLE_SECTIONS
-# itself.
-BRIEFABLE_ITEM_KEYS = frozenset({"open_questions", "uncertainties"})
-
 
 def _handle_suffix(item, briefable: bool) -> str:
     """The compact ` [id]` handle appended to a briefable item's rendered

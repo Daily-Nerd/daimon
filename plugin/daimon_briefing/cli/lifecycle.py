@@ -24,6 +24,7 @@ from .. import (
     refutations,
     render,
     requests,
+    schema,
     serializer,
     store,
     trust,
@@ -813,7 +814,7 @@ def _cmd_loops(args) -> int:
     could show an item the briefing itself would withhold (an agent would
     then "resolve" a ghost).
 
-    Briefable = briefing.BRIEFABLE_ITEM_KEYS (open_questions — external and
+    Briefable = the ItemField.briefable fields (open_questions — external and
     non-external both — plus uncertainties). Decisions/beliefs/
     contradictions are valid `daimon resolve` targets too, but are not
     loop-shaped; listing them here would invite resolving settled facts
@@ -841,10 +842,11 @@ def _cmd_loops(args) -> int:
     checkpoint = annotated.checkpoint
     stale_ids = {id(i) for i in annotated.stale_items}
     rows = []
-    for section, key in store._ITEM_LISTS:
-        if key not in briefing.BRIEFABLE_ITEM_KEYS:
+    for field in schema.ITEM_FIELDS:
+        if not field.briefable:
             continue
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
+        for item in ((checkpoint.get(field.section) or {}).get(field.key)
+                     or []):
             if not isinstance(item, dict) or not item.get("id"):
                 continue
             text = str(item.get("text") or "").strip()
@@ -868,7 +870,7 @@ def _cmd_loops(args) -> int:
             age_label = "" if age is None else f"{age:.0f}d"
             if stale:
                 age_label = f"{age_label} stale".strip()
-            rows.append((item["id"], key, text, briefing._mark(item),
+            rows.append((item["id"], field.key, text, briefing._mark(item),
                          age_label))
     if not rows:
         render.render_lifecycle_lines(
