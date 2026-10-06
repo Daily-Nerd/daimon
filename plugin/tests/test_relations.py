@@ -813,7 +813,7 @@ def test_only_declared_consumers_import_relations():
 
     import daimon_briefing
     package = pathlib.Path(daimon_briefing.__file__).parent
-    allowed = {"privacy.py", "cli/__init__.py", "ledger_repair.py"}
+    allowed = {"privacy.py", "cli/relations_cmd.py", "ledger_repair.py"}
     import_re = re.compile(
         r"^\s*(?:from\s+\.\.?\s+import\s+"
         r"(?:\([^)]*\brelations\b|[^\n(]*\brelations\b)"
