@@ -354,6 +354,19 @@ def _scan_team_dir(slug: str, keys: set[str], project_dir,
     return findings
 
 
+def _scan_rows(path, result) -> list:
+    """The rows of one ledger file for the audit's scan. A file `jsonl.read`
+    cannot vouch for (a failed read, a transient error, an undecodable byte)
+    is recorded in `result["unscannable"]`, so a scan of it can never read as
+    clean, and the rows that could be read are still returned. A line that is
+    merely not JSON (a conflict marker, a torn tail) is skipped and does not
+    make the file unscannable."""
+    read = jsonl.read(path)
+    if read.cannot_scan:
+        result["unscannable"].append(str(path))
+    return read.rows
+
+
 def audit_project(project_dir=None) -> dict:
     # #948: the report names a project, and the tombstone read below is scoped
     # to the same one, so both take the resolution the CLI applies.
@@ -426,25 +439,13 @@ def audit_project(project_dir=None) -> dict:
     # names, so it needs no special case. `item_id` is always the row's
     # item_ref, whichever field matched.
     events = config.checkpoint_dir() / slug / _EVENTS_NAME
-    try:
-        # Read first, ask later: `events.exists()` RAISES on an unreadable
-        # parent dir (EACCES is not in pathlib's ignored set), which would
-        # crash the auditor on exactly the tree it must report on.
-        # UnicodeDecodeError IS a ValueError: a non-UTF-8 ledger is
-        # cannot-check, not a traceback out of a read-only auditor.
-        lines = jsonl.read_rows(events, errors="strict")
-    except FileNotFoundError:
-        lines = []                  # no ledger written yet — nothing to scan
-    except (OSError, ValueError):
-        lines = []
-        result["unscannable"].append(str(events))
-    for line in lines:
-        try:
-            evt = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(evt, dict):
-            continue
+    # `jsonl.read` asks nothing first (`events.exists()` RAISES on an
+    # unreadable parent dir, which would crash the auditor on exactly the
+    # tree it must report on) and never raises: a file it cannot vouch for
+    # (a failed read, an undecodable byte) is cannot-check, never a
+    # traceback out of a read-only auditor and never silent-clean, and the
+    # rows it could read are still scanned.
+    for evt in _scan_rows(events, result):
         for field in surfaces.scalar_prose_fields(_EVENTS_NAME):
             value = evt.get(field)
             if not (isinstance(value, str) and value.strip()):
@@ -463,22 +464,10 @@ def audit_project(project_dir=None) -> dict:
     # The FIELD SET is refutations' own declaration, not a copy: the deleter
     # reads it too, so a value the audit reports is a value forget can reach.
     ledger = config.checkpoint_dir() / slug / _REFUTATIONS_NAME
-    try:
-        lines = jsonl.read_rows(ledger, errors="strict")
-    except FileNotFoundError:
-        lines = []                  # no refutation recorded yet
-    except (OSError, ValueError):
-        lines = []
-        result["unscannable"].append(str(ledger))
+    scanned = _scan_rows(ledger, result)
     ledger_records: set[str] = set()
     ledger_rows = 0
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in scanned:
         ledger_rows += 1
         ref_id = str(row.get("refutation_id") or "")
         if ref_id:
@@ -516,23 +505,11 @@ def audit_project(project_dir=None) -> dict:
     # A hit here means the scrub was missed or raced; after it runs, this
     # scan is what proves the deletion reached the edges.
     rel_path = config.checkpoint_dir() / slug / _RELATIONS_NAME
-    try:
-        lines = jsonl.read_rows(rel_path, errors="strict")
-    except FileNotFoundError:
-        lines = []                  # no relation recorded yet
-    except (OSError, ValueError):
-        lines = []
-        result["unscannable"].append(str(rel_path))
+    scanned = _scan_rows(rel_path, result)
     tombstoned = relations.tombstoned_item_ids(project_dir=project_dir)
     rel_records: set[str] = set()
     rel_rows = 0
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in scanned:
         rel_rows += 1
         rel_id = str(row.get("relation_id") or "")
         if rel_id:
@@ -572,22 +549,10 @@ def audit_project(project_dir=None) -> dict:
     # (relations.tombstoned_item_ids) — a deliberate shared read, named here
     # so reordering these blocks does not silently sever it.
     amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
-    try:
-        lines = jsonl.read_rows(amend_path, errors="strict")
-    except FileNotFoundError:
-        lines = []                  # no amendment recorded yet
-    except (OSError, ValueError):
-        lines = []
-        result["unscannable"].append(str(amend_path))
+    scanned = _scan_rows(amend_path, result)
     amend_records: set[str] = set()
     amend_rows = 0
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in scanned:
         amend_rows += 1
         a_id = str(row.get("amendment_id") or "")
         if a_id:
@@ -621,22 +586,10 @@ def audit_project(project_dir=None) -> dict:
     # cannot exist. The hash intersection runs over requests' own plaintext
     # declaration, so a value the audit reports is a value forget can reach.
     req_path = config.checkpoint_dir() / slug / _REQUESTS_NAME
-    try:
-        lines = jsonl.read_rows(req_path, errors="strict")
-    except FileNotFoundError:
-        lines = []                  # no request recorded yet
-    except (OSError, ValueError):
-        lines = []
-        result["unscannable"].append(str(req_path))
+    scanned = _scan_rows(req_path, result)
     req_records: set[str] = set()
     req_rows = 0
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in scanned:
         req_rows += 1
         q_id = str(row.get("request_id") or "")
         if q_id:
@@ -664,22 +617,10 @@ def audit_project(project_dir=None) -> dict:
     # read-path concern (PR 2), not a residue-of-this-ledger's-own-prose
     # concern, which is all this block answers.
     trust_path = config.checkpoint_dir() / slug / _TRUST_NAME
-    try:
-        lines = jsonl.read_rows(trust_path, errors="strict")
-    except FileNotFoundError:
-        lines = []                  # no quarantine recorded yet
-    except (OSError, ValueError):
-        lines = []
-        result["unscannable"].append(str(trust_path))
+    scanned = _scan_rows(trust_path, result)
     trust_records: set[str] = set()
     trust_rows = 0
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in scanned:
         trust_rows += 1
         tid = str(row.get("quarantine_id") or "")
         if tid:
@@ -702,18 +643,7 @@ def audit_project(project_dir=None) -> dict:
     # inside it (ledger_repair.matched_keys), the reach the deleter
     # (ledger_repair.forget_quarantined_lines) has when it holds only a key.
     for side_path in ledger_repair.sidecars(config.checkpoint_dir() / slug):
-        try:
-            lines = jsonl.read_rows(side_path, errors="strict")
-        except (OSError, ValueError):
-            result["unscannable"].append(str(side_path))
-            continue
-        for line in lines:
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(row, dict):
-                continue
+        for row in _scan_rows(side_path, result):
             for value in surfaces.prose_values(_SIDECAR_PROSE, row):
                 for h in ledger_repair.matched_keys(value, keys):
                     result["findings"].append({
