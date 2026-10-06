@@ -249,3 +249,32 @@ def test_replace_and_rewrite_with_lock_false_leave_no_sidecar(tmp_path):
     jsonl.replace(path, '{"a": 2}\n', lock=False)
     assert jsonl.rewrite(path, lambda line, row: None, lock=False) == 1
     assert not (tmp_path / ".pointer.lock").exists()
+
+
+def test_without_fcntl_the_lock_yields_not_held_and_append_still_lands(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(jsonl, "_fcntl", None)
+    with jsonl.dir_lock(tmp_path) as held:
+        assert held is False
+    path = tmp_path / "l.jsonl"
+    assert jsonl.append_lines(path, ['{"a": 1}']) == 1
+    assert path.read_bytes() == b'{"a": 1}\n'
+    assert not (tmp_path / ".pointer.lock").exists()
+
+
+def test_a_failed_unlock_exits_cleanly_and_the_append_landed(
+        tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    real = fcntl
+
+    def flock(fd, op):
+        if op == real.LOCK_UN:
+            raise OSError("unlock failed")
+        return real.flock(fd, op)
+
+    monkeypatch.setattr(jsonl, "_fcntl", SimpleNamespace(
+        LOCK_EX=real.LOCK_EX, LOCK_NB=real.LOCK_NB, LOCK_UN=real.LOCK_UN,
+        flock=flock))
+    path = tmp_path / "l.jsonl"
+    assert jsonl.append_lines(path, ['{"a": 1}']) == 1
+    assert path.read_bytes() == b'{"a": 1}\n'
