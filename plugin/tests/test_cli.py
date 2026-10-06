@@ -11084,9 +11084,9 @@ def test_cooled_origins_reads_the_budget_at_call_time(monkeypatch):
     # untunable — and silently turning any sweep over it into four runs of the
     # same arm. Found exactly that way.
     counts = {"S-a": 1}
-    monkeypatch.setattr(cli, "_ORIGIN_BUDGET", 1)
+    monkeypatch.setattr("daimon_briefing.cli.inject._ORIGIN_BUDGET", 1)
     assert cli.cooled_origins(counts) == {"S-a"}
-    monkeypatch.setattr(cli, "_ORIGIN_BUDGET", 2)
+    monkeypatch.setattr("daimon_briefing.cli.inject._ORIGIN_BUDGET", 2)
     assert cli.cooled_origins(counts) == set()
 
 
