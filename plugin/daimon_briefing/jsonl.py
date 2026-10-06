@@ -105,13 +105,17 @@ class Health(str, enum.Enum):
 class Read(NamedTuple):
     """`read`'s answer. `rows` is whatever could be parsed (split rows
     rejoined in memory), so a degraded or unreadable file still yields its
-    good rows. `detail` is an errno name or a short reason, NEVER content."""
+    good rows. `detail` is an errno name or a short reason, NEVER content.
+    `undecodable` counts the lines holding undecodable bytes, a subset of
+    `garbage`, so a scan that must say "cannot check" for a non-UTF-8 file
+    can tell it from a line that is merely not JSON."""
     health: Health
     rows: list
     torn: int = 0
     split: int = 0
     garbage: int = 0
     detail: str = ""
+    undecodable: int = 0
 
 
 _TRANSIENT_ERRNOS = frozenset({errno.EAGAIN, errno.EBUSY, errno.EINTR,
@@ -197,7 +201,7 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
         return Read(Health.TRANSIENT, [], detail=reason)
     lines, split = _split(data.decode("utf-8", errors="surrogateescape"))
     rows: list = []
-    torn = garbage = 0
+    torn = garbage = undecodable = 0
     for line in lines:
         kind, row = _classify(line)
         if kind == _ROW:
@@ -206,6 +210,8 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
             torn += 1
         else:
             garbage += 1
+            if _UNDECODABLE.search(line):
+                undecodable += 1
     if garbage:
         health, detail = Health.UNREADABLE, "garbage"
     elif torn or split:
@@ -213,7 +219,7 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
         detail = "+".join(n for n, c in (("torn", torn), ("split", split)) if c)
     else:
         health, detail = Health.OK, ""
-    return Read(health, rows, torn, split, garbage, detail)
+    return Read(health, rows, torn, split, garbage, detail, undecodable)
 
 
 class Partition(NamedTuple):
