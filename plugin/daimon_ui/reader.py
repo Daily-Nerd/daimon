@@ -156,6 +156,7 @@ def _active_quarantine_keys(bucket: Path) -> set:
     active rows, is the empty set — not an error, matching `resolutions()`'s
     own fail-open posture: a broken ledger withholds nothing here rather
     than blanking the viewer."""
+    # Own reader on purpose: this module imports nothing from daimon_briefing.
     try:
         text = (bucket / "trust.jsonl").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -483,6 +484,7 @@ def resolutions(bucket: Path) -> dict:
     """Fold events.jsonl into last-event-per-item_ref, keeping only resolved ones.
     Missing bucket/events.jsonl, or a file with no readable resolution events, is {} —
     not an error. Malformed lines are skipped silently (append-log, may be torn mid-write)."""
+    # Own reader on purpose: this module imports nothing from daimon_briefing.
     try:
         text = (bucket / "events.jsonl").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -856,6 +858,7 @@ _BIO_TRACKED_FIELDS = ("trust", "quote_verified", "text")
 def _jsonl_rows(path: Path):
     """Defensive line-by-line jsonl parse: torn/non-dict lines skipped,
     missing/unreadable file -> []. Shared by verification + activity readers."""
+    # Own reader on purpose: this module imports nothing from daimon_briefing.
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):

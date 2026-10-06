@@ -275,6 +275,8 @@ def _read_lines(path: Path) -> tuple[list[str], bool]:
     file is destroyed, the receipt says zero lines, and the exit code says
     success. A file that cannot be read cannot be compared, so it cannot be
     proven safe to delete."""
+    # Not on jsonl.read: the merge compares and carries RAW lines (torn ones
+    # included), which `Read.rows` would drop.
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:

@@ -943,6 +943,8 @@ _MAX_TOMBSTONE_BYTES = 1_000_000
 
 
 def _tombstone_keys(path) -> set[str]:
+    # Not on jsonl.read: this read is capped at _MAX_TOMBSTONE_BYTES, and
+    # jsonl.read has no bounded mode (it loads the whole file).
     keys: set[str] = set()
     try:
         if path.stat().st_size > _MAX_TOMBSTONE_BYTES:

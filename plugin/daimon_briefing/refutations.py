@@ -807,6 +807,9 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     # permanent exit 1 this module forbids. Version-proof for any future
     # event name; the rewrite below already walks raw lines for this reason.
     doomed = set()
+    # Not on jsonl.read: a deleter must see every line, and `read` drops a
+    # line holding an undecodable byte, so a forgotten value sitting in a row
+    # next to one would stay on disk. read_rows round-trips those bytes.
     try:
         lines = jsonl.read_rows(path)
     except OSError:

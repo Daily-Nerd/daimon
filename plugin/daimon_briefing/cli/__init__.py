@@ -3658,6 +3658,8 @@ def _stats_events(project_dir) -> dict:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return out
+    # A RAW line count (blank, torn and garbage lines included): the growth
+    # signal, which jsonl.read's rows cannot give.
     out["lines"] = len(text.splitlines())
     start = time.perf_counter()
     folded = store.resolutions(project_dir=project_dir)
