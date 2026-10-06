@@ -8,7 +8,10 @@ forget. A JSON row never contains a raw "\\n" (compact `json.dumps` escapes
 it), so "\\n" is the only separator this module honours.
 
 Stdlib only. Readers stay on their own tolerant paths for now; this module
-is what REWRITERS and scans use, because a rewrite must not lose a byte.
+is what REWRITERS and scans use, because a rewrite must not lose a byte. It is
+also the one place a ledger is APPENDED to (`append_lines`, #1132): the
+torn-tail heal, the single write and the lock live here, not in each ledger
+module.
 """
 
 from __future__ import annotations
@@ -20,9 +23,20 @@ import os
 import re
 import stat
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from types import ModuleType
 from typing import NamedTuple
+
+# Annotated before the import (#842): the try branch alone infers a Module, so
+# the except branch's None reads as a type error rather than as the degrade it
+# is. Every use site honors it with an `if _fcntl` guard.
+_fcntl: ModuleType | None
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - non-POSIX: the lock degrades to a no-op
+    _fcntl = None
 
 # A past `scrub_event_fields` split such a row and rejoined the fragments
 # with "\n". A row can hold several separators, so the rejoin accumulates;
@@ -92,6 +106,117 @@ def read_rows(path: Path, *, errors: str = "surrogateescape") -> list[str]:
     return split_rows(path.read_text(encoding="utf-8", errors=errors))
 
 
+LOCK_NAME = ".pointer.lock"   # dotfile: invisible to _session_files (.json
+                              # filter) and _pointer_stems (_POINTER_RE)
+_LOCK_TRIES = 50              # x 20ms = ~1s bounded wait, then fail open
+_LOCK_INTERVAL = 0.02
+
+
+@contextmanager
+def dir_lock(d: Path) -> Iterator[bool]:
+    """Serialize a critical section over the files of directory `d` (#31).
+
+    flock on a sidecar dotfile with a bounded wait; yields whether the lock
+    was actually acquired. Fail-open everywhere (no fcntl, unwritable or
+    missing dir, contention past the wait): the caller proceeds unguarded,
+    which is exactly the pre-lock behavior. The sidecar is opened with the
+    builtin `open`, never `Path.open`: it carries no content, and the
+    write-audit guard must not record it as a write.
+
+    It is a sidecar, not a lock on the ledger's own fd, because `rewrite`
+    swaps the inode with os.replace and a lock on the old inode would not
+    exclude a writer holding the new one."""
+    if _fcntl is None:
+        yield False
+        return
+    fh = None
+    held = False
+    try:
+        fh = open(d / LOCK_NAME, "a+")
+        for _ in range(_LOCK_TRIES):
+            try:
+                _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                time.sleep(_LOCK_INTERVAL)
+    except OSError:
+        pass
+    try:
+        yield held
+    finally:
+        if fh is not None:
+            try:
+                if held:
+                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+                fh.close()
+            except OSError:
+                pass
+
+
+def ledger_lock(path: Path):
+    """`dir_lock` over the directory a ledger lives in. Per-directory, not
+    per-file: the sidecar is the one `.pointer.lock` the registry already
+    declares, and contention between ledgers of one bucket is negligible."""
+    return dir_lock(path.parent)
+
+
+def _unterminated(path: Path) -> bool:
+    """True when the file's last byte is not "\\n": the last append died
+    before writing its terminator. A missing, empty or unreadable file is
+    not torn."""
+    try:
+        if path.stat().st_size == 0:
+            return False
+        with path.open("rb") as handle:
+            handle.seek(-1, 2)
+            return handle.read(1) != b"\n"
+    except OSError:
+        return False
+
+
+def append_lines(path: Path, lines: Iterable[str], *, lock: bool = True) -> int:
+    """Append `lines` (each already serialised, no terminator) to a ledger.
+    Returns how many were written.
+
+    The bytes are built once and written in ONE call on an unbuffered
+    O_APPEND handle, so a crash leaves at most one torn tail and two
+    appenders cannot interleave inside a row. Appending onto an
+    unterminated tail would fuse two rows into one unparseable line, so a
+    torn tail is first TERMINATED with "\\n" (never truncated: the torn
+    bytes stay on disk for `ledger repair` to move out, and `read` counts
+    them torn, not split). A missing or empty file needs no heal.
+
+    Text is encoded with surrogateescape, so a line carrying undecodable
+    bytes writes them back as they were. OSError propagates as it did from
+    each ledger's own appender; the caller decides what a failed append
+    means.
+
+    `lock=False` skips the `.pointer.lock` sidecar, for a directory that is
+    not a bucket: a team dir is committed by `teamsync._commit_own` and would
+    carry the lock file to every teammate, and `logs/` declares no such
+    surface."""
+    body = [line + "\n" for line in lines]
+    if not body:
+        return 0
+    data = "".join(body).encode("utf-8", errors="surrogateescape")
+    with ledger_lock(path) if lock else nullcontext():
+        if _unterminated(path):
+            data = b"\n" + data
+        with path.open("ab", buffering=0) as handle:
+            view = memoryview(data)
+            while view:
+                view = view[handle.write(view):]
+    return len(body)
+
+
+def append(path: Path, row: dict, *, lock: bool = True) -> int:
+    """`append_lines` for one row, dumped with ensure_ascii=False like every
+    ledger writer."""
+    return append_lines(path, [json.dumps(row, ensure_ascii=False)],
+                        lock=lock)
+
+
 class Health(str, enum.Enum):
     """What a ledger file is, judged per line (#1132). `str` so a payload
     carries the value without a custom encoder."""
@@ -105,13 +230,17 @@ class Health(str, enum.Enum):
 class Read(NamedTuple):
     """`read`'s answer. `rows` is whatever could be parsed (split rows
     rejoined in memory), so a degraded or unreadable file still yields its
-    good rows. `detail` is an errno name or a short reason, NEVER content."""
+    good rows. `detail` is an errno name or a short reason, NEVER content.
+    `undecodable` counts the lines holding undecodable bytes, a subset of
+    `garbage`, so a scan that must say "cannot check" for a non-UTF-8 file
+    can tell it from a line that is merely not JSON."""
     health: Health
     rows: list
     torn: int = 0
     split: int = 0
     garbage: int = 0
     detail: str = ""
+    undecodable: int = 0
 
 
 _TRANSIENT_ERRNOS = frozenset({errno.EAGAIN, errno.EBUSY, errno.EINTR,
@@ -197,7 +326,7 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
         return Read(Health.TRANSIENT, [], detail=reason)
     lines, split = _split(data.decode("utf-8", errors="surrogateescape"))
     rows: list = []
-    torn = garbage = 0
+    torn = garbage = undecodable = 0
     for line in lines:
         kind, row = _classify(line)
         if kind == _ROW:
@@ -206,6 +335,8 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
             torn += 1
         else:
             garbage += 1
+            if _UNDECODABLE.search(line):
+                undecodable += 1
     if garbage:
         health, detail = Health.UNREADABLE, "garbage"
     elif torn or split:
@@ -213,7 +344,7 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
         detail = "+".join(n for n, c in (("torn", torn), ("split", split)) if c)
     else:
         health, detail = Health.OK, ""
-    return Read(health, rows, torn, split, garbage, detail)
+    return Read(health, rows, torn, split, garbage, detail, undecodable)
 
 
 class Partition(NamedTuple):
@@ -246,8 +377,43 @@ def partition(text: str) -> Partition:
     return Partition(rows, torn, garbage, split, moved)
 
 
+def _stage(path: Path, text: str) -> None:
+    """Write `text` beside `path` as `<name>.<pid>.tmp` and swap it in with
+    os.replace, so a crash leaves the old file or the new one. The `.tmp`
+    suffix is the one `store._reap_stale_tmps` already reaps, and the pid
+    keeps two processes from staging into the same name."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8", errors="surrogateescape")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def replace(path: Path, text: str, *,
+            write: Callable[[Path, str], None] | None = None,
+            lock: bool = True) -> None:
+    """Atomically replace a ledger's whole text, under the ledger lock.
+
+    `write(path, text)` replaces the stager for a caller that already owns
+    one (store's `_atomic_write`, which the write-audit guard observes); it
+    receives the surrogateescape-decoded text and must encode it the same
+    way. Raises OSError when the swap fails, the ledger untouched.
+
+    `lock=False` is for a caller that already holds `ledger_lock(path)` across
+    a larger read-then-swap: flock on a second fd of the same process would
+    not nest, it would stall about a second and then proceed unguarded."""
+    with ledger_lock(path) if lock else nullcontext():
+        (write or _stage)(path, text)
+
+
 def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
-            write: Callable[[Path, str], None] | None = None) -> int:
+            write: Callable[[Path, str], None] | None = None,
+            lock: bool = True) -> int:
     """Atomically rewrite a ledger row by row. Returns the number of rows
     dropped or changed; 0 means the file was not touched.
 
@@ -260,40 +426,28 @@ def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
     is then untouched and the temp file removed. Staged beside the ledger and
     swapped with os.replace, so a crash leaves the old file or the new one.
 
-    `write(path, text)` replaces that stager for a caller that already owns
-    one (store's `_atomic_write`, which the write-audit guard observes); it
-    receives the surrogateescape-decoded text and must encode it the same
-    way."""
-    text = path.read_text(encoding="utf-8", errors="surrogateescape")
-    out: list[str] = []
-    changed = 0
-    for line in split_rows(text):
-        try:
-            row = json.loads(line)
-        except (ValueError, RecursionError):
-            out.append(line)
-            continue
-        new = transform(line, row)
-        if new is None:
-            changed += 1
-            continue
-        if new != line:
-            changed += 1
-        out.append(new)
-    if not changed:
-        return 0
-    if write is not None:
-        write(path, "".join(row + "\n" for row in out))
+    The read, the transform and the swap all run under the ledger lock, so an
+    append (which takes the same lock) cannot land between the read and the
+    swap and be lost. `write` is `replace`'s stager hook; `lock=False` is for
+    a caller that already holds the ledger lock (see `replace`)."""
+    with ledger_lock(path) if lock else nullcontext():
+        text = path.read_text(encoding="utf-8", errors="surrogateescape")
+        out: list[str] = []
+        changed = 0
+        for line in split_rows(text):
+            try:
+                row = json.loads(line)
+            except (ValueError, RecursionError):
+                out.append(line)
+                continue
+            new = transform(line, row)
+            if new is None:
+                changed += 1
+                continue
+            if new != line:
+                changed += 1
+            out.append(new)
+        if not changed:
+            return 0
+        (write or _stage)(path, "".join(row + "\n" for row in out))
         return changed
-    tmp = path.with_name(path.name + ".forget-tmp")
-    try:
-        tmp.write_text("".join(row + "\n" for row in out), encoding="utf-8",
-                       errors="surrogateescape")
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
-    return changed

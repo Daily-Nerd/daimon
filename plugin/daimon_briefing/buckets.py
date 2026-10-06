@@ -49,7 +49,7 @@ RECORD_VERSION = 1
 
 
 # Files a merge may DELETE from the legacy bucket even though they are not
-# ledgers. `.pointer.lock` is store._pointer_lock's flock sidecar: opened
+# ledgers. `.pointer.lock` is jsonl.dir_lock's flock sidecar: opened
 # "a+", never written, declared in surfaces.py as exempt-no-plaintext because
 # it holds nothing by construction. Every bucket the store has ever written to
 # has one, so treating it as an unrecognized leftover kept the legacy
@@ -306,17 +306,9 @@ def _lines(path: Path) -> list[str]:
 
 
 def _append_lines(path: Path, lines: list[str]) -> None:
-    """Append `lines`, healing a torn tail first — the same shape every ledger
-    appender in this package uses."""
-    try:
-        tail = path.read_bytes()[-1:] if path.exists() else b"\n"
-    except OSError:
-        tail = b"\n"
-    with path.open("a", encoding="utf-8") as handle:
-        if tail not in (b"", b"\n"):
-            handle.write("\n")
-        for line in lines:
-            handle.write(line + "\n")
+    """Append `lines`, healing a torn tail first, through the one append every
+    ledger shares (`jsonl.append_lines`)."""
+    jsonl.append_lines(path, lines)
 
 
 def legacy_leftovers(project_dir) -> tuple[str, ...]:

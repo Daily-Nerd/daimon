@@ -570,8 +570,6 @@ def test_oversized_row_is_refused_loudly_not_silently(bucket):
         relations._write({"pad": "x" * 3000}, project_dir=bucket)
 
 
-def test_is_torn_survives_a_missing_file(tmp_path):
-    assert relations._is_torn(tmp_path / "absent.jsonl") is False
 
 
 def test_verdicts_on_unknown_relation_are_refused(bucket):
@@ -778,7 +776,7 @@ def test_forget_rewrite_failure_returns_empty_not_partial(bucket, monkeypatch):
     original = type(path).write_text
 
     def failing_write(self, *args, **kwargs):
-        if self.name.endswith(".forget-tmp"):
+        if self.name.endswith(".tmp"):
             raise OSError("disk full")
         return original(self, *args, **kwargs)
 

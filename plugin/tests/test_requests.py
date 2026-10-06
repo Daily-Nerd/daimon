@@ -3934,10 +3934,8 @@ def _rows_or_empty(project):
     return [] if path is None or not path.exists() else _rows(project)
 
 
-def test_a_missing_ledger_is_not_torn(project, tmp_path):
-    """`_is_torn` answers for a file it cannot stat: the first append to a
-    fresh bucket must not prepend a repair newline."""
-    assert requests._is_torn(tmp_path / "never-written.jsonl") is False
+def test_the_first_append_to_a_fresh_bucket_starts_with_a_row(project):
+    """A file that does not exist yet is not torn: no repair newline leads."""
     _open(project)
     assert requests._path(project).read_text(
         encoding="utf-8").startswith("{")
@@ -4105,7 +4103,7 @@ def test_a_failed_swap_leaves_the_ledger_whole_and_no_tmp_behind(
                                        project_dir=project) == []
     assert path.read_text(encoding="utf-8") == before
     assert requests.get(q_id, project_dir=project) is not None
-    assert not list(path.parent.glob("*.forget-tmp"))
+    assert not list(path.parent.glob("*.tmp"))
 
 
 def test_a_failed_swap_survives_an_undeletable_tmp(project, monkeypatch):
@@ -4117,7 +4115,7 @@ def test_a_failed_swap_survives_an_undeletable_tmp(project, monkeypatch):
     real_unlink = type(requests._path(project)).unlink
 
     def deny(self, missing_ok=False):
-        if self.name.endswith(".forget-tmp"):
+        if self.name.endswith(".tmp"):
             raise OSError("EPERM")
         return real_unlink(self, missing_ok=missing_ok)
 

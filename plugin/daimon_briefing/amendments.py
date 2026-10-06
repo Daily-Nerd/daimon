@@ -175,18 +175,6 @@ def _stamp(event: str, amendment_id: str, channel: str,
     }
 
 
-def _is_torn(path) -> bool:
-    """True when the last append died before writing its terminator."""
-    try:
-        if path.stat().st_size == 0:
-            return False
-        with path.open("rb") as handle:
-            handle.seek(-1, 2)
-            return handle.read(1) != b"\n"
-    except OSError:
-        return False
-
-
 def append(row: dict, project_dir=None) -> bool:
     """Append one admitted lifecycle row. Never mutates another ledger."""
     if config.is_disabled():
@@ -197,10 +185,7 @@ def append(row: dict, project_dir=None) -> bool:
     admitted = policy.admit_row(row, redact_fields=("evidence", "note", "author"))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            if _is_torn(path):
-                handle.write("\n")
-            handle.write(json.dumps(admitted, ensure_ascii=False) + "\n")
+        jsonl.append(path, admitted)
         return True
     except OSError:
         return False

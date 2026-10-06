@@ -221,3 +221,23 @@ def test_health_values_are_json_ready():
     assert json.dumps({"h": Health.DEGRADED}) == '{"h": "degraded"}'
     assert {h.value for h in Health} == {
         "absent", "ok", "degraded", "transient", "unreadable"}
+
+
+def test_an_undecodable_line_counts_in_undecodable_and_in_garbage(tmp_path):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(_row(a=1) + b'\n{"a": "\xff\xfe"}\n' + _row(a=3) + b"\n")
+    result = jsonl.read(path)
+    assert (result.garbage, result.undecodable) == (1, 1)
+
+
+def test_a_non_json_text_line_counts_in_garbage_only(tmp_path):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(b"<<<<<<< HEAD\n" + _row(a=1) + b"\n")
+    result = jsonl.read(path)
+    assert (result.garbage, result.undecodable) == (1, 0)
+
+
+def test_a_clean_file_has_no_undecodable_lines(tmp_path):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(_row(a=1) + b"\n")
+    assert jsonl.read(path).undecodable == 0

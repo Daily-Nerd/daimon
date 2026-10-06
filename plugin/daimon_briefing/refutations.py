@@ -293,11 +293,8 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         store.record_bucket_root(project_dir)  # #1092: first writer wins
-        with path.open("a", encoding="utf-8") as handle:
-            if _is_torn(path):
-                handle.write("\n")
-            for row in rows:
-                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        jsonl.append_lines(
+            path, [json.dumps(row, ensure_ascii=False) for row in rows])
     except OSError:
         pass
 
@@ -692,24 +689,6 @@ def _scrub_list(values: list[str]) -> list[str]:
     return out
 
 
-def _is_torn(path) -> bool:
-    """True when the last append died before writing its terminator.
-
-    Appending onto an unterminated line fuses two rows into one unparseable
-    line, and `events` drops malformed lines silently — so the new row would
-    vanish while its command still reported success.  A torn write must cost
-    exactly the torn row.
-    """
-    try:
-        if path.stat().st_size == 0:
-            return False
-        with path.open("rb") as handle:
-            handle.seek(-1, 2)
-            return handle.read(1) != b"\n"
-    except OSError:
-        return False
-
-
 def append(row: dict, project_dir=None) -> bool:
     """Append one admitted lifecycle row.  Never mutates another ledger."""
     if config.is_disabled():
@@ -736,10 +715,7 @@ def append(row: dict, project_dir=None) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         store.record_bucket_root(project_dir)  # #1092: first writer wins
-        with path.open("a", encoding="utf-8") as handle:
-            if _is_torn(path):
-                handle.write("\n")
-            handle.write(json.dumps(admitted, ensure_ascii=False) + "\n")
+        jsonl.append(path, admitted)
         return True
     except OSError:
         return False

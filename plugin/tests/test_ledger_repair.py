@@ -193,6 +193,89 @@ def test_repair_rejoins_quarantines_and_leaves_a_readable_ledger(capsys):
     assert "quarantined 1 torn + 3 garbage line(s)" in out
 
 
+def test_repair_swaps_the_sidecar_then_the_ledger_through_jsonl_replace(
+        monkeypatch):
+    """Both swaps run under the ledger lock, which an append also takes."""
+    seen = []
+    real = jsonl.replace
+
+    def spy(path, text, **kwargs):
+        seen.append(path.name)
+        return real(path, text, **kwargs)
+
+    monkeypatch.setattr(jsonl, "replace", spy)
+    _messy_trust()
+    assert _repair("trust") == 0
+    assert seen == ["trust.quarantined-lines", "trust.jsonl"]
+
+
+def test_an_append_racing_the_repair_is_not_lost(monkeypatch):
+    """The read, the partition and both swaps run under one lock hold, so an
+    appender that arrives mid-repair waits and lands after the swap."""
+    import threading
+    path = _messy_trust()
+    late = {"quarantine_id": "tr-late", "event": "proposed", "reason": "late"}
+    real = ledger_repair._quarantine
+    appended = []
+
+    def racing(*args, **kwargs):
+        worker = threading.Thread(
+            target=lambda: appended.append(jsonl.append(path, late)))
+        worker.start()
+        worker.join(0.2)        # the appender had its chance to land first
+        try:
+            return real(*args, **kwargs)
+        finally:
+            racing.worker = worker
+
+    monkeypatch.setattr(ledger_repair, "_quarantine", racing)
+    assert _repair("trust") == 0
+    racing.worker.join(5)
+    assert appended == [1]
+    assert late in jsonl.read(path).rows
+
+
+def _counting_dir_lock(monkeypatch):
+    real = jsonl.dir_lock
+    state = {"depth": 0, "max": 0, "dirs": []}
+
+    class Wrapped:
+        def __init__(self, d):
+            self._inner = real(d)
+            state["dirs"].append(d)
+
+        def __enter__(self):
+            state["depth"] += 1
+            state["max"] = max(state["max"], state["depth"])
+            return self._inner.__enter__()
+
+        def __exit__(self, *exc):
+            state["depth"] -= 1
+            return self._inner.__exit__(*exc)
+
+    monkeypatch.setattr(jsonl, "dir_lock", Wrapped)
+    return state
+
+
+def test_a_repair_never_nests_the_ledger_lock(monkeypatch):
+    state = _counting_dir_lock(monkeypatch)
+    _messy_trust()
+    assert _repair("trust") == 0
+    assert state["dirs"], "the repair took no lock"
+    assert state["max"] == 1
+
+
+def test_a_dry_run_locks_the_scratch_copy_never_the_real_bucket(monkeypatch):
+    state = _counting_dir_lock(monkeypatch)
+    _messy_trust()
+    real = _bucket()
+    assert _repair("trust", "--dry-run") == 0
+    assert state["dirs"]
+    assert all(d != real for d in state["dirs"])
+    assert not (real / jsonl.LOCK_NAME).exists()
+    assert state["max"] == 1
+
+
 def test_repair_rescrubs_a_forgotten_value_a_split_row_still_carried(capsys):
     head, tail = _trust_row("tr-aaa", VALUE).split(" ")
     path = _write("trust.jsonl", _line(head), _line(tail),
