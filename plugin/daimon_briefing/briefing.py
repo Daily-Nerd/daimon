@@ -151,13 +151,8 @@ def _truncate_agent_claim(evidence: str | None) -> str:
 
 # ---- #480 slice 1: resolve handles on open-loop-class items ----
 
-# build()'s section keys that render a resolve handle — the single source of
-# truth both render paths (plain _line below, rich render._rich_brief) and
-# `daimon loops` key off of. Decisions/beliefs/contradictions are valid
-# `daimon resolve` targets too (resolve accepts any item id), but are not
-# loop-shaped: stamping a handle there would invite resolving settled facts,
-# which is out of this slice's scope.
-BRIEFABLE_SECTIONS = frozenset({"external", "open_loops", "uncertainties"})
+# BRIEFABLE_SECTIONS (build()'s section keys that render a resolve handle) is
+# derived from ItemField.briefable beside SECTION_ORDER below.
 
 
 def _handle_suffix(item, briefable: bool) -> str:
@@ -1838,8 +1833,42 @@ def _head_lines(degraded: bool, rulings) -> list[str]:
 SECTION_ORDER = ("decisions", "external", "open_loops", "beliefs",
                  "uncertainties", "active_topic", "contradictions")
 
-_ITEM_SECTIONS = ("decisions", "external", "open_loops", "beliefs",
-                  "uncertainties", "contradictions")
+# The one hand-written map from a presentation section to the checkpoint field
+# that feeds it: (section, key) of schema.ITEM_FIELDS. build() splits ONE
+# field (open_questions) into "external" and "open_loops" by the
+# external_state flag, so both name it. Everything keyed by section that a
+# field row can answer is derived from this (and a census test pins that every
+# field is reached and every briefable one maps into SECTION_ORDER).
+SECTION_FIELD = {
+    "decisions": ("working_context", "recent_decisions"),
+    "external": ("working_context", "open_questions"),
+    "open_loops": ("working_context", "open_questions"),
+    "beliefs": ("epistemic_snapshot", "strong_beliefs"),
+    "uncertainties": ("epistemic_snapshot", "uncertainties"),
+    "active_topic": ("working_context", "active_topic"),
+    "contradictions": ("epistemic_snapshot", "contradictions_flagged"),
+}
+
+_FIELD_OF = {(f.section, f.key): f for f in schema.ITEM_FIELDS}
+
+
+def _section_field(section: str) -> schema.ItemField:
+    return _FIELD_OF[SECTION_FIELD[section]]
+
+
+# The item-bearing sections: SECTION_ORDER minus the singleton's section.
+_ITEM_SECTIONS = tuple(s for s in SECTION_ORDER
+                       if not _section_field(s).singleton)
+
+# build()'s section keys that render a resolve handle — the single source of
+# truth both render paths (plain _line below, rich render._rich_brief) and
+# `daimon loops` key off of: the sections whose field is briefable.
+# Decisions/beliefs/contradictions are valid `daimon resolve` targets too
+# (resolve accepts any item id), but are not loop-shaped: stamping a handle
+# there would invite resolving settled facts, which is out of this slice's
+# scope.
+BRIEFABLE_SECTIONS = frozenset(s for s in SECTION_ORDER
+                               if _section_field(s).briefable)
 
 SECTION_HEADERS = {
     "decisions": "Decisions made:",
@@ -1852,10 +1881,11 @@ SECTION_HEADERS = {
 }
 
 # #78 weights are only ever compared INSIDE a section, never across types.
-_WEIGHT_TYPE = {"decisions": "recent_decision", "external": "open_question",
-                "open_loops": "open_question", "beliefs": "strong_belief",
-                "uncertainties": "uncertainty",
-                "contradictions": "contradiction"}
+# A field with no scoring type (contradictions_flagged) falls back to its kind
+# word, which is not a TYPE_RULES key, so scoring resolves it to the default
+# rules exactly as the hand-kept table did.
+_WEIGHT_TYPE = {s: _section_field(s).scoring_type or _section_field(s).kind
+                for s in _ITEM_SECTIONS}
 
 # Background content goes before actionable content within a tier.
 _BACKGROUND = frozenset({"beliefs", "uncertainties"})
