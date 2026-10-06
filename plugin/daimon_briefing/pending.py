@@ -257,7 +257,7 @@ def _trust_rows(project_dir, slug) -> list:
     for tid, record in records.items():
         if record.get("state") != "candidate":
             continue
-        reason = record.get("reason") or ""
+        reason = trust.display_text(record.get("reason") or "")
         shown = display.shorten(reason, HEADLINE_CHARS)
         rows.append((_row(
             kind="trust", record_id=tid, slug=slug,

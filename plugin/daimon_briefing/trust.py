@@ -94,9 +94,9 @@ _MIN_VALUE_TEXT = 20
 
 # Every field of a ledger row that can hold plaintext (#645 discipline, same
 # shape as refutations.py/amendments.py) is the `prose` column of this
-# ledger's registry row: one list, two consumers — the deleter below and the
-# privacy auditor. `value_key` is deliberately absent: it is a hash, never
-# the text itself.
+# ledger's registry row: one list, two consumers: the deleter below
+# (`redact_content_key`) and the privacy auditor. `value_key` is deliberately
+# absent: it is a hash, never the text itself.
 _LEDGER = "trust.jsonl"
 
 
@@ -503,57 +503,92 @@ def row_content_keys(row: dict) -> set[str]:
     """Canonical keys for every plaintext field this row carries (#645).
 
     The one reader of the registry's `prose` column, so the deleter
-    below and a future privacy auditor cannot drift apart about what counts
+    below and the privacy auditor cannot drift apart about what counts
     as plaintext on this surface."""
     return {normalize.content_key(value) for value in surfaces.prose_values(
         surfaces.bucket_ledger(_LEDGER).prose, row)}
 
 
-def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
-    """Remove every record holding `content_key` in a plaintext field.
+_FORGOTTEN_SHOWN = "(value forgotten)"
+_MARKER_HEAD, _MARKER_TAIL = store._FORGOTTEN_FIELD_MARKER.split("{}")
+_FORGOTTEN_RE = re.compile(
+    re.escape(_MARKER_HEAD) + "[0-9a-f]+" + re.escape(_MARKER_TAIL))
 
-    This reaches the ledger's OWN prose (`reason`/`evidence`) — the same
-    whole-value canonical match every other plaintext ledger here uses. It
-    is deliberately NOT how a quarantined VALUE's own tombstone interacts
-    with this ledger (design §5: closing out a quarantine whose target was
-    separately forgotten is read-side reasoning for PR 2, once something
-    reads `active_value_keys`); this function only ever removes rows whose
-    `reason`/`evidence` text matches, never rows by `value_key`.
 
-    Raw LINES, never `events()` output — that reader is deliberately
-    tolerant and would silently delete rows a future daimon added (the scar
-    0025/0042 shape: a forgiving read feeding a write). Atomic or nothing."""
+def display_text(value) -> str:
+    """A prose value as a human should read it: a field `redact_content_key`
+    replaced renders as "(value forgotten)", never as the raw marker."""
+    text = str(value or "")
+    return _FORGOTTEN_SHOWN if _FORGOTTEN_RE.fullmatch(text) else text
+
+
+def redact_content_key(content_key: str, *, project_dir=None,
+                       dry_run: bool = False) -> list[str]:
+    """Redact, in place, the prose a forget of `content_key` reaches (#1132).
+
+    Never deletes a record. A quarantine is a human verdict that WITHHOLDS a
+    value; dropping its rows would lift the withhold and let the value show
+    again (and a whole-record drop could un-quarantine an unrelated value that
+    shared one evidence entry). So the verdict, `value_key` (the hash latch
+    that keeps withholding a re-extracted copy) and every non-prose field
+    survive, and only text is replaced, with the marker
+    `store.scrub_event_fields` writes.
+
+    Two reaches, both against the registry's `prose` column. A prose value
+    whose own canonical key IS `content_key` is replaced where it sits (the
+    scalar `reason`, or just that entry of `evidence`). A row whose
+    `value_key` IS `content_key` is the quarantine OF the forgotten value, so
+    all of its prose goes: any of it may describe the value.
+
+    Raw LINES through `jsonl.rewrite`, never `events()` output: that reader is
+    tolerant and the rewrite must not lose a byte it could not interpret
+    (scars 0025/0042). A changed row is re-admitted and re-dumped exactly as
+    `append` writes it; every other line, including one that does not parse,
+    is written back verbatim. Idempotent: a marker never matches again.
+
+    Returns the quarantine ids redacted, or [] when nothing matched, the
+    ledger is absent or unreadable, or the rewrite failed (the contract the
+    sibling deleters hold: forget never aborts over one ledger).
+
+    `dry_run` decides the same ids from the same rows and writes nothing
+    (the `forget --dry-run` preview)."""
     path = _path(project_dir)
     if path is None or not path.exists():
         return []
-    try:
-        lines = jsonl.read_rows(path)
-    except OSError:
-        return []
-    doomed: set[str] = set()
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
+    marker = store._FORGOTTEN_FIELD_MARKER.format(content_key)
+    prose = [fp.path[0] for fp in surfaces.bucket_ledger(_LEDGER).prose
+             if len(fp.path) == 1]
+    redacted: set[str] = set()
+
+    def redact(line, row):
         if not isinstance(row, dict):
-            continue
-        if content_key in row_content_keys(row):
-            tid = str(row.get("quarantine_id") or "")
-            if _TRUST_ID_RE.fullmatch(tid):
-                doomed.add(tid)
-    if not doomed:
-        return []
+            return line
+        whole = row.get("value_key") == content_key
 
-    def drop(line, row):
-        if (isinstance(row, dict)
-                and str(row.get("quarantine_id") or "") in doomed):
-            return None
-        return line
+        def swap(value):
+            if (isinstance(value, str) and value.strip() and value != marker
+                    and (whole or normalize.content_key(value) == content_key)):
+                return marker
+            return value
 
-    # #1138: "\n"-only split, unparseable lines kept verbatim (jsonl.rewrite).
+        changed = False
+        for field in prose:
+            value = row.get(field)
+            new = ([swap(v) for v in value] if isinstance(value, list)
+                   else swap(value))
+            if new != value:
+                row[field] = new
+                changed = True
+        if not changed:
+            return line
+        redacted.add(str(row.get("quarantine_id") or ""))
+        if dry_run:
+            return line
+        row = policy.admit_row(row, redact_fields=("reason", "author"))
+        return json.dumps(row, ensure_ascii=False)
+
     try:
-        jsonl.rewrite(path, drop)
+        jsonl.rewrite(path, redact)
     except OSError:
         return []
-    return sorted(doomed)
+    return sorted(redacted)

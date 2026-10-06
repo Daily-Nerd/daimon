@@ -243,8 +243,10 @@ SURFACES: tuple[Surface, ...] = (
     #    `evidence`), so `rewrite`/`forget` must be able to reach it exactly
     #    the way they reach refutations.jsonl today. `value_key` is a hash,
     #    never plaintext, and is not in the deletion contract (it names no
-    #    item text on its own). `rewrite` is trust.forget_content_key,
-    #    matching the same whole-value canonical key refutations.py uses.
+    #    item text on its own). `rewrite` is trust.redact_content_key: it
+    #    REDACTS prose in place and never drops a record (a drop would lift
+    #    the quarantine), matching the same whole-value canonical key
+    #    refutations.py uses.
     #    Never audit_exempt: growth must be measured, never silent, the same
     #    posture every other plaintext ledger here holds. Readers: the briefing,
     #    recall's rebuild (hence `index_content`) and the cli withhold pool

@@ -655,7 +655,7 @@ def audit_project(project_dir=None) -> dict:
     # birth like relations/amendments/requests so it can never repeat #645's
     # unknown->unscannable->exit-3 arc. One residue check: the hash
     # intersection over trust's own plaintext declaration (`reason`,
-    # `evidence`) — the deleter (trust.forget_content_key) reads the same
+    # `evidence`): the deleter (trust.redact_content_key) reads the same
     # set, so a value the audit reports is a value forget can reach.
     # `value_key` is a hash, never scanned as plaintext, and never
     # compared against `tombstoned` — that item-id comparison is a
