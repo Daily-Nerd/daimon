@@ -1714,16 +1714,17 @@ def test_resolutions_skips_unstamped_nondict_and_refless_events(tmp_checkpoint_d
     assert list(out) == ["o-a"]
 
 
-def test_resolutions_invalid_utf8_bytes_return_empty(tmp_checkpoint_dir):
-    # A corrupt log (invalid UTF-8) must fail open like a missing file, never
-    # raise UnicodeDecodeError out of the read path — a reader can never let
-    # one bad byte take down the whole fold.
+def test_resolutions_invalid_utf8_bytes_cost_only_their_own_line(
+        tmp_checkpoint_dir):
+    # One undecodable line never takes the fold down, and (#1132 PR 3b) it no
+    # longer empties it either: the good rows around it are read.
     from daimon_briefing import store
     slug = store.project_slug("/p/A")
     d = tmp_checkpoint_dir / slug
     d.mkdir(parents=True, exist_ok=True)
     (d / "events.jsonl").write_bytes(b'{"item_ref": "o-a", "status": "resolved"}\n\xff\xfe bad bytes\n')
-    assert store.resolutions(project_dir="/p/A") == {}
+    assert store.resolutions(project_dir="/p/A") == {
+        "o-a": {"item_ref": "o-a", "status": "resolved"}}
 
 
 def test_append_event_stores_item_text_when_given(tmp_checkpoint_dir):

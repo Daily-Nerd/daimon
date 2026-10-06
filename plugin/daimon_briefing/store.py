@@ -2009,23 +2009,15 @@ def active_handoff(project_dir=None) -> dict | None:
     Fail-open: unreadable files read as "no baton", never an exception."""
     project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
-    if path is None or not path.exists():
+    if path is None:
         return None
     latest = None
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                evt = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if (not isinstance(evt, dict) or evt.get("kind") != "handoff"
-                    or evt.get("item_ref")):
-                continue
-            if latest is None or (str(evt.get("ts") or "")
-                                  >= str(latest.get("ts") or "")):
-                latest = evt
-    except OSError:
-        return None
+    for evt in jsonl.read(path).rows:
+        if evt.get("kind") != "handoff" or evt.get("item_ref"):
+            continue
+        if latest is None or (str(evt.get("ts") or "")
+                              >= str(latest.get("ts") or "")):
+            latest = evt
     if (latest is None or latest.get("status") == "cleared"
             or not str(latest.get("note") or "").strip()):
         return None
@@ -2107,19 +2099,7 @@ def verification_rows(project_dir=None, *, bucket=None) -> list:
         path = _ledger_path(project_dir)
         if path is None:
             return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-    rows: list = []
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
+    return list(jsonl.read(path).rows)
 
 
 # #835/#839: the receipt-validity ledger vocabulary. Two check names rather
@@ -2381,17 +2361,7 @@ def forget_hit_stats(project_dir=None) -> dict:
     path = _forget_hits_path(project_dir)
     if path is None:
         return out
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return out
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in jsonl.read(path).rows:
         if row.get("reason") == "ruling-echo":
             count_key, ts_key = "ruling_echo_count", "ruling_echo_last_at"
         else:
@@ -2626,20 +2596,22 @@ def resolutions(project_dir=None) -> dict:
     kinds and extra fields ride along untouched; unparseable lines are
     skipped best-effort: a reader must never drop the log over one bad
     line."""
-    out: dict = {}
     project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None:
-        return out
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return out
-    for line in lines:
-        try:
-            evt = json.loads(line)
-        except ValueError:
-            continue
+        return {}
+    return fold_resolutions(jsonl.read(path).rows)
+
+
+def fold_resolutions(rows) -> dict:
+    """The pure half of `resolutions`: event rows -> {item_ref: latest event}.
+
+    Latest by `ts`, never by row position; equal-ts ties break on content
+    (`_tie_wins`). A row with no `item_ref` is skipped, a row with no usable
+    `ts` never displaces a stamped one, and the first of two unstamped rows
+    on one ref stays. No dedupe: every ref keeps its own latest event."""
+    out: dict = {}
+    for evt in rows:
         if not isinstance(evt, dict):
             continue
         ref = str(evt.get("item_ref") or "")
@@ -2682,16 +2654,15 @@ def item_events(item_ref: str, project_dir=None) -> list[dict]:
     path = _events_path(project_dir)
     if path is None or not item_ref:
         return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
+    return fold_item_events(jsonl.read(path).rows, item_ref)
+
+
+def fold_item_events(rows, item_ref: str) -> list[dict]:
+    """The pure half of `item_events`: every row addressed to EXACTLY
+    `item_ref`, oldest first by `ts` (an unstamped row sorts oldest), ties
+    broken on the row's position among the rows given."""
     found: list[tuple[float, int, dict]] = []
-    for position, line in enumerate(lines):
-        try:
-            evt = json.loads(line)
-        except ValueError:
-            continue
+    for position, evt in enumerate(rows):
         if not isinstance(evt, dict) or evt.get("item_ref") != item_ref:
             continue
         epoch = _created_epoch(evt.get("ts"))
@@ -2791,22 +2762,20 @@ def corroborations(project_dir=None) -> dict:
     uses), and an unstamped row sorts oldest, never displacing a stamped one
     (the same posture `resolutions` takes). Fails open to {} on a missing,
     unreadable or corrupt log; unparseable lines are skipped best-effort."""
-    out: dict = {}
     project_dir = _resolved(project_dir)
     path = _events_path(project_dir)
     if path is None:
-        return out
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return out
+        return {}
+    return fold_corroborations(jsonl.read(path).rows)
+
+
+def fold_corroborations(rows) -> dict:
+    """The pure half of `corroborations`: event rows -> {bare item id:
+    {origins, recorded, latest_demotion_ts}}. A full pass over every row."""
+    out: dict = {}
     witnesses: dict = {}   # item id -> {observing session: latest row ts}
     demotions: dict = {}   # item id -> latest contradicting row ts
-    for line in lines:
-        try:
-            evt = json.loads(line)
-        except ValueError:
-            continue
+    for evt in rows:
         if not isinstance(evt, dict):
             continue
         ref = str(evt.get("item_ref") or "")
