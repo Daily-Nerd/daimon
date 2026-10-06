@@ -35,7 +35,7 @@ from typing import NamedTuple
 _fcntl: ModuleType | None
 try:
     import fcntl as _fcntl
-except ImportError:            # non-POSIX: the lock degrades to a no-op
+except ImportError:  # pragma: no cover - non-POSIX: the lock degrades to a no-op
     _fcntl = None
 
 # A past `scrub_event_fields` split such a row and rejoined the fragments
