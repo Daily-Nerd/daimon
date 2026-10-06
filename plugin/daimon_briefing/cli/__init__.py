@@ -1422,9 +1422,13 @@ from .amend import (  # noqa: E402
     _cmd_amend_propose,  # noqa: F401 — re-exported for compat
     _cmd_amend_verdict,  # noqa: F401 — re-exported for compat
 )
+from .ledger_cmd import (  # noqa: E402
+    _cmd_ledger_repair,  # noqa: F401 — re-exported for compat
+)
 from .trust import (  # noqa: E402
     _cmd_trust_list,  # noqa: F401 — re-exported for compat
     _cmd_trust_propose,  # noqa: F401 — re-exported for compat
+    _cmd_trust_repair,  # noqa: F401 — re-exported for compat
     _cmd_trust_show,  # noqa: F401 — re-exported for compat
     _cmd_trust_verdict,  # noqa: F401 — re-exported for compat
     _trust_channel,  # noqa: F401 — re-exported for compat
@@ -1487,6 +1491,7 @@ from . import (  # noqa: E402
     check,
     history,
     hooks,
+    ledger_cmd,
     lifecycle,
     refute,
     request,
@@ -4571,6 +4576,8 @@ def build_parser() -> argparse.ArgumentParser:
     amend.register(sub, fmt)
 
     trust.register(sub, fmt)
+
+    ledger_cmd.register(sub, fmt)
 
     request.register(sub, fmt)
 

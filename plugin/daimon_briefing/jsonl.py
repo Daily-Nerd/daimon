@@ -222,6 +222,7 @@ class Partition(NamedTuple):
     torn: list
     garbage: list
     split: int = 0
+    moved: list = []   # (kind, line) for every torn or garbage line, file order
 
 
 def partition(text: str) -> Partition:
@@ -236,10 +237,13 @@ def partition(text: str) -> Partition:
     rows: list[str] = []
     torn: list[str] = []
     garbage: list[str] = []
+    moved: list[tuple[str, str]] = []
     for line in lines:
         kind, _row = _classify(line)
         {_ROW: rows, _TORN: torn, _GARBAGE: garbage}[kind].append(line)
-    return Partition(rows, torn, garbage, split)
+        if kind != _ROW:
+            moved.append((kind, line))
+    return Partition(rows, torn, garbage, split, moved)
 
 
 def rewrite(path: Path, transform: Callable[[str, object], str | None], *,

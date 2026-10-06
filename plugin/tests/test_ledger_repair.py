@@ -110,3 +110,260 @@ def test_forget_reaches_every_ledger_deleter_through_the_shared_entry(
     quarantine_call = [c for c in calls
                        if c[0] == "ledger_repair.forget_quarantined_lines"][0]
     assert quarantine_call[2]["text"] == "forget me please"
+
+
+# ---- `daimon ledger repair` ------------------------------------------------
+
+import errno  # noqa: E402
+import re  # noqa: E402
+
+from daimon_briefing import config, ledger_census, normalize  # noqa: E402
+
+PROJECT = "/p/ledger-repair"
+VALUE = "the vault code is alpha beta"
+KEY = normalize.content_key(VALUE)
+SLUG = None
+
+
+def _bucket():
+    d = config.checkpoint_dir() / store.project_slug(PROJECT)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _trust_row(qid, reason, **extra):
+    return json.dumps({"quarantine_id": qid, "event": "proposed",
+                       "reason": reason, "evidence": ["issue:1"], **extra},
+                      ensure_ascii=False)
+
+
+def _write(name, *chunks):
+    path = _bucket() / name
+    path.write_bytes(b"".join(chunks))
+    return path
+
+
+def _line(text):
+    return text.encode("utf-8") + b"\n"
+
+
+def _tombstone(key=KEY, ref="i-gone"):
+    with (_bucket() / "events.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "2026-10-05T00:00:00Z", "kind": "tombstone",
+                            "item_ref": ref, "status": f"forgotten:{key}",
+                            "source": "cli"}) + "\n")
+
+
+def _repair(*argv):
+    return cli.main(["ledger", "repair", *argv, "--project", PROJECT])
+
+
+def _sidecar_rows(name="trust.quarantined-lines"):
+    path = _bucket() / name
+    return [json.loads(ln) for ln in path.read_text(
+        encoding="utf-8").split("\n") if ln]
+
+
+def _messy_trust():
+    head, tail = SPLIT.split(" ")
+    return _write(
+        "trust.jsonl", _line(ROW_A), _line(head), _line(tail), _line(TORN),
+        b"\xff\xfe broken bytes\n", _line("not json at all"), _line("[1, 2]"),
+        _line(ROW_B))
+
+
+def test_repair_rejoins_quarantines_and_leaves_a_readable_ledger(capsys):
+    path = _messy_trust()
+    assert _repair("trust") == 0
+    assert jsonl.read(path).health is jsonl.Health.OK
+    assert path.read_bytes() == _line(ROW_A) + _line(SPLIT) + _line(ROW_B)
+    rows = _sidecar_rows()
+    assert [(r["kind"], r["ledger"]) for r in rows] == [
+        ("torn", "trust.jsonl"), ("garbage", "trust.jsonl"),
+        ("garbage", "trust.jsonl"), ("garbage", "trust.jsonl")]
+    assert rows[0]["text"] == TORN
+    assert all(r["quarantined_at"].endswith("Z") for r in rows)
+    undecodable = rows[1]["text"]
+    assert undecodable == "\\xff\\xfe broken bytes"
+    assert undecodable.encode().decode("unicode_escape").encode(
+        "latin-1") == b"\xff\xfe broken bytes"
+    assert [r["text"] for r in rows[2:]] == ["not json at all", "[1, 2]"]
+    out = capsys.readouterr().out
+    assert "rejoined 1 split row" in out
+    assert "quarantined 1 torn + 3 garbage line(s)" in out
+
+
+def test_repair_rescrubs_a_forgotten_value_a_split_row_still_carried(capsys):
+    head, tail = _trust_row("tr-aaa", VALUE).split(" ")
+    path = _write("trust.jsonl", _line(head), _line(tail),
+                  _line(_trust_row("tr-bbb", "an unrelated reason")))
+    _tombstone()
+    slug = store.project_slug(PROJECT)
+    before = ledger_census.census_bucket(slug)["ledgers"]["trust.jsonl"]
+    assert before["tombstoned_present"] == 1
+    assert _repair("trust") == 0
+    text = path.read_text(encoding="utf-8")
+    assert "vault code" not in text
+    assert f"[forgotten:{KEY}]" in text and "an unrelated reason" in text
+    after = ledger_census.census_bucket(slug)["ledgers"]["trust.jsonl"]
+    assert after["tombstoned_present"] == 0 and after["state"] == "ok"
+    assert "re-scrubbed 1 forgotten key(s)" in capsys.readouterr().out
+
+
+def test_repair_stamps_the_census_marker_with_the_repaired_state():
+    _messy_trust()
+    store._record_ledger_census(store.project_slug(PROJECT))
+    marker = _bucket() / ".ledger-census"
+    assert json.loads(marker.read_text())["ledgers"]["trust.jsonl"][
+        "state"] == "unreadable"
+    assert _repair("trust") == 0
+    assert json.loads(marker.read_text())["ledgers"]["trust.jsonl"][
+        "state"] == "ok"
+
+
+def test_a_second_repair_changes_nothing_and_says_so(capsys):
+    _messy_trust()
+    _tombstone()
+    assert _repair("trust") == 0
+    ledger_bytes = (_bucket() / "trust.jsonl").read_bytes()
+    side_bytes = (_bucket() / "trust.quarantined-lines").read_bytes()
+    capsys.readouterr()
+    assert _repair("trust") == 0
+    assert (_bucket() / "trust.jsonl").read_bytes() == ledger_bytes
+    assert (_bucket() / "trust.quarantined-lines").read_bytes() == side_bytes
+    assert "nothing to repair" in capsys.readouterr().out
+
+
+def _numbers(out):
+    return re.findall(r"\d+", re.sub(r"dry run.*", "", out))
+
+
+def test_dry_run_reports_the_same_counts_and_writes_nothing(capsys):
+    path = _messy_trust()
+    _tombstone()
+    (_bucket() / "trust.quarantined-lines").write_text(
+        json.dumps({"ledger": "trust.jsonl", "quarantined_at": "t",
+                    "kind": "torn", "text": "older"}) + "\n")
+    files = [path, _bucket() / "trust.quarantined-lines",
+             _bucket() / "events.jsonl"]
+    before = [p.read_bytes() for p in files]
+    assert _repair("trust", "--dry-run") == 0
+    dry = capsys.readouterr().out
+    assert [p.read_bytes() for p in files] == before
+    assert not (_bucket() / ".ledger-census").exists()
+    assert "dry run" in dry and "would" in dry
+    assert _repair("trust") == 0
+    real = capsys.readouterr().out
+    assert _numbers(dry) == _numbers(real)
+
+
+def test_repair_says_unrelated_fragments_stay_in_an_existing_sidecar(capsys):
+    _messy_trust()
+    (_bucket() / "trust.quarantined-lines").write_text(
+        json.dumps({"ledger": "trust.jsonl", "quarantined_at": "t",
+                    "kind": "torn", "text": "an older fragment"}) + "\n")
+    assert _repair("trust") == 0
+    assert "unrelated fragments are kept" in capsys.readouterr().out
+    texts = [r["text"] for r in _sidecar_rows()]
+    assert texts[0] == "an older fragment" and len(texts) == 5
+
+
+def test_repair_rescrubs_the_sidecar_by_key(capsys):
+    _write("trust.jsonl", _line(ROW_A))
+    _tombstone()
+    (_bucket() / "trust.quarantined-lines").write_text(
+        json.dumps({"ledger": "trust.jsonl", "quarantined_at": "t",
+                    "kind": "torn",
+                    "text": '{"reason": ' + json.dumps(VALUE) + ', "cut'})
+        + "\n" + json.dumps({"ledger": "trust.jsonl", "quarantined_at": "t",
+                             "kind": "torn", "text": "keep me"}) + "\n")
+    assert _repair("trust") == 0
+    assert [r["text"] for r in _sidecar_rows()] == ["keep me"]
+
+
+def test_trust_repair_is_the_same_verb_as_ledger_repair_trust():
+    _messy_trust()
+    assert cli.main(["trust", "repair", "--project", PROJECT]) == 0
+    assert (_bucket() / "trust.jsonl").read_bytes() == (
+        _line(ROW_A) + _line(SPLIT) + _line(ROW_B))
+    assert len(_sidecar_rows()) == 4
+
+
+def test_a_short_or_full_ledger_name_is_accepted():
+    _write("events.jsonl", _line(ROW_A), _line(TORN))
+    assert _repair("events.jsonl") == 0
+    assert (_bucket() / "events.quarantined-lines").exists()
+
+
+def test_an_unknown_ledger_name_is_refused_with_exit_2(capsys):
+    assert _repair("nonsense") == 2
+    out = capsys.readouterr().out
+    assert "unknown ledger 'nonsense'" in out and "trust" in out
+
+
+def test_an_absent_ledger_is_nothing_to_repair(capsys):
+    _bucket()
+    assert _repair("trust") == 0
+    assert "nothing to repair" in capsys.readouterr().out
+    assert not (_bucket() / "trust.quarantined-lines").exists()
+
+
+def test_a_transient_ledger_is_never_touched(monkeypatch, capsys):
+    path = _messy_trust()
+    before = path.read_bytes()
+
+    def stuck(_p):
+        raise OSError(errno.EAGAIN, "try again")
+    monkeypatch.setattr(jsonl, "_read_bytes", stuck)
+    monkeypatch.setattr(jsonl.time, "sleep", lambda _s: None)
+    assert _repair("trust") == 1
+    out = capsys.readouterr().out
+    assert "transient" in out and "EAGAIN" in out
+    assert path.read_bytes() == before
+    assert not (_bucket() / "trust.quarantined-lines").exists()
+
+
+def test_an_already_clean_ledger_is_left_byte_identical(capsys):
+    path = _write("trust.jsonl", _line(ROW_A), _line(ROW_B))
+    before = path.read_bytes()
+    assert _repair("trust") == 0
+    assert path.read_bytes() == before
+    assert "nothing to repair" in capsys.readouterr().out
+
+
+def test_a_ledger_that_cannot_be_rewritten_is_reported_and_kept(
+        monkeypatch, capsys):
+    path = _messy_trust()
+    before = path.read_bytes()
+
+    def refuse(*_a, **_k):
+        raise OSError(errno.EROFS, "read-only")
+    monkeypatch.setattr(store, "_atomic_write", refuse)
+    assert _repair("trust") == 1
+    assert "cannot repair trust.jsonl" in capsys.readouterr().out
+    assert path.read_bytes() == before
+
+
+def test_repair_without_a_readable_events_ledger_skips_the_rescrub(capsys):
+    _write("trust.jsonl", _line(ROW_A), _line(TORN))
+    _write("events.jsonl", b"\xff\xfe not an event\n")
+    assert _repair("trust") == 1
+    out = capsys.readouterr().out
+    assert "re-scrub skipped" in out and "events" in out
+    assert jsonl.read(_bucket() / "trust.jsonl").health is jsonl.Health.OK
+
+
+def test_repairing_events_keeps_the_tombstones_and_redacts_missed_rows():
+    event = {"ts": "2026-10-04T00:00:00Z", "kind": "resolution",
+             "item_ref": "i-1", "status": "resolved", "source": "cli",
+             "item_text": VALUE}
+    head, tail = json.dumps(event, ensure_ascii=False).split(" ")
+    path = _write("events.jsonl", _line(head), _line(tail), _line(TORN))
+    _tombstone()
+    assert _repair("events") == 0
+    text = path.read_text(encoding="utf-8")
+    assert "vault code" not in text and f"[forgotten:{KEY}]" in text
+    assert store.forgotten_content_keys(PROJECT) == {KEY}
+    assert jsonl.read(path).health is jsonl.Health.OK
+    assert [r["text"] for r in _sidecar_rows("events.quarantined-lines")] == [
+        TORN]

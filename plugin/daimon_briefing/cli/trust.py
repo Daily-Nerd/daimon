@@ -12,7 +12,7 @@ import json
 import sys
 
 from .. import render, trust
-from . import _cap_refusal
+from . import _cap_refusal, ledger_cmd
 
 # #920-style destination for an over-cap field: `reason` is the human's own
 # rationale, capped the same way a ruling's `verdict` is — the long form
@@ -135,6 +135,11 @@ def _cmd_trust_show(args) -> int:
     return 0
 
 
+def _cmd_trust_repair(args) -> int:
+    """`daimon trust repair` is `daimon ledger repair trust`, nothing more."""
+    return ledger_cmd._cmd_ledger_repair(args)
+
+
 def _resolve_project(project):
     # Imported lazily to avoid a cycle with the `cli` package `__init__`
     # (mirrors `amend.py`'s own `daimon_briefing.cli as _cli` seam).
@@ -206,6 +211,13 @@ def register(sub, fmt) -> None:
     pt_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pt_list.add_argument("--json", action="store_true", help="machine-readable output")
     pt_list.set_defaults(func=_cli._cmd_trust_list)
+
+    pt_repair = trust_sub.add_parser(
+        "repair",
+        help="alias for `daimon ledger repair trust`: heal trust.jsonl and "
+             "re-run forget over it")
+    ledger_cmd.add_repair_arguments(pt_repair)
+    pt_repair.set_defaults(func=_cli._cmd_trust_repair, name="trust")
 
     pt_show = trust_sub.add_parser("show", help="show one quarantine record")
     pt_show.add_argument("quarantine_id", help="exact tr-… id")

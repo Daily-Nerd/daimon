@@ -128,15 +128,16 @@ def census_machine() -> dict:
     return {key: _counts(jsonl.read(path)) for key, path in found.items()}
 
 
-def record_marker(slug: str) -> None:
+def record_marker(slug: str, *, force: bool = False) -> None:
     """Stamp `checkpoints/<slug>/.ledger-census` with this bucket's census,
-    once. An existing marker is left alone and costs one stat. The marker
+    once. An existing marker is left alone and costs one stat, unless
+    `force` (a repair re-stamps it). The marker
     carries a version, a UTC stamp and the per-ledger state and counts: no
     row content, no checkpoint-surface walk (that part of the census grows
     with the whole store, and a first write should not pay for it). Raises on
     failure; the caller (`store._record_ledger_census`) owns the swallowing."""
     path = config.checkpoint_dir() / slug / MARKER_NAME
-    if path.exists():
+    if path.exists() and not force:
         return
     census = census_bucket(slug, checkpoints=False)
     marker = {"version": MARKER_VERSION,
