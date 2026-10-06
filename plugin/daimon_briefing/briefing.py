@@ -407,13 +407,6 @@ def injection_read_route(project) -> "store.Route":
     return store.Route.OWN
 
 
-# (section, key) -> recall-index kind, for the same store._ITEM_LISTS pairs
-# withhold() iterates — #1109's quarantine pool is scoped by kind (design §2),
-# and this loop only ever has section/key in hand, never the kind word.
-_KIND_BY_LIST: dict[tuple[str, str], str] = {
-    (f.section, f.key): f.kind for f in schema.ITEM_FIELDS if not f.singleton}
-
-
 def _quarantine_hit(by_kind: dict, kind: str | None, *texts) -> bool:
     """True if any of `texts` canonicalizes to a value this `kind` has an
     ACTIVE human quarantine on. Same value-keyed check store.forgotten_content_keys'
@@ -552,11 +545,11 @@ def withhold(checkpoint: dict, resolutions: dict,
     to_stamp = []  # [(section, key, index, event, new_id)]
     to_stamp_claim = []  # [(section, key, index, evidence)] — #480 slice 4
     to_stamp_amend = []  # [(section, key, index, payloads)] — #691
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
-        kind = _KIND_BY_LIST.get((section, key))
+        kind = _FIELD_OF[(section, key)].kind
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
@@ -693,7 +686,7 @@ def mark_corroborated(checkpoint, corroborations: dict):
 
     # Dry run over the ORIGINAL, then one deepcopy — withhold's shape exactly.
     to_stamp = []  # [(section, key, index, n)]
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
@@ -830,7 +823,7 @@ def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None)
         return checkpoint, []
     resolutions = resolutions if isinstance(resolutions, dict) else {}
     to_stamp = []  # [(section, key, index, age_days)]
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue

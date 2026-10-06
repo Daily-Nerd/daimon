@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from . import (amendments, config, jsonl, normalize, refutations, relations,
-               requests, ledger_repair, store, surfaces, teamproject, trust)
+               requests, ledger_repair, schema, store, surfaces, teamproject, trust)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -166,7 +166,7 @@ def _payload_findings(payload: dict, path: Path, keys: set[str],
     the real residue it is — reporting it twice would understate it."""
     findings: list[dict] = []
     suppressed: list[dict] = []
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for item in ((payload.get(section) or {}).get(key) or []):
             if not isinstance(item, dict):
                 continue
@@ -181,7 +181,7 @@ def _payload_findings(payload: dict, path: Path, keys: set[str],
                                    "item_id": item.get("id"),
                                    "content_hash": h,
                                    "surface": surface})
-    # The active_topic singleton sits outside _ITEM_LISTS (#599 class
+    # The active_topic singleton sits outside schema.ITEM_LISTS (#599 class
     # finding): indexed for retrieval by schema.KIND_SOURCES, so an audit
     # walking only the list sections certifies exit 0 over live plaintext.
     topic = (payload.get("working_context") or {}).get("active_topic")

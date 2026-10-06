@@ -34,7 +34,6 @@ from . import normalize, redact, schema
 # (#146 — one definition; serializer/recall/carry derive theirs from the same
 # table). active_topic is a single per-session dict and never needs an id (it
 # does not carry, #33).
-_ITEM_LISTS = schema.ITEM_LISTS
 
 
 def redact_checkpoint(checkpoint: dict, redact_fn=None) -> None:
@@ -61,7 +60,7 @@ def redact_checkpoint(checkpoint: dict, redact_fn=None) -> None:
             for k, n in c.items():
                 counts[k] = counts.get(k, 0) + n
 
-    for section, key in _ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
@@ -112,7 +111,7 @@ def scrub_forgotten_payload(checkpoint: dict,
     """drop_forgotten's full-enumeration body (#599): covers the same
     plaintext-bearing CLASS redact_checkpoint enumerates — every list item's
     text/quote/scene and links[].target, plus the active_topic singleton
-    (outside _ITEM_LISTS, so a list-only walk indexes it for retrieval while
+    (outside schema.ITEM_LISTS, so a list-only walk indexes it for retrieval while
     leaving it unreachable by deletion). Returns (dropped_items, changed) —
     `changed` also covers field-level scrubs that drop nothing, so a caller
     rewriting files knows whether bytes moved."""
@@ -120,7 +119,7 @@ def scrub_forgotten_payload(checkpoint: dict,
         return [], False
     dropped: list = []
     changed = False
-    for section, key in _ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         block = checkpoint.get(section)
         if not isinstance(block, dict):
             continue
@@ -228,7 +227,7 @@ def stamp_item_ids(checkpoint: dict) -> None:
     Ids already stamped keep their width forever and both shapes coexist:
     every consumer regex accepts {6,} (briefing's bounds it at {6,40})."""
     seen: set = set()
-    for section, key in _ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
@@ -283,7 +282,7 @@ def bind_origin(checkpoint: dict) -> None:
 
     Only non-empty string fields bind. An empty origin would read as a real
     witness with an unnameable source; absent = unknown is the project
-    convention (project_slug, git_branch). Walks _ITEM_LISTS, so
+    convention (project_slug, git_branch). Walks schema.ITEM_LISTS, so
     active_topic is excluded for the same reason stamp_item_ids excludes it:
     it is per-session by definition and never carries (#33)."""
     session = checkpoint.get("session_id")
@@ -293,7 +292,7 @@ def bind_origin(checkpoint: dict) -> None:
               if isinstance(val, str) and val.strip()]
     if not stamps:
         return
-    for section, key in _ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         block = checkpoint.get(section)
         if not isinstance(block, dict):
             continue  # torn/legacy blob — drop_forgotten's tolerance, not
@@ -320,7 +319,7 @@ def drop_matching_items(checkpoint: dict, keys: set) -> list:
     if not keys:
         return []
     dropped: list = []
-    for section, key in _ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         block = checkpoint.get(section)
         if not isinstance(block, dict):
             continue
@@ -397,7 +396,7 @@ def clamp_foreign_trust(checkpoint: dict) -> None:
             item["trust"] = "inferred"
             item["foreign_verbatim_claim"] = True
 
-    for section, key in _ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue

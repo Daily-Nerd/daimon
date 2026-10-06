@@ -23,7 +23,6 @@ _ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,}(-\d+)?")
 # (section, key, scoring TYPE_RULES type), from the shared schema (#146).
 # Beliefs regenerate cheaply and active_topic is per-session by definition —
 # neither carries (v1); the carries flag in schema.ITEM_FIELDS records that.
-_CARRIED_KINDS = schema.CARRIED_KINDS
 
 _MIN_SHARED = 3     # shared salient terms for same-item
 _MIN_RATIO = 0.6    # or this fraction of the shorter term list
@@ -367,7 +366,7 @@ def merge(new_cp: dict, prev_cp: dict | None, now: float,
     # serialize, long before this runs); absent means G2 is unprovable and
     # every observation refuses.
     out_sid = str(out.get("session_id") or "")
-    for section, key, item_type in _CARRIED_KINDS:
+    for section, key, item_type in schema.CARRIED_KINDS:
         native = (out.get(section) or {}).get(key)
         if not isinstance(native, list):
             continue
@@ -626,7 +625,7 @@ def bind_links(merged_cp: dict, prev_cp: dict | None) -> list[tuple[str, str, st
     pairs: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()  # dedupe triples by (old_id, new_id) —
     # two links resolving to the same prev item are one supersession event
-    for section, key, _item_type in _CARRIED_KINDS:
+    for section, key, _item_type in schema.CARRIED_KINDS:
         native = (merged_cp.get(section) or {}).get(key)
         if not isinstance(native, list):
             continue

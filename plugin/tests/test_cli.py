@@ -6425,7 +6425,7 @@ def test_status_suppressed_lists_a_quarantined_item(tmp_checkpoint_dir, sample_c
 
 
 def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, sample_checkpoint, capsys):
-    # #103 I2: `daimon resolve` accepts all five item kinds (store._ITEM_LISTS),
+    # #103 I2: `daimon resolve` accepts all five item kinds (schema.ITEM_LISTS),
     # but withhold used to iterate only carry._CARRIED_KINDS (3 of 5) — a
     # resolved strong_beliefs id never suppressed. Cover the gap end-to-end.
     from daimon_briefing import store

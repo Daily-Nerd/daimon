@@ -21,7 +21,7 @@ receipt re-checkable at all.
 import json
 import os
 
-from daimon_briefing import capture, provenance, serializer, store
+from daimon_briefing import capture, provenance, schema, serializer
 
 PROJECT = "/p/clock-determinism"
 SESSION = "S-clock"
@@ -66,7 +66,7 @@ def _write_transcript(tmp_path):
 def _stamps(checkpoint):
     """Every verification stamp the checkpoint carries."""
     out = []
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for item in ((checkpoint.get(section) or {}).get(key) or []):
             if not isinstance(item, dict):
                 continue

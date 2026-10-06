@@ -13,7 +13,7 @@ test is about.
 
 import json
 
-from daimon_briefing import carry, cli, config, render, store
+from daimon_briefing import carry, cli, config, render, schema, store
 from daimon_briefing.cli import history
 
 
@@ -52,7 +52,7 @@ def _write(checkpoint, *, project=_PROJECT):
 
 def _ids(checkpoint) -> dict:
     out = {}
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for item in ((checkpoint.get(section) or {}).get(key) or []):
             if isinstance(item, dict) and item.get("id"):
                 out[item["text"]] = item["id"]

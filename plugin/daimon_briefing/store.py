@@ -461,7 +461,7 @@ def items_for_project(project_dir=None) -> list[tuple[Path, str, str, dict]]:
             continue
         if not isinstance(payload, dict):
             continue
-        for section, key in _ITEM_LISTS:
+        for section, key in schema.ITEM_LISTS:
             for item in ((payload.get(section) or {}).get(key) or []):
                 if isinstance(item, dict) and item.get("id"):
                     found.append((path, section, key, item))
@@ -1186,13 +1186,6 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
 # preserves it untouched when present — carry copies whole items (carry.merge
 # deepcopy) and redaction/id-stamping below only ever touch named fields — so no
 # code here needs to name it; this note is the reservation.
-
-# The five list sections that hold checkpoint items, from the shared schema
-# (#146 — one definition; serializer/recall/carry derive theirs from the same
-# table). active_topic is a single per-session dict and never needs an id (it
-# does not carry, #33). Aliased because briefing.withhold and cli iterate
-# store._ITEM_LISTS.
-_ITEM_LISTS = schema.ITEM_LISTS
 
 
 # #421: the admission pipeline (redact -> forget-gate -> id-stamp) moved to
