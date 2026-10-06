@@ -12,6 +12,9 @@ import getpass
 import logging
 import os
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from pathlib import Path
 from typing import overload
@@ -106,7 +109,29 @@ def mcp_tool_name() -> str | None:
     return raw or None
 
 
+# A scoped replacement for the checkpoint dir, set only by
+# `checkpoint_dir_override`. A ContextVar, not an environment edit: the
+# package is imported in-process by long-lived async hosts, and an env swap
+# would point every concurrent reader in the process at the replacement. A
+# thread or task started elsewhere has its own context and never sees it.
+_CHECKPOINT_DIR_OVERRIDE: ContextVar[Path | None] = ContextVar(
+    "daimon_checkpoint_dir_override", default=None)
+
+
+@contextmanager
+def checkpoint_dir_override(path: Path) -> Iterator[None]:
+    """Make `checkpoint_dir()` answer `path` in the calling context only."""
+    token = _CHECKPOINT_DIR_OVERRIDE.set(path)
+    try:
+        yield
+    finally:
+        _CHECKPOINT_DIR_OVERRIDE.reset(token)
+
+
 def checkpoint_dir() -> Path:
+    override = _CHECKPOINT_DIR_OVERRIDE.get()
+    if override is not None:
+        return override
     raw = _get("DAIMON_CHECKPOINT_DIR")
     if raw:
         return Path(raw).expanduser()
