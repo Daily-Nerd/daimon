@@ -357,8 +357,9 @@ SURFACES: tuple[Surface, ...] = (
     #    copy them (receipts._sidecar_path). The suffix exemption. --
     Surface("checkpoints/**/*.receipt", "receipts._atomic_write_text",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
-    # store._pointer_lock: empty flock sidecar, opened a+, never written.
-    Surface("checkpoints/**/.pointer.lock", "store._pointer_lock",
+    # jsonl.dir_lock (store._pointer_lock delegates): empty flock sidecar,
+    # opened a+, never written; every bucket ledger append and rewrite takes it.
+    Surface("checkpoints/**/.pointer.lock", "jsonl.dir_lock",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
     # macOS Finder metadata: listing positions, never file contents.
     Surface("**/.DS_Store", "macOS Finder", False, "exempt-no-plaintext",
