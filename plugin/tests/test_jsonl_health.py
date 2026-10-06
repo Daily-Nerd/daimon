@@ -241,3 +241,47 @@ def test_a_clean_file_has_no_undecodable_lines(tmp_path):
     path = tmp_path / "l.jsonl"
     path.write_bytes(_row(a=1) + b"\n")
     assert jsonl.read(path).undecodable == 0
+
+
+def _cannot_scan(path):
+    return jsonl.read(path)._asdict().get("cannot_scan")
+
+
+def test_an_undecodable_byte_cannot_be_scanned(tmp_path):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(_row(a=1) + b'\n{"a": "\xff"}\n')
+    assert jsonl.read(path).cannot_scan == "undecodable"
+
+
+def test_a_stray_text_line_can_still_be_scanned(tmp_path):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(b"<<<<<<< HEAD\n" + _row(a=1) + b"\n")
+    assert jsonl.read(path).cannot_scan == ""
+
+
+def test_an_os_error_cannot_be_scanned_and_names_the_errno(tmp_path):
+    (tmp_path / "dir.jsonl").mkdir()
+    assert jsonl.read(tmp_path / "dir.jsonl").cannot_scan == "EISDIR"
+
+
+def test_a_transient_failure_cannot_be_scanned(tmp_path, monkeypatch):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(_row(a=1) + b"\n")
+
+    def busy(_p):
+        raise OSError(errno.EAGAIN, "try again")
+
+    monkeypatch.setattr(jsonl, "_read_bytes", busy)
+    result = jsonl.read(path, sleep=_no_sleep)
+    assert result.health is Health.TRANSIENT
+    assert result.cannot_scan == "EAGAIN"
+
+
+def test_absent_torn_and_clean_files_can_be_scanned(tmp_path):
+    clean = tmp_path / "c.jsonl"
+    clean.write_bytes(_row(a=1) + b"\n")
+    torn = tmp_path / "t.jsonl"
+    torn.write_bytes(_row(a=1) + b'\n{"cut')
+    assert jsonl.read(tmp_path / "nope.jsonl").cannot_scan == ""
+    assert jsonl.read(clean).cannot_scan == ""
+    assert jsonl.read(torn).cannot_scan == ""

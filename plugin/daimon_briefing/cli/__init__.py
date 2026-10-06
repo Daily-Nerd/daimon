@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, jsonl, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, relations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 # Aliased: `trust` below (from . import (..., trust)) already binds the
 # `cli.trust` VERB submodule at this scope — this is the LIBRARY ledger
 # module (daimon_briefing.trust), needed here only to read
@@ -3658,6 +3658,8 @@ def _stats_events(project_dir) -> dict:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return out
+    # A RAW line count (blank, torn and garbage lines included): the growth
+    # signal, which jsonl.read's rows cannot give.
     out["lines"] = len(text.splitlines())
     start = time.perf_counter()
     folded = store.resolutions(project_dir=project_dir)
@@ -3914,16 +3916,8 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
     human_stamps: list[str] = []
     path = store._events_path(project_dir)
     if path is not None:
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            lines = []
-        for line in lines:
-            try:
-                evt = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(evt, dict) or not evt.get("item_ref"):
+        for evt in jsonl.read(path).rows:
+            if not evt.get("item_ref"):
                 continue
             source = str(evt.get("source") or "")
             status = str(evt.get("status") or "")

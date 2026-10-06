@@ -242,6 +242,22 @@ class Read(NamedTuple):
     detail: str = ""
     undecodable: int = 0
 
+    @property
+    def cannot_scan(self) -> str:
+        """Why a scan or a strict read cannot vouch for this file, or "".
+
+        A transient failure and an OS-level failure (the detail is the errno
+        name) mean the file was not read, and an undecodable byte means a
+        line could not be read, so "nothing found" proves nothing. A line
+        that is merely not JSON (a conflict marker, stray text) is skipped
+        and does not count: the same line was skipped before `read` existed.
+        """
+        if self.health is Health.TRANSIENT:
+            return self.detail
+        if self.health is Health.UNREADABLE and self.detail != "garbage":
+            return self.detail
+        return "undecodable" if self.undecodable else ""
+
 
 _TRANSIENT_ERRNOS = frozenset({errno.EAGAIN, errno.EBUSY, errno.EINTR,
                                errno.ETIMEDOUT})

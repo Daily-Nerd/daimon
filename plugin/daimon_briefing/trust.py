@@ -242,18 +242,8 @@ def events(project_dir=None) -> list[dict]:
     path = _path(project_dir)
     if path is None:
         return []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError:
-        return []
-    except (OSError, UnicodeDecodeError):
-        return []
     rows = []
-    for index, line in enumerate(lines):
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
+    for index, row in enumerate(jsonl.read(path).rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _TRUST_ID_RE.fullmatch(
@@ -266,6 +256,9 @@ def events(project_dir=None) -> list[dict]:
                 row.get("evidence"), list):
             continue
         copy = dict(row)
+        # `_line` is the row's index among the rows `jsonl.read` returned
+        # (torn and garbage lines do not count); it is only a read-order
+        # tie-break, so its absolute value is not part of any contract.
         copy["_line"] = index
         rows.append(copy)
     return rows

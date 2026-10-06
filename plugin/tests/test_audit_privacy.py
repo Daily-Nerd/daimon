@@ -579,6 +579,52 @@ def test_non_utf8_events_ledger_is_unscannable(tmp_checkpoint_dir):
     assert privacy.exit_code([result]) == 3
 
 
+_SCANNED_LEDGERS = ["events.jsonl", "refutations.jsonl", "relations.jsonl",
+                    "amendments.jsonl", "requests.jsonl", "trust.jsonl",
+                    "trust.quarantined-lines"]
+
+
+@pytest.mark.parametrize("name", _SCANNED_LEDGERS)
+def test_an_undecodable_byte_makes_any_scanned_ledger_unscannable(
+        name, tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    path = tmp_checkpoint_dir / store.project_slug(PROJECT) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'{"a": 1}\n\xff\xfe garbage\n')
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert str(path) in result["unscannable"]
+    assert privacy.exit_code([result]) == 3
+
+
+@pytest.mark.parametrize("name", _SCANNED_LEDGERS)
+def test_a_stray_text_line_leaves_a_scanned_ledger_scannable(
+        name, tmp_checkpoint_dir):
+    _write("S1", KEEPER)
+    path = tmp_checkpoint_dir / store.project_slug(PROJECT) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<<<<<<< HEAD\nnot json at all\n")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert str(path) not in result["unscannable"]
+
+
+def test_the_good_rows_around_an_undecodable_byte_are_still_scanned(
+        tmp_checkpoint_dir):
+    """Unscannable says the file cannot be vouched for; it does not hide the
+    residue that the readable rows around the bad byte do carry."""
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT, tombstone=True)
+    store.append_event("i-y", "resolved", note=CANARY, project_dir=PROJECT)
+    events = tmp_checkpoint_dir / store.project_slug(PROJECT) / "events.jsonl"
+    with events.open("ab") as f:
+        f.write(b"\xff\xfe not utf-8\n")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert str(events) in result["unscannable"]
+    assert any(f["surface"] == "events-note" and f["item_id"] == "i-y"
+               for f in result["findings"])
+
+
 def test_torn_and_non_dict_event_lines_are_skipped(tmp_checkpoint_dir):
     """The ledger is append-only and can be torn mid-write. A junk line is a
     line, not a reason to stop reading the rest of the file."""

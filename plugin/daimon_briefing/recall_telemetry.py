@@ -458,17 +458,7 @@ def stats(*, now=None) -> dict:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=WINDOW_DAYS)
     lifetime, recent = [], []
-    try:
-        lines = config.recall_delivery_log().read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in jsonl.read(config.recall_delivery_log()).rows:
         lifetime.append(row)
         stamp = _parse_stamp(row.get("at"))
         if stamp is not None and stamp >= cutoff:

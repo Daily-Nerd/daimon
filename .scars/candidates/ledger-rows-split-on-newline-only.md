@@ -25,9 +25,12 @@ fragments through and leave a forgotten value in place, and let the privacy
 audit report such a file clean. A past scrub also persisted the split as a
 raw "\n" inside a JSON string, which jsonl.split_rows rejoins with U+2028.
 
-Rewriters and scans must use jsonl.split_rows / read_rows / rewrite (rewrite
-keeps unparseable lines verbatim and round-trips undecodable bytes). Readers
-still on splitlines() are the remaining exposure (PR 3 of the read pipeline).
+Rewriters, scans and readers must use jsonl.read / split_rows / read_rows /
+rewrite (rewrite keeps unparseable lines verbatim and round-trips undecodable
+bytes; read judges each line on its own and returns the rows around a bad
+one). Every ledger reader in daimon_briefing is on jsonl.read now. Still on
+splitlines() by design: store._tombstone_keys (byte-capped read), the raw line
+count in cli._stats_events, and daimon_ui/reader.py (no daimon imports).
 
 Coupling found while doing it: store.scrub_event_fields must keep writing via
 store._atomic_write (jsonl.rewrite(write=...)) and hold the admitted row in

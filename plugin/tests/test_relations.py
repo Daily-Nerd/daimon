@@ -792,16 +792,15 @@ def test_forget_read_failure_after_doomed_scan_returns_empty(bucket,
     _propose(bucket)
     path = relations._path(bucket)
     original = type(path).read_text
-    calls = {"n": 0}
 
-    def flaky_read(self, *args, **kwargs):
+    def failing_read(self, *args, **kwargs):
+        # `events()` reads bytes through jsonl.read, so the only read_text of
+        # the ledger is the rewrite's: that one fails after the doomed scan.
         if self.name == "relations.jsonl":
-            calls["n"] += 1
-            if calls["n"] > 1:      # events() scan works, rewrite read fails
-                raise OSError("io error")
+            raise OSError("io error")
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(type(path), "read_text", flaky_read)
+    monkeypatch.setattr(type(path), "read_text", failing_read)
     assert relations.forget_item_id("r-abc123456789",
                                     project_dir=bucket) == []
 

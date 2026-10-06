@@ -416,6 +416,7 @@ def _firing_summary(project_dir) -> FiringSummary:
     # on every run and the log has no cap yet, so reading it whole made the
     # most-used verb hold the entire file: 150 MB of resident memory on a
     # 34 MB log. Nothing here needs two passes or random access.
+    # Not on jsonl.read: it loads the whole file, and this fold streams.
     try:
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:

@@ -154,22 +154,8 @@ def records() -> list[dict]:
     Torn lines are skipped, never fatal: this file is read from `status`,
     `recall`'s rebuild and the requests inbox join, and a half-written line
     must not take a reporting surface down."""
-    try:
-        text = migrations_path().read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return []
-    out: list[dict] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict) and row.get("from_slug") and row.get("to_slug"):
-            out.append(row)
-    return out
+    return [row for row in jsonl.read(migrations_path()).rows
+            if row.get("from_slug") and row.get("to_slug")]
 
 
 def _is_complete(row: dict) -> bool:
@@ -289,6 +275,8 @@ def _read_lines(path: Path) -> tuple[list[str], bool]:
     file is destroyed, the receipt says zero lines, and the exit code says
     success. A file that cannot be read cannot be compared, so it cannot be
     proven safe to delete."""
+    # Not on jsonl.read: the merge compares and carries RAW lines (torn ones
+    # included), which `Read.rows` would drop.
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:

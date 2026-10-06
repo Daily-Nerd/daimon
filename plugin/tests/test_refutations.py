@@ -413,15 +413,13 @@ def test_append_and_read_fail_soft_on_missing_scope_and_io_errors(
     assert refutations.append(row, project_dir=PROJECT) is False
 
 
-def test_events_fail_soft_on_unreadable_ledger(tmp_checkpoint_dir, monkeypatch):
+def test_events_fail_soft_on_unreadable_ledger(tmp_checkpoint_dir):
     path = refutations._path(PROJECT)
     path.parent.mkdir(parents=True)
-    path.touch()
-
-    def fail_read(*_args, **_kwargs):
-        raise UnicodeDecodeError("utf-8", b"x", 0, 1, "invalid")
-
-    monkeypatch.setattr(Path, "read_text", fail_read)
+    path.write_bytes(b"\xff\xfe not utf-8 at all\n")
+    assert refutations.events(project_dir=PROJECT) == []
+    path.unlink()
+    path.mkdir()                    # a directory in the ledger's place
     assert refutations.events(project_dir=PROJECT) == []
 
 
@@ -438,7 +436,9 @@ def test_events_ignore_structurally_invalid_rows(tmp_checkpoint_dir):
         json.dumps(valid),
     )) + "\n", encoding="utf-8")
 
-    assert refutations.events(project_dir=PROJECT) == [dict(valid, _line=3)]
+    # `_line` counts the rows `jsonl.read` returned: the `[]` line is not a
+    # row, so the one valid row is the third row read, index 2.
+    assert refutations.events(project_dir=PROJECT) == [dict(valid, _line=2)]
 
 
 def test_fold_ignores_duplicate_assertions_and_accepts_mechanical_activation():

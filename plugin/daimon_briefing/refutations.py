@@ -310,18 +310,8 @@ def _read_policy_tombstones(project_dir=None) -> frozenset:
     path = _tombstone_path(project_dir)
     if path is None or not path.exists():
         return frozenset()
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return frozenset()
     out = set()
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(row, dict):
-            continue
+    for row in jsonl.read(path).rows:
         active_from_raw = row.get("active_from")
         active_until_raw = row.get("active_until")
         try:
@@ -817,6 +807,9 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     # permanent exit 1 this module forbids. Version-proof for any future
     # event name; the rewrite below already walks raw lines for this reason.
     doomed = set()
+    # Not on jsonl.read: a deleter must see every line, and `read` drops a
+    # line holding an undecodable byte, so a forgotten value sitting in a row
+    # next to one would stay on disk. read_rows round-trips those bytes.
     try:
         lines = jsonl.read_rows(path)
     except OSError:
@@ -895,19 +888,10 @@ def events(project_dir=None, *, strict: bool = False) -> list[dict]:
     if path is None:
         return []
     rows = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError:
-        return []
-    except (OSError, UnicodeDecodeError):
-        if strict:
-            raise
-        return []
-    for index, line in enumerate(lines):
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
+    read = jsonl.read(path)
+    if strict and read.cannot_scan:
+        _raise_unreadable(read)
+    for index, row in enumerate(read.rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _REF_ID_RE.fullmatch(str(row.get("refutation_id") or ""))):
@@ -924,9 +908,24 @@ def events(project_dir=None, *, strict: bool = False) -> list[dict]:
                for key in ("anchors", "evidence")):
             continue
         copy = dict(row)
+        # `_line` is the row's index among the rows `jsonl.read` returned
+        # (torn and garbage lines do not count); it is only a read-order
+        # tie-break, so its absolute value is not part of any contract.
         copy["_line"] = index
         rows.append(copy)
     return rows
+
+
+def _raise_unreadable(read) -> None:
+    """`events(strict=True)`'s refusal: the exception a failed read raised
+    before `jsonl.read` existed (an OSError for a file that could not be
+    read, a UnicodeDecodeError for an undecodable byte), so `rulings_read`
+    keeps reporting "unreadable" for exactly those conditions."""
+    reason = read.cannot_scan
+    if reason == "undecodable":
+        raise UnicodeDecodeError("utf-8", b"", 0, 1,
+                                 "ledger holds undecodable bytes")
+    raise OSError(reason)
 
 
 def _fold_row(out: dict, row: dict) -> None:
