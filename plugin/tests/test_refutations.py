@@ -518,19 +518,6 @@ def test_a_record_too_damaged_to_name_an_identity_claims_none():
         == refutations.make_id("a real subject", "storage")
 
 
-def test_an_unstattable_ledger_is_not_reported_as_torn(
-        tmp_checkpoint_dir, monkeypatch):
-    """`_is_torn` decides whether to prefix a newline before appending. It
-    cannot answer over a file it cannot stat, and guessing True there would
-    inject a blank line into a healthy ledger on every append."""
-    _assert()
-    path = refutations._path(PROJECT)
-
-    def boom(*args, **kwargs):
-        raise OSError("no stat for you")
-
-    monkeypatch.setattr(Path, "stat", boom)
-    assert refutations._is_torn(path) is False
 
 
 def test_a_revision_that_keeps_its_own_identity_is_still_allowed(

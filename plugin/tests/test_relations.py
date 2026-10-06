@@ -570,8 +570,6 @@ def test_oversized_row_is_refused_loudly_not_silently(bucket):
         relations._write({"pad": "x" * 3000}, project_dir=bucket)
 
 
-def test_is_torn_survives_a_missing_file(tmp_path):
-    assert relations._is_torn(tmp_path / "absent.jsonl") is False
 
 
 def test_verdicts_on_unknown_relation_are_refused(bucket):

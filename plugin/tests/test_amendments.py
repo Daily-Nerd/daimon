@@ -965,12 +965,6 @@ def test_append_and_torn_check_survive_unwritable_ledger(project):
     assert amendments.get(a_id, project_dir=project) is not None
 
 
-def test_is_torn_survives_unopenable_path(project):
-    from daimon_briefing import config, store
-    slug = store.project_slug(project)
-    directory = config.checkpoint_dir() / slug
-    directory.mkdir(parents=True, exist_ok=True)
-    assert amendments._is_torn(directory) is False
 
 
 def test_rewrite_cleanup_survives_failing_tmp_write(project, monkeypatch):

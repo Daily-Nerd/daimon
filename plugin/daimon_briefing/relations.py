@@ -158,18 +158,6 @@ def _stamp(event: str, relation_id: str, channel: str,
     }
 
 
-def _is_torn(path) -> bool:
-    """True when the last append died before writing its terminator."""
-    try:
-        if path.stat().st_size == 0:
-            return False
-        with path.open("rb") as handle:
-            handle.seek(-1, 2)
-            return handle.read(1) != b"\n"
-    except OSError:
-        return False
-
-
 def _append(row: dict, project_dir=None) -> bool:
     """Append one admitted row.  Never raises; never mutates another ledger."""
     if config.is_disabled():
@@ -180,10 +168,7 @@ def _append(row: dict, project_dir=None) -> bool:
     admitted = policy.admit_row(row, redact_fields=("author",))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            if _is_torn(path):
-                handle.write("\n")
-            handle.write(json.dumps(admitted, ensure_ascii=False) + "\n")
+        jsonl.append(path, admitted)
         return True
     except OSError:
         return False
@@ -593,7 +578,7 @@ def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     Every row of a matched record goes; everything else is written back
     byte-identical, including rows this version cannot interpret.
     Unparseable lines are dropped: already invisible to every read path, and
-    `_is_torn` establishes a torn row is expendable.
+    a torn row is expendable.
 
     No kill-switch check: forget is the ratified deletion exemption (#421).
     Atomic or nothing, staged beside the ledger and swapped with os.replace.

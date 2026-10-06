@@ -214,3 +214,30 @@ def test_replace_hands_the_text_to_a_caller_supplied_stager(tmp_path):
         (target, text)))
     assert got == [(path, "x\n")]
     assert not path.exists()
+
+
+def test_a_missing_ledger_is_not_torn(tmp_path):
+    assert jsonl._unterminated(tmp_path / "never-written.jsonl") is False
+
+
+def test_an_unopenable_path_is_not_torn(tmp_path):
+    assert jsonl._unterminated(tmp_path) is False
+
+
+def test_an_unstattable_ledger_is_not_reported_as_torn(tmp_path, monkeypatch):
+    """Guessing True here would inject a blank line into a healthy ledger on
+    every append."""
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(b'{"cut"')
+
+    def boom(*args, **kwargs):
+        raise OSError("no stat for you")
+
+    monkeypatch.setattr(Path, "stat", boom)
+    assert jsonl._unterminated(path) is False
+
+
+def test_append_to_an_unwritable_path_propagates_the_oserror(tmp_path):
+    import pytest
+    with pytest.raises(OSError):
+        jsonl.append_lines(tmp_path / "no-such-dir" / "l.jsonl", ["{}"])

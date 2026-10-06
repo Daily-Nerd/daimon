@@ -3934,10 +3934,8 @@ def _rows_or_empty(project):
     return [] if path is None or not path.exists() else _rows(project)
 
 
-def test_a_missing_ledger_is_not_torn(project, tmp_path):
-    """`_is_torn` answers for a file it cannot stat: the first append to a
-    fresh bucket must not prepend a repair newline."""
-    assert requests._is_torn(tmp_path / "never-written.jsonl") is False
+def test_the_first_append_to_a_fresh_bucket_starts_with_a_row(project):
+    """A file that does not exist yet is not torn: no repair newline leads."""
     _open(project)
     assert requests._path(project).read_text(
         encoding="utf-8").startswith("{")

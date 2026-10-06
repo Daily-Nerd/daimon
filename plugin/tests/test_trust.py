@@ -367,9 +367,6 @@ def test_stamp_rejects_unknown_channel():
         trust._stamp("quarantined", "tr-000000000000", "narrator")
 
 
-def test_is_torn_false_for_a_missing_path():
-    from pathlib import Path
-    assert trust._is_torn(Path("/does/not/exist/trust.jsonl")) is False
 
 
 def test_append_returns_false_for_an_unresolvable_project(monkeypatch):
