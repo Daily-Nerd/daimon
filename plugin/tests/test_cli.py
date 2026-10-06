@@ -7436,7 +7436,7 @@ def test_status_payload_matches_status_json_output(
             return frozen_dt.astimezone(tz) if tz else \
                 frozen_dt.replace(tzinfo=None)
 
-    monkeypatch.setattr(cli, "datetime", _FrozenDatetime)
+    monkeypatch.setattr("daimon_briefing.cli.status.datetime", _FrozenDatetime)
     rc = cli.main(["status", "--json"])
     data = json.loads(capsys.readouterr().out)
     payload, prc = cli.status_payload(None)
