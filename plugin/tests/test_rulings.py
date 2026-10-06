@@ -1157,6 +1157,36 @@ def test_rulings_read_state_read_matches_active_rulings(tmp_checkpoint_dir):
     assert [dict(r, inherited_from=None) for r in read.rows] == merged
 
 
+def test_rulings_read_is_unreadable_for_an_undecodable_byte(
+        tmp_checkpoint_dir):
+    from daimon_briefing import briefing
+
+    _rule(channel="cli-tty", ratified=True)
+    path = refutations._path(PROJECT)
+    with path.open("ab") as fh:
+        fh.write(b"\xff\xfe not utf-8 at all\n")
+
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "unreadable"
+    assert read.rows == []
+
+
+def test_rulings_read_keeps_the_good_rows_around_a_stray_text_line(
+        tmp_checkpoint_dir):
+    """A conflict marker or stray text is skipped, as it always was: only an
+    undecodable byte or a failed read makes the ledger unreadable."""
+    from daimon_briefing import briefing
+
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    path = refutations._path(PROJECT)
+    with path.open("ab") as fh:
+        fh.write(b"<<<<<<< HEAD\n=======\n>>>>>>> other\n")
+
+    read = briefing.rulings_read(PROJECT)
+    assert read.state == "read"
+    assert [r["refutation_id"] for r in read.rows] == [ruling_id]
+
+
 def test_rulings_read_skips_malformed_lines_and_keeps_the_good_rows(
         tmp_checkpoint_dir):
     from daimon_briefing import briefing

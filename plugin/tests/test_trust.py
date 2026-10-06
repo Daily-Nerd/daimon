@@ -560,15 +560,11 @@ def test_events_returns_empty_for_an_unresolvable_project(monkeypatch):
     assert trust.events(project_dir="/p/x") == []
 
 
-def test_events_returns_empty_on_a_read_oserror(project, tmp_checkpoint_dir,
-                                                monkeypatch):
-    from pathlib import Path
+def test_events_returns_empty_on_a_read_oserror(project, tmp_checkpoint_dir):
     _propose(project)
-
-    def boom(self, *a, **k):
-        raise OSError("boom")
-
-    monkeypatch.setattr(Path, "read_text", boom)
+    path = trust._path(project)
+    path.unlink()
+    path.mkdir()                    # EISDIR on read
     assert trust.events(project_dir=project) == []
 
 

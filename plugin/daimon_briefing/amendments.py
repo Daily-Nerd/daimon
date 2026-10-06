@@ -35,7 +35,6 @@ both length-capped, both reachable by forget by value.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import time
 import uuid
@@ -194,25 +193,18 @@ def append(row: dict, project_dir=None) -> bool:
 def events(project_dir=None) -> list[dict]:
     """Read valid ledger rows best-effort; malformed lines never sink reads."""
     path = _path(project_dir)
-    if path is None or not path.exists():
+    if path is None:
         return []
     rows = []
-    try:
-        # #1138: "\n"-only split; strict decoding stays (a non-UTF-8 ledger
-        # reads as empty, callers and tests rely on that).
-        lines = jsonl.read_rows(path, errors="strict")
-    except (OSError, UnicodeDecodeError):
-        return []
-    for index, line in enumerate(lines):
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
+    for index, row in enumerate(jsonl.read(path).rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _AMEND_ID_RE.fullmatch(str(row.get("amendment_id") or ""))):
             continue
         copy = dict(row)
+        # `_line` is the row's index among the rows `jsonl.read` returned
+        # (torn and garbage lines do not count); it is only a read-order
+        # tie-break, so its absolute value is not part of any contract.
         copy["_line"] = index
         rows.append(copy)
     return rows

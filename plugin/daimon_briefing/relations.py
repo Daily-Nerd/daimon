@@ -267,20 +267,12 @@ def events(project_dir=None) -> list[dict]:
     path = _path(project_dir)
     if path is None:
         return []
-    # Read first, ask later: `path.exists()` RAISES on an unreadable parent
-    # dir (EACCES is not in pathlib's ignored set), which would crash the
-    # read-only auditor on exactly the tree it must report on.
-    try:
-        # #1138: "\n"-only split; strict decoding stays (see amendments).
-        lines = jsonl.read_rows(path, errors="strict")
-    except (OSError, UnicodeDecodeError):
-        return []
+    # `jsonl.read` asks nothing first and never raises: `path.exists()` RAISES
+    # on an unreadable parent dir (EACCES is not in pathlib's ignored set),
+    # which would crash the read-only auditor on exactly the tree it must
+    # report on.
     rows = []
-    for index, line in enumerate(lines):
-        try:
-            row = json.loads(line)
-        except (ValueError, TypeError):
-            continue
+    for index, row in enumerate(jsonl.read(path).rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _REL_ID_RE.fullmatch(str(row.get("relation_id") or ""))):
@@ -294,6 +286,9 @@ def events(project_dir=None) -> list[dict]:
             continue
         copy = dict(row)
         copy["order"] = row_order
+        # `_line` is the row's index among the rows `jsonl.read` returned
+        # (torn and garbage lines do not count); it is only a read-order
+        # tie-break, so its absolute value is not part of any contract.
         copy["_line"] = index
         rows.append(copy)
     return rows
