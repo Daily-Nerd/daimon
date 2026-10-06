@@ -927,8 +927,9 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
             if path.exists() and content_hash in _tombstone_keys(path):
                 continue
             adir.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as f:
-                f.write(row + "\n")
+            # lock=False: this dir is committed by teamsync._commit_own, and a
+            # .pointer.lock sidecar would travel to every teammate.
+            jsonl.append_lines(path, [row], lock=False)
         except OSError:
             continue
         written.append(str(path))
@@ -2083,8 +2084,7 @@ def append_verification(item_ref: str, check: str, reason: str,
         row = policy.admit_row(row, redact_fields=("check", "reason"))
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        jsonl.append(path, row)
         return True
     except OSError:
         return False
@@ -2344,15 +2344,18 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
-        with path.open("a", encoding="utf-8") as f:
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                key = normalize.content_key(item.get("text") or "")
-                row = {"ts": ts, "key": key}
-                if reason:
-                    row["reason"] = reason
-                f.write(json.dumps(row) + "\n")
+        lines = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = normalize.content_key(item.get("text") or "")
+            row = {"ts": ts, "key": key}
+            if reason:
+                row["reason"] = reason
+            # Default ensure_ascii (True): this ledger has always been
+            # written ASCII-escaped, so the bytes stay what they were.
+            lines.append(json.dumps(row))
+        jsonl.append_lines(path, lines)
         return True
     except OSError:
         return False
@@ -2476,8 +2479,7 @@ def append_event(item_ref: str, status: str, note: str = "",
             del evt["item_text"]
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(evt, ensure_ascii=False) + "\n")
+        jsonl.append(path, evt)
         return True
     except OSError:
         return False

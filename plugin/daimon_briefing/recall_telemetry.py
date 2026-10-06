@@ -12,7 +12,7 @@ import re
 import statistics
 from datetime import datetime, timedelta, timezone
 
-from . import config
+from . import config, jsonl
 
 WINDOW_DAYS = 7
 
@@ -212,8 +212,8 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
     try:
         path = config.recall_delivery_log()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write("\n".join(entries) + "\n")
+        # lock=False: logs/ holds no bucket and declares no lock sidecar.
+        jsonl.append_lines(path, entries, lock=False)
     except OSError:
         pass
 
