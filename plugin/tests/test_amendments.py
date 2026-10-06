@@ -979,7 +979,7 @@ def test_rewrite_cleanup_survives_failing_tmp_write(project, monkeypatch):
     orig = pathlib.Path.write_text
 
     def fake(self, *a, **k):
-        if self.name.endswith(".forget-tmp"):
+        if self.name.endswith(".tmp"):
             raise OSError("no space left")
         return orig(self, *a, **k)
 

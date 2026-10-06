@@ -4105,7 +4105,7 @@ def test_a_failed_swap_leaves_the_ledger_whole_and_no_tmp_behind(
                                        project_dir=project) == []
     assert path.read_text(encoding="utf-8") == before
     assert requests.get(q_id, project_dir=project) is not None
-    assert not list(path.parent.glob("*.forget-tmp"))
+    assert not list(path.parent.glob("*.tmp"))
 
 
 def test_a_failed_swap_survives_an_undeletable_tmp(project, monkeypatch):
@@ -4117,7 +4117,7 @@ def test_a_failed_swap_survives_an_undeletable_tmp(project, monkeypatch):
     real_unlink = type(requests._path(project)).unlink
 
     def deny(self, missing_ok=False):
-        if self.name.endswith(".forget-tmp"):
+        if self.name.endswith(".tmp"):
             raise OSError("EPERM")
         return real_unlink(self, missing_ok=missing_ok)
 

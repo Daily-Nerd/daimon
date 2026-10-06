@@ -778,7 +778,7 @@ def test_forget_rewrite_failure_returns_empty_not_partial(bucket, monkeypatch):
     original = type(path).write_text
 
     def failing_write(self, *args, **kwargs):
-        if self.name.endswith(".forget-tmp"):
+        if self.name.endswith(".tmp"):
             raise OSError("disk full")
         return original(self, *args, **kwargs)
 

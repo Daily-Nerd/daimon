@@ -156,7 +156,7 @@ def test_rewrite_failure_leaves_the_ledger_and_no_tmp(tmp_path, monkeypatch):
     real = type(path).write_text
 
     def failing(self, *a, **k):
-        if self.name.endswith(".forget-tmp"):
+        if self.name.endswith(".tmp"):
             raise OSError("disk full")
         return real(self, *a, **k)
 
@@ -164,7 +164,7 @@ def test_rewrite_failure_leaves_the_ledger_and_no_tmp(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         jsonl.rewrite(path, lambda line, row: None)
     assert path.read_text(encoding="utf-8") == original
-    assert not list(tmp_path.glob("*.forget-tmp"))
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_read_rows_strict_raises_on_undecodable_and_default_does_not(tmp_path):
