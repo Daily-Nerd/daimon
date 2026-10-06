@@ -9,7 +9,7 @@ authors: ["claude-code"]
 promoted_by: Kibukx
 promoted_by_source: explicit
 anchors:
-  - path: plugin/daimon_briefing/cli/__init__.py
+  - path: plugin/daimon_briefing/cli/stats.py
   - path: plugin/tests/test_checks_surfaces.py
 evidence:
   - note: #974 step 1 — adding the `stitching` section, exactly as the in-code comment instructs, failed test_stats_json_carries_checks_at_the_tail
