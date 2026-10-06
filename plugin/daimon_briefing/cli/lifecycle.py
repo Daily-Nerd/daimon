@@ -18,10 +18,10 @@ from .. import (
     briefing,
     carry,
     config,
+    ledger_repair,
     normalize,
     pending,
     refutations,
-    relations,
     render,
     requests,
     serializer,
@@ -551,51 +551,22 @@ def _cmd_forget(args) -> int:
     # suppress the value without waiting to pull the scrubbed file — and so
     # a copy THEY extracted independently can be acted on at all.
     store.publish_tombstone(content_hash, project_dir=project)
-    # #599: rows appended BEFORE this forget can carry the value in
-    # `item_text`/`status`/`note` — redacted in place, rows never dropped
-    # (the one ratified rewrite of the append-only ledger).
-    events_scrubbed = store.scrub_event_fields(content_hash,
-                                               project_dir=project)
-    # #578: same value, second plaintext store. The ledger splices on the SAME
-    # canonical key for the same reason the checkpoint splices on it rather than
-    # on the id — removal is content removal, so a refutation asserting the
-    # forgotten value goes with it whether or not it was the named target.
-    forgotten_refutations = refutations.forget_content_key(
-        content_hash, project_dir=project)
-    # #678 fork A: relation rows hold no text, but an edge touching this item
-    # is an equivalence CLAIM about its content (an `exact-text` rail against
-    # a surviving twin re-derives what the value was), and post-forget the
-    # relations ledger would be the only surface binding the forgotten id to
-    # its sessions, kind, and revision-chain length. The scrub is id-keyed —
-    # the tombstone above landed on this exact id — and the audit's
-    # relations-ledger scan is what proves it reached the edges.
-    forgotten_relations = relations.forget_item_id(
-        str(target["id"]), project_dir=project)
-    # #691: same value, another plaintext store — and unlike relations, amend
-    # rows DO carry prose, so records targeting a forgotten item (or any of
-    # its spliced siblings) go with it — their evidence may paraphrase the
-    # removed content — and records holding the value in any plaintext field
-    # go regardless of target.
+    # Every ledger deleter, in one shared entry that `daimon ledger repair`
+    # also calls (ledger_repair.scrub_forgotten_key). Events are redacted in
+    # place (#599), refutations/amendments/requests drop the records holding
+    # the value (#578, #691, #694), relations and amendments also go by the
+    # id of the forgotten item and its spliced siblings (#678, #691), and the
+    # trust ledger is redacted, never dropped (#1132: a quarantine withholds).
     spliced_ids.discard("")
-    forgotten_amendment_set = set(
-        amendments.forget_content_key(content_hash, project_dir=project))
-    for doomed_id in sorted(spliced_ids):
-        forgotten_amendment_set.update(
-            amendments.forget_item_id(doomed_id, project_dir=project))
-    forgotten_amendments = sorted(forgotten_amendment_set)
-    # #694: the fifth plaintext store, and the only one whose prose was
-    # written FOR another project. Value-keyed only — a request names a
-    # project, never a checkpoint item, so there is no target-id sweep to
-    # pair with this one. Nothing enforces this dispatch; the surface
-    # registry declares the deleter but cannot call it, which is why the
-    # deletion contract for a new ledger is a hand-wired line here.
-    forgotten_requests = requests.forget_content_key(content_hash,
-                                                     project_dir=project)
-    # #1132: the trust ledger holds prose (`reason`/`evidence`) too, but a
-    # quarantine is a human verdict that WITHHOLDS a value, so it is redacted
-    # in place and never dropped: removing the record would lift the withhold.
-    redacted_quarantines = trust.redact_content_key(content_hash,
-                                                    project_dir=project)
+    scrubbed = ledger_repair.scrub_forgotten_key(
+        content_hash, item_id=str(target["id"]), sibling_ids=spliced_ids,
+        text=str(target.get("text") or ""), project_dir=project)
+    events_scrubbed = scrubbed.events
+    forgotten_refutations = list(scrubbed.refutations)
+    forgotten_relations = list(scrubbed.relations)
+    forgotten_amendments = list(scrubbed.amendments)
+    forgotten_requests = list(scrubbed.requests)
+    redacted_quarantines = list(scrubbed.quarantines)
     # #422: the serializer chunk cache holds PRE-redaction extraction output
     # (quote verification forbids redacting before caching, #125), keyed by
     # chunk text — the forgotten value cannot be located selectively, so the
@@ -678,6 +649,10 @@ def _cmd_forget(args) -> int:
         report.append(f"redacted prose in {len(redacted_quarantines)} "
                       f"quarantine(s) ({', '.join(redacted_quarantines)}); "
                       "records kept, the quarantine still withholds")
+    if scrubbed.lines.purged or scrubbed.lines.kept:
+        report.append(
+            f"purged {scrubbed.lines.purged} quarantined line(s) carrying "
+            f"the value; kept {scrubbed.lines.kept} unrelated one(s)")
     if purge_err is not None:
         report.append(f"warning: chunk cache purge failed: {purge_err} — "
                       "cached pre-redaction chunks may persist up to "

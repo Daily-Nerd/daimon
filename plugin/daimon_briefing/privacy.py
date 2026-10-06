@@ -25,9 +25,8 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import (amendments, config, jsonl, ledger_repair, normalize,
-               refutations, relations, requests, store, surfaces, teamproject,
-               trust)
+from . import (amendments, config, jsonl, normalize, refutations, relations,
+               requests, ledger_repair, store, surfaces, teamproject, trust)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes

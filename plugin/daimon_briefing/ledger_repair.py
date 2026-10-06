@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, jsonl, normalize, store, surfaces
+from . import (amendments, config, jsonl, normalize, refutations,
+               relations, requests, store, surfaces, trust)
 
 
 class Purged(NamedTuple):
@@ -85,3 +86,55 @@ def forget_quarantined_lines(content_key: str, *, text: str = "",
         except OSError:
             kept = before
     return Purged(purged, kept)
+
+
+class Scrubbed(NamedTuple):
+    """What `scrub_forgotten_key` reached, per ledger."""
+    events: int = 0
+    refutations: tuple = ()
+    relations: tuple = ()
+    amendments: tuple = ()
+    requests: tuple = ()
+    quarantines: tuple = ()
+    lines: Purged = Purged(0, 0)
+
+
+def scrub_forgotten_key(content_key: str, *, item_id: str = "",
+                        sibling_ids=(), text: str = "",
+                        project_dir=None) -> Scrubbed:
+    """Run every ledger deleter for ONE forgotten value, in the order forget
+    has always run them. `daimon forget` and `daimon ledger repair` both call
+    this, so a deleter added to forget cannot be missed by repair.
+
+    `item_id` is the tombstone's `item_ref` (the id the user named) and
+    `sibling_ids` the other checkpoint items that held the value, which only
+    forget can see; the id-keyed deleters (relations, amendments) take
+    both. `text` is the value itself when the caller has it: forget does,
+    repair does not. A repair has only the tombstone, so everything it
+    reaches is matched by `content_key` (and by id), never by text: a value
+    a ledger holds inside a longer string, which no whole-value key matches,
+    is the part only a forget with the text can reach.
+
+    Each deleter is best-effort and never raises, so one unwritable ledger
+    does not stop the rest."""
+    events = store.scrub_event_fields(content_key, project_dir=project_dir)
+    refuted = refutations.forget_content_key(content_key,
+                                             project_dir=project_dir)
+    related = relations.forget_item_id(item_id, project_dir=project_dir)
+    amended = set(amendments.forget_content_key(content_key,
+                                                project_dir=project_dir))
+    for doomed in sorted(({item_id} | set(sibling_ids)) - {""}):
+        amended.update(amendments.forget_item_id(doomed,
+                                                 project_dir=project_dir))
+    requested = requests.forget_content_key(content_key,
+                                            project_dir=project_dir)
+    # A quarantine is a human verdict that withholds a value: redacted in
+    # place, never dropped (scar trust-deleter-redacts-never-drops).
+    quarantined = trust.redact_content_key(content_key,
+                                           project_dir=project_dir)
+    lines = forget_quarantined_lines(content_key, text=text,
+                                     project_dir=project_dir)
+    return Scrubbed(events, tuple(refuted), tuple(related),
+                    tuple(sorted(amended)), tuple(requested),
+                    tuple(quarantined), lines)
+
