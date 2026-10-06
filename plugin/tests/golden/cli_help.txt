@@ -104,1569 +104,824 @@ why
 write-checkpoint
 
 === <root> ===
-usage: daimon [-h] [--version] <command> ...
-
-Cognitive checkpoints — serialize sessions, brief on resume.
-
-positional arguments:
-  <command>
-    serialize         serialize a transcript file into a checkpoint
-    write-checkpoint  store a checkpoint read as JSON on stdin (introspection path, #23)
-    brief             render the briefing from the latest checkpoint
-    anchor            resolve a code symbol to an anchor block for a cognitive item
-    recall            search local + team checkpoint history (FTS5)
-    why               inspect the evidence and lifecycle receipt for one item
-    diff              what changed between two retained checkpoints of this project (#975) —
-                      added, restated, re-tagged, and every item the chain stopped carrying, with
-                      the reason the record gives
-    blame             how one item got here (#975) — the session that first stated it, every carry
-                      since, and every event that changed its state, in order
-    serve             serve the read-only local viewer (localhost only)
-    projects          list every project daimon has a checkpoint for
-    bucket            maintain the checkpoint bucket this project reads and writes
-    slug              print the checkpoint directory name daimon derives from a project path
-    resolve           mark a checkpoint item resolved — append-only event, folds at read so the
-                      item stops carrying (#102)
-    forget            remove ONE item from the live checkpoint and record a signed-state tombstone
-                      — content leaves disk and index; the event carries only a hash (#321)
-    reverify          evidence-gated human reopen of a resolved item (#103) — requires an
-                      interactive terminal and refuses without proof
-    loops             list open, briefable loop items with ids for this project (#480) — the read
-                      counterpart to daimon resolve's write path
-    decide            list what is waiting on YOU with the command that closes each (#766) — the
-                      human-side mirror of daimon loops
-    refute            author and query evidence-cited negative knowledge (#573)
-    ruling            standing rulings: human-ratified records that never decay (#693)
-    amend             record an evidence-carrying state transition on a briefed item (#691)
-    trust             record or settle a human quarantine on a checkpoint value (#1109); write-
-                      only in this release, nothing reads it yet
-    ledger            look after a bucket ledger file (#1132)
-    request           ask another project for something, and answer what it asks (#694)
-    relations         inspect and decide typed item relations (#678, shadow mode)
-    handoff           leave an authored baton for the next session — renders above everything in
-                      its next briefing (#523)
-    log               append a freeform timeline event (zero-LLM) to this project's event log
-                      (#102)
-    recall-inject     proactive-suggestion backend for the UserPromptSubmit hook (#125): prompt on
-                      stdin, prints 0-2 prior-work lines, rc 0 always
-    action-recall     action-keyed recall backend for the PreToolUse hook (#1031): shell command
-                      on stdin, prints 0-1 prior-work lines, rc 0 always
-    request-inject    live-delivery backend for the UserPromptSubmit hook (#756): prints undecided
-                      asks this session has not been shown, rc 0 always
-    status            checkpoint presence/age + last serialize outcome
-    verify-receipt    verify a checkpoint's signed provenance receipt via the vitni CLI (#204)
-    audit             read-only auditors that verify stored guarantees
-    heal              re-serialize the most recent FAILED session if it can be done safely
-    team              shared team memory: sidecar repo init/sync/status (#113)
-    configure         detect the resolved LLM backend and fill gaps in ~/.daimon/env
-    stats             local usage + capture aggregates (#54) — nothing is transmitted; sharing the
-                      output is a deliberate paste
-    check             armed rulings' checks (#943): rebuild what a host hook reads
-    hooks             ship host hook scripts from the package (#43): list, install, status
-    skill             install the daimon agent skill into a host's rules/skills file (#66)
-    mcp               opt-in read-only MCP server (#261): recall/brief/projects/status as a self-
-                      describing tool surface for MCP-capable hosts
-
-options:
-  -h, --help          show this help message and exit
-  --version           show program's version number and exit
-
-Examples:
-  daimon brief                 render the latest briefing
-  daimon status                checkpoint presence + last serialize
-  daimon configure             detect/repair the LLM backend
-
-Docs:   https://daily-nerd.github.io/daimon/
-Issues: https://github.com/Daily-Nerd/daimon/issues
+usage: daimon [-h] [--version] <command> ... Cognitive checkpoints — serialize sessions, brief on
+resume. positional arguments: <command> serialize serialize a transcript file into a checkpoint
+write-checkpoint store a checkpoint read as JSON on stdin (introspection path, #23) brief render the
+briefing from the latest checkpoint anchor resolve a code symbol to an anchor block for a cognitive
+item recall search local + team checkpoint history (FTS5) why inspect the evidence and lifecycle
+receipt for one item diff what changed between two retained checkpoints of this project (#975) —
+added, restated, re-tagged, and every item the chain stopped carrying, with the reason the record
+gives blame how one item got here (#975) — the session that first stated it, every carry since, and
+every event that changed its state, in order serve serve the read-only local viewer (localhost only)
+projects list every project daimon has a checkpoint for bucket maintain the checkpoint bucket this
+project reads and writes slug print the checkpoint directory name daimon derives from a project path
+resolve mark a checkpoint item resolved — append-only event, folds at read so the item stops
+carrying (#102) forget remove ONE item from the live checkpoint and record a signed-state tombstone
+— content leaves disk and index; the event carries only a hash (#321) reverify evidence-gated human
+reopen of a resolved item (#103) — requires an interactive terminal and refuses without proof loops
+list open, briefable loop items with ids for this project (#480) — the read counterpart to daimon
+resolve's write path decide list what is waiting on YOU with the command that closes each (#766) —
+the human-side mirror of daimon loops refute author and query evidence-cited negative knowledge
+(#573) ruling standing rulings: human-ratified records that never decay (#693) amend record an
+evidence-carrying state transition on a briefed item (#691) trust record or settle a human
+quarantine on a checkpoint value (#1109); write-only in this release, nothing reads it yet ledger
+look after a bucket ledger file (#1132) request ask another project for something, and answer what
+it asks (#694) relations inspect and decide typed item relations (#678, shadow mode) handoff leave
+an authored baton for the next session — renders above everything in its next briefing (#523) log
+append a freeform timeline event (zero-LLM) to this project's event log (#102) recall-inject
+proactive-suggestion backend for the UserPromptSubmit hook (#125): prompt on stdin, prints 0-2
+prior-work lines, rc 0 always action-recall action-keyed recall backend for the PreToolUse hook
+(#1031): shell command on stdin, prints 0-1 prior-work lines, rc 0 always request-inject
+live-delivery backend for the UserPromptSubmit hook (#756): prints undecided asks this session has
+not been shown, rc 0 always status checkpoint presence/age + last serialize outcome verify-receipt
+verify a checkpoint's signed provenance receipt via the vitni CLI (#204) audit read-only auditors
+that verify stored guarantees heal re-serialize the most recent FAILED session if it can be done
+safely team shared team memory: sidecar repo init/sync/status (#113) configure detect the resolved
+LLM backend and fill gaps in ~/.daimon/env stats local usage + capture aggregates (#54) — nothing is
+transmitted; sharing the output is a deliberate paste check armed rulings' checks (#943): rebuild
+what a host hook reads hooks ship host hook scripts from the package (#43): list, install, status
+skill install the daimon agent skill into a host's rules/skills file (#66) mcp opt-in read-only MCP
+server (#261): recall/brief/projects/status as a self-describing tool surface for MCP-capable hosts
+options: -h, --help show this help message and exit --version show program's version number and exit
+Examples: daimon brief render the latest briefing daimon status checkpoint presence + last serialize
+daimon configure detect/repair the LLM backend Docs: https://daily-nerd.github.io/daimon/ Issues:
+https://github.com/Daily-Nerd/daimon/issues
 
 === serialize ===
-usage: daimon serialize [-h] [--project PROJECT] [--session SESSION] transcript
-
-positional arguments:
-  transcript         path to a text/markdown transcript
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory to route the checkpoint to (default: DAIMON_PROJECT_DIR,
-                     then cwd)
-  --session SESSION  session id for this transcript, overriding the filename (#988: a host whose
-                     transcript is not named for its session, such as Kimi Code, where every file
-                     is `wire.jsonl`)
+usage: daimon serialize [-h] [--project PROJECT] [--session SESSION] transcript positional
+arguments: transcript path to a text/markdown transcript options: -h, --help show this help message
+and exit --project PROJECT project directory to route the checkpoint to (default:
+DAIMON_PROJECT_DIR, then cwd) --session SESSION session id for this transcript, overriding the
+filename (#988: a host whose transcript is not named for its session, such as Kimi Code, where every
+file is `wire.jsonl`)
 
 === write-checkpoint ===
 usage: daimon write-checkpoint [-h] [--project PROJECT] [--source SOURCE] [--session SESSION]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory to route the checkpoint to (default: DAIMON_PROJECT_DIR,
-                     then cwd)
-  --source SOURCE    provenance stamp for the checkpoint (default: introspection)
-  --session SESSION  the live session's REAL id (e.g. $CLAUDE_CODE_SESSION_ID), stamped onto the
-                     checkpoint in place of whatever session_id the JSON body carries (#983). This
-                     is what lets carry.py's same-session guard recognize a later reconstruction
-                     of THIS session as its own predecessor instead of an independent witness, so
-                     a provisional can never corroborate itself. Omit only when the host has no
-                     way to tell the live session its own id.
+options: -h, --help show this help message and exit --project PROJECT project directory to route the
+checkpoint to (default: DAIMON_PROJECT_DIR, then cwd) --source SOURCE provenance stamp for the
+checkpoint (default: introspection) --session SESSION the live session's REAL id (e.g.
+$CLAUDE_CODE_SESSION_ID), stamped onto the checkpoint in place of whatever session_id the JSON body
+carries (#983). This is what lets carry.py's same-session guard recognize a later reconstruction of
+THIS session as its own predecessor instead of an independent witness, so a provisional can never
+corroborate itself. Omit only when the host has no way to tell the live session its own id.
 
 === brief ===
 usage: daimon brief [-h] [--project PROJECT] [--team] [--slug SLUG] [--global-fallback] [--auto]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory to brief (default: DAIMON_PROJECT_DIR, then cwd)
-  --team             also show a 'Teammates' section: each teammate's active topic + recent
-                     decisions from the shared team memory (#111)
-  --slug SLUG        brief another project's bucket by its slug (see `daimon projects`) —
-                     deliberate cross-project read, provenance-labeled, no fallback (#243)
-  --global-fallback  when this project has no checkpoint, render the full global checkpoint
-                     (possibly another project's) instead of the header-only note (#96)
-  --auto             mark this render as hook-driven (SessionStart) so `daimon stats` can separate
-                     automatic briefings from deliberate re-reads (#54)
-
-Examples:
-  daimon brief
-  daimon brief --project .
-  DAIMON_PLAIN=1 daimon brief
+options: -h, --help show this help message and exit --project PROJECT project directory to brief
+(default: DAIMON_PROJECT_DIR, then cwd) --team also show a 'Teammates' section: each teammate's
+active topic + recent decisions from the shared team memory (#111) --slug SLUG brief another
+project's bucket by its slug (see `daimon projects`) — deliberate cross-project read,
+provenance-labeled, no fallback (#243) --global-fallback when this project has no checkpoint, render
+the full global checkpoint (possibly another project's) instead of the header-only note (#96) --auto
+mark this render as hook-driven (SessionStart) so `daimon stats` can separate automatic briefings
+from deliberate re-reads (#54) Examples: daimon brief daimon brief --project . DAIMON_PLAIN=1 daimon
+brief
 
 === anchor ===
-usage: daimon anchor [-h] [--project PROJECT] [--attach TEXT-MATCH] file symbol
-
-positional arguments:
-  file                 repo-relative path to the source file
-  symbol               symbol name or Class.method
-
-options:
-  -h, --help           show this help message and exit
-  --project PROJECT    project root the file is relative to (default: cwd)
-  --attach TEXT-MATCH  attach the anchor to the one checkpoint item whose text contains TEXT-MATCH
-                       (case-insensitive), re-writing the latest checkpoint
-
-Examples:
-  daimon anchor daimon_briefing/cli.py _cmd_brief
-  daimon anchor pkg/mod.py MyClass.method --project .
-  daimon anchor pkg/mod.py fn --attach 'auth decision'
+usage: daimon anchor [-h] [--project PROJECT] [--attach TEXT-MATCH] file symbol positional
+arguments: file repo-relative path to the source file symbol symbol name or Class.method options:
+-h, --help show this help message and exit --project PROJECT project root the file is relative to
+(default: cwd) --attach TEXT-MATCH attach the anchor to the one checkpoint item whose text contains
+TEXT-MATCH (case-insensitive), re-writing the latest checkpoint Examples: daimon anchor
+daimon_briefing/cli.py _cmd_brief daimon anchor pkg/mod.py MyClass.method --project . daimon anchor
+pkg/mod.py fn --attach 'auth decision'
 
 === recall ===
-usage: daimon recall [-h] [--project PROJECT] [--all-projects] [--slug SLUG] [--json]
-                     [--limit LIMIT]
-                     query [query ...]
-
-positional arguments:
-  query              search terms (matched as words against item text and quotes)
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)
-  --all-projects     search across every project (lifts the project scope)
-  --slug SLUG        scope to a project bucket by its slug (see `daimon projects`) — reaches
-                     buckets whose source path no longer exists (#243)
-  --json             machine-readable output
-  --limit LIMIT      max results (default: 20)
-
-Examples:
-  daimon recall auth caching
-  daimon recall gateway --all-projects --json
+usage: daimon recall [-h] [--project PROJECT] [--all-projects] [--slug SLUG] [--json] [--limit
+LIMIT] query [query ...] positional arguments: query search terms (matched as words against item
+text and quotes) options: -h, --help show this help message and exit --project PROJECT project
+directory to scope to (default: DAIMON_PROJECT_DIR, then cwd) --all-projects search across every
+project (lifts the project scope) --slug SLUG scope to a project bucket by its slug (see `daimon
+projects`) — reaches buckets whose source path no longer exists (#243) --json machine-readable
+output --limit LIMIT max results (default: 20) Examples: daimon recall auth caching daimon recall
+gateway --all-projects --json
 
 === why ===
-usage: daimon why [-h] [--source] [--json] [--project PROJECT] [--slug SLUG] item_id
-
-positional arguments:
-  item_id            exact item id shown by `daimon recall` or `daimon loops`
-
-options:
-  -h, --help         show this help message and exit
-  --source           show one bounded, redacted message-level source window
-  --json             machine-readable evidence axes
-  --project PROJECT  project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        scope to a project bucket by its slug (see `daimon projects`)
-
-Examples:
-  daimon recall retry policy
-  daimon why o-3f8a2c
-  daimon why o-3f8a2c --source --json
+usage: daimon why [-h] [--source] [--json] [--project PROJECT] [--slug SLUG] item_id positional
+arguments: item_id exact item id shown by `daimon recall` or `daimon loops` options: -h, --help show
+this help message and exit --source show one bounded, redacted message-level source window --json
+machine-readable evidence axes --project PROJECT project directory to scope to (default:
+DAIMON_PROJECT_DIR, then cwd) --slug SLUG scope to a project bucket by its slug (see `daimon
+projects`) Examples: daimon recall retry policy daimon why o-3f8a2c daimon why o-3f8a2c --source
+--json
 
 === diff ===
-usage: daimon diff [-h] [--from N] [--to M] [--json] [--project PROJECT] [--slug SLUG]
-
-Compare two retained checkpoints of one project and report every item that changed. Read-only: it stamps nothing. Rollback is a non-goal — a checkpoint records what a session did, so restoring one would assert a different past; use forget, resolve or reverify to say so on the record instead.
-
-options:
-  -h, --help         show this help message and exit
-  --from N           the OLDER endpoint, in generations back: 0 is latest.json, 1 is prev-1.json
-                     (default: the latest readable pair)
-  --to M             the NEWER endpoint, same numbering; must be smaller than --from
-  --json             machine-readable change rows
-  --project PROJECT  project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        scope to a project bucket by its slug (see `daimon projects`)
-
-Examples:
-  daimon diff
-  daimon diff --from 2 --to 0
-  daimon diff --json
+usage: daimon diff [-h] [--from N] [--to M] [--json] [--project PROJECT] [--slug SLUG] Compare two
+retained checkpoints of one project and report every item that changed. Read-only: it stamps
+nothing. Rollback is a non-goal — a checkpoint records what a session did, so restoring one would
+assert a different past; use forget, resolve or reverify to say so on the record instead. options:
+-h, --help show this help message and exit --from N the OLDER endpoint, in generations back: 0 is
+latest.json, 1 is prev-1.json (default: the latest readable pair) --to M the NEWER endpoint, same
+numbering; must be smaller than --from --json machine-readable change rows --project PROJECT project
+directory to scope to (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG scope to a project bucket
+by its slug (see `daimon projects`) Examples: daimon diff daimon diff --from 2 --to 0 daimon diff
+--json
 
 === blame ===
-usage: daimon blame [-h] [--json] [--project PROJECT] [--slug SLUG] item_id
-
-Trace one item through this project's retained checkpoint chain. `daimon why` answers where a claim came from; this answers how it got here. Read-only, and there is no restore: a forgotten item keeps its tombstone here and never its text.
-
-positional arguments:
-  item_id            exact item id shown by `daimon recall`, `daimon loops` or `daimon diff`
-
-options:
-  -h, --help         show this help message and exit
-  --json             machine-readable lineage
-  --project PROJECT  project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        scope to a project bucket by its slug (see `daimon projects`)
-
-Examples:
-  daimon blame o-3f8a2c
-  daimon blame o-3f8a2c --json
+usage: daimon blame [-h] [--json] [--project PROJECT] [--slug SLUG] item_id Trace one item through
+this project's retained checkpoint chain. `daimon why` answers where a claim came from; this answers
+how it got here. Read-only, and there is no restore: a forgotten item keeps its tombstone here and
+never its text. positional arguments: item_id exact item id shown by `daimon recall`, `daimon loops`
+or `daimon diff` options: -h, --help show this help message and exit --json machine-readable lineage
+--project PROJECT project directory to scope to (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG
+scope to a project bucket by its slug (see `daimon projects`) Examples: daimon blame o-3f8a2c daimon
+blame o-3f8a2c --json
 
 === serve ===
 usage: daimon serve [-h] [--data-dir DATA_DIR] [--project-dir PROJECT_DIR] [--port PORT]
-                    [--no-browser]
-
-Serve the read-only local viewer on localhost. Every surface renders an existing engine's output; nothing writes.
-
-options:
-  -h, --help            show this help message and exit
-  --data-dir DATA_DIR   checkpoint dir (default: DAIMON_CHECKPOINT_DIR, then
-                        ~/.daimon/checkpoints)
-  --project-dir PROJECT_DIR
-                        project directory to scope to (default: cwd)
-  --port PORT           port to bind (default: 7717)
-  --no-browser          don't open a browser tab
-
-Examples:
-  daimon serve
-  daimon serve --port 7800 --no-browser
+[--no-browser] Serve the read-only local viewer on localhost. Every surface renders an existing
+engine's output; nothing writes. options: -h, --help show this help message and exit --data-dir
+DATA_DIR checkpoint dir (default: DAIMON_CHECKPOINT_DIR, then ~/.daimon/checkpoints) --project-dir
+PROJECT_DIR project directory to scope to (default: cwd) --port PORT port to bind (default: 7717)
+--no-browser don't open a browser tab Examples: daimon serve daimon serve --port 7800 --no-browser
 
 === projects ===
-usage: daimon projects [-h] [--project PROJECT] [--json]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory the current-project mark is computed against (default:
-                     DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
-
-Examples:
-  daimon projects
-  daimon projects --json
+usage: daimon projects [-h] [--project PROJECT] [--json] options: -h, --help show this help message
+and exit --project PROJECT project directory the current-project mark is computed against (default:
+DAIMON_PROJECT_DIR, then cwd) --json machine-readable output Examples: daimon projects daimon
+projects --json
 
 === bucket ===
-usage: daimon bucket [-h] {migrate} ...
-
-positional arguments:
-  {migrate}
-    migrate   move a bucket written before 0.42.0 into the one daimon reads
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon bucket [-h] {migrate} ... positional arguments: {migrate} migrate move a bucket
+written before 0.42.0 into the one daimon reads options: -h, --help show this help message and exit
 
 === bucket migrate ===
-usage: daimon bucket migrate [-h] [--project PROJECT] [--dry-run] [--json]
-
-Move the bucket a pre-0.42.0 daimon wrote for this project into the bucket this daimon reads. Affects a project whose path carries a symlink component, or one below a git toplevel: before 0.42.0 the library slugged the literal path. A pointer already in the current bucket is never removed or displaced. Safe to run twice: a second run over an unchanged state writes nothing new and returns the code matching the state it finds.
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --dry-run          print the plan and write nothing
-  --json             machine-readable output
-
-Examples:
-  daimon bucket migrate
-  daimon bucket migrate --project /tmp/my-repo --dry-run
+usage: daimon bucket migrate [-h] [--project PROJECT] [--dry-run] [--json] Move the bucket a
+pre-0.42.0 daimon wrote for this project into the bucket this daimon reads. Affects a project whose
+path carries a symlink component, or one below a git toplevel: before 0.42.0 the library slugged the
+literal path. A pointer already in the current bucket is never removed or displaced. Safe to run
+twice: a second run over an unchanged state writes nothing new and returns the code matching the
+state it finds. options: -h, --help show this help message and exit --project PROJECT project
+directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run print the plan and write nothing --json
+machine-readable output Examples: daimon bucket migrate daimon bucket migrate --project /tmp/my-repo
+--dry-run
 
 === slug ===
-usage: daimon slug [-h] path
-
-Print the checkpoint directory name daimon derives from a project path. Read-only: no store, config, or ledger access.
-
-positional arguments:
-  path        project directory path to slug
-
-options:
-  -h, --help  show this help message and exit
-
-Examples:
-  daimon slug /Users/x/my.proj
-  daimon slug -- -Users-x        # '--' escapes a path starting with '-'
+usage: daimon slug [-h] path Print the checkpoint directory name daimon derives from a project path.
+Read-only: no store, config, or ledger access. positional arguments: path project directory path to
+slug options: -h, --help show this help message and exit Examples: daimon slug /Users/x/my.proj
+daimon slug -- -Users-x # '--' escapes a path starting with '-'
 
 === resolve ===
 usage: daimon resolve [-h] [--status STATUS] [--note NOTE] [--by {agent}] [--evidence EVIDENCE]
-                      [--project PROJECT] [--dry-run]
-                      target
-
-positional arguments:
-  target               item id (exact) or a query that must match exactly one item
-
-options:
-  -h, --help           show this help message and exit
-  --status STATUS      free-form lifecycle status (default: resolved; a status starting with
-                       'reopen' revives the item)
-  --note NOTE          optional context recorded on the event
-  --by {agent}         declare an agent-initiated claim (requires --evidence); omit for the human
-                       path (default)
-  --evidence EVIDENCE  verbatim transcript quote proving the claim — required with --by agent,
-                       rejected without it
-  --project PROJECT    project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --dry-run            show what would resolve without writing an event — look before the write
-                       (#304)
-
-Examples:
-  daimon resolve o-3f8a2c
-  daimon resolve "release pipeline approval" --note "shipped in 0.9"
+[--project PROJECT] [--dry-run] target positional arguments: target item id (exact) or a query that
+must match exactly one item options: -h, --help show this help message and exit --status STATUS
+free-form lifecycle status (default: resolved; a status starting with 'reopen' revives the item)
+--note NOTE optional context recorded on the event --by {agent} declare an agent-initiated claim
+(requires --evidence); omit for the human path (default) --evidence EVIDENCE verbatim transcript
+quote proving the claim — required with --by agent, rejected without it --project PROJECT project
+directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run show what would resolve without writing
+an event — look before the write (#304) Examples: daimon resolve o-3f8a2c daimon resolve "release
+pipeline approval" --note "shipped in 0.9"
 
 === forget ===
-usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] target
-
-positional arguments:
-  target             item id (exact) or a query that must match exactly one item
-
-options:
-  -h, --help         show this help message and exit
-  --reason REASON    recorded on the tombstone event (redacted like any note)
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --dry-run          show what would be forgotten without writing — look before a destructive op
-
-Examples:
-  daimon forget o-3f8a2c --reason "contains client name"
-  daimon forget "wrong belief about retry nonce" --dry-run
+usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] target positional
+arguments: target item id (exact) or a query that must match exactly one item options: -h, --help
+show this help message and exit --reason REASON recorded on the tombstone event (redacted like any
+note) --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run show
+what would be forgotten without writing — look before a destructive op Examples: daimon forget
+o-3f8a2c --reason "contains client name" daimon forget "wrong belief about retry nonce" --dry-run
 
 === reverify ===
-usage: daimon reverify [-h] [--evidence EVIDENCE] [--project PROJECT] target
-
-positional arguments:
-  target               item id (exact only — reverify is deliberate, no fuzzy match)
-
-options:
-  -h, --help           show this help message and exit
-  --evidence EVIDENCE  why this claim can be trusted again
-  --project PROJECT    project directory (default: DAIMON_PROJECT_DIR, then cwd)
-
-Examples:
-  daimon reverify o-3f8a2c --evidence "checked release page"
-  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live
-  daimon reverify o-3f8a2c   # rejects an unconfirmed supersede candidate — no evidence needed
+usage: daimon reverify [-h] [--evidence EVIDENCE] [--project PROJECT] target positional arguments:
+target item id (exact only — reverify is deliberate, no fuzzy match) options: -h, --help show this
+help message and exit --evidence EVIDENCE why this claim can be trusted again --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd) Examples: daimon reverify o-3f8a2c
+--evidence "checked release page" daimon reverify o-3f8a2c # reopens only if the anchor still checks
+live daimon reverify o-3f8a2c # rejects an unconfirmed supersede candidate — no evidence needed
 
 === loops ===
-usage: daimon loops [-h] [--project PROJECT] [--stale]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --stale            list only the carried items past the staleness budget, the set the briefing
-                     may drop
-
-Examples:
-  daimon loops
-  daimon loops --stale
-  daimon loops --project .
+usage: daimon loops [-h] [--project PROJECT] [--stale] options: -h, --help show this help message
+and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --stale list
+only the carried items past the staleness budget, the set the briefing may drop Examples: daimon
+loops daimon loops --stale daimon loops --project .
 
 === decide ===
-usage: daimon decide [-h] [--project PROJECT] [--all-projects]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --all-projects     also list every other project's queue as text, composed per project, each
-                     command routed with --slug=<slug> so it runs from here; refused on a tenant-
-                     scoped home (#766, #899)
-
-Examples:
-  daimon decide
-  daimon decide --project .
+usage: daimon decide [-h] [--project PROJECT] [--all-projects] options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+--all-projects also list every other project's queue as text, composed per project, each command
+routed with --slug=<slug> so it runs from here; refused on a tenant-scoped home (#766, #899)
+Examples: daimon decide daimon decide --project .
 
 === refute ===
-usage: daimon refute [-h] {add,ratify,revise,overturn,show,list,search,guard} ...
-
-positional arguments:
-  {add,ratify,revise,overturn,show,list,search,guard}
-    add                 assert a scoped refutation; agent assertions stay candidates
-    ratify              explicitly activate a candidate as a human decision
-    revise              append a new evidence-cited version; inactive until ratified
-    overturn            cite evidence against the verdict; agent calls propose, humans deactivate
-    show                show one refutation and its trust signals
-    list                list project refutations
-    search              search the complete ledger without age decay
-    guard               check active refutations by exact anchor or subject phrase
-
-options:
-  -h, --help            show this help message and exit
-
-Examples:
-  daimon refute list
-  daimon refute search receipt verification
-  daimon refute guard 'should we revisit #502?'
+usage: daimon refute [-h] {add,ratify,revise,overturn,show,list,search,guard} ... positional
+arguments: {add,ratify,revise,overturn,show,list,search,guard} add assert a scoped refutation; agent
+assertions stay candidates ratify explicitly activate a candidate as a human decision revise append
+a new evidence-cited version; inactive until ratified overturn cite evidence against the verdict;
+agent calls propose, humans deactivate show show one refutation and its trust signals list list
+project refutations search search the complete ledger without age decay guard check active
+refutations by exact anchor or subject phrase options: -h, --help show this help message and exit
+Examples: daimon refute list daimon refute search receipt verification daimon refute guard 'should
+we revisit #502?'
 
 === refute add ===
 usage: daimon refute add [-h] --subject SUBJECT --verdict VERDICT --scope SCOPE --evidence SOURCE
-                         [--anchor ANCHOR] [--revisit-when REVISIT_WHEN] [--by {agent}] [--ratify]
-                         [--project PROJECT] [--json]
-
-options:
-  -h, --help            show this help message and exit
-  --subject SUBJECT     approach or claim rejected
-  --verdict VERDICT     what no longer holds
-  --scope SCOPE         where the verdict applies
-  --evidence SOURCE     cited measurement, artifact, issue, or transcript source; recorded
-                        verbatim, not resolved or verified; repeatable
-  --anchor ANCHOR       stable exact-match key such as issue:502 or command:daimon-why; repeatable
-  --revisit-when REVISIT_WHEN
-                        condition that makes reconsideration legitimate
-  --by {agent}          declare yourself an agent; omit it only from an interactive terminal,
-                        which is the human path
-  --ratify              activate immediately; valid only on the human path, which is an
-                        interactive terminal with no --by.
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
-
-Example:
-  daimon refute add --subject 'original #502 receipt design' --verdict 'whole-file hashes do not prove span claims' --scope 'carried-item receipt tiers' --anchor issue:502 --evidence 'measurement:566/623 origin misses' --ratify
+[--anchor ANCHOR] [--revisit-when REVISIT_WHEN] [--by {agent}] [--ratify] [--project PROJECT]
+[--json] options: -h, --help show this help message and exit --subject SUBJECT approach or claim
+rejected --verdict VERDICT what no longer holds --scope SCOPE where the verdict applies --evidence
+SOURCE cited measurement, artifact, issue, or transcript source; recorded verbatim, not resolved or
+verified; repeatable --anchor ANCHOR stable exact-match key such as issue:502 or command:daimon-why;
+repeatable --revisit-when REVISIT_WHEN condition that makes reconsideration legitimate --by {agent}
+declare yourself an agent; omit it only from an interactive terminal, which is the human path
+--ratify activate immediately; valid only on the human path, which is an interactive terminal with
+no --by. --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output Example: daimon refute add --subject 'original #502 receipt design'
+--verdict 'whole-file hashes do not prove span claims' --scope 'carried-item receipt tiers' --anchor
+issue:502 --evidence 'measurement:566/623 origin misses' --ratify
 
 === refute ratify ===
 usage: daimon refute ratify [-h] [--by {agent}] [--note NOTE] [--project PROJECT] [--slug SLUG]
-                            [--json]
-                            refutation_id
-
-positional arguments:
-  refutation_id      exact r-… id
-
-options:
-  -h, --help         show this help message and exit
-  --by {agent}       declare yourself an agent; ratification then refuses, because activation
-                     requires a human channel
-  --note NOTE        optional ratification rationale
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
-  --json             machine-readable output
+[--json] refutation_id positional arguments: refutation_id exact r-… id options: -h, --help show
+this help message and exit --by {agent} declare yourself an agent; ratification then refuses,
+because activation requires a human channel --note NOTE optional ratification rationale --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another
+project's bucket by its slug, written --slug=<slug> (a slug starts with '-'); routing only, the
+channel gate is unchanged (#766) --json machine-readable output
 
 === refute revise ===
-usage: daimon refute revise [-h] [--subject SUBJECT] [--verdict VERDICT] [--scope SCOPE]
-                            [--anchor ANCHOR] [--revisit-when REVISIT_WHEN] --evidence SOURCE
-                            [--by {agent}] [--ratify] [--project PROJECT] [--json]
-                            refutation_id
-
-positional arguments:
-  refutation_id         exact r-… id
-
-options:
-  -h, --help            show this help message and exit
-  --subject SUBJECT     replacement subject
-  --verdict VERDICT     replacement verdict
-  --scope SCOPE         replacement scope
-  --anchor ANCHOR       replacement anchor set; repeatable
-  --revisit-when REVISIT_WHEN
-                        replacement revisit condition
-  --evidence SOURCE     new evidence cited for the revision; recorded, not verified; repeatable
-  --by {agent}
-  --ratify              activate the revision immediately; valid only on the human path, which is
-                        an interactive terminal with no --by.
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
+usage: daimon refute revise [-h] [--subject SUBJECT] [--verdict VERDICT] [--scope SCOPE] [--anchor
+ANCHOR] [--revisit-when REVISIT_WHEN] --evidence SOURCE [--by {agent}] [--ratify] [--project
+PROJECT] [--json] refutation_id positional arguments: refutation_id exact r-… id options: -h, --help
+show this help message and exit --subject SUBJECT replacement subject --verdict VERDICT replacement
+verdict --scope SCOPE replacement scope --anchor ANCHOR replacement anchor set; repeatable
+--revisit-when REVISIT_WHEN replacement revisit condition --evidence SOURCE new evidence cited for
+the revision; recorded, not verified; repeatable --by {agent} --ratify activate the revision
+immediately; valid only on the human path, which is an interactive terminal with no --by. --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === refute overturn ===
-usage: daimon refute overturn [-h] --evidence SOURCE [--note NOTE] [--by {agent}]
-                              [--project PROJECT] [--slug SLUG] [--json]
-                              refutation_id
-
-positional arguments:
-  refutation_id      exact r-… id
-
-options:
-  -h, --help         show this help message and exit
-  --evidence SOURCE  evidence cited against the active verdict; recorded, not verified; repeatable
-  --note NOTE        optional explanation
-  --by {agent}
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
-  --json             machine-readable output
+usage: daimon refute overturn [-h] --evidence SOURCE [--note NOTE] [--by {agent}] [--project
+PROJECT] [--slug SLUG] [--json] refutation_id positional arguments: refutation_id exact r-… id
+options: -h, --help show this help message and exit --evidence SOURCE evidence cited against the
+active verdict; recorded, not verified; repeatable --note NOTE optional explanation --by {agent}
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to
+another project's bucket by its slug, written --slug=<slug> (a slug starts with '-'); routing only,
+the channel gate is unchanged (#766) --json machine-readable output
 
 === refute show ===
-usage: daimon refute show [-h] [--project PROJECT] [--json] refutation_id
-
-positional arguments:
-  refutation_id      exact r-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon refute show [-h] [--project PROJECT] [--json] refutation_id positional arguments:
+refutation_id exact r-… id options: -h, --help show this help message and exit --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === refute list ===
-usage: daimon refute list [-h] [--state {active,candidate,overturned}] [--project PROJECT]
-                          [--json]
-
-options:
-  -h, --help            show this help message and exit
-  --state {active,candidate,overturned}
-                        filter by state; repeatable
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
+usage: daimon refute list [-h] [--state {active,candidate,overturned}] [--project PROJECT] [--json]
+options: -h, --help show this help message and exit --state {active,candidate,overturned} filter by
+state; repeatable --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output
 
 === refute search ===
 usage: daimon refute search [-h] [--state {active,candidate,overturned}] [--project PROJECT]
-                            [--json]
-                            query [query ...]
-
-positional arguments:
-  query                 subject, verdict, scope, or anchor terms
-
-options:
-  -h, --help            show this help message and exit
-  --state {active,candidate,overturned}
-                        filter by state; repeatable
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
+[--json] query [query ...] positional arguments: query subject, verdict, scope, or anchor terms
+options: -h, --help show this help message and exit --state {active,candidate,overturned} filter by
+state; repeatable --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output
 
 === refute guard ===
-usage: daimon refute guard [-h] [--anchor ANCHOR] [--project PROJECT] [--json] [--quiet]
-                           query [query ...]
-
-positional arguments:
-  query              the proposed approach or user prompt
-
-options:
-  -h, --help         show this help message and exit
-  --anchor ANCHOR    candidate action anchor; repeatable
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
-  --quiet            print nothing when no active refutation matches
+usage: daimon refute guard [-h] [--anchor ANCHOR] [--project PROJECT] [--json] [--quiet] query
+[query ...] positional arguments: query the proposed approach or user prompt options: -h, --help
+show this help message and exit --anchor ANCHOR candidate action anchor; repeatable --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
+--quiet print nothing when no active refutation matches
 
 === ruling ===
-usage: daimon ruling [-h] {propose,ratify,revise,retire,check,checks,list,show} ...
-
-positional arguments:
-  {propose,ratify,revise,retire,check,checks,list,show}
-    propose             propose a standing ruling; agent proposals stay candidates until a human
-                        ratifies
-    ratify              activate a candidate ruling; prints the full text and confirms before the
-                        append
-    revise              revise a ruling; on an active ruling an agent call records a proposal and
-                        the text stands
-    retire              end a ruling; agent calls propose, humans retire directly; evidence
-                        optional
-    check               the check a ruling carries (#943): try it before a human arms it
-    checks              what this project has armed, the mode each host gives it, and whether it
-                        ever fired (#943)
-    list                list project rulings
-    show                show one ruling, including pending proposals
-
-options:
-  -h, --help            show this help message and exit
-
-Examples:
-  daimon ruling propose --subject 'public posts' --verdict 'internal numbers never appear in public posts' --scope publishing --evidence issue:693 --by agent
-  daimon ruling ratify r-1a2b3c4d5e6f
+usage: daimon ruling [-h] {propose,ratify,revise,retire,check,checks,list,show} ... positional
+arguments: {propose,ratify,revise,retire,check,checks,list,show} propose propose a standing ruling;
+agent proposals stay candidates until a human ratifies ratify activate a candidate ruling; prints
+the full text and confirms before the append revise revise a ruling; on an active ruling an agent
+call records a proposal and the text stands retire end a ruling; agent calls propose, humans retire
+directly; evidence optional check the check a ruling carries (#943): try it before a human arms it
+checks what this project has armed, the mode each host gives it, and whether it ever fired (#943)
+list list project rulings show show one ruling, including pending proposals options: -h, --help show
+this help message and exit Examples: daimon ruling propose --subject 'public posts' --verdict
+'internal numbers never appear in public posts' --scope publishing --evidence issue:693 --by agent
+daimon ruling ratify r-1a2b3c4d5e6f
 
 === ruling propose ===
-usage: daimon ruling propose [-h] --subject SUBJECT --verdict VERDICT --scope SCOPE
-                             --evidence SOURCE [--anchor ANCHOR] [--revisit-when REVISIT_WHEN]
-                             [--by {agent}] [--ratify] [--check-body-file PATH]
-                             [--check-match REGEX] [--check-intent {enforce,record-only,warn}]
-                             [--request-policy KEY=VALUE] [--project PROJECT] [--json]
-
-options:
-  -h, --help            show this help message and exit
-  --subject SUBJECT     what the ruling governs
-  --verdict VERDICT     the ruling text itself (max 280 chars)
-  --scope SCOPE         where it applies
-  --evidence SOURCE     cited source behind the ruling; recorded verbatim, not resolved or
-                        verified; repeatable
-  --anchor ANCHOR       stable exact-match key such as issue:693; repeatable
-  --revisit-when REVISIT_WHEN
-                        condition that makes reconsideration legitimate
-  --by {agent}          declare yourself an agent; omit it only from an interactive terminal
-  --ratify              activate immediately; valid only on the human path
-  --check-body-file PATH
-                        file whose contents become the ruling's check script; the bytes are
-                        stored, the path is not (#943)
-  --check-match REGEX   regex on the command string that selects the actions the check runs before
-  --check-intent {enforce,record-only,warn}
-                        what the check asks each host for; the host delivers the strongest it
-                        supports (default warn)
-  --request-policy KEY=VALUE
-                        grant this ruling authorizes, one of two shapes: sender=<slug>
-                        kind=work|info verb=accept by=agent (a sender this project trusts to
-                        record its own accept), or to=<slug> kind=info verb=open by=agent (this
-                        project's own agent may open an info ask there); repeatable, all four
-                        required per shape (#961)
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
+usage: daimon ruling propose [-h] --subject SUBJECT --verdict VERDICT --scope SCOPE --evidence
+SOURCE [--anchor ANCHOR] [--revisit-when REVISIT_WHEN] [--by {agent}] [--ratify] [--check-body-file
+PATH] [--check-match REGEX] [--check-intent {enforce,record-only,warn}] [--request-policy KEY=VALUE]
+[--project PROJECT] [--json] options: -h, --help show this help message and exit --subject SUBJECT
+what the ruling governs --verdict VERDICT the ruling text itself (max 280 chars) --scope SCOPE where
+it applies --evidence SOURCE cited source behind the ruling; recorded verbatim, not resolved or
+verified; repeatable --anchor ANCHOR stable exact-match key such as issue:693; repeatable
+--revisit-when REVISIT_WHEN condition that makes reconsideration legitimate --by {agent} declare
+yourself an agent; omit it only from an interactive terminal --ratify activate immediately; valid
+only on the human path --check-body-file PATH file whose contents become the ruling's check script;
+the bytes are stored, the path is not (#943) --check-match REGEX regex on the command string that
+selects the actions the check runs before --check-intent {enforce,record-only,warn} what the check
+asks each host for; the host delivers the strongest it supports (default warn) --request-policy
+KEY=VALUE grant this ruling authorizes, one of two shapes: sender=<slug> kind=work|info verb=accept
+by=agent (a sender this project trusts to record its own accept), or to=<slug> kind=info verb=open
+by=agent (this project's own agent may open an info ask there); repeatable, all four required per
+shape (#961) --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output
 
 === ruling ratify ===
 usage: daimon ruling ratify [-h] [--by {agent}] [--note NOTE] [--project PROJECT] [--slug SLUG]
-                            [--json]
-                            ruling_id
-
-positional arguments:
-  ruling_id          exact r-… id
-
-options:
-  -h, --help         show this help message and exit
-  --by {agent}       declare yourself an agent; ratification then refuses
-  --note NOTE        optional ratification rationale
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
-  --json             machine-readable output
+[--json] ruling_id positional arguments: ruling_id exact r-… id options: -h, --help show this help
+message and exit --by {agent} declare yourself an agent; ratification then refuses --note NOTE
+optional ratification rationale --project PROJECT project directory (default: DAIMON_PROJECT_DIR,
+then cwd) --slug SLUG route to another project's bucket by its slug, written --slug=<slug> (a slug
+starts with '-'); routing only, the channel gate is unchanged (#766) --json machine-readable output
 
 === ruling revise ===
-usage: daimon ruling revise [-h] [--subject SUBJECT] [--verdict VERDICT] [--scope SCOPE]
-                            [--anchor ANCHOR] [--revisit-when REVISIT_WHEN] --evidence SOURCE
-                            [--by {agent}] [--ratify] [--check-body-file PATH]
-                            [--check-match REGEX] [--check-intent {enforce,record-only,warn}]
-                            [--request-policy KEY=VALUE] [--no-request-policy] [--project PROJECT]
-                            [--json]
-                            ruling_id
-
-positional arguments:
-  ruling_id             exact r-… id
-
-options:
-  -h, --help            show this help message and exit
-  --subject SUBJECT     replacement subject
-  --verdict VERDICT     replacement ruling text
-  --scope SCOPE         replacement scope
-  --anchor ANCHOR       replacement anchor set; repeatable
-  --revisit-when REVISIT_WHEN
-                        replacement revisit condition
-  --evidence SOURCE     source cited for the revision; recorded, not verified; repeatable
-  --by {agent}          declare yourself an agent; on an active ruling the call then records a
-                        proposal and the text stands
-  --ratify              refused: activation goes through `daimon ruling ratify`, which shows the
-                        text before the write
-  --check-body-file PATH
-                        file whose contents become the ruling's check script; the bytes are
-                        stored, the path is not (#943)
-  --check-match REGEX   regex on the command string that selects the actions the check runs before
-  --check-intent {enforce,record-only,warn}
-                        what the check asks each host for; the host delivers the strongest it
-                        supports (default warn)
-  --request-policy KEY=VALUE
-                        replacement grant, one of two shapes: sender=<slug> kind=work|info
-                        verb=accept by=agent (a sender this project trusts to record its own
-                        accept), or to=<slug> kind=info verb=open by=agent (this project's own
-                        agent may open an info ask there); repeatable, all four required per shape
-                        (#961)
-  --no-request-policy   clear this ruling's request_policy; mutually exclusive with --request-
-                        policy
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
+usage: daimon ruling revise [-h] [--subject SUBJECT] [--verdict VERDICT] [--scope SCOPE] [--anchor
+ANCHOR] [--revisit-when REVISIT_WHEN] --evidence SOURCE [--by {agent}] [--ratify] [--check-body-file
+PATH] [--check-match REGEX] [--check-intent {enforce,record-only,warn}] [--request-policy KEY=VALUE]
+[--no-request-policy] [--project PROJECT] [--json] ruling_id positional arguments: ruling_id exact
+r-… id options: -h, --help show this help message and exit --subject SUBJECT replacement subject
+--verdict VERDICT replacement ruling text --scope SCOPE replacement scope --anchor ANCHOR
+replacement anchor set; repeatable --revisit-when REVISIT_WHEN replacement revisit condition
+--evidence SOURCE source cited for the revision; recorded, not verified; repeatable --by {agent}
+declare yourself an agent; on an active ruling the call then records a proposal and the text stands
+--ratify refused: activation goes through `daimon ruling ratify`, which shows the text before the
+write --check-body-file PATH file whose contents become the ruling's check script; the bytes are
+stored, the path is not (#943) --check-match REGEX regex on the command string that selects the
+actions the check runs before --check-intent {enforce,record-only,warn} what the check asks each
+host for; the host delivers the strongest it supports (default warn) --request-policy KEY=VALUE
+replacement grant, one of two shapes: sender=<slug> kind=work|info verb=accept by=agent (a sender
+this project trusts to record its own accept), or to=<slug> kind=info verb=open by=agent (this
+project's own agent may open an info ask there); repeatable, all four required per shape (#961)
+--no-request-policy clear this ruling's request_policy; mutually exclusive with --request-policy
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable
+output
 
 === ruling retire ===
-usage: daimon ruling retire [-h] [--evidence SOURCE] [--note NOTE] [--by {agent}]
-                            [--project PROJECT] [--slug SLUG] [--json]
-                            ruling_id
-
-positional arguments:
-  ruling_id          exact r-… id
-
-options:
-  -h, --help         show this help message and exit
-  --evidence SOURCE  optional source for why the ruling stopped applying; repeatable
-  --note NOTE        optional explanation
-  --by {agent}       declare yourself an agent; the call then records a retirement proposal and
-                     the ruling stands until a human verdict
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
-  --json             machine-readable output
+usage: daimon ruling retire [-h] [--evidence SOURCE] [--note NOTE] [--by {agent}] [--project
+PROJECT] [--slug SLUG] [--json] ruling_id positional arguments: ruling_id exact r-… id options: -h,
+--help show this help message and exit --evidence SOURCE optional source for why the ruling stopped
+applying; repeatable --note NOTE optional explanation --by {agent} declare yourself an agent; the
+call then records a retirement proposal and the ruling stands until a human verdict --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another
+project's bucket by its slug, written --slug=<slug> (a slug starts with '-'); routing only, the
+channel gate is unchanged (#766) --json machine-readable output
 
 === ruling check ===
-usage: daimon ruling check [-h] {try} ...
-
-positional arguments:
-  {try}
-    try       run this ruling's check against a command and print the outcome; arms nothing, logs
-              nothing
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon ruling check [-h] {try} ... positional arguments: {try} try run this ruling's check
+against a command and print the outcome; arms nothing, logs nothing options: -h, --help show this
+help message and exit
 
 === ruling check try ===
-usage: daimon ruling check try [-h] --command CMD [--cwd DIR] [--proposed] [--by {agent}]
-                               [--project PROJECT]
-                               ruling_id
-
-positional arguments:
-  ruling_id          exact r-... id
-
-options:
-  -h, --help         show this help message and exit
-  --command CMD      the command string to check, as a host would hand it to the hook
-  --cwd DIR          working directory the command would run in; relative file arguments resolve
-                     against it (default: the current directory)
-  --proposed         run the pending revision's check instead of the armed one
-  --by {agent}       declare yourself an agent; a dry run then refuses, because it executes the
-                     body
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon ruling check try [-h] --command CMD [--cwd DIR] [--proposed] [--by {agent}] [--project
+PROJECT] ruling_id positional arguments: ruling_id exact r-... id options: -h, --help show this help
+message and exit --command CMD the command string to check, as a host would hand it to the hook
+--cwd DIR working directory the command would run in; relative file arguments resolve against it
+(default: the current directory) --proposed run the pending revision's check instead of the armed
+one --by {agent} declare yourself an agent; a dry run then refuses, because it executes the body
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === ruling checks ===
-usage: daimon ruling checks [-h] [--project PROJECT] [--json]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon ruling checks [-h] [--project PROJECT] [--json] options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output
 
 === ruling list ===
-usage: daimon ruling list [-h] [--state {active,candidate,overturned}] [--project PROJECT]
-                          [--json] [--inherited]
-
-options:
-  -h, --help            show this help message and exit
-  --state {active,candidate,overturned}
-                        filter by state; repeatable
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
-  --inherited           also list active rulings inherited from a ruling layer above this project
-                        (#1092); each row (each `--json` row too) carries `inherited_from`;
-                        refused on a tenant-scoped home, the same as every caller-chosen cross-
-                        project scope (#899)
+usage: daimon ruling list [-h] [--state {active,candidate,overturned}] [--project PROJECT] [--json]
+[--inherited] options: -h, --help show this help message and exit --state
+{active,candidate,overturned} filter by state; repeatable --project PROJECT project directory
+(default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output --inherited also list active
+rulings inherited from a ruling layer above this project (#1092); each row (each `--json` row too)
+carries `inherited_from`; refused on a tenant-scoped home, the same as every caller-chosen
+cross-project scope (#899)
 
 === ruling show ===
-usage: daimon ruling show [-h] [--project PROJECT] [--json] ruling_id
-
-positional arguments:
-  ruling_id          exact r-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon ruling show [-h] [--project PROJECT] [--json] ruling_id positional arguments:
+ruling_id exact r-… id options: -h, --help show this help message and exit --project PROJECT project
+directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === amend ===
-usage: daimon amend [-h] {propose,ratify,reject,list} ...
-
-positional arguments:
-  {propose,ratify,reject,list}
-    propose             propose an amendment; agent proposals stay candidates until the session-
-                        end byte-check or a human verdict
-    ratify              activate a candidate or verified amendment as a human decision
-    reject              reject an amendment with a reason, as a human decision
-    list                list project amendments, candidates first
-
-options:
-  -h, --help            show this help message and exit
-
-Examples:
-  daimon amend o-1a2b3c4d5e6f --change progressed --evidence 'the PR merged' --by agent
-  daimon amend ratify a-0f1e2d3c4b5a
+usage: daimon amend [-h] {propose,ratify,reject,list} ... positional arguments:
+{propose,ratify,reject,list} propose propose an amendment; agent proposals stay candidates until the
+session-end byte-check or a human verdict ratify activate a candidate or verified amendment as a
+human decision reject reject an amendment with a reason, as a human decision list list project
+amendments, candidates first options: -h, --help show this help message and exit Examples: daimon
+amend o-1a2b3c4d5e6f --change progressed --evidence 'the PR merged' --by agent daimon amend ratify
+a-0f1e2d3c4b5a
 
 === amend propose ===
-usage: daimon amend propose [-h] --change {blocked,changed,progressed} --evidence EVIDENCE
-                            [--note NOTE] [--by {agent}] [--project PROJECT]
-                            item_id
-
-positional arguments:
-  item_id               exact item id from a briefing/loops handle
-
-options:
-  -h, --help            show this help message and exit
-  --change {blocked,changed,progressed}
-                        the typed transition; the closed vocabulary is the render bound
-  --evidence EVIDENCE   verbatim transcript quote backing the change; byte-checked against this
-                        session's transcript at session end
-  --note NOTE           short context; human channel only
-  --by {agent}          declare yourself an agent; omit it only from an interactive terminal,
-                        which is the human path
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon amend propose [-h] --change {blocked,changed,progressed} --evidence EVIDENCE [--note
+NOTE] [--by {agent}] [--project PROJECT] item_id positional arguments: item_id exact item id from a
+briefing/loops handle options: -h, --help show this help message and exit --change
+{blocked,changed,progressed} the typed transition; the closed vocabulary is the render bound
+--evidence EVIDENCE verbatim transcript quote backing the change; byte-checked against this
+session's transcript at session end --note NOTE short context; human channel only --by {agent}
+declare yourself an agent; omit it only from an interactive terminal, which is the human path
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === amend ratify ===
-usage: daimon amend ratify [-h] [--by {agent}] [--project PROJECT] [--slug SLUG]
-                           amendment_id [amendment_id ...]
-
-positional arguments:
-  amendment_id       one or more exact a-… ids; all-or-nothing if any is unknown or in the wrong
-                     state
-
-options:
-  -h, --help         show this help message and exit
-  --by {agent}       declare yourself an agent; ratification then refuses, because it requires a
-                     human channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
+usage: daimon amend ratify [-h] [--by {agent}] [--project PROJECT] [--slug SLUG] amendment_id
+[amendment_id ...] positional arguments: amendment_id one or more exact a-… ids; all-or-nothing if
+any is unknown or in the wrong state options: -h, --help show this help message and exit --by
+{agent} declare yourself an agent; ratification then refuses, because it requires a human channel
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to
+another project's bucket by its slug, written --slug=<slug> (a slug starts with '-'); routing only,
+the channel gate is unchanged (#766)
 
 === amend reject ===
 usage: daimon amend reject [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
-                           amendment_id [amendment_id ...]
-
-positional arguments:
-  amendment_id       one or more exact a-… ids; all-or-nothing if any is unknown
-
-options:
-  -h, --help         show this help message and exit
-  --note NOTE        why it is wrong; kept on the record
-  --by {agent}       declare yourself an agent; rejection then refuses, because it requires a
-                     human channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
+amendment_id [amendment_id ...] positional arguments: amendment_id one or more exact a-… ids;
+all-or-nothing if any is unknown options: -h, --help show this help message and exit --note NOTE why
+it is wrong; kept on the record --by {agent} declare yourself an agent; rejection then refuses,
+because it requires a human channel --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by its slug, written
+--slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === amend list ===
-usage: daimon amend list [-h] [--project PROJECT] [--json]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon amend list [-h] [--project PROJECT] [--json] options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output
 
 === trust ===
-usage: daimon trust [-h] {propose,confirm,dismiss,release,list,repair,show} ...
-
-positional arguments:
-  {propose,confirm,dismiss,release,list,repair,show}
-    propose             propose a quarantine; agent proposals stay candidates until a human
-                        confirms or dismisses them
-    confirm             activate a candidate quarantine as a human decision
-    dismiss             reject a candidate quarantine as a human decision
-    release             lift an active quarantine as a human decision
-    list                list project quarantines, candidates first
-    repair              alias for `daimon ledger repair trust`: heal trust.jsonl and re-run forget
-                        over it
-    show                show one quarantine record
-
-options:
-  -h, --help            show this help message and exit
-
-Examples:
-  daimon trust propose --text "the runbook was fabricated" --kind decision --reason "no matching PR" --evidence issue:1109 --by agent
-  daimon trust confirm tr-0123456789ab
-  daimon trust release tr-0123456789ab
+usage: daimon trust [-h] {propose,confirm,dismiss,release,list,repair,show} ... positional
+arguments: {propose,confirm,dismiss,release,list,repair,show} propose propose a quarantine; agent
+proposals stay candidates until a human confirms or dismisses them confirm activate a candidate
+quarantine as a human decision dismiss reject a candidate quarantine as a human decision release
+lift an active quarantine as a human decision list list project quarantines, candidates first repair
+alias for `daimon ledger repair trust`: heal trust.jsonl and re-run forget over it show show one
+quarantine record options: -h, --help show this help message and exit Examples: daimon trust propose
+--text "the runbook was fabricated" --kind decision --reason "no matching PR" --evidence issue:1109
+--by agent daimon trust confirm tr-0123456789ab daimon trust release tr-0123456789ab
 
 === trust propose ===
-usage: daimon trust propose [-h] --text TEXT
-                            --kind {belief,contradiction,decision,question,topic,uncertainty}
-                            --reason REASON --evidence EVIDENCE [--item-id ITEM_ID] [--by {agent}]
-                            [--project PROJECT]
-
-options:
-  -h, --help            show this help message and exit
-  --text TEXT           the checkpoint value to quarantine, verbatim
-  --kind {belief,contradiction,decision,question,topic,uncertainty}
-                        which checkpoint field kind this concerns
-  --reason REASON       why this value is unsafe to act on
-  --evidence EVIDENCE   typed evidence source (repeatable): message:<id>, transcript:<session>,
-                        artifact:<path>, issue:<number>, measurement:<receipt>, receipt:<id>,
-                        url:<source>
-  --item-id ITEM_ID     the checkpoint item id this was observed on (an accelerator only —
-                        identity is the value, not this id)
-  --by {agent}          declare yourself an agent; omit it only from an interactive terminal,
-                        which is the human path and lands active immediately
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon trust propose [-h] --text TEXT --kind
+{belief,contradiction,decision,question,topic,uncertainty} --reason REASON --evidence EVIDENCE
+[--item-id ITEM_ID] [--by {agent}] [--project PROJECT] options: -h, --help show this help message
+and exit --text TEXT the checkpoint value to quarantine, verbatim --kind
+{belief,contradiction,decision,question,topic,uncertainty} which checkpoint field kind this concerns
+--reason REASON why this value is unsafe to act on --evidence EVIDENCE typed evidence source
+(repeatable): message:<id>, transcript:<session>, artifact:<path>, issue:<number>,
+measurement:<receipt>, receipt:<id>, url:<source> --item-id ITEM_ID the checkpoint item id this was
+observed on (an accelerator only — identity is the value, not this id) --by {agent} declare yourself
+an agent; omit it only from an interactive terminal, which is the human path and lands active
+immediately --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === trust confirm ===
-usage: daimon trust confirm [-h] [--by {agent}] [--project PROJECT] quarantine_id
-
-positional arguments:
-  quarantine_id      exact tr-… id
-
-options:
-  -h, --help         show this help message and exit
-  --by {agent}       declare yourself an agent; confirm then refuses, because it requires a human
-                     channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon trust confirm [-h] [--by {agent}] [--project PROJECT] quarantine_id positional
+arguments: quarantine_id exact tr-… id options: -h, --help show this help message and exit --by
+{agent} declare yourself an agent; confirm then refuses, because it requires a human channel
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === trust dismiss ===
-usage: daimon trust dismiss [-h] [--by {agent}] [--project PROJECT] quarantine_id
-
-positional arguments:
-  quarantine_id      exact tr-… id
-
-options:
-  -h, --help         show this help message and exit
-  --by {agent}       declare yourself an agent; dismiss then refuses, because it requires a human
-                     channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon trust dismiss [-h] [--by {agent}] [--project PROJECT] quarantine_id positional
+arguments: quarantine_id exact tr-… id options: -h, --help show this help message and exit --by
+{agent} declare yourself an agent; dismiss then refuses, because it requires a human channel
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === trust release ===
-usage: daimon trust release [-h] [--by {agent}] [--project PROJECT] quarantine_id
-
-positional arguments:
-  quarantine_id      exact tr-… id
-
-options:
-  -h, --help         show this help message and exit
-  --by {agent}       declare yourself an agent; release then refuses, because it requires a human
-                     channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon trust release [-h] [--by {agent}] [--project PROJECT] quarantine_id positional
+arguments: quarantine_id exact tr-… id options: -h, --help show this help message and exit --by
+{agent} declare yourself an agent; release then refuses, because it requires a human channel
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === trust list ===
-usage: daimon trust list [-h] [--project PROJECT] [--json]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon trust list [-h] [--project PROJECT] [--json] options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
+machine-readable output
 
 === trust repair ===
-usage: daimon trust repair [-h] [--project PROJECT] [--dry-run]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --dry-run          report what would change and write nothing
+usage: daimon trust repair [-h] [--project PROJECT] [--dry-run] options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+--dry-run report what would change and write nothing
 
 === trust show ===
-usage: daimon trust show [-h] [--project PROJECT] [--json] quarantine_id
-
-positional arguments:
-  quarantine_id      exact tr-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon trust show [-h] [--project PROJECT] [--json] quarantine_id positional arguments:
+quarantine_id exact tr-… id options: -h, --help show this help message and exit --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === ledger ===
-usage: daimon ledger [-h] {repair} ...
-
-positional arguments:
-  {repair}
-    repair    rejoin split rows, move torn and garbage lines to <name>.quarantined-lines, and re-
-              run forget over the ledger
-
-options:
-  -h, --help  show this help message and exit
-
-Examples:
-  daimon ledger repair trust --dry-run
-  daimon ledger repair events
+usage: daimon ledger [-h] {repair} ... positional arguments: {repair} repair rejoin split rows, move
+torn and garbage lines to <name>.quarantined-lines, and re-run forget over the ledger options: -h,
+--help show this help message and exit Examples: daimon ledger repair trust --dry-run daimon ledger
+repair events
 
 === ledger repair ===
-usage: daimon ledger repair [-h] [--project PROJECT] [--dry-run] name
-
-positional arguments:
-  name               a bucket ledger: events, refutations, amendments, requests, verification,
-                     forget-hits, relations, trust, request_policy_tombstones
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --dry-run          report what would change and write nothing
+usage: daimon ledger repair [-h] [--project PROJECT] [--dry-run] name positional arguments: name a
+bucket ledger: events, refutations, amendments, requests, verification, forget-hits, relations,
+trust, request_policy_tombstones options: -h, --help show this help message and exit --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run report what would change
+and write nothing
 
 === request ===
-usage: daimon request [-h]
-                      {open,revise,accept,reject,needs-info,suppress,done,reply,list,inbox} ...
-
-positional arguments:
-  {open,revise,accept,reject,needs-info,suppress,done,reply,list,inbox}
-    open                open a request addressed to another project's slug
-    revise              answer a needs-info or sharpen an open ask; capped at 3 revisions per
-                        record
-    accept              accept an addressed request; a human decision, or an agent may accept an
-                        addressed `info` ask
-    reject              reject it with a reason; rejection is final for that record, and the
-                        sender can open a new one citing it
-    needs-info          ask the sender for more before deciding
-    suppress            drop it out of the briefing panel; it stays in `request list`, and any
-                        later verdict reverses it
-    done                report the ask as satisfied; an agent claim renders as claimed-and-
-                        unverified until the byte-check
-    reply               send the sender a progress note on a request you accepted; it moves no
-                        state, and the request stays owed until `done`
-    list                list this project's requests, undecided first
-    inbox               requests addressed TO this project, from every sender, undecided first
-
-options:
-  -h, --help            show this help message and exit
-
-Examples:
-  daimon request open --to ~/code/api --ask 'publish the 0.32 schema' --why 'the client cannot ship without it' --by agent
-  daimon request list
-  daimon request accept q-1a2b3c4d5e6f
+usage: daimon request [-h] {open,revise,accept,reject,needs-info,suppress,done,reply,list,inbox} ...
+positional arguments: {open,revise,accept,reject,needs-info,suppress,done,reply,list,inbox} open
+open a request addressed to another project's slug revise answer a needs-info or sharpen an open
+ask; capped at 3 revisions per record accept accept an addressed request; a human decision, or an
+agent may accept an addressed `info` ask reject reject it with a reason; rejection is final for that
+record, and the sender can open a new one citing it needs-info ask the sender for more before
+deciding suppress drop it out of the briefing panel; it stays in `request list`, and any later
+verdict reverses it done report the ask as satisfied; an agent claim renders as
+claimed-and-unverified until the byte-check reply send the sender a progress note on a request you
+accepted; it moves no state, and the request stays owed until `done` list list this project's
+requests, undecided first inbox requests addressed TO this project, from every sender, undecided
+first options: -h, --help show this help message and exit Examples: daimon request open --to
+~/code/api --ask 'publish the 0.32 schema' --why 'the client cannot ship without it' --by agent
+daimon request list daimon request accept q-1a2b3c4d5e6f
 
 === request open ===
 usage: daimon request open [-h] --to PROJECT --ask ASK --why WHY [--to-human] [--kind {info,work}]
-                           [--blocking] [--evidence EVIDENCE] [--supersedes REQUEST_ID] [--anyway]
-                           [--by {agent}] [--project PROJECT]
-
-options:
-  -h, --help            show this help message and exit
-  --to PROJECT          recipient project directory, or its slug written as --to=<slug> (a slug
-                        starts with '-', which a bare --to would read as an option); `daimon
-                        projects` lists both
-  --ask ASK             what you are asking that project to do
-  --why WHY             why it matters; the recipient reads this first
-  --to-human            the ask is for that project's human, not its agent
-  --kind {info,work}    approval requirement: work (default) waits on a person, info is answerable
-                        from the recipient's own artifacts and owes no accept; only a human
-                        channel may open one as info
-  --blocking            mark the sender as blocked on it; a flag on the record, never a claim on
-                        the recipient's time
-  --evidence EVIDENCE   optional source backing the ask; recorded, never resolved
-  --supersedes REQUEST_ID
-                        the earlier q-… this ask replaces; the lineage renders always
-  --anyway              record the ask even when the recipient slug has no bucket yet; it is never
-                        surfaced there until that project serializes
-  --by {agent}          declare yourself an agent; omit it only from an interactive terminal,
-                        which is the human path
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
+[--blocking] [--evidence EVIDENCE] [--supersedes REQUEST_ID] [--anyway] [--by {agent}] [--project
+PROJECT] options: -h, --help show this help message and exit --to PROJECT recipient project
+directory, or its slug written as --to=<slug> (a slug starts with '-', which a bare --to would read
+as an option); `daimon projects` lists both --ask ASK what you are asking that project to do --why
+WHY why it matters; the recipient reads this first --to-human the ask is for that project's human,
+not its agent --kind {info,work} approval requirement: work (default) waits on a person, info is
+answerable from the recipient's own artifacts and owes no accept; only a human channel may open one
+as info --blocking mark the sender as blocked on it; a flag on the record, never a claim on the
+recipient's time --evidence EVIDENCE optional source backing the ask; recorded, never resolved
+--supersedes REQUEST_ID the earlier q-… this ask replaces; the lineage renders always --anyway
+record the ask even when the recipient slug has no bucket yet; it is never surfaced there until that
+project serializes --by {agent} declare yourself an agent; omit it only from an interactive
+terminal, which is the human path --project PROJECT project directory (default: DAIMON_PROJECT_DIR,
+then cwd)
 
 === request revise ===
 usage: daimon request revise [-h] [--ask ASK] [--why WHY] [--evidence EVIDENCE] [--by {agent}]
-                             [--project PROJECT]
-                             request_id
-
-positional arguments:
-  request_id           exact q-… id
-
-options:
-  -h, --help           show this help message and exit
-  --ask ASK            replacement ask
-  --why WHY            replacement rationale
-  --evidence EVIDENCE  replacement source
-  --by {agent}         declare yourself an agent; omit it only from an interactive terminal
-  --project PROJECT    project directory (default: DAIMON_PROJECT_DIR, then cwd)
+[--project PROJECT] request_id positional arguments: request_id exact q-… id options: -h, --help
+show this help message and exit --ask ASK replacement ask --why WHY replacement rationale --evidence
+EVIDENCE replacement source --by {agent} declare yourself an agent; omit it only from an interactive
+terminal --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request accept ===
 usage: daimon request accept [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
-                             request_id
-
-positional arguments:
-  request_id         exact q-… id
-
-options:
-  -h, --help         show this help message and exit
-  --note NOTE        kept on the record
-  --by {agent}       declare yourself an agent; permitted only for an addressed `info` ask still
-                     open or needs-info — a `work` ask still needs `daimon request accept` from a
-                     human channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
+request_id positional arguments: request_id exact q-… id options: -h, --help show this help message
+and exit --note NOTE kept on the record --by {agent} declare yourself an agent; permitted only for
+an addressed `info` ask still open or needs-info — a `work` ask still needs `daimon request accept`
+from a human channel --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+--slug SLUG route to another project's bucket by its slug, written --slug=<slug> (a slug starts with
+'-'); routing only, the channel gate is unchanged (#766)
 
 === request reject ===
 usage: daimon request reject [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
-                             request_id
-
-positional arguments:
-  request_id         exact q-… id
-
-options:
-  -h, --help         show this help message and exit
-  --note NOTE        kept on the record
-  --by {agent}       declare yourself an agent; the call then refuses, because this verb requires
-                     a human channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
+request_id positional arguments: request_id exact q-… id options: -h, --help show this help message
+and exit --note NOTE kept on the record --by {agent} declare yourself an agent; the call then
+refuses, because this verb requires a human channel --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by its slug, written
+--slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === request needs-info ===
-usage: daimon request needs-info [-h] [--note NOTE] [--by {agent}] [--project PROJECT]
-                                 [--slug SLUG]
-                                 request_id
-
-positional arguments:
-  request_id         exact q-… id
-
-options:
-  -h, --help         show this help message and exit
-  --note NOTE        kept on the record
-  --by {agent}       declare yourself an agent; the call then refuses, because this verb requires
-                     a human channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
+usage: daimon request needs-info [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
+request_id positional arguments: request_id exact q-… id options: -h, --help show this help message
+and exit --note NOTE kept on the record --by {agent} declare yourself an agent; the call then
+refuses, because this verb requires a human channel --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by its slug, written
+--slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === request suppress ===
 usage: daimon request suppress [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
-                               request_id
-
-positional arguments:
-  request_id         exact q-… id
-
-options:
-  -h, --help         show this help message and exit
-  --note NOTE        kept on the record
-  --by {agent}       declare yourself an agent; the call then refuses, because this verb requires
-                     a human channel
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --slug SLUG        route to another project's bucket by its slug, written --slug=<slug> (a slug
-                     starts with '-'); routing only, the channel gate is unchanged (#766)
+request_id positional arguments: request_id exact q-… id options: -h, --help show this help message
+and exit --note NOTE kept on the record --by {agent} declare yourself an agent; the call then
+refuses, because this verb requires a human channel --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by its slug, written
+--slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === request done ===
 usage: daimon request done [-h] --evidence EVIDENCE [--by {agent}] [--project PROJECT] request_id
-
-positional arguments:
-  request_id           exact q-… id
-
-options:
-  -h, --help           show this help message and exit
-  --evidence EVIDENCE  what settles it; a verbatim quote from an agent is byte-checked at session
-                       end
-  --by {agent}         declare yourself an agent; omit it only from an interactive terminal
-  --project PROJECT    project directory (default: DAIMON_PROJECT_DIR, then cwd)
+positional arguments: request_id exact q-… id options: -h, --help show this help message and exit
+--evidence EVIDENCE what settles it; a verbatim quote from an agent is byte-checked at session end
+--by {agent} declare yourself an agent; omit it only from an interactive terminal --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request reply ===
-usage: daimon request reply [-h] --note NOTE [--evidence EVIDENCE] [--by {agent}]
-                            [--project PROJECT]
-                            request_id
-
-positional arguments:
-  request_id           exact q-… id
-
-options:
-  -h, --help           show this help message and exit
-  --note NOTE          the update the sender reads; 2000 characters
-  --evidence EVIDENCE  optional pointer to what backs the update
-  --by {agent}         declare yourself an agent; omit it only from an interactive terminal. An
-                       agent reply reaches the sender labeled unverified
-  --project PROJECT    project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request reply [-h] --note NOTE [--evidence EVIDENCE] [--by {agent}] [--project
+PROJECT] request_id positional arguments: request_id exact q-… id options: -h, --help show this help
+message and exit --note NOTE the update the sender reads; 2000 characters --evidence EVIDENCE
+optional pointer to what backs the update --by {agent} declare yourself an agent; omit it only from
+an interactive terminal. An agent reply reaches the sender labeled unverified --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request list ===
-usage: daimon request list [-h] [--json] [--project PROJECT]
-
-options:
-  -h, --help         show this help message and exit
-  --json             machine-readable output
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request list [-h] [--json] [--project PROJECT] options: -h, --help show this help
+message and exit --json machine-readable output --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === request inbox ===
-usage: daimon request inbox [-h] [--json] [--project PROJECT]
-
-options:
-  -h, --help         show this help message and exit
-  --json             machine-readable output
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request inbox [-h] [--json] [--project PROJECT] options: -h, --help show this help
+message and exit --json machine-readable output --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === relations ===
-usage: daimon relations [-h] {list,show,confirm,reject,retract} ...
-
-positional arguments:
-  {list,show,confirm,reject,retract}
-    list                candidates first; endpoint texts resolved at read time
-    show                one relation with its proposal history
-    confirm             record a human confirmation of a candidate edge (human-only: needs an
-                        interactive terminal)
-    reject              record a human rejection; sticky against re-proposal (human-only: needs an
-                        interactive terminal)
-    retract             undo a confirmation; a fresh proposal may revive it (human-only: needs an
-                        interactive terminal)
-
-options:
-  -h, --help            show this help message and exit
-
-Examples:
-  daimon relations list
-  daimon relations show rel-0123456789abcdef
-  daimon relations confirm rel-0123456789abcdef
+usage: daimon relations [-h] {list,show,confirm,reject,retract} ... positional arguments:
+{list,show,confirm,reject,retract} list candidates first; endpoint texts resolved at read time show
+one relation with its proposal history confirm record a human confirmation of a candidate edge
+(human-only: needs an interactive terminal) reject record a human rejection; sticky against
+re-proposal (human-only: needs an interactive terminal) retract undo a confirmation; a fresh
+proposal may revive it (human-only: needs an interactive terminal) options: -h, --help show this
+help message and exit Examples: daimon relations list daimon relations show rel-0123456789abcdef
+daimon relations confirm rel-0123456789abcdef
 
 === relations list ===
-usage: daimon relations list [-h] [--state {candidate,confirmed,rejected,retracted}]
-                             [--project PROJECT] [--json]
-
-options:
-  -h, --help            show this help message and exit
-  --state {candidate,confirmed,rejected,retracted}
-                        filter by state; repeatable (default: all)
-  --project PROJECT     project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json                machine-readable output
+usage: daimon relations list [-h] [--state {candidate,confirmed,rejected,retracted}] [--project
+PROJECT] [--json] options: -h, --help show this help message and exit --state
+{candidate,confirmed,rejected,retracted} filter by state; repeatable (default: all) --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === relations show ===
-usage: daimon relations show [-h] [--project PROJECT] [--json] relation_id
-
-positional arguments:
-  relation_id        exact rel-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
+usage: daimon relations show [-h] [--project PROJECT] [--json] relation_id positional arguments:
+relation_id exact rel-… id options: -h, --help show this help message and exit --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === relations confirm ===
-usage: daimon relations confirm [-h] [--project PROJECT] relation_id
-
-positional arguments:
-  relation_id        exact rel-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon relations confirm [-h] [--project PROJECT] relation_id positional arguments:
+relation_id exact rel-… id options: -h, --help show this help message and exit --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === relations reject ===
-usage: daimon relations reject [-h] [--project PROJECT] relation_id
-
-positional arguments:
-  relation_id        exact rel-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon relations reject [-h] [--project PROJECT] relation_id positional arguments:
+relation_id exact rel-… id options: -h, --help show this help message and exit --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === relations retract ===
-usage: daimon relations retract [-h] [--project PROJECT] relation_id
-
-positional arguments:
-  relation_id        exact rel-… id
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon relations retract [-h] [--project PROJECT] relation_id positional arguments:
+relation_id exact rel-… id options: -h, --help show this help message and exit --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === handoff ===
-usage: daimon handoff [-h] [--clear] [--project PROJECT] [text]
-
-positional arguments:
-  text               the baton: imperative, small — what to do first and what to beware
-
-options:
-  -h, --help         show this help message and exit
-  --clear            retract the active baton
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon handoff [-h] [--clear] [--project PROJECT] [text] positional arguments: text the
+baton: imperative, small — what to do first and what to beware options: -h, --help show this help
+message and exit --clear retract the active baton --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === log ===
-usage: daimon log [-h] --text TEXT [--kind KIND] [--status STATUS] [--project PROJECT]
-
-options:
-  -h, --help         show this help message and exit
-  --text TEXT        what happened
-  --kind KIND        event kind (default: note)
-  --status STATUS    optional free-form status
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon log [-h] --text TEXT [--kind KIND] [--status STATUS] [--project PROJECT] options: -h,
+--help show this help message and exit --text TEXT what happened --kind KIND event kind (default:
+note) --status STATUS optional free-form status --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === recall-inject ===
-usage: daimon recall-inject [-h] [--project PROJECT] [--session SESSION]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project dir for scoping (defaults to cwd detection)
-  --session SESSION  current session id (excluded from matches; keys the cooldown)
+usage: daimon recall-inject [-h] [--project PROJECT] [--session SESSION] options: -h, --help show
+this help message and exit --project PROJECT project dir for scoping (defaults to cwd detection)
+--session SESSION current session id (excluded from matches; keys the cooldown)
 
 === action-recall ===
-usage: daimon action-recall [-h] [--project PROJECT] [--session SESSION] [--record-only]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project dir for scoping (defaults to cwd detection)
-  --session SESSION  current session id (excluded from matches; keys the cooldown)
-  --record-only      write the delivery-ledger row and print nothing (the soak rung of the per-
-                     host ladder)
+usage: daimon action-recall [-h] [--project PROJECT] [--session SESSION] [--record-only] options:
+-h, --help show this help message and exit --project PROJECT project dir for scoping (defaults to
+cwd detection) --session SESSION current session id (excluded from matches; keys the cooldown)
+--record-only write the delivery-ledger row and print nothing (the soak rung of the per-host ladder)
 
 === request-inject ===
-usage: daimon request-inject [-h] [--project PROJECT] [--session SESSION]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project dir for scoping (defaults to cwd detection)
-  --session SESSION  current session id (half the delivery write-once key)
+usage: daimon request-inject [-h] [--project PROJECT] [--session SESSION] options: -h, --help show
+this help message and exit --project PROJECT project dir for scoping (defaults to cwd detection)
+--session SESSION current session id (half the delivery write-once key)
 
 === status ===
-usage: daimon status [-h] [--project PROJECT] [--json] [--suppressed]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory to check (default: DAIMON_PROJECT_DIR, then cwd)
-  --json             machine-readable output
-  --suppressed       list items withheld from the briefing as resolved (#103)
-
-Examples:
-  daimon status
-  daimon status --project . --json
+usage: daimon status [-h] [--project PROJECT] [--json] [--suppressed] options: -h, --help show this
+help message and exit --project PROJECT project directory to check (default: DAIMON_PROJECT_DIR,
+then cwd) --json machine-readable output --suppressed list items withheld from the briefing as
+resolved (#103) Examples: daimon status daimon status --project . --json
 
 === verify-receipt ===
-usage: daimon verify-receipt [-h] [--project PROJECT] [session_id]
-
-positional arguments:
-  session_id         session id to verify (default: this project's latest checkpoint)
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-
-Examples:
-  daimon verify-receipt
-  daimon verify-receipt <session-id>
+usage: daimon verify-receipt [-h] [--project PROJECT] [session_id] positional arguments: session_id
+session id to verify (default: this project's latest checkpoint) options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+Examples: daimon verify-receipt daimon verify-receipt <session-id>
 
 === audit ===
-usage: daimon audit [-h] {quotes,privacy} ...
-
-positional arguments:
-  {quotes,privacy}
-    quotes          re-check stored verbatim quotes against their source transcripts and report
-                    mismatches (read-only, never rewrites tags, #125; exit 0 checked clean, 1
-                    mismatch, 3 nothing checkable)
-    privacy         prove no forgotten value's plaintext survives on any surface (read-only; exit
-                    0 clean, 1 residue, 3 cannot-prove)
-
-options:
-  -h, --help        show this help message and exit
+usage: daimon audit [-h] {quotes,privacy} ... positional arguments: {quotes,privacy} quotes re-check
+stored verbatim quotes against their source transcripts and report mismatches (read-only, never
+rewrites tags, #125; exit 0 checked clean, 1 mismatch, 3 nothing checkable) privacy prove no
+forgotten value's plaintext survives on any surface (read-only; exit 0 clean, 1 residue, 3
+cannot-prove) options: -h, --help show this help message and exit
 
 === audit quotes ===
-usage: daimon audit quotes [-h] [--project PROJECT] [--all] [--top TOP] [--json]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --all              audit every project's checkpoints, not just the current one
-  --top TOP          how many failing quotes to list (default: 10)
-  --json             machine-readable output; lists EVERY failure, where the printed lines stop at
-                     --top
-
-Examples: daimon audit quotes daimon audit quotes --all --top 20 daimon audit quotes --json
+usage: daimon audit quotes [-h] [--project PROJECT] [--all] [--top TOP] [--json] options: -h, --help
+show this help message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR,
+then cwd) --all audit every project's checkpoints, not just the current one --top TOP how many
+failing quotes to list (default: 10) --json machine-readable output; lists EVERY failure, where the
+printed lines stop at --top Examples: daimon audit quotes daimon audit quotes --all --top 20 daimon
+audit quotes --json
 
 === audit privacy ===
-usage: daimon audit privacy [-h] [--project PROJECT | --all]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
-  --all              audit every local project, each against its own tombstone set
-
-Examples: daimon audit privacy daimon audit privacy --all
+usage: daimon audit privacy [-h] [--project PROJECT | --all] options: -h, --help show this help
+message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --all
+audit every local project, each against its own tombstone set Examples: daimon audit privacy daimon
+audit privacy --all
 
 === audit-quotes ===
-usage: daimon audit-quotes [-h] [--project PROJECT] [--all] [--top TOP]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT
-  --all
-  --top TOP
+usage: daimon audit-quotes [-h] [--project PROJECT] [--all] [--top TOP] options: -h, --help show
+this help message and exit --project PROJECT --all --top TOP
 
 === heal ===
-usage: daimon heal [-h] [--dry-run] [--force]
-
-options:
-  -h, --help  show this help message and exit
-  --dry-run   explain what heal would repair (and why not) without serializing
-  --force     ignore a prior retry marker and re-heal a retry-exhausted session (#15)
+usage: daimon heal [-h] [--dry-run] [--force] options: -h, --help show this help message and exit
+--dry-run explain what heal would repair (and why not) without serializing --force ignore a prior
+retry marker and re-heal a retry-exhausted session (#15)
 
 === team ===
-usage: daimon team [-h] {init,sync,status} ...
-
-positional arguments:
-  {init,sync,status}
-    init              clone the private team sidecar repo (empty remote OK)
-    sync              commit+push own checkpoints; fetch teammates' only on remote change (ls-
-                      remote gate)
-    status            per-remote freshness, own unpushed count, authors seen
-
-options:
-  -h, --help          show this help message and exit
-
-Examples:
-  daimon team init git@github.com:org/team-memory.git
-  daimon team sync
-  daimon team status
+usage: daimon team [-h] {init,sync,status} ... positional arguments: {init,sync,status} init clone
+the private team sidecar repo (empty remote OK) sync commit+push own checkpoints; fetch teammates'
+only on remote change (ls-remote gate) status per-remote freshness, own unpushed count, authors seen
+options: -h, --help show this help message and exit Examples: daimon team init
+git@github.com:org/team-memory.git daimon team sync daimon team status
 
 === team init ===
-usage: daimon team init [-h] remote_url
-
-positional arguments:
-  remote_url  git remote URL of the PRIVATE team repo
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon team init [-h] remote_url positional arguments: remote_url git remote URL of the
+PRIVATE team repo options: -h, --help show this help message and exit
 
 === team sync ===
-usage: daimon team sync [-h] [--project PROJECT] [--apply-forget]
-
-options:
-  -h, --help         show this help message and exit
-  --project PROJECT  accepted for CLI symmetry; sync is currently project-agnostic (all own
-                     checkpoints sync regardless of project)
-  --apply-forget     also rewrite THIS machine's checkpoints under teammates' forget tombstones
-                     (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed only — the SessionStart
-                     hook spawns a bare sync, so this can never delete your belief state
-                     unattended. Without the standing consent, refuses at rc 2 before syncing
-                     anything
+usage: daimon team sync [-h] [--project PROJECT] [--apply-forget] options: -h, --help show this help
+message and exit --project PROJECT accepted for CLI symmetry; sync is currently project-agnostic
+(all own checkpoints sync regardless of project) --apply-forget also rewrite THIS machine's
+checkpoints under teammates' forget tombstones (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed
+only — the SessionStart hook spawns a bare sync, so this can never delete your belief state
+unattended. Without the standing consent, refuses at rc 2 before syncing anything
 
 === team status ===
-usage: daimon team status [-h] [--json]
-
-options:
-  -h, --help  show this help message and exit
-  --json      machine-readable output
+usage: daimon team status [-h] [--json] options: -h, --help show this help message and exit --json
+machine-readable output
 
 === configure ===
-usage: daimon configure [-h] [--backend {litellm,command,claude-cli}] [--api-key API_KEY]
-                        [--model MODEL] [--base-url BASE_URL] [--command COMMAND]
-                        [--output OUTPUT] [--input INPUT] [--init] [--timeout TIMEOUT]
-                        [--author AUTHOR] [--team-remote TEAM_REMOTE] [--test]
-
-options:
-  -h, --help            show this help message and exit
-  --backend {litellm,command,claude-cli}
-                        non-interactive: pin this backend and write the value flags below
-  --api-key API_KEY     litellm: DAIMON_LLM_API_KEY
-  --model MODEL         litellm: DAIMON_LLM_MODEL
-  --base-url BASE_URL   litellm: DAIMON_LLM_BASE_URL
-  --command COMMAND     command: DAIMON_LLM_COMMAND
-  --output OUTPUT       command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>)
-  --input INPUT         command: DAIMON_LLM_COMMAND_INPUT (stdin|arg|file:<flag>) — how the prompt
-                        reaches a CLI that doesn't read stdin, e.g. --input 'file:--prompt-file'
-                        for the Devin CLI (#58)
-  --init                guided setup wizard (#368): backend, timeout, immediate --test offer,
-                        optional team walk, ends with the status summary; every prompt has a flag
-                        escape hatch for scripts
-  --timeout TIMEOUT     --init: DAIMON_TIMEOUT (total serialize budget, floor 420s)
-  --author AUTHOR       --init: DAIMON_AUTHOR for team memory
-  --team-remote TEAM_REMOTE
-                        --init: git remote URL — sets DAIMON_TEAM=1 and runs `daimon team init
-                        <url>`
-  --test                send one tiny prompt through the resolved backend and report pass/fail —
-                        run this right after configuring (#56)
+usage: daimon configure [-h] [--backend {litellm,command,claude-cli}] [--api-key API_KEY] [--model
+MODEL] [--base-url BASE_URL] [--command COMMAND] [--output OUTPUT] [--input INPUT] [--init]
+[--timeout TIMEOUT] [--author AUTHOR] [--team-remote TEAM_REMOTE] [--test] options: -h, --help show
+this help message and exit --backend {litellm,command,claude-cli} non-interactive: pin this backend
+and write the value flags below --api-key API_KEY litellm: DAIMON_LLM_API_KEY --model MODEL litellm:
+DAIMON_LLM_MODEL --base-url BASE_URL litellm: DAIMON_LLM_BASE_URL --command COMMAND command:
+DAIMON_LLM_COMMAND --output OUTPUT command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>) --input
+INPUT command: DAIMON_LLM_COMMAND_INPUT (stdin|arg|file:<flag>) — how the prompt reaches a CLI that
+doesn't read stdin, e.g. --input 'file:--prompt-file' for the Devin CLI (#58) --init guided setup
+wizard (#368): backend, timeout, immediate --test offer, optional team walk, ends with the status
+summary; every prompt has a flag escape hatch for scripts --timeout TIMEOUT --init: DAIMON_TIMEOUT
+(total serialize budget, floor 420s) --author AUTHOR --init: DAIMON_AUTHOR for team memory
+--team-remote TEAM_REMOTE --init: git remote URL — sets DAIMON_TEAM=1 and runs `daimon team init
+<url>` --test send one tiny prompt through the resolved backend and report pass/fail — run this
+right after configuring (#56)
 
 === stats ===
-usage: daimon stats [-h] [--json]
-
-options:
-  -h, --help  show this help message and exit
-  --json      machine-readable output
+usage: daimon stats [-h] [--json] options: -h, --help show this help message and exit --json
+machine-readable output
 
 === check ===
-usage: daimon check [-h] {sync} ...
-
-positional arguments:
-  {sync}
-    sync      rebuild the check manifest and bodies from this project's ledger; safe to repeat,
-              and every ratify already does it
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon check [-h] {sync} ... positional arguments: {sync} sync rebuild the check manifest and
+bodies from this project's ledger; safe to repeat, and every ratify already does it options: -h,
+--help show this help message and exit
 
 === check sync ===
-usage: daimon check sync [-h] [--check] [--json] [--project PROJECT]
-
-options:
-  -h, --help         show this help message and exit
-  --check            audit only: report whether the manifest matches this project's ledger and
-                     write nothing (0 in step, 1 drifted, 3 unreadable)
-  --json             machine-readable output
-  --project PROJECT  project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon check sync [-h] [--check] [--json] [--project PROJECT] options: -h, --help show this
+help message and exit --check audit only: report whether the manifest matches this project's ledger
+and write nothing (0 in step, 1 drifted, 3 unreadable) --json machine-readable output --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === hooks ===
-usage: daimon hooks [-h] {list,status,install,remove} ...
-
-positional arguments:
-  {list,status,install,remove}
-    list                hosts with packaged hook scripts
-    status              audit installed hook copies against the packaged versions
-                        (CURRENT/STALE/MISSING/NOT INSTALLED), and this project's check manifest
-                        against its ledger; non-zero exit on either drift. --json appends one
-                        trailing `checks-manifest` entry carrying the manifest audit, after the
-                        real hosts
-    install             copy a host's hook script(s) to the stable path ~/.daimon/hooks/ and print
-                        the registration snippet — re-run after every upgrade
-    remove              unregister daimon's hook entries from a host whose registration daimon
-                        wrote (kimi, codex). The installed hook scripts are left in place, inert
-                        once unregistered; the MCP wrapper is removed along with its registration
-
-options:
-  -h, --help            show this help message and exit
+usage: daimon hooks [-h] {list,status,install,remove} ... positional arguments:
+{list,status,install,remove} list hosts with packaged hook scripts status audit installed hook
+copies against the packaged versions (CURRENT/STALE/MISSING/NOT INSTALLED), and this project's check
+manifest against its ledger; non-zero exit on either drift. --json appends one trailing
+`checks-manifest` entry carrying the manifest audit, after the real hosts install copy a host's hook
+script(s) to the stable path ~/.daimon/hooks/ and print the registration snippet — re-run after
+every upgrade remove unregister daimon's hook entries from a host whose registration daimon wrote
+(kimi, codex). The installed hook scripts are left in place, inert once unregistered; the MCP
+wrapper is removed along with its registration options: -h, --help show this help message and exit
 
 === hooks list ===
-usage: daimon hooks list [-h]
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon hooks list [-h] options: -h, --help show this help message and exit
 
 === hooks status ===
-usage: daimon hooks status [-h] [--json]
-
-options:
-  -h, --help  show this help message and exit
-  --json      machine-readable output
+usage: daimon hooks status [-h] [--json] options: -h, --help show this help message and exit --json
+machine-readable output
 
 === hooks install ===
-usage: daimon hooks install [-h] [--all] [host]
-
-positional arguments:
-  host        host to install (see `daimon hooks list`); omit to detect the hosts on this machine
-
-options:
-  -h, --help  show this help message and exit
-  --all       install for every detected host without asking (unattended provisioning)
+usage: daimon hooks install [-h] [--all] [host] positional arguments: host host to install (see
+`daimon hooks list`); omit to detect the hosts on this machine options: -h, --help show this help
+message and exit --all install for every detected host without asking (unattended provisioning)
 
 === hooks remove ===
-usage: daimon hooks remove [-h] [--all] [host]
-
-positional arguments:
-  host        host to unregister
-
-options:
-  -h, --help  show this help message and exit
-  --all       unregister every detected host daimon registered
+usage: daimon hooks remove [-h] [--all] [host] positional arguments: host host to unregister
+options: -h, --help show this help message and exit --all unregister every detected host daimon
+registered
 
 === skill ===
-usage: daimon skill [-h] {list,show,status,install,uninstall} ...
-
-positional arguments:
-  {list,show,status,install,uninstall}
-    list                hosts with a skill renderer
-    show                print the canonical skill content
-    status              audit each installed skill against what this CLI would write now
-                        (CURRENT/STALE/MISSING/BROKEN/NOT INSTALLED); non-zero exit on drift.
-                        --json for machines
-    install             write the skill for a host (global scope by default); with no host, detect
-                        what this machine runs
-    uninstall           remove exactly what install wrote
-
-options:
-  -h, --help            show this help message and exit
+usage: daimon skill [-h] {list,show,status,install,uninstall} ... positional arguments:
+{list,show,status,install,uninstall} list hosts with a skill renderer show print the canonical skill
+content status audit each installed skill against what this CLI would write now
+(CURRENT/STALE/MISSING/BROKEN/NOT INSTALLED); non-zero exit on drift. --json for machines install
+write the skill for a host (global scope by default); with no host, detect what this machine runs
+uninstall remove exactly what install wrote options: -h, --help show this help message and exit
 
 === skill list ===
-usage: daimon skill list [-h]
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon skill list [-h] options: -h, --help show this help message and exit
 
 === skill show ===
-usage: daimon skill show [-h] [--compact]
-
-options:
-  -h, --help  show this help message and exit
-  --compact   print the rules-host variant instead of SKILL.md
+usage: daimon skill show [-h] [--compact] options: -h, --help show this help message and exit
+--compact print the rules-host variant instead of SKILL.md
 
 === skill status ===
-usage: daimon skill status [-h] [--json]
-
-options:
-  -h, --help  show this help message and exit
-  --json      machine-readable output
+usage: daimon skill status [-h] [--json] options: -h, --help show this help message and exit --json
+machine-readable output
 
 === skill install ===
-usage: daimon skill install [-h] [--project] [--all] [host]
-
-positional arguments:
-  host        host to install (see `daimon skill list`); omit to detect the hosts on this machine
-
-options:
-  -h, --help  show this help message and exit
-  --project   write into the current repo instead of $HOME
-  --all       install for every detected host without asking (unattended provisioning)
+usage: daimon skill install [-h] [--project] [--all] [host] positional arguments: host host to
+install (see `daimon skill list`); omit to detect the hosts on this machine options: -h, --help show
+this help message and exit --project write into the current repo instead of $HOME --all install for
+every detected host without asking (unattended provisioning)
 
 === skill uninstall ===
-usage: daimon skill uninstall [-h] [--project] [--all] [host]
-
-positional arguments:
-  host
-
-options:
-  -h, --help  show this help message and exit
-  --project
-  --all       remove from every detected host daimon serves
+usage: daimon skill uninstall [-h] [--project] [--all] [host] positional arguments: host options:
+-h, --help show this help message and exit --project --all remove from every detected host daimon
+serves
 
 === mcp ===
-usage: daimon mcp [-h] {serve} ...
-
-positional arguments:
-  {serve}
-    serve     serve MCP over stdio until EOF — reads only, never writes; register in your host's
-              MCP config (see the docs site)
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon mcp [-h] {serve} ... positional arguments: {serve} serve serve MCP over stdio until
+EOF — reads only, never writes; register in your host's MCP config (see the docs site) options: -h,
+--help show this help message and exit
 
 === mcp serve ===
-usage: daimon mcp serve [-h]
-
-options:
-  -h, --help  show this help message and exit
+usage: daimon mcp serve [-h] options: -h, --help show this help message and exit
