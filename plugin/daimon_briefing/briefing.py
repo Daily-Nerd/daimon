@@ -2340,12 +2340,10 @@ def _iter_trusted_quotes(checkpoint):
     Sections come from schema.ITEM_FIELDS so a field added there is validated
     here without another hand-kept list (#146 drift class; #161 added the
     active_topic singleton this way)."""
-    for field in schema.ITEM_FIELDS:
-        value = (checkpoint.get(field.section) or {}).get(field.key)
-        for item in (value,) if field.singleton else (value or []):
-            if (isinstance(item, dict) and item.get("trust") == "verbatim"
-                    and str(item.get("quote") or "").strip()):
-                yield str(item["quote"]).strip()
+    for _field, item in schema.iter_items(checkpoint):
+        if (item.get("trust") == "verbatim"
+                and str(item.get("quote") or "").strip()):
+            yield str(item["quote"]).strip()
 
 
 def _kept_checkpoint(sel: Selection) -> dict:
