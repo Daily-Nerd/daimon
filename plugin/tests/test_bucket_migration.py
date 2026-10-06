@@ -307,6 +307,26 @@ def test_a_legacy_bucket_s_policy_tombstones_move_with_it(
     assert not (legacy / name).exists()
 
 
+def test_a_legacy_bucket_s_quarantine_sidecar_moves_with_it(
+        linked, tmp_checkpoint_dir):
+    """`daimon ledger repair` parks torn lines in `<stem>.quarantined-lines`;
+    stranding it in the legacy bucket would orphan the only copy of them."""
+    link, real = linked
+    legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    name = "events.quarantined-lines"
+    _plant(legacy, {name: _row("q1")})
+    _plant(target, {"events.jsonl": _row("keep"), name: _row("q0")})
+
+    record = buckets.migrate(link)
+
+    assert record["ledgers"] == {name: 1}
+    assert record["leftovers"] == []
+    body = (target / name).read_text(encoding="utf-8")
+    assert _row("q0").strip() in body and _row("q1").strip() in body
+    assert not (legacy / name).exists()
+
+
 def test_the_merge_set_is_the_registry_mergeable_column(
         linked, tmp_checkpoint_dir, monkeypatch):
     """Drop trust.jsonl's `mergeable` flag and the migration treats it as a

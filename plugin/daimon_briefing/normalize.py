@@ -31,6 +31,7 @@ it regardless.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 
@@ -136,3 +137,24 @@ def content_key(text) -> str:
     direction for a deletion guarantee."""
     canon = canonical_text(text)[:_MAX_KEY_INPUT]
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:_KEY_HEX_LEN]
+
+
+_STRING_LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def literal_content_keys(text: str) -> set[str]:
+    """Canonical keys of the JSON string literals inside `text`.
+
+    For a line no parser will take (a torn row, a fragment): the value a
+    forget names was a JSON string in the row that tore, and a string that
+    closed inside the fragment still decodes. A literal that cannot be
+    decoded is keyed as written. A string the tear cut short has no closing
+    quote and is not found: a partial value is not the value."""
+    keys: set[str] = set()
+    for match in _STRING_LITERAL.finditer(text):
+        try:
+            value = json.loads('"' + match.group(1) + '"')
+        except ValueError:
+            value = match.group(1)
+        keys.add(content_key(value))
+    return keys

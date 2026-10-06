@@ -78,6 +78,29 @@ class Surface(NamedTuple):
     phase: str = ""                   # forget registry (later PR)
 
 
+# A repair moves the lines a ledger cannot parse out of it and into
+# `<stem>.quarantined-lines` beside it (#1132 2c-2): one envelope row per line.
+QUARANTINE_SIDECAR_SUFFIX = ".quarantined-lines"
+
+
+def quarantine_sidecar(ledger_name: str) -> str:
+    """The sidecar file name for a bucket ledger: "events.jsonl" ->
+    "events.quarantined-lines"."""
+    return ledger_name.removesuffix(".jsonl") + QUARANTINE_SIDECAR_SUFFIX
+
+
+def is_quarantine_sidecar(name: str) -> bool:
+    return name.endswith(QUARANTINE_SIDECAR_SUFFIX)
+
+
+def quarantine_prose() -> tuple["FieldPath", ...]:
+    """The sidecar's `prose` column (the envelope `text`), from its row."""
+    for s in SURFACES:
+        if s.shape.endswith("*" + QUARANTINE_SIDECAR_SUFFIX):
+            return s.prose
+    raise LookupError("quarantine sidecar surface is not declared")
+
+
 def _scalars(*names: str) -> tuple[FieldPath, ...]:
     return tuple(FieldPath((n,)) for n in names)
 
@@ -221,6 +244,23 @@ SURFACES: tuple[Surface, ...] = (
     #    no path from item text into it and nothing for forget to reach. --
     Surface("checkpoints/{slug}/.ledger-census", "ledger_census.record_marker",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
+    # -- the quarantine sidecar (#1132 2c-2): `daimon ledger repair` moves
+    #    every torn or garbage line out of a ledger into
+    #    `<stem>.quarantined-lines`, one JSONL envelope row per line,
+    #    {ledger, quarantined_at, kind, text}. `text` is the original line
+    #    VERBATIM (undecodable bytes as \xNN escapes), so it holds whatever
+    #    plaintext the torn row held and sits inside the deletion contract.
+    #    `rewrite` is ledger_repair.forget_quarantined_lines: forget purges
+    #    the envelope rows holding the value (by text when it has the text,
+    #    else by canonical key over the JSON strings in the line), and every
+    #    other row stays. Mergeable: a legacy-bucket merge by concatenation
+    #    is safe, the rows are independent. Not a `bucket_ledger` (the shape
+    #    is a glob, one file per ledger), so census and privacy list the
+    #    files by suffix. --
+    Surface("checkpoints/{slug}/*" + QUARANTINE_SIDECAR_SUFFIX,
+            "ledger_repair.quarantine_lines", True, "rewrite", "forget",
+            prose=_scalars("text"), mergeable=True,
+            deleter="ledger_repair.forget_quarantined_lines"),
     # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
     #    only — no field can carry item text (relations.py refuses at the
     #    seam). plaintext=True anyway, deliberately: an edge is an
@@ -606,6 +646,13 @@ def prose_values(prose: tuple[FieldPath, ...], row: dict, *,
 def mergeable_ledgers() -> tuple[str, ...]:
     """Ledger names a legacy-bucket migration moves, in registry order."""
     return tuple(n for n, s in _bucket_ledger_rows() if s.mergeable)
+
+
+def mergeable_files() -> tuple[str, ...]:
+    """Every file a legacy-bucket migration moves: the mergeable ledgers,
+    each followed by its quarantine sidecar."""
+    return tuple(f for n in mergeable_ledgers()
+                 for f in (n, quarantine_sidecar(n)))
 
 
 def index_content_ledgers() -> frozenset:

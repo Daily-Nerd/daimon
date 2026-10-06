@@ -17,7 +17,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, jsonl, normalize, privacy, store, surfaces
+from . import config, jsonl, ledger_repair, normalize, privacy, store, surfaces
 
 MARKER_NAME = store._LEDGER_CENSUS_NAME
 MARKER_VERSION = 1
@@ -31,12 +31,17 @@ def _counts(result: jsonl.Read) -> dict:
             "split": result.split, "garbage": result.garbage}
 
 
-def _tombstoned_rows(rows: list, prose: tuple, keys: set) -> int:
+def _tombstoned_rows(rows: list, prose: tuple, keys: set,
+                     fragments: bool = False) -> int:
+    """Rows with a prose value that folds to a tombstoned key. `fragments`
+    (the quarantine sidecar, whose prose is a whole torn line) also looks at
+    the JSON strings inside the value, the reach forget's key matcher has."""
     if not keys or not prose:
         return 0
     return sum(
         1 for row in rows
-        if any(normalize.content_key(v) in keys
+        if any((ledger_repair.holds_forgotten_key(v, keys) if fragments
+                else normalize.content_key(v) in keys)
                for v in surfaces.prose_values(prose, row)))
 
 
@@ -84,6 +89,12 @@ def census_bucket(slug: str, *, checkpoints: bool = True) -> dict:
             result.rows, surfaces.bucket_ledger(name).prose, keys
         ) if trusted else None
         ledgers[name] = {**_counts(result), "tombstoned_present": present}
+    sidecar_prose = surfaces.quarantine_prose()
+    for path in ledger_repair.sidecars(bucket):
+        result = jsonl.read(path)
+        present = _tombstoned_rows(result.rows, sidecar_prose, keys,
+                                   fragments=True) if trusted else None
+        ledgers[path.name] = {**_counts(result), "tombstoned_present": present}
     try:
         undeclared = sorted(p.name for p in bucket.iterdir()
                             if p.name.endswith(".jsonl")
