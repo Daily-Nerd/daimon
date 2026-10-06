@@ -341,7 +341,7 @@ def legacy_leftovers(project_dir) -> tuple[str, ...]:
     # send a reader deleting a pointer the next run would have absorbed.
     attempted = any(pair[0] == legacy and not _is_complete(row)
                     for pair, row in latest_rows().items())
-    mergeable = surfaces.mergeable_ledgers()
+    mergeable = surfaces.mergeable_files()
     out = []
     for name in _leftovers(d):
         if name in _REMOVABLE:
@@ -679,7 +679,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
 
     ledgers: dict[str, int] = {}
     unreadable: list[str] = []
-    for name in surfaces.mergeable_ledgers():
+    for name in surfaces.mergeable_files():
         source = legacy_dir / name
         if not source.is_file():
             continue

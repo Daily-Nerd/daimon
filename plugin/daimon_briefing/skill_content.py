@@ -53,6 +53,12 @@ NOT_AGENT_FACING = {
         "`daimon status` already tells that person when it is needed — an "
         "agent has nothing to decide with it"
     ),
+    "ledger": (
+        "human maintenance (#1132): heals a bucket ledger `daimon status` "
+        "reported as degraded and re-runs forget over it. It rewrites a "
+        "person's own history and moves unparseable lines out of it, so an "
+        "agent has nothing to decide with it"
+    ),
     "slug": (
         "internal: a host-integration primitive (#913) that names a "
         "checkpoint bucket before any checkpoint exists — a HOST process "

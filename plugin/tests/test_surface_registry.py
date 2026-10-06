@@ -304,9 +304,10 @@ def _write_min_checkpoint():
 
 
 def _bucket_jsonl():
+    # The quarantine sidecar is JSONL too: one envelope row per line.
     return [s for s in surfaces.SURFACES
             if s.shape.startswith("checkpoints/{slug}/")
-            and s.shape.endswith(".jsonl")]
+            and s.shape.endswith((".jsonl", surfaces.QUARANTINE_SIDECAR_SUFFIX))]
 
 
 def test_field_paths_are_nonempty_tuples_of_str():

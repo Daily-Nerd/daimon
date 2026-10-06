@@ -124,6 +124,21 @@ KNOWN_BYPASSES = frozenset({
     # target's own pointers are never rewritten (#963 review), so no
     # latest.json / prev-1 entry belongs here.
     ("bucket migrate", "checkpoints/{slug}/prev-3.json"),
+    # ledger repair (#1132 2c-2): like a bucket migration it MOVES bytes that
+    # already passed the seam. The ledger is rewritten with the very rows it
+    # held (split rows rejoined), the lines it could not parse go verbatim to
+    # a sidecar, and the census marker is re-stamped; no new row is admitted,
+    # and re-admitting the kept rows against today's rules would rewrite
+    # history the repair was asked to preserve. The forget re-scrub it runs
+    # is governed already (scrub_event_fields holds its admitted row). Bounded:
+    # it writes only the one named ledger, its sidecar and the marker, in the
+    # caller's own bucket. `trust repair` is the same verb on trust.jsonl.
+    ("ledger repair", "checkpoints/{slug}/forget-hits.jsonl"),
+    ("ledger repair", "checkpoints/{slug}/forget-hits.quarantined-lines"),
+    ("ledger repair", "checkpoints/{slug}/.ledger-census"),
+    ("trust repair", "checkpoints/{slug}/trust.jsonl"),
+    ("trust repair", "checkpoints/{slug}/trust.quarantined-lines"),
+    ("trust repair", "checkpoints/{slug}/.ledger-census"),
 })
 
 # Commands that genuinely cannot be driven headless would be named here with
@@ -645,6 +660,21 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # ctx["trust_id"] is active after r_trust_confirm; release lifts it.
         run(["trust", "release", ctx["trust_id"]], 0)
 
+    def _plant_torn(ledger_path):
+        # builtin open(), not Path.open: the audit patches the latter, and
+        # this is the fixture breaking the ledger, not a daimon write.
+        with open(ledger_path, "ab") as handle:
+            handle.write(b'{"torn": "cut off mid-row\n')
+
+    def r_trust_repair():
+        _plant_torn(trust._path(str(proj)))
+        run(["trust", "repair"], 0)
+
+    def r_ledger_repair():
+        hits = trust._path(str(proj)).with_name("forget-hits.jsonl")
+        _plant_torn(hits)
+        run(["ledger", "repair", "forget-hits"], 0)
+
     def _open_request(ask):
         # Self-addressed: the drive's own project is the one bucket that
         # exists, and `--to` takes the project DIRECTORY (a real slug starts
@@ -934,6 +964,8 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("trust", "confirm"): r_trust_confirm,
         ("trust", "dismiss"): r_trust_dismiss,
         ("trust", "release"): r_trust_release,
+        ("trust", "repair"): r_trust_repair,
+        ("ledger", "repair"): r_ledger_repair,
         ("request", "open"): r_request_open,
         ("request", "revise"): r_request_revise,
         ("request", "needs-info"): r_request_needs_info,

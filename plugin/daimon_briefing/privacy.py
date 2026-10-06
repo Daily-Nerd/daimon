@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from . import (amendments, config, jsonl, normalize, refutations, relations,
-               requests, store, surfaces, teamproject, trust)
+               requests, ledger_repair, store, surfaces, teamproject, trust)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -42,6 +42,7 @@ _FIELDS = ("text", "quote", "scene")
 # user's own resolution wording can BE the value. The file is append-only, so
 # forget reaches all three only through store.scrub_event_fields.
 
+_SIDECAR_PROSE = surfaces.quarantine_prose()
 _EVENTS_NAME = "events.jsonl"
 
 # The refutation ledger (#645): a SECOND plaintext ledger in the same bucket.
@@ -127,6 +128,7 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                     elif p.suffix == ".json":
                         known.append(p)
                     elif p.name not in plaintext_ledgers \
+                            and not surfaces.is_quarantine_sidecar(p.name) \
                             and not _is_plaintext_free(p):
                         unknown.append((p, entry.name))
         except OSError:
@@ -694,6 +696,30 @@ def audit_project(project_dir=None) -> dict:
     result["trust"] = {"records": len(trust_records),
                        "rows": trust_rows,
                        "bytes": trust_bytes}
+    # Quarantine sidecars (#1132 2c-2): the lines a repair moved out of a
+    # ledger, one envelope row each, whole line in `text`. Scanned by the
+    # same keys as every ledger above, over the line and the JSON strings
+    # inside it (ledger_repair.matched_keys), the reach the deleter
+    # (ledger_repair.forget_quarantined_lines) has when it holds only a key.
+    for side_path in ledger_repair.sidecars(config.checkpoint_dir() / slug):
+        try:
+            lines = jsonl.read_rows(side_path, errors="strict")
+        except (OSError, ValueError):
+            result["unscannable"].append(str(side_path))
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            for value in surfaces.prose_values(_SIDECAR_PROSE, row):
+                for h in ledger_repair.matched_keys(value, keys):
+                    result["findings"].append({
+                        "path": str(side_path),
+                        "item_id": row.get("ledger"),
+                        "content_hash": h, "surface": "quarantine-sidecar"})
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.

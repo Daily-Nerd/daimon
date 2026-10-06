@@ -166,8 +166,10 @@ def record_bucket_root(project_dir) -> None:
         pass
 
 
-def _record_ledger_census(slug: str) -> None:
+def _record_ledger_census(slug: str, *, force: bool = False) -> None:
     """Run the ledger census once for a bucket and stamp the result (#1132).
+    `force` re-stamps an existing marker: `daimon ledger repair` does, so
+    `status` reads the repaired state.
 
     Best-effort in the strictest sense: any failure, from the census or the
     marker write, is logged at debug and dropped. It runs inside
@@ -178,7 +180,7 @@ def _record_ledger_census(slug: str) -> None:
         return
     try:
         from . import ledger_census  # local: census imports this module
-        ledger_census.record_marker(slug)
+        ledger_census.record_marker(slug, force=force)
     except Exception:
         log.debug("ledger census marker failed", exc_info=True)
 
