@@ -395,19 +395,25 @@ def _stage(path: Path, text: str) -> None:
 
 
 def replace(path: Path, text: str, *,
-            write: Callable[[Path, str], None] | None = None) -> None:
+            write: Callable[[Path, str], None] | None = None,
+            lock: bool = True) -> None:
     """Atomically replace a ledger's whole text, under the ledger lock.
 
     `write(path, text)` replaces the stager for a caller that already owns
     one (store's `_atomic_write`, which the write-audit guard observes); it
     receives the surrogateescape-decoded text and must encode it the same
-    way. Raises OSError when the swap fails, the ledger untouched."""
-    with ledger_lock(path):
+    way. Raises OSError when the swap fails, the ledger untouched.
+
+    `lock=False` is for a caller that already holds `ledger_lock(path)` across
+    a larger read-then-swap: flock on a second fd of the same process would
+    not nest, it would stall about a second and then proceed unguarded."""
+    with ledger_lock(path) if lock else nullcontext():
         (write or _stage)(path, text)
 
 
 def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
-            write: Callable[[Path, str], None] | None = None) -> int:
+            write: Callable[[Path, str], None] | None = None,
+            lock: bool = True) -> int:
     """Atomically rewrite a ledger row by row. Returns the number of rows
     dropped or changed; 0 means the file was not touched.
 
@@ -422,8 +428,9 @@ def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
 
     The read, the transform and the swap all run under the ledger lock, so an
     append (which takes the same lock) cannot land between the read and the
-    swap and be lost. `write` is `replace`'s stager hook."""
-    with ledger_lock(path):
+    swap and be lost. `write` is `replace`'s stager hook; `lock=False` is for
+    a caller that already holds the ledger lock (see `replace`)."""
+    with ledger_lock(path) if lock else nullcontext():
         text = path.read_text(encoding="utf-8", errors="surrogateescape")
         out: list[str] = []
         changed = 0

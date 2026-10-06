@@ -241,3 +241,11 @@ def test_append_to_an_unwritable_path_propagates_the_oserror(tmp_path):
     import pytest
     with pytest.raises(OSError):
         jsonl.append_lines(tmp_path / "no-such-dir" / "l.jsonl", ["{}"])
+
+
+def test_replace_and_rewrite_with_lock_false_leave_no_sidecar(tmp_path):
+    path = tmp_path / "l.jsonl"
+    path.write_bytes(b'{"a": 1}\n')
+    jsonl.replace(path, '{"a": 2}\n', lock=False)
+    assert jsonl.rewrite(path, lambda line, row: None, lock=False) == 1
+    assert not (tmp_path / ".pointer.lock").exists()

@@ -217,8 +217,9 @@ def _quarantine(path: Path, sidecar: Path, part: jsonl.Partition
     """Move `part.moved` into the sidecar, then rewrite the ledger with the
     rows only. The sidecar lands first, so a crash between the two writes
     leaves a copy of every moved line and no loss; the next run does not
-    duplicate what the sidecar already holds. Returns (envelope rows the
-    sidecar held before, rows it holds now)."""
+    duplicate what the sidecar already holds. The caller holds the ledger
+    lock (`_run`), so the swaps do not take it again. Returns (envelope rows
+    the sidecar held before, rows it holds now)."""
     try:
         held_text = sidecar.read_text(encoding="utf-8",
                                       errors="surrogateescape")
@@ -240,9 +241,9 @@ def _quarantine(path: Path, sidecar: Path, part: jsonl.Partition
             fresh.append(json.dumps(env, ensure_ascii=False))
     if fresh:
         body = "".join(line + "\n" for line in held + fresh)
-        jsonl.replace(sidecar, body, write=_stage)
+        jsonl.replace(sidecar, body, write=_stage, lock=False)
     jsonl.replace(path, "".join(row + "\n" for row in part.rows),
-                  write=_stage)
+                  write=_stage, lock=False)
     return len(held), len(held) + len(fresh)
 
 
@@ -307,9 +308,15 @@ def _run(project_dir, ledger: str, approve, dry_run: bool) -> Report:
     rejoined = torn = garbage = held = 0
     try:
         if read.health is not jsonl.Health.OK:
-            text = path.read_text(encoding="utf-8", errors="surrogateescape")
-            part = jsonl.partition(text)
-            held, _total = _quarantine(path, sidecar, part)
+            # One lock hold from the read to the last swap: an append that
+            # lands between them would be overwritten with the stale rows.
+            # The re-scrub below stays outside it, its deleters take the
+            # lock themselves through `jsonl.rewrite`.
+            with jsonl.ledger_lock(path):
+                text = path.read_text(encoding="utf-8",
+                                      errors="surrogateescape")
+                part = jsonl.partition(text)
+                held, _total = _quarantine(path, sidecar, part)
             rejoined, torn, garbage = (part.split, len(part.torn),
                                        len(part.garbage))
         keys, rows, skipped, rulings, refusal = _rescrub(
