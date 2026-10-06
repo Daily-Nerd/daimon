@@ -11604,3 +11604,196 @@ def test_cli_handoff_refusal_names_where_the_content_belongs(
     assert "write-checkpoint" in err
     assert "daimon ruling propose --by agent" in err
     assert "daimon log" not in err
+
+
+# ---- #1132 PR 5: pins for the branches the cli split exposed -------------
+# Behavior tests for paths that moved with their family (error branches,
+# fallbacks, empty input) and had no test of their own. No production change.
+
+
+def test_preflight_passes_when_the_litellm_backend_has_key_and_model(
+        monkeypatch, tmp_path):
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "k")
+    monkeypatch.setenv("DAIMON_LLM_MODEL", "m")
+    monkeypatch.setattr(llm, "_resolve_command", lambda: None)
+    assert cli._preflight_error(tmp_path / "S.md") is None
+
+
+def test_write_checkpoint_refuses_a_body_that_is_not_an_object(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    _stdin(monkeypatch, "[1, 2, 3]")
+    assert cli.main(["write-checkpoint"]) == 1
+    assert "non-empty session_id" in capsys.readouterr().err
+
+
+def test_heal_reports_a_transcript_that_vanished_and_stops(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch, tmp_path, capsys):
+    transcript = tmp_path / "S-gone.md"
+    transcript.write_text("**user**: hello\n")
+    stem = transcript.stem
+    _write_log(tmp_log_dir, [
+        f"2026-06-10T12:00:00Z session-end: spawned serialize for {stem} (reason: exit, project: /p/A)",
+        f"error: LLM call failed: boom (transcript: {transcript}) after 1s",
+    ])
+    real = cli._heal_plan
+
+    def plan_then_vanish(*args, **kwargs):
+        plan = real(*args, **kwargs)
+        transcript.unlink()          # the file goes between plan and re-run
+        return plan
+
+    monkeypatch.setattr(cli, "_heal_plan", plan_then_vanish)
+    ran = []
+    monkeypatch.setattr(cli, "_run_serialize", lambda *a, **k: ran.append(1))
+    assert cli.main(["heal"]) == 0
+    assert "vanished" in capsys.readouterr().out
+    assert ran == []
+
+
+def test_anchor_attach_under_the_kill_switch_writes_nothing(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path, sample_checkpoint):
+    from daimon_briefing import store
+    proj = _anchor_proj(tmp_path, monkeypatch)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    capsys.readouterr()
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "PINNING",
+                   "--project", str(proj)])
+    assert rc == 1
+    assert "daimon disabled" in capsys.readouterr().err
+
+
+def test_team_briefings_skip_a_teammate_with_nothing_to_surface(
+        tmp_checkpoint_dir, monkeypatch, tmp_path):
+    from daimon_briefing import store
+    proj = str((tmp_path / "proj").resolve())
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    store.write_checkpoint("g-empty", {
+        "session_id": "g-empty", "created": "2026-08-01T00:00:00Z",
+        "working_context": {"active_topic": {"text": ""}, "open_questions": [],
+                            "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }, project_dir=proj)
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    assert cli._team_briefings(proj, []) == []
+
+
+def test_log_reports_when_the_event_was_not_written(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    rc = cli.main(["log", "--text", "something happened", "--project", "/repo/x"])
+    assert rc == 1
+    assert "event not written" in capsys.readouterr().out
+
+
+def test_seen_path_refuses_a_session_id_that_could_escape_the_directory():
+    for bad in ("", "a/b", "a\\b", "..", "x..y"):
+        assert cli._seen_path(bad) is None
+    assert cli._seen_path("S-ok").name == "S-ok.json"
+
+
+def test_save_seen_survives_a_stale_file_it_cannot_remove(
+        tmp_path, monkeypatch):
+    seen = tmp_path / "S-now.seen"
+    stale = tmp_path / "S-old.seen"
+    stale.write_text("{}")
+    old = time.time() - 30 * 86400
+    os.utime(stale, (old, old))
+
+    def refuse(self, *a, **k):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    cli._save_seen(seen, {"S-1": 1}, {"k"})
+    assert json.loads(seen.read_text())["origins"] == {"S-1": 1}
+    assert stale.exists()
+
+
+def test_save_seen_survives_a_directory_it_cannot_list(tmp_path, monkeypatch):
+    seen = tmp_path / "S-now.seen"
+
+    def refuse(self, *a, **k):
+        raise OSError("not listable")
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+    cli._save_seen(seen, {"S-1": 1}, {"k"})
+    assert seen.exists()
+
+
+def test_recall_inject_stays_silent_and_rc_0_when_the_store_raises(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import store
+
+    def boom(*a, **k):
+        raise RuntimeError("unreadable store")
+
+    monkeypatch.setattr(store, "read_latest_body", boom)
+    monkeypatch.setattr("sys.stdin", io.StringIO("debugging the gateway cache"))
+    assert cli.main(["recall-inject", "--session", "S-x"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_retention_skips_usage_lines_that_are_not_a_stamp_and_a_command(
+        tmp_log_dir):
+    now = datetime(2026, 7, 6, tzinfo=timezone.utc)
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_log_dir / "usage.log").write_text(
+        "one-token-only\n" + "three tokens here\n"
+        + _usage_line(2, "status", now))
+    assert cli._stats_retention(now=now)["status_checks"] == 1
+
+
+def test_stats_events_is_zeroed_when_no_project_resolves():
+    assert cli._stats_events(None) == {"lines": 0, "fold_ms": 0.0,
+                                       "resolved_refs": 0}
+
+
+def test_checkpoint_info_reports_a_torn_pointer_with_its_age(tmp_path):
+    torn = tmp_path / "latest.json"
+    torn.write_text("{not json")
+    info = cli._checkpoint_info(torn, time.time() + 60)
+    assert info["exists"] is True
+    assert info["session_id"] is None
+    assert info["age_seconds"] >= 60
+
+
+def test_tail_log_info_is_none_for_an_empty_or_blank_log(tmp_path):
+    empty = tmp_path / "empty.log"
+    empty.write_text("")
+    blank = tmp_path / "blank.log"
+    blank.write_text("\n   \n\n")
+    assert cli._tail_log_info(empty, time.time()) is None
+    assert cli._tail_log_info(blank, time.time()) is None
+
+
+def test_status_suppressed_fails_open_when_the_fold_raises(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def boom(*a, **k):
+        raise RuntimeError("hand-edited ledger")
+
+    monkeypatch.setattr(store, "resolutions", boom)
+    assert cli.main(["status", "--suppressed", "--project", "/repo/x"]) == 0
+    assert "no suppressed items" in capsys.readouterr().out
+
+
+def test_status_suppressed_prints_the_note_a_resolution_carried(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    from daimon_briefing import store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN_ELSE_GLOBAL,
+                                     admit=store.Admit.ANY)
+    item_id = written["working_context"]["open_questions"][1]["id"]
+    store.append_event(item_id, "resolved", note="shipped in 0.9",
+                       project_dir="/repo/x")
+    assert cli.main(["status", "--suppressed", "--project", "/repo/x"]) == 0
+    out = capsys.readouterr().out
+    assert "resolved" in out
+    assert "shipped in 0.9" in out
