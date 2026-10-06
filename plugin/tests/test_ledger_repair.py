@@ -433,3 +433,70 @@ def test_a_dry_run_names_the_ruling_it_would_remove_and_writes_nothing(
     assert rid in capsys.readouterr().out
     assert sorted(bucket.iterdir()) == files
     assert [p.read_bytes() for p in files] == before
+
+
+# ---- edges of the repair engine ---------------------------------------------
+
+
+def test_repair_does_not_duplicate_what_a_crashed_run_already_parked(capsys):
+    path = _write("trust.jsonl", _line(ROW_A), _line(TORN))
+    (_bucket() / "trust.quarantined-lines").write_text(
+        json.dumps({"ledger": "trust.jsonl", "quarantined_at": "t",
+                    "kind": "torn", "text": TORN}) + "\n"
+        + "{a torn fragment of its own\n[1]\n", encoding="utf-8")
+    assert _repair("trust") == 0
+    body = (_bucket() / "trust.quarantined-lines").read_text(encoding="utf-8")
+    assert body.count(json.dumps(TORN)) == 1
+    assert "{a torn fragment of its own\n[1]\n" in body
+    assert path.read_bytes() == _line(ROW_A)
+
+
+def test_an_unreadable_ledger_that_is_not_garbage_is_reported(
+        monkeypatch, capsys):
+    path = _messy_trust()
+    before = path.read_bytes()
+
+    def denied(_p):
+        raise PermissionError(errno.EACCES, "denied")
+    monkeypatch.setattr(jsonl, "_read_bytes", denied)
+    assert _repair("trust") == 1
+    assert "unreadable (EACCES)" in capsys.readouterr().out
+    assert path.read_bytes() == before
+
+
+def test_a_project_with_no_bucket_has_nothing_to_repair(capsys):
+    assert _repair("trust") == 0
+    assert _repair("trust", "--dry-run") == 0
+    out = capsys.readouterr().out
+    assert out.count("nothing to repair") == 2
+    assert not (config.checkpoint_dir() / store.project_slug(PROJECT)).exists()
+
+
+def test_repair_without_a_resolvable_project_reports_it(monkeypatch, capsys):
+    monkeypatch.setattr(store, "project_slug", lambda _p: None)
+    assert _repair("trust") == 1
+    assert "no project to address" in capsys.readouterr().out
+
+
+def test_a_dry_run_that_cannot_stage_its_copy_says_so_and_writes_nothing(
+        monkeypatch, capsys):
+    path = _messy_trust()
+    before = path.read_bytes()
+
+    def full(*_a, **_k):
+        raise OSError(errno.ENOSPC, "no space")
+    monkeypatch.setattr(ledger_repair.shutil, "copy2", full)
+    assert _repair("trust", "--dry-run") == 1
+    assert "ENOSPC" in capsys.readouterr().out
+    assert path.read_bytes() == before
+
+
+def test_the_scratch_store_restores_an_unset_checkpoint_dir(
+        tmp_path, monkeypatch):
+    bucket = tmp_path / "bucket"
+    bucket.mkdir()
+    (bucket / "trust.jsonl").write_text(ROW_A + "\n", encoding="utf-8")
+    monkeypatch.delenv("DAIMON_CHECKPOINT_DIR")
+    with ledger_repair._scratch_store(bucket):
+        assert "DAIMON_CHECKPOINT_DIR" in ledger_repair.os.environ
+    assert "DAIMON_CHECKPOINT_DIR" not in ledger_repair.os.environ

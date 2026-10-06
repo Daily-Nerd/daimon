@@ -221,8 +221,8 @@ class Partition(NamedTuple):
     rows: list
     torn: list
     garbage: list
-    split: int = 0
-    moved: list = []   # (kind, line) for every torn or garbage line, file order
+    split: int
+    moved: list        # (kind, line) for every torn or garbage line, file order
 
 
 def partition(text: str) -> Partition:

@@ -137,3 +137,80 @@ def test_the_audit_finds_a_value_in_the_sidecar_and_is_clean_after_forget():
     ledger_repair.forget_quarantined_lines(KEY, project_dir=PROJECT)
     again = privacy.audit_project(PROJECT)
     assert not [f for f in again["findings"] if f["path"] == str(path)]
+
+
+# ---- edges: what a sidecar does with rows and files it cannot interpret ----
+
+import errno  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+def test_an_unlistable_bucket_has_no_sidecars(tmp_path):
+    assert ledger_repair.sidecars(tmp_path / "no-such-bucket") == []
+
+
+def test_forget_without_a_key_or_a_project_purges_nothing(monkeypatch):
+    path = _write_sidecar("trust.quarantined-lines", _envelope(VALUE))
+    assert ledger_repair.forget_quarantined_lines(
+        "", text=VALUE, project_dir=PROJECT) == ledger_repair.Purged(0, 0)
+    monkeypatch.setattr(store, "project_slug", lambda _p: None)
+    assert ledger_repair.forget_quarantined_lines(
+        KEY, text=VALUE, project_dir=PROJECT) == ledger_repair.Purged(0, 0)
+    assert VALUE in path.read_text(encoding="utf-8")
+
+
+def test_a_line_that_is_not_an_envelope_row_is_kept_untouched():
+    other = {"unrelated": "row without text"}
+    notext = {"ledger": "trust.jsonl", "text": 7}
+    path = _bucket() / "trust.quarantined-lines"
+    path.write_text(
+        json.dumps(other) + "\n" + json.dumps(notext) + "\n"
+        + json.dumps(_envelope(VALUE)) + "\n" + "{torn line\n",
+        encoding="utf-8")
+    result = ledger_repair.forget_quarantined_lines(KEY, project_dir=PROJECT)
+    assert result == ledger_repair.Purged(1, 0)
+    assert path.read_text(encoding="utf-8") == (
+        json.dumps(other) + "\n" + json.dumps(notext) + "\n" + "{torn line\n")
+
+
+def test_a_sidecar_that_cannot_be_rewritten_is_left_alone(monkeypatch):
+    path = _write_sidecar("trust.quarantined-lines", _envelope(VALUE),
+                          _envelope(OTHER))
+    before = path.read_bytes()
+
+    def refuse(*_a, **_k):
+        raise OSError(errno.EROFS, "read-only")
+    monkeypatch.setattr(store, "_atomic_write", refuse)
+    result = ledger_repair.forget_quarantined_lines(KEY, project_dir=PROJECT)
+    assert result == ledger_repair.Purged(0, 0)
+    assert path.read_bytes() == before
+
+
+def test_the_audit_reports_an_unreadable_sidecar_as_unscannable():
+    _tombstone()
+    path = _bucket() / "trust.quarantined-lines"
+    path.write_bytes(b"\xff\xfe not utf-8\n")
+    assert str(path) in privacy.audit_project(PROJECT)["unscannable"]
+
+
+def test_the_audit_skips_sidecar_lines_that_are_not_envelope_rows():
+    _tombstone()
+    path = _bucket() / "trust.quarantined-lines"
+    path.write_text(
+        "{torn line\n[1, 2]\n" + json.dumps(_envelope(VALUE)) + "\n",
+        encoding="utf-8")
+    found = privacy.audit_project(PROJECT)
+    hits = [f for f in found["findings"] if f["path"] == str(path)]
+    assert len(hits) == 1 and str(path) not in found["unscannable"]
+
+
+def test_a_literal_with_an_invalid_escape_is_keyed_as_written():
+    keys = normalize.literal_content_keys('{"note": "bad \\q escape", "cut')
+    assert normalize.content_key("bad \\q escape") in keys
+
+
+def test_the_sidecar_prose_lookup_fails_loudly_when_undeclared(monkeypatch):
+    monkeypatch.setattr(surfaces, "SURFACES", ())
+    with pytest.raises(LookupError):
+        surfaces.quarantine_prose()
