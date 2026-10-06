@@ -427,9 +427,8 @@ def _cmd_forget(args) -> int:
             for row in requests.events(project_dir=project)
             if value_key in requests.row_content_keys(row)})
         preview = [f"would forget {target['id']}: {target.get('text', '')}"]
-        active_rulings = sorted(
-            rid for rid in set(ref_reach) | {str(target["id"])}
-            if ledger_meta.get(rid) == ("ruling", "active"))
+        active_rulings = refutations.active_rulings_reached(
+            {value_key}, item_ids={str(target["id"])}, project_dir=project)
         if active_rulings:
             preview.append("WARNING — this removes ACTIVE ruling(s): "
                            + ", ".join(active_rulings))
@@ -462,13 +461,8 @@ def _cmd_forget(args) -> int:
     # constraint — the one thing no agent path may do. A human at a terminal
     # proceeds (deletion stays the user's call, #421 posture unchanged); a
     # non-interactive caller is pointed at the human.
-    doomed_rulings = sorted(
-        rid for rid in ({
-            str(row.get("refutation_id") or "")
-            for row in refutations.events(project_dir=project)
-            if content_hash in refutations.row_content_keys(row)}
-            | {str(target["id"])})
-        if ledger_meta.get(rid) == ("ruling", "active"))
+    doomed_rulings = refutations.active_rulings_reached(
+        {content_hash}, item_ids={str(target["id"])}, project_dir=project)
     if doomed_rulings:
         if not sys.stdin.isatty():
             print("refused: this would remove ACTIVE ruling(s) "

@@ -777,6 +777,26 @@ def row_content_keys(row: dict) -> set[str]:
         surfaces.bucket_ledger(_LEDGER).prose, row)}
 
 
+def active_rulings_reached(keys, *, item_ids=(), project_dir=None) -> list[str]:
+    """Ids of the ACTIVE rulings a forget of `keys` would remove (#693).
+
+    A ruling goes when any row of it holds one of the canonical `keys` in a
+    plaintext field, or when its own id is in `item_ids` (the item a forget
+    named may itself be a ruling). Shared by `daimon forget` and `daimon
+    ledger repair`, so both put the same human gate in front of the same
+    deletion. Sorted; empty when nothing active is reached."""
+    wanted = set(keys)
+    ids = {str(i) for i in item_ids}
+    ids |= {str(row.get("refutation_id") or "")
+            for row in events(project_dir=project_dir)
+            if wanted & row_content_keys(row)}
+    folded = records(project_dir=project_dir)
+    return sorted(
+        rid for rid in ids
+        if (folded.get(rid) or {}).get("polarity") == "ruling"
+        and folded[rid].get("state") == "active")
+
+
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     """Remove every record holding `content_key` in a plaintext field (#578).
 

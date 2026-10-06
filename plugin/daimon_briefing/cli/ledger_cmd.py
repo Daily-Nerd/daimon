@@ -5,6 +5,8 @@ garbage in a bucket ledger and re-runs forget over the result. `daimon trust
 repair` is the same verb for the trust ledger.
 """
 
+import sys
+
 import daimon_briefing.cli as _cli
 
 from .. import ledger_repair, render
@@ -16,7 +18,8 @@ def _report_lines(report: ledger_repair.Report) -> list:
         ("would rejoin", "would quarantine", "would re-scrub") if dry
         else ("rejoined", "quarantined", "re-scrubbed"))
     name = report.name
-    if report.outcome == "nothing" and not report.scrub_skipped:
+    if (report.outcome == "nothing" and not report.scrub_skipped
+            and not report.refusal):
         return [f"nothing to repair: {name} is ok"]
     lines = []
     if report.rejoined:
@@ -35,9 +38,29 @@ def _report_lines(report: ledger_repair.Report) -> list:
             f"{report.rows} row(s) removed or redacted")
     if report.scrub_skipped:
         lines.append(f"re-scrub skipped: {report.scrub_skipped}")
+    if report.rulings and dry:
+        lines.append("WARNING: the re-scrub would remove ACTIVE ruling(s): "
+                     + ", ".join(report.rulings))
+    if report.refusal:
+        lines.append(report.refusal)
     if report.dry_run:
         lines.append("dry run: nothing written")
     return lines
+
+
+def _approve_rulings(rulings: list) -> str:
+    """The #693 gate forget holds, for the re-scrub: a human at a terminal
+    may say y; anything else is refused and pointed at `ruling retire`."""
+    if not sys.stdin.isatty():
+        return ledger_repair.refusal_for(rulings)
+    render.render_ledger_lines(
+        ["WARNING: the re-scrub removes ACTIVE ruling(s): "
+         + ", ".join(rulings)])
+    answer = input("Remove? [y/N]: ").strip().casefold()
+    if answer in ("y", "yes"):
+        return ""
+    return ("not removed: the re-scrub was skipped to keep ACTIVE ruling(s) "
+            + ", ".join(rulings))
 
 
 def _cmd_ledger_repair(args) -> int:
@@ -48,12 +71,13 @@ def _cmd_ledger_repair(args) -> int:
                           for n in ledger_repair.declared_names()))
         return 2
     project = _cli._resolve_project(args.project)
-    report = ledger_repair.repair(project, ledger, dry_run=args.dry_run)
+    report = ledger_repair.repair(project, ledger, dry_run=args.dry_run,
+                                  approve=_approve_rulings)
     if report.outcome == "error":
         print(f"cannot repair {ledger}: {report.error}")
         return 1
     render.render_ledger_lines(_report_lines(report))
-    return 1 if report.scrub_skipped else 0
+    return 1 if report.scrub_skipped or report.refusal else 0
 
 
 def add_repair_arguments(parser) -> None:

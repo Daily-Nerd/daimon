@@ -367,3 +367,69 @@ def test_repairing_events_keeps_the_tombstones_and_redacts_missed_rows():
     assert jsonl.read(path).health is jsonl.Health.OK
     assert [r["text"] for r in _sidecar_rows("events.quarantined-lines")] == [
         TORN]
+
+
+# ---- the ruling gate (#693) -------------------------------------------------
+
+RULING_VERDICT = "internal numbers never appear in public posts"
+
+
+def _active_ruling():
+    rid = refutations.assert_ruling(
+        subject="public posts", verdict=RULING_VERDICT, scope="publishing",
+        evidence=["issue:693"], channel="cli-tty", ratified=True,
+        project_dir=PROJECT)
+    _tombstone(normalize.content_key(RULING_VERDICT))
+    _write("trust.jsonl", _line(ROW_A), _line(TORN))
+    return rid
+
+
+def _terminal(monkeypatch, tty, answer=None):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: tty, raising=False)
+    if answer is not None:
+        monkeypatch.setattr("builtins.input", lambda prompt="": answer)
+
+
+def test_a_non_interactive_repair_fixes_the_file_but_refuses_to_drop_a_ruling(
+        monkeypatch, capsys):
+    rid = _active_ruling()
+    ledger = config.checkpoint_dir() / store.project_slug(PROJECT)
+    before = (ledger / "refutations.jsonl").read_bytes()
+    _terminal(monkeypatch, False)
+    assert _repair("trust") == 1
+    out = capsys.readouterr().out
+    assert rid in out and "ruling retire" in out and "refused" in out
+    assert (ledger / "refutations.jsonl").read_bytes() == before
+    assert jsonl.read(ledger / "trust.jsonl").health is jsonl.Health.OK
+
+
+def test_an_interactive_yes_lets_the_rescrub_remove_the_ruling(
+        monkeypatch, capsys):
+    rid = _active_ruling()
+    _terminal(monkeypatch, True, "y")
+    assert _repair("trust") == 0
+    assert "WARNING" in capsys.readouterr().out
+    assert refutations.get(rid, project_dir=PROJECT) is None
+
+
+def test_an_interactive_no_keeps_the_ruling_and_still_repairs_the_file(
+        monkeypatch, capsys):
+    rid = _active_ruling()
+    _terminal(monkeypatch, True, "n")
+    assert _repair("trust") == 1
+    assert refutations.get(rid, project_dir=PROJECT) is not None
+    path = config.checkpoint_dir() / store.project_slug(PROJECT) / "trust.jsonl"
+    assert jsonl.read(path).health is jsonl.Health.OK
+
+
+def test_a_dry_run_names_the_ruling_it_would_remove_and_writes_nothing(
+        monkeypatch, capsys):
+    rid = _active_ruling()
+    bucket = config.checkpoint_dir() / store.project_slug(PROJECT)
+    files = sorted(p for p in bucket.iterdir())
+    before = [p.read_bytes() for p in files]
+    _terminal(monkeypatch, False)
+    assert _repair("trust", "--dry-run") == 0
+    assert rid in capsys.readouterr().out
+    assert sorted(bucket.iterdir()) == files
+    assert [p.read_bytes() for p in files] == before

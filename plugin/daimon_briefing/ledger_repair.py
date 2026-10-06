@@ -157,6 +157,8 @@ class Report(NamedTuple):
     keys: int = 0              # forget tombstone keys re-scrubbed
     rows: int = 0              # records removed or redacted by that scrub
     scrub_skipped: str = ""    # why the re-scrub could not run
+    rulings: tuple = ()        # ACTIVE rulings the re-scrub reaches
+    refusal: str = ""          # set when the ruling gate stopped the re-scrub
     error: str = ""
     dry_run: bool = False
 
@@ -241,18 +243,40 @@ def _quarantine(path: Path, sidecar: Path, part: jsonl.Partition
     return len(held), len(held) + len(fresh)
 
 
-def _rescrub(project_dir) -> tuple[int, int, str]:
-    """(keys, rows reached, why it was skipped). The tombstones live in
-    events.jsonl; when that file cannot be trusted no key is known, and
-    "nothing to scrub" must not be mistaken for "scrubbed"."""
+def refusal_for(rulings: list) -> str:
+    return ("refused: re-scrubbing would remove ACTIVE ruling(s) "
+            + ", ".join(rulings) + ", a human decision. Run it from a "
+            "terminal, or ask the user; `daimon ruling retire` records the "
+            "verdict instead.")
+
+
+def _rescrub(project_dir, approve, dry_run: bool
+             ) -> tuple[int, int, str, tuple, str]:
+    """(keys, rows reached, why it was skipped, active rulings reached, the
+    gate's refusal). The tombstones live in events.jsonl; when that file
+    cannot be trusted no key is known, and "nothing to scrub" must not be
+    mistaken for "scrubbed".
+
+    The refutations deleter drops whole rulings, and a ruling is a human
+    verdict (#693). Before it runs, every ACTIVE ruling the forgotten keys
+    reach is handed to `approve`, which returns "" to proceed or the reason
+    to stop. A dry run never asks: it reports the rulings and goes on, on
+    its scratch copy."""
     bucket = _bucket_dir(project_dir)
     assert bucket is not None
     health = jsonl.read(bucket / "events.jsonl").health
     if health in (jsonl.Health.UNREADABLE, jsonl.Health.TRANSIENT):
         return 0, 0, (f"events.jsonl is {health.value}, so the forgotten "
                       "keys cannot be read; run `daimon ledger repair "
-                      "events` first")
+                      "events` first"), (), ""
     forgotten = _forgotten_keys(project_dir)
+    doomed = tuple(refutations.active_rulings_reached(
+        forgotten, item_ids={r for refs in forgotten.values() for r in refs},
+        project_dir=project_dir)) if forgotten else ()
+    if doomed and not dry_run:
+        refusal = approve(list(doomed))
+        if refusal:
+            return 0, 0, "", doomed, refusal
     rows = 0
     for key, refs in forgotten.items():
         done = scrub_forgotten_key(key, item_id=refs[0],
@@ -261,10 +285,10 @@ def _rescrub(project_dir) -> tuple[int, int, str]:
         rows += (done.events + len(done.refutations) + len(done.relations)
                  + len(done.amendments) + len(done.requests)
                  + len(done.quarantines) + done.lines.purged)
-    return len(forgotten), rows, ""
+    return len(forgotten), rows, "", doomed, ""
 
 
-def _run(project_dir, ledger: str) -> Report:
+def _run(project_dir, ledger: str, approve, dry_run: bool) -> Report:
     bucket = _bucket_dir(project_dir)
     assert bucket is not None
     path = bucket / ledger
@@ -285,14 +309,16 @@ def _run(project_dir, ledger: str) -> Report:
             held, _total = _quarantine(path, sidecar, part)
             rejoined, torn, garbage = (part.split, len(part.torn),
                                        len(part.garbage))
-        keys, rows, skipped = _rescrub(project_dir)
+        keys, rows, skipped, rulings, refusal = _rescrub(
+            project_dir, approve, dry_run)
     except OSError as exc:
         return Report(ledger, "error", error=f"{_errno_name(exc)} while "
                       "writing; the ledger is as it was")
     changed = bool(rejoined or torn or garbage or rows)
     return Report(ledger, "repaired" if changed else "nothing", rejoined,
                   torn, garbage, str(sidecar) if torn or garbage else "",
-                  held if torn or garbage else 0, keys, rows, skipped)
+                  held if torn or garbage else 0, keys, rows, skipped,
+                  rulings, refusal)
 
 
 @contextmanager
@@ -319,7 +345,8 @@ def _scratch_store(bucket: Path):
                 os.environ["DAIMON_CHECKPOINT_DIR"] = saved
 
 
-def repair(project_dir, ledger: str, *, dry_run: bool = False) -> Report:
+def repair(project_dir, ledger: str, *, dry_run: bool = False,
+           approve=None) -> Report:
     """Heal one bucket ledger, in this order, through governed writes:
     rejoin split rows; move torn and garbage lines into the sidecar
     `<stem>.quarantined-lines` (the ledger keeps only valid rows, so
@@ -329,7 +356,11 @@ def repair(project_dir, ledger: str, *, dry_run: bool = False) -> Report:
 
     Idempotent: a second run changes no byte. A transient or unreadable
     ledger is reported and never touched. `dry_run` runs all of it against a
-    scratch copy and writes nothing to the store."""
+    scratch copy and writes nothing to the store.
+
+    `approve(rulings)` is the human gate in front of the re-scrub (see
+    `_rescrub`); without one the re-scrub refuses to remove a ruling."""
+    approve = approve or refusal_for
     bucket = _bucket_dir(project_dir)
     if bucket is None:
         return Report(ledger, "error", error="no project to address",
@@ -339,14 +370,14 @@ def repair(project_dir, ledger: str, *, dry_run: bool = False) -> Report:
     if dry_run:
         try:
             with _scratch_store(bucket):
-                report = _run(project_dir, ledger)
+                report = _run(project_dir, ledger, approve, True)
         except OSError as exc:
             return Report(ledger, "error", error=_errno_name(exc),
                           dry_run=True)
         real = str(bucket / surfaces.quarantine_sidecar(ledger))
         return report._replace(dry_run=True,
                                sidecar=real if report.sidecar else "")
-    report = _run(project_dir, ledger)
+    report = _run(project_dir, ledger, approve, False)
     if report.outcome == "repaired":
         store._record_ledger_census(bucket.name, force=True)
     return report
