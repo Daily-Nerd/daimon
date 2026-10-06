@@ -128,6 +128,22 @@ def _is_dataless(st: os.stat_result) -> bool:
     return bool(getattr(st, "st_flags", 0) & _SF_DATALESS)
 
 
+_ROW, _TORN, _GARBAGE = "row", "torn", "garbage"
+
+
+def _classify(line: str) -> tuple[str, object]:
+    """One line -> (kind, parsed row). A row parses as a JSON object; TORN
+    opens like one (`{`) and does not parse; anything else is GARBAGE,
+    undecodable bytes included. `read` and `partition` both judge by this."""
+    if _UNDECODABLE.search(line):
+        return _GARBAGE, None
+    try:
+        row = json.loads(line)
+    except (ValueError, RecursionError):
+        return (_TORN if line.lstrip().startswith("{") else _GARBAGE), None
+    return (_ROW, row) if isinstance(row, dict) else (_GARBAGE, None)
+
+
 def _read_bytes(path: Path) -> bytes:
     return path.read_bytes()
 
@@ -183,19 +199,11 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
     rows: list = []
     torn = garbage = 0
     for line in lines:
-        if _UNDECODABLE.search(line):
-            garbage += 1
-            continue
-        try:
-            row = json.loads(line)
-        except (ValueError, RecursionError):
-            if line.lstrip().startswith("{"):
-                torn += 1
-            else:
-                garbage += 1
-            continue
-        if isinstance(row, dict):
+        kind, row = _classify(line)
+        if kind == _ROW:
             rows.append(row)
+        elif kind == _TORN:
+            torn += 1
         else:
             garbage += 1
     if garbage:
@@ -206,6 +214,32 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
     else:
         health, detail = Health.OK, ""
     return Read(health, rows, torn, split, garbage, detail)
+
+
+class Partition(NamedTuple):
+    """`partition`'s answer: what a repair keeps and what it moves out."""
+    rows: list
+    torn: list
+    garbage: list
+    split: int = 0
+
+
+def partition(text: str) -> Partition:
+    """Ledger text -> the lines a repair keeps and the lines it moves out.
+
+    Judged with the same rules as `read`: split rows are rejoined (`rows`
+    holds them as one line), a line that parses as an object is a row,
+    torn and garbage lines are returned apart, each verbatim, in file order.
+    Lines are returned as text; undecodable bytes stay lone surrogates, so
+    a caller that decodes with surrogateescape can put them back exactly."""
+    lines, split = _split(text)
+    rows: list[str] = []
+    torn: list[str] = []
+    garbage: list[str] = []
+    for line in lines:
+        kind, _row = _classify(line)
+        {_ROW: rows, _TORN: torn, _GARBAGE: garbage}[kind].append(line)
+    return Partition(rows, torn, garbage, split)
 
 
 def rewrite(path: Path, transform: Callable[[str, object], str | None], *,
