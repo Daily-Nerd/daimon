@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import errno
 import json
-import os
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -324,8 +323,9 @@ def _run(project_dir, ledger: str, approve, dry_run: bool) -> Report:
 @contextmanager
 def _scratch_store(bucket: Path):
     """A throwaway copy of the bucket's ledger files, with the checkpoint dir
-    pointed at it, so a dry run executes the real repair and reports its real
-    counts while nothing it writes reaches the store."""
+    overridden to it for this context only, so a dry run executes the real
+    repair and reports its real counts while nothing it writes reaches the
+    store."""
     with tempfile.TemporaryDirectory() as tmp:
         copy = Path(tmp) / bucket.name
         copy.mkdir()
@@ -334,15 +334,8 @@ def _scratch_store(bucket: Path):
                                     or surfaces.is_quarantine_sidecar(
                                         entry.name)):
                 shutil.copy2(entry, copy / entry.name)
-        saved = os.environ.get("DAIMON_CHECKPOINT_DIR")
-        os.environ["DAIMON_CHECKPOINT_DIR"] = tmp
-        try:
+        with config.checkpoint_dir_override(Path(tmp)):
             yield
-        finally:
-            if saved is None:
-                os.environ.pop("DAIMON_CHECKPOINT_DIR", None)
-            else:
-                os.environ["DAIMON_CHECKPOINT_DIR"] = saved
 
 
 def repair(project_dir, ledger: str, *, dry_run: bool = False,

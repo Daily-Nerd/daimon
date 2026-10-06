@@ -491,12 +491,44 @@ def test_a_dry_run_that_cannot_stage_its_copy_says_so_and_writes_nothing(
     assert path.read_bytes() == before
 
 
-def test_the_scratch_store_restores_an_unset_checkpoint_dir(
+def test_the_scratch_store_never_touches_the_environment(
         tmp_path, monkeypatch):
     bucket = tmp_path / "bucket"
     bucket.mkdir()
     (bucket / "trust.jsonl").write_text(ROW_A + "\n", encoding="utf-8")
+    import os
+    env = os.environ
+    before = env["DAIMON_CHECKPOINT_DIR"]
+    with ledger_repair._scratch_store(bucket):
+        assert env["DAIMON_CHECKPOINT_DIR"] == before
+        assert config.checkpoint_dir() != config.Path(before)
+    assert env["DAIMON_CHECKPOINT_DIR"] == before
     monkeypatch.delenv("DAIMON_CHECKPOINT_DIR")
     with ledger_repair._scratch_store(bucket):
-        assert "DAIMON_CHECKPOINT_DIR" in ledger_repair.os.environ
-    assert "DAIMON_CHECKPOINT_DIR" not in ledger_repair.os.environ
+        assert "DAIMON_CHECKPOINT_DIR" not in env
+    assert "DAIMON_CHECKPOINT_DIR" not in env
+
+
+def test_a_concurrent_reader_during_a_dry_run_still_sees_the_real_store(
+        monkeypatch):
+    import threading
+    _messy_trust()
+    real = config.checkpoint_dir()
+    seen = {}
+
+    def reader():
+        seen["other"] = config.checkpoint_dir()
+
+    original = ledger_repair._run
+
+    def run_with_a_reader(*args):
+        seen["own"] = config.checkpoint_dir()
+        thread = threading.Thread(target=reader)
+        thread.start()
+        thread.join()
+        return original(*args)
+
+    monkeypatch.setattr(ledger_repair, "_run", run_with_a_reader)
+    assert _repair("trust", "--dry-run") == 0
+    assert seen["own"] != real
+    assert seen["other"] == real
