@@ -123,3 +123,9 @@ def test_anchor_and_trusted_quotes_survive_a_non_dict_block():
     cp = {"working_context": "torn", "epistemic_snapshot": ["x"]}
     assert list(anchor._all_items(cp)) == []
     assert list(briefing._iter_trusted_quotes(cp)) == []
+
+
+def test_a_checkpoint_that_is_not_a_dict_yields_nothing():
+    for cp in ("torn", None, ["x"], 7):
+        assert list(schema.iter_fields(cp)) == []
+        assert list(schema.iter_items(cp)) == []
