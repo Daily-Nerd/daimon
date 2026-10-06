@@ -107,7 +107,6 @@ _FTS5_MISSING_MSG = (
 # (checkpoint section, key, indexed kind). Every trust-tagged cognitive list in
 # the serializer schema, including contradictions_flagged (item shape varies) —
 # derived from the shared item-field table (#146).
-_KIND_SOURCES = schema.KIND_SOURCES
 
 
 class RecallError(RuntimeError):
@@ -133,7 +132,7 @@ def _items(cp: dict):
     without re-opening checkpoints (any truthy value counts; absent = 0).
     supersede_targets is the item's `supersedes` link target strings (#234) —
     usually empty."""
-    for section, key, kind in _KIND_SOURCES:
+    for section, key, kind in schema.KIND_SOURCES:
         block = cp.get(section)
         if not isinstance(block, dict):
             continue
@@ -1335,7 +1334,6 @@ _MIN_OVERLAP = 2        # matched SESSION must share >=2 distinct salient terms
 # recall index `kind` -> scoring TYPE_RULES key (#78 composition), from the
 # shared schema (#146). `contradiction` has no dedicated rules and is absent —
 # the .get() below keeps its default fallback.
-_KIND_TO_TYPE = schema.KIND_TO_TYPE
 
 
 def _fold(tok: str) -> str:
@@ -1694,7 +1692,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         r["term_hits"] = len(hit)
         relevance = max(0.0, float(r["match_score"]))
         weight = _suggest_weight(
-            r, _KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
+            r, schema.KIND_TO_TYPE.get(r["kind"], "recent_decision"), now)
         # #1073: the rank the sort below actually used, carried on the row
         # itself so the delivery telemetry can persist it. match_score stays
         # the raw bm25 value (the #989 axis); this is the weighted product a

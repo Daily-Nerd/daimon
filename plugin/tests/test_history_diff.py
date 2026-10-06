@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from daimon_briefing import carry, cli, config, render, store
+from daimon_briefing import carry, cli, config, render, schema, store
 from daimon_briefing.cli import history
 
 
@@ -50,7 +50,7 @@ def _write(session_id, created, *, project=_PROJECT, **kw):
 def _ids(checkpoint) -> dict:
     """text -> stamped id, read back off the dict the writer mutated."""
     out = {}
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for item in ((checkpoint.get(section) or {}).get(key) or []):
             if isinstance(item, dict) and item.get("id"):
                 out[item["text"]] = item["id"]

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from daimon_briefing import cli, config, normalize, store
+from daimon_briefing import cli, config, normalize, schema, store
 
 SECRET = "a forgotten value status must never echo"
 
@@ -106,7 +106,7 @@ def test_human_status_flags_a_forgotten_value_without_showing_it(proj, capsys):
 def test_human_status_flags_checkpoint_residue(proj, capsys):
     d = _bucket(proj)
     slug = store.project_slug(str(proj))
-    section, key = store._ITEM_LISTS[0]
+    section, key = schema.ITEM_LISTS[0]
     (d / "events.jsonl").write_bytes(_line(
         ts="2026-01-01T00:00:00Z", kind="resolution", item_ref="i-1",
         status=f"forgotten:{normalize.content_key(SECRET)}", source="cli"))

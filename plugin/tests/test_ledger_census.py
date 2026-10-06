@@ -8,7 +8,7 @@ asserts the value (and its key) is absent from the output.
 
 import json
 
-from daimon_briefing import config, ledger_census, normalize, surfaces
+from daimon_briefing import config, ledger_census, normalize, schema, surfaces
 
 SLUG = "-census-proj"
 SECRET = "the forgotten sentence nobody may read back"
@@ -93,8 +93,7 @@ def test_a_jsonl_the_registry_does_not_declare_is_named_not_skipped():
 
 
 def test_a_checkpoint_surface_still_holding_a_forgotten_value_is_counted():
-    from daimon_briefing import store
-    section, key = store._ITEM_LISTS[0]
+    section, key = schema.ITEM_LISTS[0]
     _forget(normalize.content_key(SECRET))
     payload = {"project_slug": SLUG,
                section: {key: [{"id": "i-1", "text": SECRET},
@@ -201,8 +200,7 @@ def test_a_degraded_events_ledger_still_checks_forgotten_values():
 
 
 def test_an_unreadable_checkpoint_file_is_counted_unscannable_not_clean():
-    from daimon_briefing import store
-    section, key = store._ITEM_LISTS[0]
+    section, key = schema.ITEM_LISTS[0]
     _forget(normalize.content_key(SECRET))
     (_bucket() / "S1.json").write_text(json.dumps({
         "project_slug": SLUG, section: {key: [{"id": "i-1", "text": "fine"}]}}),

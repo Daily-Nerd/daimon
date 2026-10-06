@@ -36,7 +36,6 @@ SCHEMA_VERSION = 1
 # the backtracking shape carry's _ID_SHAPE documents.
 _POINTER_RE = re.compile(r"^(?:latest|prev-(\d{1,3}))\.json$")
 
-_KINDS = {(field.section, field.key): field.kind for field in schema.ITEM_FIELDS}
 
 # Emission order for a diff. Additions first because they are what a reader
 # scans for; the gone classes last, grouped, because their REASON is the part
@@ -117,13 +116,16 @@ def _items_by_id(checkpoint: dict) -> dict:
     false-merge lesson, #13). Non-dict entries are skipped —
     contradictions_flagged may hold bare strings, which carry no id."""
     out: dict = {}
-    for section, key in store._ITEM_LISTS:
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
+    for field in schema.ITEM_FIELDS:
+        if field.singleton:
+            continue
+        for item in ((checkpoint.get(field.section) or {}).get(
+                field.key) or []):
             if not isinstance(item, dict):
                 continue
             item_id = item.get("id")
             if isinstance(item_id, str) and item_id and item_id not in out:
-                out[item_id] = (_KINDS.get((section, key), key), item)
+                out[item_id] = (field.kind, item)
     return out
 
 

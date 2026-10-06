@@ -12,7 +12,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import amendments, briefing, render, store
+from .. import amendments, briefing, render, schema, store
 from . import _cap_refusal
 
 # #920: over-cap `evidence` gets its OWN destination, distinct from the
@@ -59,15 +59,16 @@ def _cmd_amend_propose(args) -> int:
     # off a rendered ` [id]` handle or it does not exist. Loop-shaped items
     # only (#480's scope rule, restated): amending a settled decision or
     # belief would invite exactly the state-rewriting on settled facts that
-    # BRIEFABLE_ITEM_KEYS exists to fence off, and `daimon loops` — the
+    # ItemField.briefable exists to fence off, and `daimon loops` — the
     # discovery surface this command's errors point at — lists only these.
     checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                         admit=store.Admit.ANY)
     live = {
         str(item.get("id") or "")
-        for section, key in store._ITEM_LISTS
-        if key in briefing.BRIEFABLE_ITEM_KEYS
-        for item in ((checkpoint or {}).get(section) or {}).get(key) or []
+        for field in schema.ITEM_FIELDS
+        if field.briefable
+        for item in ((checkpoint or {}).get(field.section) or {}).get(
+            field.key) or []
         if isinstance(item, dict)
     }
     live.discard("")

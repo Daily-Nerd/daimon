@@ -31,7 +31,8 @@ down.
 """
 
 import re
-from typing import NamedTuple
+from collections.abc import Iterator
+from typing import Any, NamedTuple
 
 
 class ItemField(NamedTuple):
@@ -44,6 +45,8 @@ class ItemField(NamedTuple):
     scoring_type: str | None  # scoring.TYPE_RULES key; None -> consumers fall
     #                           back to their own default (recall's .get)
     carries: bool   # carry.merge folds unresolved items forward (#33 Phase 2)
+    briefable: bool  # loop-shaped: the briefing stamps a ` [id]` handle on it and
+    #                  `daimon loops` / `daimon amend` address it (#480 scope rule)
 
 
 # Order is load-bearing: consumers iterate this tuple directly, so it feeds
@@ -53,13 +56,17 @@ class ItemField(NamedTuple):
 # definition — neither carries (v1). contradictions_flagged has no dedicated
 # scoring rules and never carries; its item shape varies (may be bare strings),
 # which every consumer already tolerates per item.
+#
+# briefable: only the loop-shaped fields. Decisions, beliefs and contradictions
+# are valid `daimon resolve` targets too, but stamping a handle there would
+# invite resolving settled facts.
 ITEM_FIELDS: tuple[ItemField, ...] = (
-    ItemField("working_context", "active_topic", True, "topic", "active_topic", False),
-    ItemField("working_context", "open_questions", False, "question", "open_question", True),
-    ItemField("working_context", "recent_decisions", False, "decision", "recent_decision", True),
-    ItemField("epistemic_snapshot", "strong_beliefs", False, "belief", "strong_belief", False),
-    ItemField("epistemic_snapshot", "uncertainties", False, "uncertainty", "uncertainty", True),
-    ItemField("epistemic_snapshot", "contradictions_flagged", False, "contradiction", None, False),
+    ItemField("working_context", "active_topic", True, "topic", "active_topic", False, False),
+    ItemField("working_context", "open_questions", False, "question", "open_question", True, True),
+    ItemField("working_context", "recent_decisions", False, "decision", "recent_decision", True, False),
+    ItemField("epistemic_snapshot", "strong_beliefs", False, "belief", "strong_belief", False, False),
+    ItemField("epistemic_snapshot", "uncertainties", False, "uncertainty", "uncertainty", True, True),
+    ItemField("epistemic_snapshot", "contradictions_flagged", False, "contradiction", None, False, False),
 )
 
 # (section, key) for the list sections that hold checkpoint items — store's
@@ -90,6 +97,49 @@ CARRIED_KINDS: tuple[tuple[str, str, str], ...] = tuple(
 # dedicated rules (contradiction) are absent; lookups .get their own default.
 KIND_TO_TYPE: dict[str, str] = {
     f.kind: f.scoring_type for f in ITEM_FIELDS if f.scoring_type}
+
+def iter_fields(checkpoint) -> Iterator[tuple[ItemField, Any]]:
+    """Yield `(field, value)` for every field of ITEM_FIELDS whose block is
+    present, in table order. `value` is the raw thing stored under the key
+    (a list, a dict, None, or anything a torn checkpoint holds): for the
+    loops that rebuild a list rather than visit its items. A checkpoint
+    that is not a dict, or a block that is not a dict, yields nothing for
+    that block instead of raising."""
+    if not isinstance(checkpoint, dict):
+        return
+    for field in ITEM_FIELDS:
+        block = checkpoint.get(field.section)
+        if isinstance(block, dict):
+            yield field, block.get(field.key)
+
+
+def iter_items(checkpoint, *, dicts_only: bool = True
+               ) -> Iterator[tuple[ItemField, Any]]:
+    """Yield `(field, item)` for every item a checkpoint holds, in
+    ITEM_FIELDS order: the singleton (active_topic) when it is a dict, then
+    each entry of each list field. The one walker for cross-cutting
+    per-item passes (#126, #146): store's first_seen stamping,
+    sanitize_importance, anchor's drift scan.
+
+    Tolerant of an absent or non-dict block, and of a list field that holds
+    something other than a list (torn or legacy checkpoints). `dicts_only`
+    (default) skips list entries that are not dicts, which is what the
+    sanitizers want; `dicts_only=False` yields them as they are, for a
+    reader that tolerates them per item (contradictions_flagged may hold
+    bare strings, and anchor.drifted skips them itself). Items come back by
+    reference, so a caller may mutate them in place."""
+    for field, value in iter_fields(checkpoint):
+        if field.singleton:
+            if isinstance(value, dict):
+                yield field, value
+            continue
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if dicts_only and not isinstance(item, dict):
+                continue
+            yield field, item
+
 
 _FORMAT_VERSION_RE = re.compile(r"D-(\d+)")
 

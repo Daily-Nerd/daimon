@@ -151,21 +151,8 @@ def _truncate_agent_claim(evidence: str | None) -> str:
 
 # ---- #480 slice 1: resolve handles on open-loop-class items ----
 
-# build()'s section keys that render a resolve handle — the single source of
-# truth both render paths (plain _line below, rich render._rich_brief) and
-# `daimon loops` key off of. Decisions/beliefs/contradictions are valid
-# `daimon resolve` targets too (resolve accepts any item id), but are not
-# loop-shaped: stamping a handle there would invite resolving settled facts,
-# which is out of this slice's scope.
-BRIEFABLE_SECTIONS = frozenset({"external", "open_loops", "uncertainties"})
-
-# The raw checkpoint field keys underlying BRIEFABLE_SECTIONS above — build()
-# splits ONE field (open_questions) into "external"/"open_loops" by the
-# external_state flag, so the raw-checkpoint view collapses back to two keys.
-# `daimon loops` walks store._ITEM_LISTS (raw section/key pairs), not the
-# built briefing dict, so it needs this mapping rather than BRIEFABLE_SECTIONS
-# itself.
-BRIEFABLE_ITEM_KEYS = frozenset({"open_questions", "uncertainties"})
+# BRIEFABLE_SECTIONS (build()'s section keys that render a resolve handle) is
+# derived from ItemField.briefable beside SECTION_ORDER below.
 
 
 def _handle_suffix(item, briefable: bool) -> str:
@@ -420,13 +407,6 @@ def injection_read_route(project) -> "store.Route":
     return store.Route.OWN
 
 
-# (section, key) -> recall-index kind, for the same store._ITEM_LISTS pairs
-# withhold() iterates — #1109's quarantine pool is scoped by kind (design §2),
-# and this loop only ever has section/key in hand, never the kind word.
-_KIND_BY_LIST: dict[tuple[str, str], str] = {
-    (f.section, f.key): f.kind for f in schema.ITEM_FIELDS if not f.singleton}
-
-
 def _quarantine_hit(by_kind: dict, kind: str | None, *texts) -> bool:
     """True if any of `texts` canonicalizes to a value this `kind` has an
     ACTIVE human quarantine on. Same value-keyed check store.forgotten_content_keys'
@@ -565,11 +545,11 @@ def withhold(checkpoint: dict, resolutions: dict,
     to_stamp = []  # [(section, key, index, event, new_id)]
     to_stamp_claim = []  # [(section, key, index, evidence)] — #480 slice 4
     to_stamp_amend = []  # [(section, key, index, payloads)] — #691
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
-        kind = _KIND_BY_LIST.get((section, key))
+        kind = _FIELD_OF[(section, key)].kind
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
@@ -706,7 +686,7 @@ def mark_corroborated(checkpoint, corroborations: dict):
 
     # Dry run over the ORIGINAL, then one deepcopy — withhold's shape exactly.
     to_stamp = []  # [(section, key, index, n)]
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
@@ -843,7 +823,7 @@ def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None)
         return checkpoint, []
     resolutions = resolutions if isinstance(resolutions, dict) else {}
     to_stamp = []  # [(section, key, index, age_days)]
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
@@ -1846,8 +1826,42 @@ def _head_lines(degraded: bool, rulings) -> list[str]:
 SECTION_ORDER = ("decisions", "external", "open_loops", "beliefs",
                  "uncertainties", "active_topic", "contradictions")
 
-_ITEM_SECTIONS = ("decisions", "external", "open_loops", "beliefs",
-                  "uncertainties", "contradictions")
+# The one hand-written map from a presentation section to the checkpoint field
+# that feeds it: (section, key) of schema.ITEM_FIELDS. build() splits ONE
+# field (open_questions) into "external" and "open_loops" by the
+# external_state flag, so both name it. Everything keyed by section that a
+# field row can answer is derived from this (and a census test pins that every
+# field is reached and every briefable one maps into SECTION_ORDER).
+SECTION_FIELD = {
+    "decisions": ("working_context", "recent_decisions"),
+    "external": ("working_context", "open_questions"),
+    "open_loops": ("working_context", "open_questions"),
+    "beliefs": ("epistemic_snapshot", "strong_beliefs"),
+    "uncertainties": ("epistemic_snapshot", "uncertainties"),
+    "active_topic": ("working_context", "active_topic"),
+    "contradictions": ("epistemic_snapshot", "contradictions_flagged"),
+}
+
+_FIELD_OF = {(f.section, f.key): f for f in schema.ITEM_FIELDS}
+
+
+def _section_field(section: str) -> schema.ItemField:
+    return _FIELD_OF[SECTION_FIELD[section]]
+
+
+# The item-bearing sections: SECTION_ORDER minus the singleton's section.
+_ITEM_SECTIONS = tuple(s for s in SECTION_ORDER
+                       if not _section_field(s).singleton)
+
+# build()'s section keys that render a resolve handle — the single source of
+# truth both render paths (plain _line below, rich render._rich_brief) and
+# `daimon loops` key off of: the sections whose field is briefable.
+# Decisions/beliefs/contradictions are valid `daimon resolve` targets too
+# (resolve accepts any item id), but are not loop-shaped: stamping a handle
+# there would invite resolving settled facts, which is out of this slice's
+# scope.
+BRIEFABLE_SECTIONS = frozenset(s for s in SECTION_ORDER
+                               if _section_field(s).briefable)
 
 SECTION_HEADERS = {
     "decisions": "Decisions made:",
@@ -1860,10 +1874,11 @@ SECTION_HEADERS = {
 }
 
 # #78 weights are only ever compared INSIDE a section, never across types.
-_WEIGHT_TYPE = {"decisions": "recent_decision", "external": "open_question",
-                "open_loops": "open_question", "beliefs": "strong_belief",
-                "uncertainties": "uncertainty",
-                "contradictions": "contradiction"}
+# A field with no scoring type (contradictions_flagged) falls back to its kind
+# word, which is not a TYPE_RULES key, so scoring resolves it to the default
+# rules exactly as the hand-kept table did.
+_WEIGHT_TYPE = {s: _section_field(s).scoring_type or _section_field(s).kind
+                for s in _ITEM_SECTIONS}
 
 # Background content goes before actionable content within a tier.
 _BACKGROUND = frozenset({"beliefs", "uncertainties"})
@@ -2340,12 +2355,10 @@ def _iter_trusted_quotes(checkpoint):
     Sections come from schema.ITEM_FIELDS so a field added there is validated
     here without another hand-kept list (#146 drift class; #161 added the
     active_topic singleton this way)."""
-    for field in schema.ITEM_FIELDS:
-        value = (checkpoint.get(field.section) or {}).get(field.key)
-        for item in (value,) if field.singleton else (value or []):
-            if (isinstance(item, dict) and item.get("trust") == "verbatim"
-                    and str(item.get("quote") or "").strip()):
-                yield str(item["quote"]).strip()
+    for _field, item in schema.iter_items(checkpoint):
+        if (item.get("trust") == "verbatim"
+                and str(item.get("quote") or "").strip()):
+            yield str(item["quote"]).strip()
 
 
 def _kept_checkpoint(sel: Selection) -> dict:

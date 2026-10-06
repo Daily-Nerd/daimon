@@ -3516,7 +3516,7 @@ def _stats_store() -> dict:
                               ("extraction_version", "extraction_versions")):
             key = str(cp.get(field)) if cp.get(field) is not None else "unknown"
             out[bucket][key] = out[bucket].get(key, 0) + 1
-        for section, key, kind in recall._KIND_SOURCES:
+        for section, key, kind in schema.KIND_SOURCES:
             block = cp.get(section)
             raw = block.get(key) if isinstance(block, dict) else None
             if key == "active_topic":

@@ -1095,7 +1095,7 @@ def test_withhold_covers_strong_beliefs():
     # #103 I2: withhold used to iterate only carry._CARRIED_KINDS (3 of 5
     # item kinds), so a resolved strong_beliefs id never suppressed — even
     # though `daimon resolve` accepts it. withhold must cover all five
-    # store._ITEM_LISTS kinds; carry's own 3-kind carry policy is untouched.
+    # schema.ITEM_LISTS kinds; carry's own 3-kind carry policy is untouched.
     cp = {"epistemic_snapshot": {"strong_beliefs": [
         {"text": "extractive pinning prevents silent fact loss", "id": "b-aaa"}]}}
     filtered, withheld, candidates = briefing.withhold(cp, {"b-aaa": _res_evt("b-aaa")})

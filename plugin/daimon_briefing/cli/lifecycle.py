@@ -24,6 +24,7 @@ from .. import (
     refutations,
     render,
     requests,
+    schema,
     serializer,
     store,
     trust,
@@ -113,7 +114,7 @@ def _cmd_resolve(args) -> int:
         print("no checkpoint for this project yet — nothing to resolve")
         return 1
     items = []
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for item in ((checkpoint.get(section) or {}).get(key) or []):
             if isinstance(item, dict) and item.get("id"):
                 items.append((key, item))
@@ -406,7 +407,7 @@ def _cmd_forget(args) -> int:
         # amendments keyed on it.
         spliced = {str(target["id"] or "")}
         if isinstance(checkpoint, dict):
-            for section, key in store._ITEM_LISTS:
+            for section, key in schema.ITEM_LISTS:
                 for i in (checkpoint.get(section) or {}).get(key) or []:
                     if isinstance(i, dict) and (
                             i.get("id") == target["id"]
@@ -507,7 +508,7 @@ def _cmd_forget(args) -> int:
     # for non-string text, which content_key canonicalizes to "".
     spliced_ids = {str(target["id"] or "")}
     if isinstance(checkpoint, dict):
-        for section, key in store._ITEM_LISTS:
+        for section, key in schema.ITEM_LISTS:
             lst = (checkpoint.get(section) or {}).get(key)
             if isinstance(lst, list):
                 doomed = [i for i in lst
@@ -758,7 +759,7 @@ def _cmd_reverify(args) -> int:
         print("no checkpoint for this project yet — nothing to reverify")
         return 1
     item = None
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for it in ((checkpoint.get(section) or {}).get(key) or []):
             if isinstance(it, dict) and it.get("id") == args.target:
                 item = it
@@ -806,14 +807,14 @@ def _cmd_loops(args) -> int:
     briefing._line now renders inline (an agent, or a human, needs something
     to pass to `daimon resolve`).
 
-    Reuses the SAME item walk `_cmd_resolve` builds (store._ITEM_LISTS over
+    Reuses the SAME item walk `_cmd_resolve` builds (schema.ITEM_LISTS over
     the latest checkpoint) and the SAME withhold classification `daimon
     status --suppressed` uses (briefing.withhold over store.resolutions) —
     the resolved/live split must stay in exactly one place, or this listing
     could show an item the briefing itself would withhold (an agent would
     then "resolve" a ghost).
 
-    Briefable = briefing.BRIEFABLE_ITEM_KEYS (open_questions — external and
+    Briefable = the ItemField.briefable fields (open_questions — external and
     non-external both — plus uncertainties). Decisions/beliefs/
     contradictions are valid `daimon resolve` targets too, but are not
     loop-shaped; listing them here would invite resolving settled facts
@@ -841,10 +842,11 @@ def _cmd_loops(args) -> int:
     checkpoint = annotated.checkpoint
     stale_ids = {id(i) for i in annotated.stale_items}
     rows = []
-    for section, key in store._ITEM_LISTS:
-        if key not in briefing.BRIEFABLE_ITEM_KEYS:
+    for field in schema.ITEM_FIELDS:
+        if not field.briefable:
             continue
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
+        for item in ((checkpoint.get(field.section) or {}).get(field.key)
+                     or []):
             if not isinstance(item, dict) or not item.get("id"):
                 continue
             text = str(item.get("text") or "").strip()
@@ -868,7 +870,7 @@ def _cmd_loops(args) -> int:
             age_label = "" if age is None else f"{age:.0f}d"
             if stale:
                 age_label = f"{age_label} stale".strip()
-            rows.append((item["id"], key, text, briefing._mark(item),
+            rows.append((item["id"], field.key, text, briefing._mark(item),
                          age_label))
     if not rows:
         render.render_lifecycle_lines(

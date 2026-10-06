@@ -97,15 +97,9 @@ def check(anchor: dict, project_root) -> str:
 def _all_items(checkpoint: dict):
     """Yield every item schema.ITEM_FIELDS declares (#146) — singletons
     (active_topic) only when they are dicts, list entries as-is (drifted()
-    tolerates non-dict entries per item)."""
-    for field in schema.ITEM_FIELDS:
-        block = checkpoint.get(field.section) or {}
-        if field.singleton:
-            item = block.get(field.key)
-            if isinstance(item, dict):
-                yield item
-        else:
-            yield from (block.get(field.key) or [])
+    tolerates non-dict entries per item). The walk is `schema.iter_items`."""
+    for _field, item in schema.iter_items(checkpoint, dicts_only=False):
+        yield item
 
 
 def drifted(checkpoint: dict, project_root) -> list[dict]:

@@ -74,7 +74,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import (amendments, buckets, cli, config, policy,
-                             refutations, relations, requests, store,
+                             refutations, relations, requests, schema, store,
                              teamsync, trust)
 
 from tests.conftest import FIXTURES, FakeChat
@@ -365,7 +365,7 @@ def _ids_by_text(proj):
     cp = store.read_latest_body(project_dir=str(proj), route=store.Route.OWN,
                                 admit=store.Admit.ANY)
     out = {}
-    for section, key in store._ITEM_LISTS:
+    for section, key in schema.ITEM_LISTS:
         for item in ((cp or {}).get(section) or {}).get(key) or []:
             if isinstance(item, dict) and item.get("id"):
                 out[str(item.get("text") or "")] = item["id"]

@@ -22,7 +22,7 @@ deletion that crosses a trust boundary has no undo.
 """
 import json
 
-from daimon_briefing import cli, config, normalize, store, surfaces
+from daimon_briefing import cli, config, normalize, schema, store, surfaces
 
 PROJECT = "/p/tombstone-propagation"
 MINE = "a decision this machine extracted on its own"
@@ -191,7 +191,7 @@ def test_teammate_content_under_a_foreign_tombstone_is_withheld_on_read(
                     "author": "grace"}) + "\n", encoding="utf-8")
     seen = store.read_team(project_dir=PROJECT)   # [(author, checkpoint), …]
     texts = [i.get("text") for _author, cp in seen
-             for section, key in store._ITEM_LISTS
+             for section, key in schema.ITEM_LISTS
              for i in ((cp or {}).get(section) or {}).get(key) or []]
     assert texts, "the teammate's checkpoint must be read at all"
     assert THEIRS not in texts

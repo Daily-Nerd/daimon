@@ -25,7 +25,6 @@ _SOURCE_MESSAGE_LIMIT = 3
 _SOURCE_CHAR_LIMIT = 600
 _WS_RE = re.compile(r"\s+")
 _REDACTION_MARKER_RE = re.compile(r"\[redacted:[^\]\r\n]+\]")
-_KINDS = {(field.section, field.key): field.kind for field in schema.ITEM_FIELDS}
 
 
 def valid_item_id(value) -> bool:
@@ -75,13 +74,16 @@ def _project_checkpoints(project_dir) -> list[dict]:
 def _item_occurrences(project_dir, item_id: str) -> list[dict]:
     occurrences = []
     for checkpoint in _project_checkpoints(project_dir):
-        for section, key in store._ITEM_LISTS:
-            for item in ((checkpoint.get(section) or {}).get(key) or []):
+        for field in schema.ITEM_FIELDS:
+            if field.singleton:
+                continue
+            for item in ((checkpoint.get(field.section) or {}).get(
+                    field.key) or []):
                 if isinstance(item, dict) and item.get("id") == item_id:
                     occurrences.append({
                         "checkpoint": checkpoint,
                         "item": item,
-                        "kind": _KINDS.get((section, key), key),
+                        "kind": field.kind,
                     })
     return occurrences
 

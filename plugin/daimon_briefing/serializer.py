@@ -710,21 +710,12 @@ def iter_items(checkpoint):
     """Yield every schema item dict in a checkpoint: active_topic plus the five
     item lists, exactly the fields schema.ITEM_FIELDS declares (#146). Single
     source for cross-cutting per-item passes (#126) — store's first_seen
-    stamping and sanitize_importance both walk exactly this set. Tolerant of
-    absent keys and non-dict entries (torn/legacy checkpoints, and
-    contradictions_flagged whose item shape varies)."""
-    for field in schema.ITEM_FIELDS:
-        block = checkpoint.get(field.section)
-        if not isinstance(block, dict):
-            continue
-        if field.singleton:
-            item = block.get(field.key)
-            if isinstance(item, dict):
-                yield item
-            continue
-        for item in block.get(field.key) or []:
-            if isinstance(item, dict):
-                yield item
+    stamping and sanitize_importance both walk exactly this set. The walk
+    itself is `schema.iter_items` (tolerant of absent keys and non-dict
+    entries: torn/legacy checkpoints, and contradictions_flagged whose item
+    shape varies); this is its items-only view."""
+    for _field, item in schema.iter_items(checkpoint):
+        yield item
 
 
 def sanitize_importance(checkpoint) -> None:
