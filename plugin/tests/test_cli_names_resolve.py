@@ -19,12 +19,16 @@ TESTS = Path(__file__).parent
 REQUIRED = (
     "Path",
     "SLUG_ROUTE_HELP",
+    "_ACTION_BUDGET",
     "_HOOK_HOSTS",
+    "_INJECT_FETCH",
     "_LEAD_WIDTH",
     "_LEDGER_SKIP_RE",
     "_ORIGIN_BUDGET",
+    "_RECEIPT_PROBE_USAGE_PREFIX",
     "_RESULT_ERR_RE",
     "_RESULT_OK_RE",
+    "_RETENTION_WINDOW_DAYS",
     "_SLOT_WIDTH",
     "_SPAWN_RE",
     "_STALE_MIN_HITS",
@@ -33,6 +37,7 @@ REQUIRED = (
     "_bucket_migrate_lines",
     "_capture_alarm",
     "_checkpoint_info",
+    "_choose_recall_rows",
     "_cmd_amend_list",
     "_cmd_amend_propose",
     "_cmd_amend_verdict",
@@ -93,6 +98,7 @@ REQUIRED = (
     "_crash_log_info",
     "_crash_stamp_excepthook",
     "_emit_supersede_candidates",
+    "_fit_item_text",
     "_format_age",
     "_formatter_class",
     "_heal_plan",
@@ -113,6 +119,7 @@ REQUIRED = (
     "_plugin_drift",
     "_plugin_drift_present",
     "_preflight_error",
+    "_prompt",
     "_raw_project",
     "_refuses_caller_scope",
     "_resolve_audit_source",
@@ -156,12 +163,28 @@ REQUIRED = (
     "store",
     "sys",
     "time",
+    "trust_lib",
     "worldcheck",
 )
 
 
+def _cli_receivers(tree) -> set:
+    """Every local name bound to the cli module in this file (`cli`,
+    `cli_lib`, `cli_mod`, ...), whichever way it was imported."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "daimon_briefing":
+            names |= {a.asname or a.name for a in node.names if a.name == "cli"}
+        elif isinstance(node, ast.Import):
+            names |= {a.asname for a in node.names
+                      if a.name == "daimon_briefing.cli" and a.asname}
+    return names
+
+
 def _attrs(path: Path, receivers: set):
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    if receivers == {"cli"}:
+        receivers = _cli_receivers(tree)
     for node in ast.walk(tree):
         if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
                 and node.value.id in receivers):
