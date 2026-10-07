@@ -189,6 +189,23 @@ def test_the_no_briefing_line_is_plain_and_not_a_warning(
     assert got.warnings == []
 
 
+def test_the_teammate_counts_on_the_header_only_path_are_plain(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing.cli import brief as brief_mod
+
+    def fake(project, counts):
+        counts.resolved, counts.quarantined = 2, 3
+        return []
+
+    monkeypatch.setattr(brief_mod, "_team_briefings", fake)
+    _seed(project=OTHER)
+    rc, out = _brief(capsys, monkeypatch, "--team")
+    assert rc == 0
+    assert "2 resolved item(s) withheld (a teammate's)" in out
+    assert "3 quarantined item(s) withheld (a teammate's)" in out
+    assert api.parse_briefing(out).warnings == []
+
+
 def test_a_missing_bucket_line_is_plain(
         tmp_checkpoint_dir, monkeypatch, capsys):
     rc, out = _brief(capsys, monkeypatch, "--slug", "-no-such-bucket")

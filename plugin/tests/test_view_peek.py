@@ -105,6 +105,12 @@ def test_a_trust_fold_that_raises_fails_closed(tmp_checkpoint_dir, monkeypatch):
     assert view.peek_topic(slug, forgotten=frozenset()) is None
 
 
+def test_the_light_snapshot_of_no_bucket_keeps_the_forgotten_set():
+    got = view._light("", frozenset({"k"}))
+    assert got.forgotten == frozenset({"k"})
+    assert got.quarantined == frozenset() and got.closed is False
+
+
 def test_a_non_dict_topic_is_none(tmp_checkpoint_dir):
     cp = {"session_id": "S-1", "created": "2026-08-01T00:00:00Z",
           "working_context": {"active_topic": "bare string"},
