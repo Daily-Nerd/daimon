@@ -10,7 +10,7 @@ anchors:
   - path: plugin/daimon_briefing/cli/brief.py
   - path: plugin/daimon_briefing/marks.py
 evidence:
-  - note: "#1132 PR 7b: anamnesis' parse_briefing keeps every line holding the warning mark as a warning, then takes the first remaining non-empty line as the header. Before 7b, `brief --slug X` printed 'cross-project briefing - project: X' and a serialize-in-flight note unprefixed, so each took the header and the greeting was lost. tests/test_briefing_contract.py pins it over real output."
+  - note: "#1132: api.parse_briefing keeps every line holding the warning mark as a warning, then takes the first remaining non-empty line as the header. A `brief --slug X` cross-project note or a serialize-in-flight note without the mark takes the header and the greeting is lost. tests/test_briefing_contract.py pins it over real output."
 expires:
   condition: "the briefing text gains an explicit header marker that parsers read instead of 'first line that is not a warning', or the parser stops depending on line order"
   review_after: 2027-04-01
@@ -25,7 +25,7 @@ dash or star starts an item, and every other line is dropped.
 
 So a note printed before the greeting that does not carry the mark silently
 replaces the header, and the greeting is parsed as a stray line and lost.
-That was the cross-project and serialize-in-flight notes until 7b.
+The cross-project and serialize-in-flight notes are the two that print there.
 
 Do not print a note above the greeting through `render.render_brief_line`,
 and do not pass the warning mark in by hand: `render.render_brief_note` adds
