@@ -6,6 +6,8 @@
 
 import dataclasses
 import itertools
+import json
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -257,11 +259,11 @@ def test_candidate_and_claim_statuses_are_not_resolutions():
     assert view.live({"text": "x", "id": "o-aaa"}, snap) is True
 
 
-def test_live_agrees_with_briefing_withhold_over_generated_cases():
-    """The twin of the oracle over a small cross product: the same
-    checkpoint through `briefing.withhold` and `view.live` drops the same
-    items."""
-    from daimon_briefing import briefing
+GOLDEN = Path(__file__).parent / "golden" / "live_oracle.json"
+
+
+def _oracle_cases():
+    """The cross product the frozen oracle covers: (key, item, events)."""
     texts = ["release pipeline approval step awaiting manual gate",
              "gateway retry budget confirmed stable",
              "unrelated question about caching"]
@@ -274,7 +276,72 @@ def test_live_agrees_with_briefing_withhold_over_generated_cases():
         if item_id:
             item["id"] = item_id
         events = {ref: _evt(ref, status=status, text=texts[0])}
-        cp = {"working_context": {"open_questions": [item]}}
-        _out, withheld, _cand = briefing.withhold(cp, events)
-        assert view.live(item, _res(**events)) is (not withheld), (
-            text, item_id, ref, status)
+        yield f"{text}|{item_id}|{ref}|{status}", item, events
+
+
+def test_live_agrees_with_the_frozen_oracle():
+    """`tests/golden/live_oracle.json` holds what `briefing.withhold`'s
+    resolution branch answered for every case below, recorded before that
+    branch was deleted (#1132 PR 7a). `view.live` is compared against it."""
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    cases = {key: (item, events) for key, item, events in _oracle_cases()}
+    assert set(golden) == set(cases)
+    for key, (item, events) in cases.items():
+        assert view.live(item, _res(**events)) is golden[key], key
+
+
+# ---- closing_event and prose_verdict (PR 7a) -------------------------------
+
+
+def test_closing_event_names_the_event_that_closed_an_id_bearing_item():
+    evt = _evt("o-aaa")
+    snap = _res(**{"o-aaa": evt})
+    assert view.closing_event({"id": "o-aaa", "text": "x"}, snap) is evt
+    assert view.closing_event({"id": "o-bbb", "text": "x"}, snap) is None
+
+
+def test_closing_event_names_the_event_behind_a_fuzzy_close():
+    evt = _evt("pipeline gate loop", text="release pipeline approval step "
+                                          "awaiting manual gate")
+    snap = _res(**{"pipeline gate loop": evt})
+    item = {"text": "release pipeline approval step awaiting manual gate"}
+    assert view.closing_event(item, snap) is evt
+    assert view.live(item, snap) is False
+
+
+def test_closing_event_of_a_non_item_is_none():
+    assert view.closing_event("a string", view.Snapshot.empty()) is None
+
+
+def test_prose_verdict_names_the_reason_and_the_record():
+    forgotten = _snap(forgotten=frozenset({KEY}))
+    got = view.prose_verdict(SENTINEL, forgotten)
+    assert got.reason == "forgotten" and got.quarantine_id is None
+    quarantined = _snap(quarantined=frozenset({("belief", KEY)}),
+                        quarantine_ids={("belief", KEY): "tr-abc"})
+    got = view.prose_verdict(SENTINEL, quarantined)
+    assert (got.reason, got.quarantine_id) == ("quarantine", "tr-abc")
+    assert view.prose_verdict("something else", quarantined) is None
+    assert view.prose_verdict("", quarantined) is None
+
+
+def test_prose_verdict_can_leave_a_closed_snapshot_unmasked():
+    closed = _snap(closed=True)
+    assert view.prose_verdict("hello", closed).reason == "closed"
+    assert view.prose_verdict("hello", closed, closed_masks=False) is None
+    forgotten = _snap(closed=True, forgotten=frozenset({KEY}))
+    got = view.prose_verdict(SENTINEL, forgotten, closed_masks=False)
+    assert got.reason == "forgotten"
+
+
+def test_prose_withheld_is_prose_verdict_as_a_bool():
+    assert view.prose_withheld("hello", _snap(closed=True)) is True
+    assert view.prose_withheld("hello", view.Snapshot.empty()) is False
+
+
+def test_fuzzy_pool_is_the_texts_of_the_fuzzy_events():
+    evt = _evt("pipeline gate loop", text="release pipeline approval step")
+    snap = _res(**{"pipeline gate loop": evt,
+                   "o-aaaaaa": _evt("o-aaaaaa", text="an id-bearing loop")})
+    assert snap.fuzzy_events == (("release pipeline approval step", evt),)
+    assert snap.fuzzy_pool == ("release pipeline approval step",)

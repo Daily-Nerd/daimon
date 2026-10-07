@@ -12,11 +12,13 @@ distinctly from inferred ones.
 """
 
 import copy
+import dataclasses
 import logging
 import os
 import re
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NamedTuple
 
 # store/carry import graph checked (#103): neither store, carry, recall,
@@ -25,8 +27,8 @@ from typing import Any, NamedTuple
 # don't apply here). checks_runtime is the #943 stdlib-only runtime module —
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
-from . import (capture, carry, checks_host, checks_runtime, config, display,
-               llm, normalize, pending, receipts, refutations, requests, schema,
+from . import (capture, checks_host, checks_runtime, config, display,
+               llm, pending, receipts, refutations, requests, schema,
                scoring, serializer, store)
 # Imported as constants, not as the module: withhold()'s `amendments`
 # parameter (the public keyword every caller uses) would shadow the module
@@ -407,100 +409,32 @@ def injection_read_route(project) -> "store.Route":
     return store.Route.OWN
 
 
-def _quarantine_hit(by_kind: dict, kind: str | None, *texts) -> bool:
-    """True if any of `texts` canonicalizes to a value this `kind` has an
-    ACTIVE human quarantine on. Same value-keyed check store.forgotten_content_keys'
-    readers already use (recall.py), reused rather than reinvented (#1109
-    design §2) — `quote` rides along with `text` for the same fail-safe
-    reason recall's own forgotten-value scrub checks both."""
-    keys = by_kind.get(kind) if kind else None
-    if not keys:
-        return False
-    for text in texts:
-        text = str(text or "").strip()
-        if text and normalize.content_key(text) in keys:
-            return True
-    return False
+def _machine_stamps(checkpoint: dict, snap) -> tuple:
+    """The machine-claim annotations, pure over a `view.Snapshot`: returns
+    `(checkpoint, candidates)`; the input UNCHANGED (same object) and `[]`
+    when nothing is stamped, so the common case costs nothing. Nothing is
+    ever dropped here: what the reader may not see is `view`'s decision.
 
+    #14: a "supersede-candidate:<new-id>" latest event is a machine
+    SUGGESTION, not a resolution (`store.is_resolved` says so: the loop stays
+    live). The item gets a transient `_supersede_candidate = "<new-id>"`;
+    id-bearing only, by construction.
 
-def withhold(checkpoint: dict, resolutions: dict,
-             amendments=None, quarantine=None) -> tuple[dict, list, list]:
-    """Drop items the world has already resolved, at RENDER time only — the
-    checkpoint on disk (and carry's copy of it) is never touched. `resolutions`
-    is `{item_ref: latest_event}`, exactly store.resolutions()'s shape; pure,
-    no I/O — the caller does the read (fail-open lives there, not here).
+    #480 slice 4: a still-pending agent resolve candidate (latest event
+    `resolving-candidate`, source="agent") gets `_agent_claim = "<evidence
+    quote>"`, via `capture._pending_agent_candidates` so the fold that decides
+    idempotence stays in one place. Kept OUT of `candidates` on purpose: that
+    list is #14's own "likely superseded (unconfirmed)" subsection, a
+    different suggestion with a different confirm/reject pair.
 
-    Binding is exact for id-bearing items: an item withholds only if ITS OWN
-    id is a resolved ref. id-LESS (legacy) items fall back to a fuzzy match on
-    item_text via carry._same_item/_generic_terms — but that fuzzy path is
-    id-bearing items' one guardrail: they NEVER take it, even on an exact text
-    coincidence (test_id_bearing_item_never_fuzzy_withheld). A fuzzy withhold
-    of an id-bearing item would silently suppress a live memory that merely
-    resembles a closed one — the worst failure mode this feature can have.
-    The pool is guarded symmetrically (#145): only resolutions whose OWN ref
-    is not id-shaped feed the fuzzy match, so a resolved id-bearing loop's
-    text can't fuzzy-suppress a live id-less item that merely resembles it.
-
-    #14: a THIRD outcome — a "supersede-candidate:<new-id>" latest event is a
-    machine SUGGESTION, not a resolution (store.is_resolved says so: it stays
-    live). Candidates are never dropped; instead the RETURNED COPY's item gets
-    a transient `_supersede_candidate = "<new-id>"` stamp so render/CLI layers
-    can flag it — id-bearing only, by construction (candidates are only ever
-    emitted against ids).
-
-    #480 slice 4: a FOURTH outcome — a still-pending agent resolve candidate
-    (#480 slice 2/3: latest event is `resolving-candidate`, source="agent",
-    not yet confirmed by serialize-time verification or a human). Same
-    never-withheld shape as the #14 candidate above, its own transient stamp:
-    the RETURNED COPY's item gets `_agent_claim = "<evidence quote>"`. Reuses
-    capture._pending_agent_candidates over `resolutions` rather than
-    re-deriving the status/source filter here — the fold that decides
-    idempotence (a confirmed ref's latest event is no longer
-    resolving-candidate) and the human-reopen case stays in exactly one
-    place. Kept OUT of the `candidates` return list on purpose: that list is
-    #14's own "likely superseded (unconfirmed)" subsection
-    (`status --suppressed`), a different machine suggestion with a different
-    confirm/reject pair — mixing the two would blur what a human is being
-    asked to confirm.
-
-    #691: a FIFTH outcome — `amendments` is amendments.renderable()'s shape
-    ({item_id: [folded records]}, verified/ratified ONLY — the ledger's
-    renderable() already refuses candidates, so nothing unverified can reach
-    a stamp through this argument). The RETURNED COPY's item gets a transient
-    `_amend` list of bounded payloads. A separate axis from the resolution
-    chain above: an item can carry a supersede candidate AND an amendment.
-    An item being withheld keeps its drop — amendments annotate live items
-    and die with resolved ones.
-
-    #1109 PR 2: a SIXTH outcome — `quarantine` is `trust.active_value_keys()`'s
-    shape (`{(kind, value_key), ...}`), pure like `resolutions`/`amendments` —
-    the caller reads the ledger, this function only matches against it. Checked
-    FIRST, ahead of the resolution/candidate/amendment branches, because a
-    human quarantine wins over every machine signal (design §5: "the render
-    layer checks quarantine first since a withheld item shows nothing to
-    rank") — a quarantined item is dropped outright, never stamped as a
-    candidate or amended. Value-keyed, not id-keyed (design §2): the SAME
-    `normalize.content_key` algorithm `store.forgotten_content_keys`'s readers
-    use, so a carried or re-extracted copy of a quarantined value stays
-    withheld regardless of which id currently holds it — unlike the id-exact
-    `resolved_refs` pool above, there is no id-bearing exemption here, because
-    surviving an id change is the whole point of this pool. Landed in the
-    `withheld` list with a synthetic `{"status": "quarantined"}` event so
-    `status --suppressed` can still report it, just with no ts/note to show.
-
-    No resolved/candidate/pending-claim/quarantined events, or a non-dict
-    checkpoint -> (checkpoint, [], []) UNCHANGED, same no-op idiom as
-    carry.merge: no copy is made unless something actually withholds or is
-    stamped, so the common case (nothing resolved yet) costs nothing."""
-    if not isinstance(checkpoint, dict) or (
-            not resolutions and not amendments and not quarantine):
-        return checkpoint, [], []
-
-    quarantine_by_kind: dict[str, set] = {}
-    for kind, key in (quarantine or ()):
-        quarantine_by_kind.setdefault(kind, set()).add(key)
-
-    resolved_refs = {ref for ref, evt in resolutions.items() if store.is_resolved(evt)}
+    #691: `snap.amendments` is `amendments.render_groups`' shape (verified or
+    ratified ONLY). The item gets a transient `_amend` list of bounded
+    payloads, re-checked HERE (change vocabulary, render state, role clipped,
+    quote truncated at render): a row edited on disk must not ride into the
+    injected context. A resolved item takes no annotation: it dies with the
+    loop. An item can carry a candidate AND an amendment."""
+    resolutions = snap.resolutions
+    resolved_refs = snap.resolved_refs
     candidate_refs: dict[str, str] = {}
     for ref, evt in resolutions.items():
         if not isinstance(evt, dict):
@@ -509,131 +443,68 @@ def withhold(checkpoint: dict, resolutions: dict,
         if status.lower().startswith("supersede-candidate") and ":" in status:
             new_id = status.split(":", 1)[1].strip()
             # Shape gate: the status field is free-form by design, so the
-            # payload after the colon can be ANY text — and it rides verbatim
+            # payload after the colon can be ANY text, and it rides verbatim
             # into the rendered confirm-command suggestion and the hook-
             # injected LLM context (an injection surface). Only an id-shaped
             # payload earns a stamp; a malformed machine claim earns no
-            # surface at all (unannotated, unlisted — still never withheld).
-            # Mirrors carry._ID_SHAPE, with the hex run bounded (fullmatch on
-            # attacker-adjacent input wants bounded quantifiers).
+            # surface at all. Mirrors carry._ID_SHAPE, with the hex run
+            # bounded (fullmatch on attacker-adjacent input wants bounded
+            # quantifiers).
             if new_id and _CANDIDATE_ID_SHAPE.fullmatch(new_id):
                 candidate_refs[ref] = new_id
     agent_claim_refs = capture._pending_agent_candidates(resolutions)
-    amend_refs = amendments if isinstance(amendments, dict) else {}
+    amend_refs = snap.amendments
+    if not candidate_refs and not agent_claim_refs and not amend_refs:
+        return checkpoint, []
 
-    if (not resolved_refs and not candidate_refs and not agent_claim_refs
-            and not amend_refs and not quarantine_by_kind):
-        return checkpoint, [], []
-    # #145: the fuzzy pool holds ONLY resolutions whose own ref is not
-    # id-shaped (legacy, pre-id-stamping events). An id-bearing resolution is
-    # fully handled by the exact id branch below — its text in this pool
-    # contributes nothing to correct suppression and only creates the false-
-    # positive surface where a live id-less item that merely RESEMBLES an
-    # unrelated closed loop gets silently withheld. Ref shape decides:
-    # store._stamp_item_ids only ever emits ids of this shape, so a
-    # non-matching ref cannot belong to a stamped item. When the shape read
-    # is wrong the item is shown, not withheld — fail-open.
-    fuzzy_refs = [ref for ref in resolved_refs
-                  if not _CANDIDATE_ID_SHAPE.fullmatch(str(ref))]
-    resolved_texts = [str(resolutions[ref].get("item_text") or "").strip()
-                       for ref in fuzzy_refs]
-    resolved_texts = [t for t in resolved_texts if t]
-
-    # Dry run over the ORIGINAL checkpoint — decide what would be withheld/
-    # stamped before paying for a deepcopy (most briefs resolve nothing).
-    to_drop = []  # [(section, key, index, item, event)]
     to_stamp = []  # [(section, key, index, event, new_id)]
-    to_stamp_claim = []  # [(section, key, index, evidence)] — #480 slice 4
-    to_stamp_amend = []  # [(section, key, index, payloads)] — #691
+    to_stamp_claim = []  # [(section, key, index, evidence)]
+    to_stamp_amend = []  # [(section, key, index, payloads)]
     for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
         if not isinstance(items, list):
             continue
-        kind = _FIELD_OF[(section, key)].kind
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
-            if quarantine_by_kind and _quarantine_hit(
-                    quarantine_by_kind, kind, item.get("text"), item.get("quote")):
-                # Checked before id/candidate/amendment routing: a quarantine
-                # wins over every machine signal (design §5), and it is never
-                # combined with a stamp — the item is gone either way.
-                to_drop.append((section, key, idx, item, {"status": "quarantined"}))
-                continue
             item_id = item.get("id")
-            if item_id:
-                # resolved_refs is built from resolutions.items(), so membership
-                # here already guarantees resolutions[item_id] exists (M1: the
-                # old `evt is not None and ...` check was redundant — a subset
-                # check never needs the superset's own membership re-verified).
-                # A ref can match at most one of these three: resolutions is
-                # {ref: LATEST event}, and is_resolved/#14's shape gate/#480's
-                # pending-candidate filter are mutually exclusive readings of
-                # that one event's status.
-                if item_id in resolved_refs:
-                    to_drop.append((section, key, idx, item, resolutions[item_id]))
-                elif item_id in candidate_refs:
-                    to_stamp.append((section, key, idx, resolutions[item_id],
-                                      candidate_refs[item_id]))
-                elif item_id in agent_claim_refs:
-                    to_stamp_claim.append(
-                        (section, key, idx, agent_claim_refs[item_id]))
-                entry = amend_refs.get(item_id)
-                if entry is not None and item_id not in resolved_refs:
-                    # #691: bounded payloads only — the change vocabulary and
-                    # render state are re-checked HERE, not trusted from the
-                    # ledger (a row edited on disk must not ride into the
-                    # injected context), the role is clipped, and the quote
-                    # is truncated at render. The proposer's authority is
-                    # carried so the line can attribute the claim. Skipped
-                    # for a withheld item: its annotation dies with it.
-                    rows = (entry.get("rows")
-                            if isinstance(entry, dict) else entry)
-                    payloads = [
-                        {"id": str(rec.get("amendment_id") or ""),
-                         "change": str(rec.get("change") or ""),
-                         "quote": str(rec.get("evidence") or ""),
-                         "label": str(rec.get("verdict_label") or ""),
-                         "role": str(rec.get("evidence_role") or "")[:32],
-                         "state": str(rec.get("state") or ""),
-                         "by": str(rec.get("proposed_by") or ""),
-                         "note": str(rec.get("note") or "")}
-                        for rec in (rows if isinstance(rows, list) else [])
-                        if isinstance(rec, dict)
-                        and str(rec.get("change") or "") in _AMEND_CHANGES
-                        and str(rec.get("state") or "")
-                        in _AMEND_RENDER_STATES]
-                    overflow = (entry.get("overflow", 0)
-                                if isinstance(entry, dict) else 0)
-                    if payloads:
-                        to_stamp_amend.append(
-                            (section, key, idx,
-                             {"rows": payloads,
-                              "overflow": overflow
-                              if isinstance(overflow, int) else 0}))
-                continue  # id-bearing: bound exactly or not at all, never fuzzy
-            text = str(item.get("text") or "").strip()
-            if not text or not resolved_texts:
+            if not item_id:
                 continue
-            generic = carry._generic_terms(resolved_texts + [text])
-            for ref in fuzzy_refs:
-                evt = resolutions[ref]
-                cand_text = str(evt.get("item_text") or "").strip()
-                if cand_text and carry._same_item(text, cand_text, generic):
-                    to_drop.append((section, key, idx, item, evt))
-                    break
-
-    if (not to_drop and not to_stamp and not to_stamp_claim
-            and not to_stamp_amend):
-        return checkpoint, [], []
+            if item_id in candidate_refs:
+                to_stamp.append((section, key, idx, resolutions[item_id],
+                                 candidate_refs[item_id]))
+            elif item_id in agent_claim_refs:
+                to_stamp_claim.append(
+                    (section, key, idx, agent_claim_refs[item_id]))
+            entry = amend_refs.get(item_id)
+            if entry is None or item_id in resolved_refs:
+                continue
+            rows = (entry.get("rows") if isinstance(entry, dict) else entry)
+            payloads = [
+                {"id": str(rec.get("amendment_id") or ""),
+                 "change": str(rec.get("change") or ""),
+                 "quote": str(rec.get("evidence") or ""),
+                 "label": str(rec.get("verdict_label") or ""),
+                 "role": str(rec.get("evidence_role") or "")[:32],
+                 "state": str(rec.get("state") or ""),
+                 "by": str(rec.get("proposed_by") or ""),
+                 "note": str(rec.get("note") or "")}
+                for rec in (rows if isinstance(rows, list) else [])
+                if isinstance(rec, dict)
+                and str(rec.get("change") or "") in _AMEND_CHANGES
+                and str(rec.get("state") or "") in _AMEND_RENDER_STATES]
+            overflow = (entry.get("overflow", 0)
+                        if isinstance(entry, dict) else 0)
+            if payloads:
+                to_stamp_amend.append(
+                    (section, key, idx,
+                     {"rows": payloads,
+                      "overflow": overflow if isinstance(overflow, int)
+                      else 0}))
+    if not to_stamp and not to_stamp_claim and not to_stamp_amend:
+        return checkpoint, []
 
     out = copy.deepcopy(checkpoint)
-
-    # Stamp BEFORE dropping: to_stamp/to_stamp_claim/to_drop indices all refer
-    # to the ORIGINAL (pre-removal) list positions, and stamping never changes
-    # list length — so stamping first keeps every index valid for the drop
-    # pass that follows, regardless of whether a stamped and a dropped item
-    # share a section/key list.
     candidates = []
     for section, key, idx, evt, new_id in to_stamp:
         item = out[section][key][idx]
@@ -643,7 +514,74 @@ def withhold(checkpoint: dict, resolutions: dict,
         out[section][key][idx]["_agent_claim"] = evidence
     for section, key, idx, payload in to_stamp_amend:
         out[section][key][idx]["_amend"] = payload
+    return out, candidates
 
+
+def stamp(checkpoint, snap, now, *, with_stale: bool = True) -> tuple:
+    """#1132 PR 7a: every transient annotation the renderers read, pure over a
+    `view.Snapshot`: the machine claims (`_supersede_candidate`,
+    `_agent_claim`, `_amend`), the #268 witness count (`_corroborated`) and
+    the #977 stale mark (`_stale_carried_days`). Returns `(checkpoint,
+    candidates, stale_items)`; `checkpoint` is a copy when anything is
+    stamped, the input otherwise. It reads no ledger and drops nothing: the
+    checkpoint a caller hands in has already been through `view`."""
+    if not isinstance(checkpoint, dict):
+        return checkpoint, [], []
+    out, candidates = _machine_stamps(checkpoint, snap)
+    out = mark_corroborated(out, snap.corroborations)
+    stale: list = []
+    if with_stale:
+        # a plain dict: the stale fold type-checks its resolutions
+        out, stale = stamp_stale_carried(out, dict(snap.resolutions), now)
+    return out, candidates, stale
+
+
+def withhold(checkpoint: dict, resolutions: dict,
+             amendments=None, quarantine=None) -> tuple[dict, list, list]:
+    """Compatibility wrapper kept for `status --suppressed` and the tests
+    written against it; it is deleted with the `status --suppressed`
+    conversion (PR 7b). The decisions are `view`'s: a quarantined value goes
+    through `view.classify`, a resolved loop through `view.closing_event`;
+    the stamps are `_machine_stamps`. What is returned keeps the old shape:
+    `(checkpoint, withheld, candidates)` where `withheld` is
+    `[(key, item, event)]`, a quarantined item carrying the synthetic event
+    `{"status": "quarantined"}`, and the input UNCHANGED (same object) when
+    nothing is dropped or stamped. Only dict items of the list fields are
+    considered, as before."""
+    from . import view
+    if not isinstance(checkpoint, dict) or (
+            not resolutions and not amendments and not quarantine):
+        return checkpoint, [], []
+    snap = dataclasses.replace(
+        view.Snapshot.empty(),
+        resolutions=MappingProxyType(dict(resolutions or {})),
+        amendments=MappingProxyType(
+            dict(amendments) if isinstance(amendments, dict) else {}),
+        quarantined=frozenset(quarantine or ()))
+    stamped, candidates = _machine_stamps(checkpoint, snap)
+    to_drop = []  # [(section, key, index, item, event)]
+    for section, key in schema.ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        field = _FIELD_OF[(section, key)]
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            if isinstance(view.classify(field, item, snap), view.Withheld):
+                to_drop.append((section, key, idx, item,
+                                {"status": "quarantined"}))
+                continue
+            evt = view.closing_event(item, snap)
+            if evt is not None:
+                to_drop.append((section, key, idx, item, evt))
+    dropped_ids = {item.get("id") for *_, item, _evt in to_drop
+                   if item.get("id")}
+    # a quarantined or closed item is gone: it is no candidate either
+    candidates = [c for c in candidates if c[1].get("id") not in dropped_ids]
+    if not to_drop:
+        return stamped, [], candidates
+    out = stamped if stamped is not checkpoint else copy.deepcopy(checkpoint)
     withheld = []
     drop_idx_by_list: dict[tuple[str, str], set] = {}
     for section, key, idx, item, evt in to_drop:
@@ -651,9 +589,7 @@ def withhold(checkpoint: dict, resolutions: dict,
         withheld.append((key, item, evt))
     for (section, key), idxs in drop_idx_by_list.items():
         items = out[section][key]
-        kept = [it for i, it in enumerate(items) if i not in idxs]
-        items[:] = kept
-
+        items[:] = [it for i, it in enumerate(items) if i not in idxs]
     return out, withheld, candidates
 
 
@@ -848,79 +784,98 @@ def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None)
 
 
 class AnnotateContext(NamedTuple):
-    """Where a briefing's annotations are read from. `route` keys the events,
-    amendment, quarantine and corroboration ledgers (a project dir on the
-    normal path, a bare slug on --slug). `worldcheck_project` is the one
-    optional annotator's gate: set only on the CLI same-project path, exactly
-    like the request panels (D2); None means the spot-check never runs."""
+    """Where `annotate`'s ledgers are read from. `route` keys the snapshot (a
+    project dir on the normal path, a bare slug on --slug).
+    `worldcheck_project` is the one optional annotator's gate: set only on the
+    CLI same-project path, exactly like the request panels (D2); None means
+    the spot-check never runs."""
     route: object
     worldcheck_project: object = None
 
 
 class Annotated(NamedTuple):
+    """What `prepare` hands a host: the checkpoint after the view and the
+    stamps (None when there is none), and the facts the host reports.
+    `withheld` is `Opened.withheld` (what `view` removed, never its text),
+    `events` the resolution fold, `suppressed` the loops a resolution closed
+    and `quarantined` the items a human quarantine removed (a forgotten item
+    is counted nowhere: it must read as absent). `snapshot` is the reader's
+    own, whichever body was served, and `notes` its health lines, each
+    starting with a warning sign."""
     checkpoint: Any
-    withheld: list
-    events: dict
+    withheld: Any
+    events: Any
     stale_items: list
     # worldcheck.check's counters (LEDGER_KEY popped) or None when it did not
     # run; `ledger_rows` are the rejection-ledger rows the CALLER writes
     # (worldcheck itself writes nothing, by contract).
     worldcheck: dict | None
     ledger_rows: list
+    opened: Any = None
+    snapshot: Any = None
+    suppressed: int = 0
+    quarantined: int = 0
+    notes: tuple = ()
+    fell_back: bool = False
 
 
-def annotate(checkpoint, ctx: AnnotateContext, now) -> Annotated:
-    """#1128: withhold, corroboration and stale stamping in one place, so the
-    CLI brief, the MCP daimon_brief tool and the Hermes pre_llm_call hook all
-    hand the selector the same annotated items. Each step is fail-open on its
-    own (a broken ledger costs that annotation, never the briefing), exactly
-    the posture the per-host copies had. `build()` stays pure and runs after
-    this; `now` is injected so the stale ages are deterministic.
+def prepare(project, now, *, live: bool = True, worldcheck_project=None,
+            route=None, stamps: bool = True, opened=None) -> Annotated:
+    """#1132 PR 7a: the one preparation every briefing host shares (the CLI
+    brief, the MCP tool, the Hermes hook, `daimon loops` and the teammates):
+    `view.open` (what the reader may see), then `stamp` (the transient marks
+    the renderers read), then the optional worldcheck.
 
-    Worldcheck is the one optional annotator: it runs only where the caller
-    set `ctx.worldcheck_project` AND the flag is on, and it only RETURNS its
-    stats and ledger rows. Marks it stamps never change selection protection
-    differently per host beyond being present or absent."""
-    withheld: list = []
-    events: dict = {}
+    `route` is the store route (default `Route.OWN`; the CLI brief asks for
+    OWN_ELSE_GLOBAL and reads `fell_back` off the result). `live=False`
+    keeps loops a resolution closed. `stamps=False` skips the stamps (the
+    teammate blocks never carried them). `opened` hands in an `Opened` the
+    caller already has (`view.team`) instead of opening `project`.
+
+    No try blocks: a ledger that cannot be read is a health value in the
+    snapshot (an unreadable trust ledger CLOSES the view), and a raise from
+    `view` is a bug the host reports. Worldcheck is the one annotator doing
+    I/O, runs only when `worldcheck_project` is set and the flag is on, never
+    on a global-fallback body (its `gh` probes would answer for the wrong
+    repo), only RETURNS its stats and ledger rows, and stays fail-open."""
+    from . import view
+    if opened is None:
+        opened = view.open(project, live=live,
+                           route=route if route is not None
+                           else store.Route.OWN)
+    snap = opened.snapshot
+    checkpoint = opened.checkpoint
     stale_items: list = []
+    if stamps and isinstance(checkpoint, dict):
+        checkpoint, _candidates, stale_items = stamp(checkpoint, snap, now)
     wc_stats = None
     ledger_rows: list = []
-    if not checkpoint or not isinstance(checkpoint, dict):
-        return Annotated(checkpoint, withheld, events, stale_items, None, [])
-    route = ctx.route
-    # Local imports: trust and amendments import the briefing constants, the
-    # same reason withhold() takes `amendments` as a parameter.
-    from . import amendments as amendments_lib
-    from . import trust as trust_lib
-    try:
-        events = store.resolutions(project_dir=route)
-        checkpoint, withheld, _candidates = withhold(
-            checkpoint, events,
-            amendments=amendments_lib.renderable(project_dir=route),
-            quarantine=trust_lib.active_value_keys(project_dir=route))
-    except Exception:
-        withheld = []
-        events = {}
-    try:
-        checkpoint = mark_corroborated(
-            checkpoint, store.corroborations(project_dir=route))
-    except Exception:
-        pass
-    try:
-        checkpoint, stale_items = stamp_stale_carried(checkpoint, events, now)
-    except Exception:
-        stale_items = []
-    if ctx.worldcheck_project and config.worldcheck_enabled():
+    if (isinstance(checkpoint, dict) and worldcheck_project
+            and not opened.fell_back and config.worldcheck_enabled()):
         try:
             from . import worldcheck
-            wc_stats = dict(worldcheck.check(checkpoint, ctx.worldcheck_project))
+            wc_stats = dict(worldcheck.check(checkpoint, worldcheck_project))
             ledger_rows = list(wc_stats.pop(worldcheck.LEDGER_KEY, ()))
         except Exception:
             wc_stats = None
             ledger_rows = []
-    return Annotated(checkpoint, withheld, events, stale_items, wc_stats,
-                     ledger_rows)
+    return Annotated(
+        checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
+        ledger_rows, opened, snap, opened.suppressed,
+        sum(1 for w in opened.withheld if w.reason == "quarantine"),
+        snap.notes(), opened.fell_back)
+
+
+def annotate(checkpoint, ctx: AnnotateContext, now) -> Annotated:
+    """`prepare` for a checkpoint the caller already holds: the in-hand form,
+    kept for the tests written against it and deleted with `withhold` (PR 7b).
+    The snapshot is `ctx.route`'s; the view and the stamps are `prepare`'s."""
+    from . import view
+    if not checkpoint or not isinstance(checkpoint, dict):
+        return Annotated(checkpoint, [], {}, [], None, [])
+    snap = view.snapshot(ctx.route)
+    return prepare(ctx.route, now, worldcheck_project=ctx.worldcheck_project,
+                   opened=view._opened(checkpoint, snap, True))
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -1115,7 +1070,18 @@ def layer_rulings_read(project_dir=None) -> LayerRulingsRead:
     return LayerRulingsRead(layers=layers)
 
 
-def active_rulings(project_dir=None) -> list[dict]:
+def _own_read(snap):
+    """The project's own `RulingsRead` out of a snapshot, so a briefing reads
+    the refutations ledger once. None (no snapshot) means "read it"; a
+    snapshot whose fold raised (rulings None) reads as unreadable."""
+    if snap is None:
+        return None
+    if snap.rulings is None:
+        return RulingsRead(rows=[], state="unreadable", path=None)
+    return snap.rulings
+
+
+def active_rulings(project_dir=None, own=None) -> list[dict]:
     """Every active ruling for the briefing section: every eligible layer's
     active rulings (#1093), global first then progressively nearer, followed
     by the project's OWN active rulings — within each group, newest-
@@ -1147,12 +1113,12 @@ def active_rulings(project_dir=None) -> list[dict]:
     failures apart reads `rulings_read` (own bucket) or `layer_rulings_read`
     (per layer) instead (#962, #1093)."""
     try:
-        return _merged_active_rulings(project_dir)
+        return _merged_active_rulings(project_dir, own=own)
     except Exception:
         return []
 
 
-def _merged_active_rulings(project_dir=None) -> list[dict]:
+def _merged_active_rulings(project_dir=None, own=None) -> list[dict]:
     combined: dict = {}
     order: list = []
 
@@ -1171,7 +1137,7 @@ def _merged_active_rulings(project_dir=None) -> list[dict]:
             if isinstance(row.get("request_policy"), dict):
                 continue  # #1093: an inherited policy grants nothing here
             _add(row, layer.layer)
-    for row in rulings_read(project_dir).rows:
+    for row in (own if own is not None else rulings_read(project_dir)).rows:
         _add(row, None)
     return [combined[rid] for rid in order]
 
@@ -1419,7 +1385,25 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
     return lines
 
 
-def ruling_lines(project_dir=None) -> list[str]:
+def prose_mask(snap):
+    """`text -> text` for the prose a panel prints: a whole value that is
+    forgotten or quarantined in `snap` becomes the one-line withheld marker
+    (reason and record id, never the value). None (a caller with no snapshot)
+    masks nothing. A closed snapshot is NOT applied to prose here: the
+    standing rulings and the panels are human-ratified furniture that must
+    keep rendering when the trust ledger is unreadable (the items are what
+    the closed view withholds)."""
+    if snap is None:
+        return lambda text: text
+    from . import view
+
+    def mask(text):
+        verdict = view.prose_verdict(text, snap, closed_masks=False)
+        return display.withheld_marker(verdict) if verdict else text
+    return mask
+
+
+def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
     """The section's rendered lines ([] when there is nothing at all to show
     — the section is skeleton furniture, but empty furniture is noise).
     Verdict, never subject, for a PROSE ruling: the verdict IS the rule text
@@ -1463,7 +1447,9 @@ def ruling_lines(project_dir=None) -> list[str]:
     wrote the words survives who approved them. Neither the authority
     suffix, the layer suffix, nor the cap counts the code-enforced classes
     any differently: a compact ruling is still one ruling against the cap."""
-    rows = [r for r in active_rulings(project_dir)
+    mask = prose_mask(snap)
+    rows = [r for r in active_rulings(
+                project_dir, own=_own_read(snap))
             if str(r.get("verdict") or "").strip()]
     try:
         cap = config.ruling_cap()
@@ -1491,7 +1477,7 @@ def ruling_lines(project_dir=None) -> list[str]:
             if cls == "policy":
                 policy_rendered = True
             continue
-        verdict = str(row.get("verdict") or "")
+        verdict = mask(str(row.get("verdict") or ""))
         if len(verdict) > refutations._MAX_RULING_TEXT:
             verdict = verdict[:refutations._MAX_RULING_TEXT] + "…"
         authored = row.get("text_authored_by")
@@ -1586,7 +1572,7 @@ def _truncate_request_ask(ask: str) -> str:
     return requests.short_ask(ask)
 
 
-def request_panel_lines(project_dir=None) -> list[str]:
+def request_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     """The recipient-side panel's rendered lines ([] when nothing is
     addressed to this project, or `project_dir` is None — the section is
     skeleton furniture, but empty furniture is noise).
@@ -1621,6 +1607,7 @@ def request_panel_lines(project_dir=None) -> list[str]:
     rows = entry.get("rows") or []
     if not rows:
         return []
+    mask = mask or (lambda text: text)
     lines = [_REQUEST_PANEL_HEADER]
     for row in rows:
         # #961 slice 3: no `[info]` marker here any more — `decision_
@@ -1633,7 +1620,7 @@ def request_panel_lines(project_dir=None) -> list[str]:
         # ask so the id stays in its own span.
         claim_marker = "  [done claimed]" if row.get("done_pending") else ""
         lines.append(f"→ {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}"
+                     f"{_truncate_request_ask(mask(row.get('ask', '')))}"
                      f"{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1652,7 +1639,7 @@ def request_panel_lines(project_dir=None) -> list[str]:
 _OWED_PANEL_HEADER = "Requests you accepted and still owe:"
 
 
-def owed_panel_lines(project_dir=None) -> list[str]:
+def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     """#885: the recipient's OWED panel ([] when this project owes nothing,
     or `project_dir` is None). Same posture as the two panels around it:
     fail-open, skeleton furniture, never silently truncated over RENDER_CAP.
@@ -1671,13 +1658,14 @@ def owed_panel_lines(project_dir=None) -> list[str]:
     rows = entry.get("rows") or []
     if not rows:
         return []
+    mask = mask or (lambda text: text)
     lines = [_OWED_PANEL_HEADER]
     for row in rows:
         # #961 slice 2: same marker, same posture as `request_panel_lines`.
         kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
         lines.append(f"✓ {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}"
+                     f"{_truncate_request_ask(mask(row.get('ask', '')))}"
                      f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1699,7 +1687,18 @@ _VERDICT_MARKS = {"needs-info": "?", "accepted": "✓", "rejected": "×",
                   "done": "✔"}
 
 
-def verdict_panel_lines(project_dir=None) -> list[str]:
+def _mask_reply(row: dict, mask) -> dict:
+    """The record with its latest reply's note masked, so the one reply line
+    the panel prints can never carry a withheld value."""
+    replies = row.get("replies") or []
+    if not replies:
+        return row
+    latest = dict(replies[-1])
+    latest["note"] = mask(latest.get("note") or "")
+    return {**row, "replies": [*replies[:-1], latest]}
+
+
+def verdict_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     """The sender-side panel's rendered lines ([] when nothing this project
     sent has been decided yet, or `project_dir` is None). Same posture as
     `request_panel_lines`: fail-open, skeleton furniture, never silently
@@ -1720,6 +1719,7 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
     rows = entry.get("rows") or []
     if not rows:
         return []
+    mask = mask or (lambda text: text)
     lines = [_VERDICT_PANEL_HEADER]
     for row in rows:
         state = str(row.get("state") or "")
@@ -1734,16 +1734,17 @@ def verdict_panel_lines(project_dir=None) -> list[str]:
                        if state == "accepted" and row.get("accepted_by") == "agent"
                        else state)
         lines.append(f"{mark} {state_label}  {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}")
+                     f"{_truncate_request_ask(mask(row.get('ask', '')))}")
         lines.append(f"  To: {row.get('to') or '?'}")
         note = str(row.get("note") or "").strip()
         if note:
-            lines.append(f"  Note: {_truncate_request_ask(note)}")
+            lines.append(f"  Note: {_truncate_request_ask(mask(note))}")
         done_evidence = str(row.get("done_evidence") or "").strip()
         if done_evidence:
-            lines.append(f"  Done: {_truncate_request_ask(done_evidence)}")
+            lines.append(
+                f"  Done: {_truncate_request_ask(mask(done_evidence))}")
         # #1117: ONE capped line (skeleton the trimmer keeps).
-        reply_line = requests.latest_reply_line(row)
+        reply_line = requests.latest_reply_line(_mask_reply(row, mask))
         if reply_line:
             lines.append(f"  {reply_line}")
     overflow = entry.get("overflow") or 0
@@ -1758,7 +1759,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
                  decision_count: str | None = None, *,
                  max_bytes: int | None = None,
-                 loops_pointer: bool = True) -> str:
+                 loops_pointer: bool = True, notes=()) -> str:
     """The deterministic briefing text: a thin wrapper over `select` and
     `render_selection` (#1128), kept so its many call sites keep working.
 
@@ -1779,27 +1780,44 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     sel = select(b, budget, degraded=degraded, rulings=rulings,
                  request_lines=request_lines, verdict_lines=verdict_lines,
                  owed_lines=owed_lines, decision_count=decision_count,
-                 loops_pointer=loops_pointer)
+                 loops_pointer=loops_pointer, notes=notes)
     text = render_selection(sel)
     _log_render_size(text, budget)
     return text
 
 
 
-def _head_lines(degraded: bool, rulings) -> list[str]:
-    """The greeting, the #204 degrade note, and the standing rulings block:
+GREETING = "While you were away — here's where we left off."
+# Printed in place of the body when the view is CLOSED (the trust ledger cannot
+# be read, so no item can be proven safe to show): the greeting, the ledger
+# note and the standing furniture still render, and this line says why the
+# items do not.
+CLOSED_LINE = ("(daimon: this project's items are withheld while a ledger "
+               "above cannot be read.)")
+
+
+def _head_lines(degraded: bool, rulings, notes=()) -> list[str]:
+    """The greeting, the #204 degrade note, the ledger-health notes (#1132
+    PR 7a: each already starts with a warning sign) and the standing rulings
+    block:
     the portion of the render that comes before decision/request/verdict/owed
     panels and the cognitive body. #1044's byte ceiling protects exactly this
     prefix: it is the closest this render gets to a human-ratified constraint
     (rulings) plus the one line every render opens with, and the ceiling must
     never silently eat either. Shared with `render_selection` so the two can
     never drift apart on what "the head" is."""
-    parts = ["While you were away — here's where we left off."]
+    parts = [GREETING]
     if degraded:
         # One header note (#204), embedded in the text so the hook-injected
         # briefing carries it too — not just the human-facing CLI render.
         parts.append("")
         parts.append(DEGRADE_NOTE)
+    if notes:
+        # Charged with the head like the rulings: never a drop candidate, and
+        # a machine reader keeps every line as a warning because each starts
+        # with the warning sign (the greeting stays the header).
+        parts.append("")
+        parts.extend(notes)
     if rulings:
         # #693: skeleton furniture at the top, never a drop candidate — the
         # budget loops re-render with the same lines and can only trim the
@@ -1967,8 +1985,10 @@ class Selection:
                  stale_days, budget, degraded, rulings, count_line, panels,
                  overage, now, panel_names=(), reserved=0,
                  teammate_blocks=(), teammate_header="", kept_teammates=(),
-                 collapsed=False, loops_pointer=True, full_quotes=False):
+                 collapsed=False, loops_pointer=True, full_quotes=False,
+                 notes=()):
         self.kept = kept
+        self.notes = tuple(notes)
         self.dropped = dropped
         self.reasons = reasons
         self.order = order
@@ -2055,14 +2075,15 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
            request_lines=(), verdict_lines=(), owed_lines=(),
            decision_count: str | None = None, reserved: int = 0,
            teammate_blocks=(), teammate_header: str = "",
-           loops_pointer: bool = True, full_quotes: bool = False) -> Selection:
+           loops_pointer: bool = True, full_quotes: bool = False,
+           notes=()) -> Selection:
     """#1128: decide what the briefing shows. Pure: a function of the
     annotated items in `b`, the byte `budget` (None = unbounded: the decision
     cap still applies, nothing else is dropped) and `now`.
 
     Protected, charged first and never dropped (they give way only in a fixed
     order when they alone exceed the budget, see below): the greeting, the
-    degrade note, standing rulings, the decision count and the
+    degrade note, the ledger-health `notes`, standing rulings, the decision count and the
     request/verdict/owed panels (each bounded by its own render cap), the
     active topic, the `min(3, cap)` newest native decisions, and the
     per-section count lines. Everything else is a candidate. Candidates drop
@@ -2191,7 +2212,8 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                         reserved=reserved, teammate_blocks=blocks,
                         teammate_header=teammate_header,
                         kept_teammates=kept_team, collapsed=collapse,
-                        loops_pointer=loops_pointer, full_quotes=full_quotes)
+                        loops_pointer=loops_pointer, full_quotes=full_quotes,
+                        notes=notes)
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 
@@ -2319,7 +2341,7 @@ def render_selection(sel: Selection) -> str:
     panels, then the sections in `SECTION_ORDER`, each followed by its note
     when it lost items; a final marker line when the protected set alone was
     over budget."""
-    parts = _head_lines(sel.degraded, sel.rulings)
+    parts = _head_lines(sel.degraded, sel.rulings, sel.notes)
     if sel.count_line:
         parts.append("")
         parts.append(sel.count_line)
@@ -2395,7 +2417,8 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
 
 
 def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
-           loops_pointer: bool = True) -> str | None:
+           loops_pointer: bool = True, snap=None,
+           notes=()) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
     quote integrity, and falls back to deterministic on any doubt.
@@ -2412,7 +2435,12 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     panels only on the CLI same-project path (`cli._render_briefing_body`'s
     own `worldcheck_project`, D2)."""
     b = build(checkpoint)
-    rulings = ruling_lines(project_dir) if project_dir is not None else []
+    # #1132 PR 7a: `snap` is the view's snapshot (the rulings are read once
+    # out of it and every panel masks a withheld whole value); `notes` are its
+    # ledger-health lines. Neither given: the legacy behavior, nothing masked.
+    mask = prose_mask(snap)
+    rulings = (ruling_lines(project_dir, snap=snap)
+               if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel below, not the rulings
     # section above — this line is content ABOUT another bucket's existence
     # (a count), so it follows request_panel_lines's posture: absent on
@@ -2420,13 +2448,16 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     decision_count = (decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
     decision_count_block = [decision_count] if decision_count else []
-    request_lines = (request_panel_lines(worldcheck_project)
+    request_lines = (request_panel_lines(worldcheck_project, mask=mask)
                      if worldcheck_project is not None else [])
-    verdict_lines = (verdict_panel_lines(worldcheck_project)
+    verdict_lines = (verdict_panel_lines(worldcheck_project, mask=mask)
                      if worldcheck_project is not None else [])
-    owed_lines = (owed_panel_lines(worldcheck_project)
+    owed_lines = (owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
-    skeleton_blocks = [blk for blk in (rulings, decision_count_block,
+    closed = snap is not None and snap.closed
+    head = [GREETING] if closed else []
+    skeleton_blocks = [blk for blk in (head, list(notes), rulings,
+                                       decision_count_block,
                                        request_lines, verdict_lines,
                                        owed_lines) if blk]
     if b is None:
@@ -2436,6 +2467,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
         # "nothing worth surfacing" is no longer true when any of these exist.
         if not skeleton_blocks:
             return None
+        if closed:
+            skeleton_blocks.append([CLOSED_LINE])
         return "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
     degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
@@ -2447,7 +2480,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                      rulings=rulings, request_lines=request_lines,
                      verdict_lines=verdict_lines, owed_lines=owed_lines,
                      decision_count=decision_count,
-                     loops_pointer=loops_pointer, full_quotes=True)
+                     loops_pointer=loops_pointer, full_quotes=True,
+                     notes=notes)
         kept_checkpoint = _kept_checkpoint(sel)
         rendered = _render_llm(kept_checkpoint)
         if rendered:
@@ -2460,6 +2494,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                 # prepended verbatim after the note — never re-narrated,
                 # never trusted to a generative pass.
                 parts = ([DEGRADE_NOTE] if degraded else [])
+                # `notes` ride in skeleton_blocks, first
                 parts.extend("\n".join(blk) for blk in skeleton_blocks)
                 parts.append(rendered)
                 return "\n\n".join(parts)
@@ -2467,7 +2502,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                         "falling back to the deterministic render")
     return render_plain(b, degraded, rulings, request_lines, verdict_lines,
                         owed_lines, decision_count,
-                        loops_pointer=loops_pointer)
+                        loops_pointer=loops_pointer, notes=notes)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

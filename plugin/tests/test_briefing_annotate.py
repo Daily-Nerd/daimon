@@ -1,6 +1,7 @@
 """#1128: the shared annotation step. Every host that renders a briefing
 (CLI, MCP, Hermes) goes through briefing.annotate, so the stale marks and
-the other render-time annotations cannot differ by host."""
+the other render-time annotations cannot differ by host. (#1132 PR 7a: the
+hosts call `briefing.prepare`; `annotate` is its in-hand form.)"""
 
 import datetime as dt
 import time
@@ -63,14 +64,18 @@ def test_missing_stamp_is_fail_open_not_stale():
     assert out.stale_items == []
 
 
-def test_annotate_survives_a_broken_ledger(monkeypatch):
-    def _boom(*a, **k):
-        raise RuntimeError("boom")
-    monkeypatch.setattr(store, "resolutions", _boom)
+def test_annotate_survives_an_unreadable_ledger_and_says_so(
+        tmp_checkpoint_dir):
+    """A ledger that cannot be read is a health value, not an exception: the
+    item stays and the note names the ledger (never its content)."""
+    bucket = tmp_checkpoint_dir / store.project_slug(PROJECT)
+    bucket.mkdir(parents=True)
+    (bucket / "events.jsonl").write_bytes(b"\xff\xfe not utf-8\n")
     cp = _cp([_carried("old claim", first_seen=_iso(12))])
     out = briefing.annotate(cp, _ctx(), NOW)
     assert out.checkpoint["working_context"]["open_questions"][0]["text"] == "old claim"
-    assert out.withheld == []
+    assert out.withheld == ()
+    assert out.notes[0].startswith("⚠ events.jsonl is unreadable")
 
 
 def test_annotate_without_worldcheck_project_never_probes(monkeypatch):
@@ -121,15 +126,15 @@ def test_hermes_injection_carries_stale_marks(tmp_checkpoint_dir, monkeypatch):
     assert "[? unverified] stale carried claim" in out["context"]
 
 
-def test_every_host_path_calls_annotate(tmp_checkpoint_dir, monkeypatch, capsys):
+def test_every_host_path_calls_prepare(tmp_checkpoint_dir, monkeypatch, capsys):
     _write_stale()
     seen = []
-    real = briefing.annotate
+    real = briefing.prepare
 
-    def _spy(cp, ctx, now):
-        seen.append(ctx.route)
-        return real(cp, ctx, now)
-    monkeypatch.setattr(briefing, "annotate", _spy)
+    def _spy(project, now, **kw):
+        seen.append(project)
+        return real(project, now, **kw)
+    monkeypatch.setattr(briefing, "prepare", _spy)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["brief", "--project", PROJECT]) == 0
     assert len(seen) == 1
@@ -139,3 +144,5 @@ def test_every_host_path_calls_annotate(tmp_checkpoint_dir, monkeypatch, capsys)
                        conversation_history=[], is_first_turn=True,
                        model="m", platform="cli")
     assert len(seen) == 3
+    assert cli.main(["loops", "--project", PROJECT]) == 0
+    assert len(seen) == 4

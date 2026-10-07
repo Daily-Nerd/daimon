@@ -22,7 +22,6 @@ from .. import (
     render,
     requests,
     store,
-    trust as trust_lib,
 )
 from ..ledger import _format_age
 
@@ -86,66 +85,88 @@ def _cmd_anchor(args) -> int:
     return 0
 
 
-def _team_briefings(project, withheld: list | None = None) -> list:
+class _TeamCounts:
+    """What the Teammates section withheld from the reader, for the brief's
+    trailer note: loops the reader's own ledger resolved, and items the
+    reader's own quarantine removed. A forgotten value is counted nowhere:
+    it has to read as absent."""
+
+    def __init__(self):
+        self.resolved = 0
+        self.quarantined = 0
+
+
+def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     """Per-teammate briefing sections for `brief --team`, EXCLUDING the current
     author. Returns [(author, sections), ...] newest-first, or [] when the team dir
     is empty (nothing was ever mirrored). Reuses briefing.build so the #77 decision
     cap applies to teammates identically. Self is matched by slug — the same dir
     identity read_team fans in on.
 
-    #981: each teammate checkpoint is folded through `briefing.withhold` BEFORE
-    it is built, so a resolved item neither prints under Teammates nor takes a
-    capped slot — the same fold every other briefing surface applies. The
-    ledger that governs is the READER's own (`store.resolutions(project)`):
-    what the reader resolved is what the reader stops seeing, on every
-    surface including this one; a teammate's own ledger is theirs and is not
-    read here. Fail-open like the main path: an unreadable ledger withholds
-    nothing rather than dropping the section. `withheld` is an optional
-    out-list the caller can hand in to fold the count into its note.
-    """
+    #981: each teammate checkpoint goes through the view BEFORE it is built
+    (`view.team`), so a resolved item neither prints under Teammates nor takes
+    a capped slot, the same fold every other briefing surface applies. The
+    ledgers that govern are the READER's own: what the reader resolved or
+    quarantined is what the reader stops seeing, on every surface including
+    this one; a teammate's own ledger is theirs and is not read here. An
+    unreadable trust ledger closes the view: no teammate item shows. The
+    blocks carry no stamps (`stamps=False`), as they never did. `counts` is an
+    optional collector the caller can hand in to fold the totals into its
+    trailer."""
+    from .. import view
     # project_slug munging, matching _dual_write_team's dir identity — _safe_name
     # would re-introduce the "a/b" == "a_b" collision on the self-match.
     self_slug = store.project_slug(config.author())
-    # Read once, before the fan-in: one ledger read for every teammate, and
-    # a failure here is this function's own to swallow (the fan-in's own
-    # tombstone read of the same ledger keeps its own contract).
-    try:
-        resolutions = store.resolutions(project_dir=project)
-    except Exception:
-        resolutions = {}
-    try:
-        # #1109: the READER's own quarantine ledger governs here too, same
-        # posture as `resolutions` above — a teammate's checkpoint is folded
-        # through what THIS project's human has quarantined, never theirs.
-        quarantine = trust_lib.active_value_keys(project_dir=project)
-    except Exception:
-        quarantine = set()
+    now = time.time()
     out = []
-    for author, checkpoint in store.read_team(project_dir=project):
+    for author, opened in view.team(project, live=True):
         if store.project_slug(author) == self_slug:
             continue  # never surface your own state as a teammate
-        try:
-            checkpoint, dropped, _candidates = briefing.withhold(
-                checkpoint, resolutions, quarantine=quarantine)
-        except Exception:
-            dropped = []
-        if withheld is not None:
-            withheld.extend(dropped)
-        b = briefing.build(checkpoint)
+        prepared = briefing.prepare(project, now, opened=opened, stamps=False)
+        if counts is not None:
+            counts.resolved += prepared.suppressed
+            counts.quarantined += prepared.quarantined
+        b = briefing.build(prepared.checkpoint)
         if b is None:
             continue  # nothing worth surfacing for this teammate
         out.append((author, b))
     return out
 
 
-def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
-                          worldcheck_project=None, team_withheld=(),
+def _withheld_trailer(own, team) -> list:
+    """The advisory lines about what the briefing withheld. Resolved loops
+    keep their count and wording; a quarantined item gets its own line, only
+    when there is one. `own` is the `Annotated` of the reader's briefing (or
+    None), `team` a `_TeamCounts` (or None)."""
+    resolved = (own.suppressed if own else 0) + (team.resolved if team else 0)
+    quarantined = ((own.quarantined if own else 0)
+                   + (team.quarantined if team else 0))
+    trailer = []
+    if resolved:
+        # #981: the count covers the Teammates section too, and says how
+        # many were a teammate's, since `status --suppressed` lists only the
+        # reader's own checkpoint.
+        note = f"{resolved} resolved item(s) withheld"
+        if team and team.resolved:
+            note += f" ({team.resolved} a teammate's)"
+        trailer.append(note + " — `daimon status --suppressed` to list")
+    if quarantined:
+        note = f"{quarantined} quarantined item(s) withheld"
+        if team and team.quarantined:
+            note += f" ({team.quarantined} a teammate's)"
+        trailer.append(note + " — `daimon trust list` shows them")
+    return trailer
+
+
+def _render_briefing_body(annotated, route, *, drift_project, teammates,
+                          worldcheck_project=None, team_counts=None,
                           loops_pointer=True) -> int:
-    """Shared tail of `brief` and `brief --slug`: withhold, worldcheck, drift,
-    render, footnotes. `route` is whatever the events ledger should be keyed
-    by — a project dir on the normal path, a bare slug on the --slug path (the
-    store's slug munging is idempotent, so a slug rides through
-    project_dir-shaped APIs unchanged; guarded by
+    """Shared tail of `brief` and `brief --slug`: worldcheck bookkeeping,
+    drift, render, footnotes. `annotated` is `briefing.prepare`'s result (the
+    checkpoint is already through the view and stamped). `route` is whatever
+    the events ledger should be keyed by — a project dir on the normal path, a
+    bare slug on the --slug path (the store's slug munging is idempotent, so a
+    slug rides through project_dir-shaped APIs unchanged; guarded by
     test_project_slug_is_idempotent_on_slugs).
     `drift_project=None` skips the anchor drift check: anchor paths are
     relative to the origin project's root, which a slug cannot recover.
@@ -153,24 +174,14 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     same reason drift skips: --slug and global-fallback briefs render ANOTHER
     project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
     the wrong repo context for those claims."""
-    withheld: list = []
+    checkpoint = annotated.checkpoint if annotated else None
 
     if checkpoint:
-        # #1128: withhold (#103), corroboration (#268), stale stamping (#977)
-        # and the optional worldcheck spot-check (#365/#397/#439) all live in
-        # briefing.annotate now, shared with the MCP tool and the Hermes hook.
-        # Each step is fail-open inside it. Worldcheck is opt-in, budget-
+        # #1128: worldcheck (#365/#397/#439) runs inside briefing.prepare,
+        # shared with the MCP tool and the Hermes hook. It is opt-in, budget-
         # bounded and read-only; it only RETURNS its counters and ledger rows,
         # and the writes below stay here, where the project route is already
         # resolved (worldcheck writes nothing to disk by contract).
-        annotated = briefing.annotate(
-            checkpoint,
-            briefing.AnnotateContext(route=route,
-                                     worldcheck_project=worldcheck_project),
-            time.time())
-        checkpoint = annotated.checkpoint
-        withheld = annotated.withheld
-
         if annotated.worldcheck is not None:
             try:
                 wc_stats = annotated.worldcheck
@@ -204,15 +215,7 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
         handoff = store.active_handoff(route)
     except Exception:
         handoff = None
-    trailer = []
-    if withheld or team_withheld:
-        # #981: the count covers the Teammates section too, and says how
-        # many were a teammate's, since `status --suppressed` lists only the
-        # reader's own checkpoint.
-        note = f"{len(withheld) + len(team_withheld)} resolved item(s) withheld"
-        if team_withheld:
-            note += f" ({len(team_withheld)} a teammate's)"
-        trailer.append(note + " — `daimon status --suppressed` to list")
+    trailer = _withheld_trailer(annotated, team_counts)
     # #1128: the note rides INTO render_brief so it is charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the
     # budgeted brief actually showed of each panel (None: everything).
@@ -220,7 +223,9 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
                                   handoff=handoff, project_dir=route,
                                   worldcheck_project=worldcheck_project,
                                   trailer=trailer,
-                                  loops_pointer=loops_pointer)
+                                  loops_pointer=loops_pointer,
+                                  snap=annotated.snapshot if annotated else None,
+                                  notes=annotated.notes if annotated else ())
 
     def _shown(panel, row) -> bool:
         # #1128: `printed` is the manifest of card ids render_brief printed in
@@ -278,6 +283,19 @@ def _render_briefing_body(checkpoint, route, *, drift_project, teammates,
     return 0
 
 
+def _prepared(project, route, worldcheck_project=None):
+    """`briefing.prepare` for a CLI verb, or None after printing the one error
+    line (rc 2): when the view cannot be built no briefing renders at all,
+    never an unfiltered one."""
+    try:
+        return briefing.prepare(project, time.time(), route=route,
+                                worldcheck_project=worldcheck_project)
+    except Exception as exc:  # noqa: BLE001 — reported, never rendered around
+        print("error: the briefing could not be prepared "
+              f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
+        return None
+
+
 def _cmd_brief(args) -> int:
     _cli._note_usage("brief:auto" if getattr(args, "auto", False) else "brief")
     slug = getattr(args, "slug", None)
@@ -299,44 +317,45 @@ def _cmd_brief(args) -> int:
             return 2
         # `slug` is a bare slug string, not a path — this survives because
         # project_slug is idempotent on slugs (pinned by its own test).
-        checkpoint = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
-                                            admit=store.Admit.ANY)
-        if not isinstance(checkpoint, dict):
+        annotated = _prepared(slug, store.Route.OWN)
+        if annotated is None:
+            return 2
+        if not isinstance(annotated.checkpoint, dict):
             render.render_brief_note([
                 f"no checkpoint bucket for slug {slug} — "
                 "`daimon projects` lists what exists"])
             return 1
         render.render_brief_note([f"cross-project briefing — project: {slug}"])
         # A named bucket is somebody else's listing: no `daimon loops` pointer.
-        return _render_briefing_body(checkpoint, slug,
+        return _render_briefing_body(annotated, slug,
                                      drift_project=None, teammates=None,
                                      loops_pointer=False)
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _cli._resolve_project(args.project)
     # #787/#795: whether the fallback fired is what the read DID, not what the
-    # filesystem shows — and the route fact is now READ off the result, never
-    # reconstructed from a second look (scar 0058's class). Two invariants the
-    # diff does not show: under Admit.ANY nothing is ever refused, so
-    # fell_back=True implies checkpoint is not None (the old second conjunct
-    # is implied, not dropped); and brief cannot be identity-less, because
+    # filesystem shows — the route fact is READ off the result (`fell_back`,
+    # scar 0058's class), never reconstructed from a second look. Under
+    # Admit.ANY nothing is ever refused, so fell_back=True implies a
+    # checkpoint exists; and brief cannot be identity-less, because
     # _resolve_project returns str(Path(...).resolve()) — never empty — and
-    # resolve_project_root ends `return top or raw`, so the no-slug rows of
-    # the read contract are unreachable on this path.
-    got = store.read_latest_result(project_dir=project,
-                                   route=store.Route.OWN_ELSE_GLOBAL,
-                                   admit=store.Admit.ANY)
-    checkpoint = got.checkpoint
-    fallback_used = got.fell_back
+    # resolve_project_root ends `return top or raw`.
+    # #365: worldcheck never probes a fallback body (the global pointer may
+    # belong to ANOTHER project and `gh` resolves against THIS cwd's repo);
+    # `prepare` enforces that from `fell_back`.
+    annotated = _prepared(project, store.Route.OWN_ELSE_GLOBAL,
+                          worldcheck_project=project)
+    if annotated is None:
+        return 2
+    checkpoint = annotated.checkpoint
+    fallback_used = annotated.fell_back
     if fallback_used and not (getattr(args, "global_fallback", False)
                               or config.brief_global_fallback()):
         # Header-only fallback (#96): the foreign body is suppressed — one
         # warning line above a hundred foreign lines does not read as a
         # warning. Orient (where the activity actually is) and exit clean;
         # `daimon status` still shows the full pointer table.
-        # `checkpoint` is not None here: see the Admit.ANY reasoning on the
-        # read above. mypy cannot carry that across the ReadResult, and the
-        # conjunct that would re-narrow it was removed there as implied.
+        # `checkpoint` is a dict here: see the Admit.ANY reasoning above.
         slug = str(checkpoint.get("project_slug") or "").strip() or "another project"  # type: ignore[union-attr]
         epoch = store._created_epoch(checkpoint.get("created"))  # type: ignore[union-attr]
         age = f"{_format_age(time.time() - epoch)} ago" if epoch else "age unknown"
@@ -346,6 +365,7 @@ def _cmd_brief(args) -> int:
         # serialize-count-based in store.active_handoff.
         render.render_handoff(store.active_handoff(project))
         render.render_brief_note([
+            *annotated.notes,
             "No briefing for this project yet — the first serialized session "
             "will create one.",
             f"(Most recent activity elsewhere: {slug}, {age}.)",
@@ -355,15 +375,18 @@ def _cmd_brief(args) -> int:
         # #223: the foreign body is suppressed above, but --team still means
         # --team — a fresh project with no checkpoint of its own is exactly
         # the new-teammate case where reading the team's briefings matters
-        # most. Same unprotected exposure as the main :546 call site below
-        # (no new armor here); empty team -> render_teammates no-ops, so a
-        # team-less machine's output stays byte-identical to today.
+        # most. Empty team -> render_teammates no-ops, so a team-less
+        # machine's output stays byte-identical to today.
         if getattr(args, "team", False):
-            team_withheld: list = []
-            render.render_teammates(_team_briefings(project, team_withheld))
-            if team_withheld:
+            counts = _TeamCounts()
+            render.render_teammates(_team_briefings(project, counts))
+            if counts.resolved:
                 render.render_brief_note([
-                    f"{len(team_withheld)} resolved item(s) withheld "
+                    f"{counts.resolved} resolved item(s) withheld "
+                    "(a teammate's)"])
+            if counts.quarantined:
+                render.render_brief_note([
+                    f"{counts.quarantined} quarantined item(s) withheld "
                     "(a teammate's)"])
         return 0
     # Label the global-pointer fallback (#29): status calls the same situation
@@ -384,16 +407,13 @@ def _cmd_brief(args) -> int:
             "behind; re-run `daimon brief` in a few minutes for the fresh one."])
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
-    team_withheld = []
-    teammates = (_team_briefings(project, team_withheld)
+    team_counts = _TeamCounts()
+    teammates = (_team_briefings(project, team_counts)
                  if getattr(args, "team", False) else None)
-    # #365: never worldcheck a fallback body — the global pointer may belong
-    # to ANOTHER project, and probing this cwd's repo against that
-    # checkpoint's claims answers for the wrong repo.
-    return _render_briefing_body(checkpoint, project,
+    return _render_briefing_body(annotated, project,
                                  drift_project=project, teammates=teammates,
                                  worldcheck_project=None if fallback_used
-                                 else project, team_withheld=team_withheld,
+                                 else project, team_counts=team_counts,
                                  loops_pointer=(not fallback_used
                                                 and _cli.loops_lists_project(project)))
 
