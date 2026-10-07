@@ -1,5 +1,5 @@
 """`effects.Effects`: the frozen record of what a read decided to write
-afterwards (#1132 PR 6a, type only: nothing commits it yet)."""
+afterwards (#1132 PR 6a); `effects_commit` writes it."""
 
 import dataclasses
 
@@ -41,3 +41,25 @@ def test_merge_with_none_is_the_identity_and_is_associative():
     assert effects.merge(a, effects.Effects.none()) == a
     assert effects.merge(effects.merge(a, b), c) == effects.merge(
         a, effects.merge(b, c))
+
+
+def test_the_record_types_are_frozen_and_named():
+    s = effects.Surfaced("request", "/p", "q-1", None)
+    assert (s.kind, s.project, s.request_id, s.reply_event_id) == (
+        "request", "/p", "q-1", None)
+    v = effects.Verification("/p", "/p", {"fired": 1}, ())
+    assert (v.project, v.route, v.stats, v.rows) == ("/p", "/p",
+                                                      {"fired": 1}, ())
+    t = effects.Telemetry([], {"via": "mcp"})
+    assert (t.rows, t.kwargs) == ([], {"via": "mcp"})
+    for record in (s, v, t):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            record.rows = 1  # type: ignore[attr-defined]
+
+
+def test_the_fields_a_producer_exists_for_are_typed_by_record():
+    hints = {f.name: f.type for f in dataclasses.fields(effects.Effects)}
+    assert hints["surfaced"] == "tuple[Surfaced, ...]"
+    assert hints["verification"] == "tuple[Verification, ...]"
+    assert hints["telemetry"] == "tuple[Telemetry, ...]"
+    assert hints["usage"] == "tuple[str, ...]"

@@ -23,7 +23,7 @@ import functools
 import sys
 
 from . import requests
-from .effects import Effects, merge
+from .effects import Effects, Surfaced, Verification, merge
 
 
 class Pending:
@@ -52,8 +52,8 @@ def committing(fn):
 def worldcheck_effects(worldcheck_project, route, stats, rows) -> Effects:
     """The worldcheck bookkeeping of one brief: its counters, the receipt
     probe usage and the ledger rows, as one `verification` record."""
-    return Effects(verification=(("worldcheck", worldcheck_project, route,
-                                  dict(stats), tuple(rows)),))
+    return Effects(verification=(Verification(
+        worldcheck_project, route, dict(stats), tuple(rows)),))
 
 
 def surfaced_effects(worldcheck_project, printed) -> Effects:
@@ -61,9 +61,10 @@ def surfaced_effects(worldcheck_project, printed) -> Effects:
     `printed` is its manifest (None: nothing is known to have been shown)."""
     if worldcheck_project is None or not printed:
         return Effects.none()
-    out = [("request", worldcheck_project, c.request_id, None)
+    out = [Surfaced("request", worldcheck_project, c.request_id)
            for c in printed.get("request") or () if c.stamp]
-    out += [("verdict", worldcheck_project, c.request_id, c.reply_event_id)
+    out += [Surfaced("verdict", worldcheck_project, c.request_id,
+                     c.reply_event_id)
             for c in printed.get("verdict") or () if c.stamp]
     return Effects(surfaced=tuple(out))
 
@@ -85,19 +86,22 @@ def commit(fx: Effects) -> None:
     for tag in fx.usage:
         _attempt(cli._note_usage, tag)
     for record in fx.verification:
-        _commit_worldcheck(cli, *record)
-    for kind, project, request_id, reply_id in fx.surfaced:
-        if kind == "request":
-            _attempt(requests.stamp_surfaced, request_id,
-                     project_dir=project)
+        _commit_worldcheck(cli, record)
+    for card in fx.surfaced:
+        if card.kind == "request":
+            _attempt(requests.stamp_surfaced, card.request_id,
+                     project_dir=card.project)
         else:
-            _attempt(requests.stamp_verdict_surfaced, request_id,
-                     project_dir=project, reply_event_id=reply_id)
-    for rows, kwargs in fx.telemetry:
-        _attempt(recall_telemetry.record, rows, **kwargs)
+            _attempt(requests.stamp_verdict_surfaced, card.request_id,
+                     project_dir=card.project,
+                     reply_event_id=card.reply_event_id)
+    for sample in fx.telemetry:
+        _attempt(recall_telemetry.record, sample.rows, **sample.kwargs)
 
 
-def _commit_worldcheck(cli, kind, project, route, stats, rows) -> None:
+def _commit_worldcheck(cli, record: Verification) -> None:
+    project, route = record.project, record.route
+    stats, rows = record.stats, record.rows
     # #397: the dict carries the aggregate outcomes AND a "<class>:<outcome>"
     # key per class, so one pass emits both the slice-1 counters and the
     # per-class fires-true rate the next expansion gate reads.

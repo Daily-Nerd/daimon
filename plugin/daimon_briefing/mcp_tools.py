@@ -19,7 +19,7 @@ import time
 
 from . import (briefing, config, effects_commit, recall, recall_telemetry,
                requests, store)
-from .effects import Effects
+from .effects import Effects, Telemetry
 
 
 class ToolError(Exception):
@@ -78,7 +78,7 @@ def _recall(arguments: dict, fx) -> str:
     # `status` is added below, so the recall-delivery ledger's row shape is
     # untouched.
     try:
-        fx.add(Effects(telemetry=(([dict(r) for r in rows], {
+        fx.add(Effects(telemetry=(Telemetry([dict(r) for r in rows], {
             "query_terms": recall.salient_terms(query),
             "surface": "recall-search", "via": "mcp",
             "injected_into": session}),)))

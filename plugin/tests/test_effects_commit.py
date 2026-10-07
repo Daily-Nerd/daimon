@@ -9,7 +9,8 @@ import pytest
 
 from daimon_briefing import (briefing, cli, effects_commit, mcp_tools,
                              recall_telemetry, requests, store, view, worldcheck)
-from daimon_briefing.effects import Effects
+from daimon_briefing.effects import (Effects, Surfaced, Telemetry,
+                                     Verification)
 
 
 class Recorder(io.StringIO):
@@ -83,9 +84,9 @@ def test_one_failing_write_blocks_no_other(monkeypatch, events):
     monkeypatch.setattr(recall_telemetry, "record", boom)
     effects_commit.commit(Effects(
         usage=("u",),
-        verification=(("worldcheck", "/p", "/p", {"fired": 1}, ()),),
-        surfaced=(("request", "/p", "q-aaaaaaaaaaaa", None),),
-        telemetry=(([], {}),)))
+        verification=(Verification("/p", "/p", {"fired": 1}, ()),),
+        surfaced=(Surfaced("request", "/p", "q-aaaaaaaaaaaa", None),),
+        telemetry=(Telemetry([], {}),)))
     assert ("usage", "u") in events and ("usage", "worldcheck:fired") in events
 
 
@@ -107,8 +108,8 @@ def test_surfaced_effects_only_for_cards_that_owe_a_stamp():
     printed = {"request": (card("q-1", True), card("q-2", False)),
                "verdict": (card("q-3", True, "ev1"),)}
     got = effects_commit.surfaced_effects("/p", printed)
-    assert got.surfaced == (("request", "/p", "q-1", None),
-                            ("verdict", "/p", "q-3", "ev1"))
+    assert got.surfaced == (Surfaced("request", "/p", "q-1", None),
+                            Surfaced("verdict", "/p", "q-3", "ev1"))
     assert effects_commit.surfaced_effects(None, printed) == Effects.none()
     assert effects_commit.surfaced_effects("/p", None) == Effects.none()
 
@@ -336,3 +337,54 @@ def test_hermes_pre_llm_call_records_no_usage(tmp_checkpoint_dir,
                              conversation_history=[], is_first_turn=True,
                              model="m", platform="cli")
     assert out and "context" in out
+
+
+# ---- every host goes through the seam ----
+
+
+def _calls(tree, name):
+    import ast
+    return [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+            and ((isinstance(n.func, ast.Attribute) and n.func.attr == name)
+                 or (isinstance(n.func, ast.Name) and n.func.id == name))]
+
+
+def test_every_host_entry_point_goes_through_effects_commit():
+    """One census: the CLI verbs are wrapped by `committing`, the MCP
+    handlers by `_tool` (which commits in a finally), and Hermes commits its
+    pending effects in a finally."""
+    import ast
+    from pathlib import Path
+
+    import daimon_briefing as pkg
+    root = Path(pkg.__file__).parent
+
+    def tree(rel):
+        return ast.parse((root / rel).read_text(encoding="utf-8"))
+
+    def decorated(rel, names, deco):
+        t = tree(rel)
+        got = {n.name for n in ast.walk(t) if isinstance(n, ast.FunctionDef)
+               and any(ast.unparse(d) == deco for d in n.decorator_list)}
+        assert set(names) <= got, (rel, set(names) - got)
+
+    decorated("cli/brief.py", ["_cmd_brief"], "effects_commit.committing")
+    decorated("cli/lifecycle.py", ["_cmd_loops"], "effects_commit.committing")
+    decorated("cli/status.py", ["_cmd_status"], "effects_commit.committing")
+    decorated("cli/projects.py", ["_cmd_projects"], "effects_commit.committing")
+    mcp = tree("mcp_tools.py")
+    for name, tool in (("_recall", "recall"), ("_brief", "brief"),
+                       ("_projects", "projects"), ("_status", "status"),
+                       ("_requests_inbox", "requests_inbox")):
+        fn = next(n for n in mcp.body
+                  if isinstance(n, ast.FunctionDef) and n.name == name)
+        assert [ast.unparse(d) for d in fn.decorator_list] == [
+            f"_tool('{tool}')"], name
+    assert any(_calls(mcp, "commit"))
+    for rel, fn_name in (("hooks.py", "pre_llm_call"),):
+        fn = next(n for n in ast.walk(tree(rel))
+                  if isinstance(n, ast.FunctionDef) and n.name == fn_name)
+        tries = [n for n in ast.walk(fn) if isinstance(n, ast.Try)
+                 and n.finalbody and any(_calls(ast.Module(b, []), "commit")
+                                         for b in n.finalbody)]
+        assert tries, f"{rel}:{fn_name} does not commit in a finally"
