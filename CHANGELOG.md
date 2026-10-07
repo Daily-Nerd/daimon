@@ -5,6 +5,34 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.53.0](https://github.com/Daily-Nerd/daimon/compare/v0.52.0...v0.53.0) (2026-10-07)
+
+
+### Features
+
+* **briefing:** every briefing host reads through the view ([#1151](https://github.com/Daily-Nerd/daimon/issues/1151)) ([ce85c6c](https://github.com/Daily-Nerd/daimon/commit/ce85c6cb7f97200ef09a0e5a18251aaa7f795a83))
+* **effects:** read verbs commit usage, stamps and ledger rows after their output ([#1154](https://github.com/Daily-Nerd/daimon/issues/1154)) ([bcf7a5c](https://github.com/Daily-Nerd/daimon/commit/bcf7a5cf4cb49b03ec9868f63861b24156777b96))
+* **jsonl:** one append path for every ledger, with a torn-tail heal and a lock ([#1145](https://github.com/Daily-Nerd/daimon/issues/1145)) ([4248586](https://github.com/Daily-Nerd/daimon/commit/4248586069a4cc9e6fb143227c72475993931fd7))
+* **ledger:** add daimon ledger repair and the quarantine sidecar ([#1143](https://github.com/Daily-Nerd/daimon/issues/1143)) ([952b623](https://github.com/Daily-Nerd/daimon/commit/952b62377228d2af664496e4ec200498a99d2b3f))
+* **status:** report ledger health and forgotten values still on disk ([#1141](https://github.com/Daily-Nerd/daimon/issues/1141)) ([408325a](https://github.com/Daily-Nerd/daimon/commit/408325a879c8f5a71b10db48c4f8420ace100ce3))
+* **view:** status --suppressed and projects read through the view, and daimon owns its briefing format ([#1152](https://github.com/Daily-Nerd/daimon/issues/1152)) ([a12b574](https://github.com/Daily-Nerd/daimon/commit/a12b574ae0e8d8f27f8a7f307fddb83ed6aa1be3))
+* **view:** the read view, with classify, live and typed withheld results ([#1149](https://github.com/Daily-Nerd/daimon/issues/1149)) ([1ca2b1b](https://github.com/Daily-Nerd/daimon/commit/1ca2b1b4079b78264e2f3a713a39aa0c34c5ca54))
+
+
+### Bug Fixes
+
+* **briefing:** one allocation model for every briefing host ([#1133](https://github.com/Daily-Nerd/daimon/issues/1133)) ([3619c00](https://github.com/Daily-Nerd/daimon/commit/3619c00b32071c9ac9c13cf03337e508f55bf533))
+* **briefing:** show the evidence quote as a bounded span ([#1136](https://github.com/Daily-Nerd/daimon/issues/1136)) ([c49931f](https://github.com/Daily-Nerd/daimon/commit/c49931f3efafa1148b4ea366981b83b71ed04094))
+* **decide:** bound every queue headline through one display helper ([#1135](https://github.com/Daily-Nerd/daimon/issues/1135)) ([22805b8](https://github.com/Daily-Nerd/daimon/commit/22805b8d6b0f0145a2bd6cde55225b49a312ffe0))
+* **decide:** compose a readable headline for amendment rows ([#1125](https://github.com/Daily-Nerd/daimon/issues/1125)) ([e53b285](https://github.com/Daily-Nerd/daimon/commit/e53b28521ca7db70afcb9590e455daf33f625381))
+* **display:** route the remaining hand-copied cuts through one helper ([#1137](https://github.com/Daily-Nerd/daimon/issues/1137)) ([b54cea2](https://github.com/Daily-Nerd/daimon/commit/b54cea2ef023fbd30e115fa58fe8de236a9da798))
+* **forget:** extend forget to quarantine records ([#1142](https://github.com/Daily-Nerd/daimon/issues/1142)) ([4eb729a](https://github.com/Daily-Nerd/daimon/commit/4eb729a6f067e3b8dcbb23ec0029bb58f91f53f7))
+* **ledger:** scope the dry-run scratch store to the calling context ([#1144](https://github.com/Daily-Nerd/daimon/issues/1144)) ([a417fa4](https://github.com/Daily-Nerd/daimon/commit/a417fa458b6eb4bb61c46e4a84077d311491e097))
+* **ledger:** split ledger rows on newline only so forget and migration stop losing rows ([#1139](https://github.com/Daily-Nerd/daimon/issues/1139)) ([2778beb](https://github.com/Daily-Nerd/daimon/commit/2778beb8711c03151bbda6f67f0cd08a8fe2ea4f))
+* **loops:** show age and stale marker, add --stale, point briefing notes at it ([#1134](https://github.com/Daily-Nerd/daimon/issues/1134)) ([6f0faee](https://github.com/Daily-Nerd/daimon/commit/6f0faee1666e56fc5828f89ce74fbcc767b89f5a))
+* **request:** bound the ask shown as a title and in hook injection ([#1130](https://github.com/Daily-Nerd/daimon/issues/1130)) ([d08dcb4](https://github.com/Daily-Nerd/daimon/commit/d08dcb4ab2c905d458e9ef72d365e3ce329cf4a5))
+* **surfaces:** one ledger registry, and policy tombstones survive a bucket migration ([#1140](https://github.com/Daily-Nerd/daimon/issues/1140)) ([0af13b6](https://github.com/Daily-Nerd/daimon/commit/0af13b605f5ca9a6723f96e48391741982a4575b))
+
 ## [0.52.0](https://github.com/Daily-Nerd/daimon/compare/v0.51.0...v0.52.0) (2026-10-01)
 
 
