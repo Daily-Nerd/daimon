@@ -217,9 +217,28 @@ def _bucket(project):
 def forgotten_keys() -> frozenset:
     """The machine-wide forgotten set, the one `snapshot` reads: every local
     project's tombstones plus what teammates published. Memoized in `store`,
-    so a caller that needs it for many buckets (`peek_topic`) asks once."""
+    so a caller that needs it for many buckets (`visible_topic`) asks once."""
     return frozenset(store.all_forgotten_content_keys()
                      | store.foreign_forgotten_content_keys())
+
+
+def _trust_index(project, read: jsonl.Read) -> tuple:
+    """`(quarantine_ids, health, detail)` for one bucket's trust ledger: the
+    active quarantines as `{(kind, value_key): quarantine_id}`, and what the
+    ledger is. `read` is `jsonl.read` of trust.jsonl; a fold that raises marks
+    the ledger UNREADABLE, which closes the view. The one place the quarantine
+    rule and that closing rule live, for `snapshot` and `_light` alike; the
+    fold is `trust.records`, never a copy of it."""
+    health, detail = read.health, read.detail
+    try:
+        records = trust.records(project_dir=project)
+    except Exception as exc:  # noqa: BLE001 — a fold's raise is a health state
+        records = {}
+        health, detail = Health.UNREADABLE, f"fold raised {type(exc).__name__}"
+    ids = {(r["kind"], r["value_key"]): r["quarantine_id"]
+           for r in records.values()
+           if r.get("state") == "active" and r.get("value_key")}
+    return ids, health, detail
 
 
 def snapshot(project) -> Snapshot:
@@ -252,12 +271,10 @@ def snapshot(project) -> Snapshot:
                          lambda: store.fold_resolutions(rows), {})
     corroborations = folded("events.jsonl",
                             lambda: store.fold_corroborations(rows), {})
-    records = folded("trust.jsonl",
-                     lambda: trust.records(project_dir=project), {})
-    active = [r for r in records.values()
-              if r.get("state") == "active" and r.get("value_key")]
-    quarantine_ids = {(r["kind"], r["value_key"]): r["quarantine_id"]
-                      for r in active}
+    quarantine_ids, health["trust.jsonl"], detail = _trust_index(
+        project, reads["trust.jsonl"])
+    if detail:
+        details["trust.jsonl"] = detail
     amend = folded(
         "amendments.jsonl",
         lambda: amendments.render_groups(
@@ -283,36 +300,30 @@ def snapshot(project) -> Snapshot:
 
 def _light(slug, forgotten) -> Snapshot:
     """A snapshot with only what `classify` reads: the forgotten set the
-    caller holds, this bucket's active quarantines and `closed`. A trust
-    ledger that is UNREADABLE, or whose fold raises, closes it, exactly as in
-    `snapshot`. The fold is `trust.records`, never a copy of it."""
+    caller holds, this bucket's active quarantines and `closed`, from the same
+    `_trust_index` step `snapshot` uses."""
     bucket = _bucket(slug)
     if bucket is None:
         return dataclasses.replace(Snapshot.empty(), forgotten=forgotten)
-    try:
-        closed = jsonl.read(bucket / "trust.jsonl").health is Health.UNREADABLE
-        records = {} if closed else trust.records(project_dir=slug)
-    except Exception:  # noqa: BLE001 — a fold's raise is a health state
-        closed, records = True, {}
-    active = [r for r in records.values()
-              if r.get("state") == "active" and r.get("value_key")]
-    ids = {(r["kind"], r["value_key"]): r["quarantine_id"] for r in active}
+    ids, health, _detail = _trust_index(
+        slug, jsonl.read(bucket / "trust.jsonl"))
     return dataclasses.replace(
         Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
-        quarantine_ids=_frozen(ids), closed=closed)
+        quarantine_ids=_frozen(ids), closed=health is Health.UNREADABLE)
 
 
-def peek_topic(slug, *, forgotten) -> str | None:
-    """The bucket's active topic text as a reader may see it, else None.
-    None covers no bucket, no checkpoint, no topic and every withheld case
-    (forgotten, quarantined, trust ledger unreadable), so a hidden topic reads
-    as an absent one. `forgotten` is `forgotten_keys()`, computed once by a
-    caller that lists many buckets. Equal to the active topic of
-    `open(slug, live=False)`, at the cost of two small ledger reads instead of
-    a whole snapshot. Never raises for data health."""
-    got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
-                                 admit=store.Admit.ANY)
-    topic = ((got or {}).get("working_context") or {}).get("active_topic")
+def visible_topic(checkpoint, slug, *, forgotten) -> str | None:
+    """The active topic text of a checkpoint the caller already holds, as a
+    reader of bucket `slug` may see it, else None. None covers no checkpoint,
+    no topic and every withheld case (forgotten, quarantined, trust ledger
+    unreadable), so a hidden topic reads as an absent one. `forgotten` is
+    `forgotten_keys()`, computed once by a caller that lists many buckets. It
+    classifies with `classify` over a light snapshot, so a listing pays one
+    small ledger read per bucket instead of a whole `snapshot`, and a row's
+    other fields and its topic come from the same read of the checkpoint.
+    Never raises for data health."""
+    topic = ((checkpoint or {}).get("working_context") or {}).get(
+        "active_topic")
     if not isinstance(topic, dict):
         return None
     if isinstance(classify(_TOPIC_FIELD, topic, _light(slug, forgotten)),
@@ -320,6 +331,14 @@ def peek_topic(slug, *, forgotten) -> str | None:
         return None
     text = topic.get("text")
     return text if isinstance(text, str) else None
+
+
+def peek_topic(slug, *, forgotten) -> str | None:
+    """`visible_topic` of the bucket's latest checkpoint, read here. Equal to
+    the active topic of `open(slug, live=False)`."""
+    got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
+                                 admit=store.Admit.ANY)
+    return visible_topic(got, slug, forgotten=forgotten)
 
 
 # ---- classify / live ------------------------------------------------------

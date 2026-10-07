@@ -105,6 +105,36 @@ def test_a_trust_fold_that_raises_fails_closed(tmp_checkpoint_dir, monkeypatch):
     assert view.peek_topic(slug, forgotten=frozenset()) is None
 
 
+def test_visible_topic_classifies_the_checkpoint_it_is_handed(
+        tmp_checkpoint_dir):
+    slug = _write("/p/peek-v", "the weekly sync cadence")
+    held = {"working_context": {"active_topic": {"text": "held wording about the exporter"}}}
+    # the text is the held checkpoint's, not the stored one
+    assert view.visible_topic(held, slug, forgotten=frozenset()) == (
+        "held wording about the exporter")
+    assert view.visible_topic(None, slug, forgotten=frozenset()) is None
+    _quarantine("/p/peek-v", "held wording about the exporter", kind="topic")
+    assert view.visible_topic(held, slug, forgotten=frozenset()) is None
+
+
+def test_projects_rows_reads_each_checkpoint_once(
+        tmp_checkpoint_dir, monkeypatch):
+    """A row's fields and its topic come from the one read `list_buckets`
+    made: the view is handed that body, never asked to read it again."""
+    from daimon_briefing import cli
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write("/p/peek-one", "the weekly sync cadence")
+    _write("/p/peek-two", "another topic text")
+
+    def boom(*_a, **_k):
+        raise AssertionError("projects_rows re-read a checkpoint")
+
+    monkeypatch.setattr(store, "read_latest_body", boom)
+    rows = {r["slug"]: r["topic"] for r in cli.projects_rows(None)}
+    assert rows[store.project_slug("/p/peek-one")] == "the weekly sync cadence"
+    assert rows[store.project_slug("/p/peek-two")] == "another topic text"
+
+
 def test_the_light_snapshot_of_no_bucket_keeps_the_forgotten_set():
     got = view._light("", frozenset({"k"}))
     assert got.forgotten == frozenset({"k"})
@@ -207,7 +237,7 @@ def test_projects_lists_a_torn_bucket_without_peeking(
     def boom(*_a, **_k):
         raise AssertionError("a torn bucket has no topic to peek")
 
-    monkeypatch.setattr(view, "peek_topic", boom)
+    monkeypatch.setattr(view, "visible_topic", boom)
     rc, out = _projects(capsys, "--json")
     assert rc == 0 and "-p-torn" in out.out
 
@@ -220,7 +250,7 @@ def test_projects_fails_closed_when_the_peek_raises(
     def boom(*_a, **_k):
         raise RuntimeError("peek")
 
-    monkeypatch.setattr(view, "peek_topic", boom)
+    monkeypatch.setattr(view, "visible_topic", boom)
     rc, out = _projects(capsys)
     assert rc == 2
     assert out.out == ""
@@ -236,6 +266,6 @@ def test_the_mcp_projects_tool_raises_when_the_peek_raises(
     def boom(*_a, **_k):
         raise RuntimeError("peek")
 
-    monkeypatch.setattr(view, "peek_topic", boom)
+    monkeypatch.setattr(view, "visible_topic", boom)
     with pytest.raises(mcp_tools.ToolError):
         mcp_tools._projects({})

@@ -39,7 +39,7 @@ def projects_rows(project_arg=None) -> list:
     assembler for `daimon projects --json` AND the MCP projects tool (#261) —
     two consumers, one shape. Torn buckets show with unknown fields rather
     than vanish: hiding one would read as "no such project". The topic is the
-    view's call (`view.peek_topic`): a forgotten, quarantined or unverifiable
+    view's call (`view.visible_topic`): a forgotten, quarantined or unverifiable
     one is None, the same as no topic at all."""
     cur_slug = store.project_slug(_cli._resolve_project(project_arg))
     rows = []
@@ -55,7 +55,8 @@ def projects_rows(project_arg=None) -> list:
         if b["checkpoint"] is not None:
             if forgotten is None:
                 forgotten = view.forgotten_keys()
-            topic = view.peek_topic(b["slug"], forgotten=forgotten)
+            topic = view.visible_topic(b["checkpoint"], b["slug"],
+                                       forgotten=forgotten)
         name = cp.get("project_name")
         rows.append({
             "slug": b["slug"],
