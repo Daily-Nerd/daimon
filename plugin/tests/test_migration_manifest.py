@@ -35,8 +35,6 @@ MANIFEST = {
     # route and the same admit frame.
     ("cli/action_recall.py", "_cmd_action_recall", "read_latest_body",
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
-    ("cli/status.py", "_print_suppressed", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
     ("cli/status.py", "_cmd_verify_receipt", "read_latest_body",
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.OWN_OR_UNROUTED"),
     ("cli/amend.py", "_cmd_amend_propose", "read_latest_body",

@@ -159,6 +159,33 @@ class Opened:
 
 
 @dataclass(frozen=True)
+class Resolved:
+    """A loop a resolution closed: the item as the checkpoint holds it, its
+    field and the closing event. Only a value the reader may see."""
+
+    item: dict
+    field: schema.ItemField
+    event: dict
+
+
+@dataclass(frozen=True)
+class Suppression:
+    """What `status --suppressed` lists. `resolved` are closed loops;
+    `withheld` are quarantined values (identity and reason, never text; a
+    forgotten value is in neither list and in no count); `closed` counts what
+    is hidden because the trust ledger cannot be read (nothing is listed,
+    nothing can be proven not quarantined); `candidates` are the #14
+    `(list key, item, event)` supersede suggestions, which are not
+    resolutions; `notes` are the ledger-health lines."""
+
+    resolved: tuple
+    withheld: tuple
+    closed: int
+    candidates: tuple
+    notes: tuple
+
+
+@dataclass(frozen=True)
 class Found:
     item: dict
     field: schema.ItemField
@@ -556,3 +583,30 @@ def match(project, query: str) -> Match:
         else:
             hits.append(Found(item, fld, (_occurrence(raw),)))
     return Match(tuple(hits), withheld)
+
+
+def suppressed(project, now: float) -> Suppression:
+    """The project's own suppressed items, for `status --suppressed`. Built on
+    `open(live=False)`: what `open` withholds is the quarantined list (and the
+    `closed` count), what it keeps and `closing_event` closes is the resolved
+    list, and the #14 candidates come from `briefing.stamp` over the opened
+    checkpoint, so a withheld item is never one. A forgotten value is dropped
+    by `open` and reported nowhere. `briefing` is imported inside the
+    function, as in `Snapshot.fuzzy_events`."""
+    from . import briefing
+    opened = open(project, live=False, route=store.Route.OWN)
+    snap = opened.snapshot
+    resolved = []
+    candidates: tuple = ()
+    if opened.checkpoint is not None:
+        for fld, item in schema.iter_items(opened.checkpoint):
+            event = None if fld.singleton else closing_event(item, snap)
+            if event is not None:
+                resolved.append(Resolved(item, fld, event))
+        candidates = tuple(
+            briefing.stamp(opened.checkpoint, snap, now, with_stale=False)[1])
+    return Suppression(
+        tuple(resolved),
+        tuple(w for w in opened.withheld if w.reason == "quarantine"),
+        sum(w.reason == "closed" for w in opened.withheld),
+        candidates, snap.notes())

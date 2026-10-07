@@ -565,7 +565,6 @@ KNOWN_LEAKS: set = {
     *{("cli:ruling retire", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling revise", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling show", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:status", k) for k in ("question",)},
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("cli:why", k) for k in ("question",)},
@@ -755,6 +754,7 @@ CONVERTED = {
     "cli:brief": ("cli/brief.py", PREPARE),
     "cli:loops": ("cli/lifecycle.py", PREPARE),
     "cli:projects": ("cli/projects.py", PEEK),
+    "cli:status": ("cli/status.py", frozenset({"suppressed"})),
     "mcp:daimon_brief": ("mcp_tools.py", PREPARE),
     "mcp:daimon_projects": ("cli/projects.py", PEEK),
     "hook:pre_llm_call": ("hooks.py", PREPARE),
@@ -763,6 +763,12 @@ CONVERTED = {
 # Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
 # 7a onward deletes entries as readers convert; an empty set is the goal.
 UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED)
+
+
+# Cases of a converted surface that never read a checkpoint item: the status
+# payload carries counts and health, never an item's text (only the
+# `--suppressed` listing reads items), so there is no view call to fail.
+NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json")}
 
 
 def _calls_view(rel, names):
@@ -806,7 +812,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
     # raise point that is never reached (no buckets) would pass vacuously
     pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
     for surface, tag in CASES:
-        if surface not in converted:
+        if surface not in converted or (surface, tag) in NO_ITEM_READ:
             continue
         _found, results = drive_case(surface, tag, world, pristine)
         for label, res in results:
