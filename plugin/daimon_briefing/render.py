@@ -181,51 +181,60 @@ def render_handoff(handoff) -> None:
     _print_handoff(handoff)
 
 
-def _no_checkpoint_lines(project_dir, worldcheck_project):
+def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
+                         notes=()):
     """The day-one skeleton-only body (#693/#694) shared by every render
     path when there is no checkpoint yet: a standing ruling, an addressed
     request, or a decided verdict can exist before the first checkpoint
     does, and must still reach the reader. Returns the block list AND the
     fixed pointer line, so callers can compose or print them as needed. No
     droppable structure here, so #1044's byte ceiling does not apply to it."""
-    rulings = (briefing.ruling_lines(project_dir)
+    mask = briefing.prose_mask(snap)
+    rulings = (briefing.ruling_lines(project_dir, snap=snap)
               if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel, not rulings — absent on
     # --slug and the global-pointer-fallback body.
     decision_count = (briefing.decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
     decision_count_block = [decision_count] if decision_count else []
-    request_lines = (briefing.request_panel_lines(worldcheck_project)
+    request_lines = (briefing.request_panel_lines(worldcheck_project, mask=mask)
                      if worldcheck_project is not None else [])
-    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
+    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project, mask=mask)
                      if worldcheck_project is not None else [])
-    owed_lines = (briefing.owed_panel_lines(worldcheck_project)
+    owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
-    blocks = [blk for blk in (rulings, decision_count_block, request_lines,
-                              verdict_lines, owed_lines) if blk]
+    closed = snap is not None and snap.closed
+    blocks = [blk for blk in ([briefing.GREETING] if closed else [],
+                              list(notes), rulings, decision_count_block,
+                              request_lines, verdict_lines, owed_lines)
+              if blk]
     # Point at the real flow (#29): checkpoints come from the hooks; bare
     # `serialize` dead-ends (it needs a transcript path).
     pointer = ("No checkpoint yet — nothing to brief. Checkpoints are written "
               "automatically at session end; to backfill one manually, run "
               "`daimon serialize <transcript>`.")
+    if closed:
+        # #1132 PR 7a: the checkpoint exists; its items are withheld.
+        pointer = briefing.CLOSED_LINE
     return blocks, pointer
 
 
-def _panel_lines(project_dir, worldcheck_project):
+def _panel_lines(project_dir, worldcheck_project, snap=None):
     """The four skeleton panels (rulings, decision count, request, verdict,
     owed) computed once, shared by every render path once a checkpoint
     exists. Kept as one seam so the rich, plain, and byte-budgeted plain
     branches read the same ledgers the same way (#693/#694)."""
-    rulings = (briefing.ruling_lines(project_dir)
+    mask = briefing.prose_mask(snap)
+    rulings = (briefing.ruling_lines(project_dir, snap=snap)
               if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel, not rulings.
     decision_count = (briefing.decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
-    request_lines = (briefing.request_panel_lines(worldcheck_project)
+    request_lines = (briefing.request_panel_lines(worldcheck_project, mask=mask)
                      if worldcheck_project is not None else [])
-    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project)
+    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project, mask=mask)
                      if worldcheck_project is not None else [])
-    owed_lines = (briefing.owed_panel_lines(worldcheck_project)
+    owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
     return rulings, decision_count, request_lines, verdict_lines, owed_lines
 
@@ -259,7 +268,8 @@ def _card_ids(worldcheck_project) -> dict:
 
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None, worldcheck_project=None,
-                 trailer=None, loops_pointer: bool = True) -> dict:
+                 trailer=None, loops_pointer: bool = True, snap=None,
+                 notes=()) -> dict:
     """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
     `project_dir` — the incoming-request panel's AND the sender-side
     verdict panel's `worldcheck_project` pattern (D2), never keyed on
@@ -302,7 +312,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # route) skips the read entirely; an unknown project resolves to no
         # ledger path anyway, so the guard saves the call, not a leak.
         if b is None:
-            blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project)
+            blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project, snap, notes)
             if blocks:
                 # #693/#694: standing rulings, addressed requests, and
                 # decided verdicts exist before the first checkpoint does —
@@ -325,18 +335,19 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             # return: `b` is non-None here, so render() always yields text.
             print(briefing.render(checkpoint, project_dir=project_dir,
                                   worldcheck_project=worldcheck_project,
-                                  loops_pointer=loops_pointer))
+                                  loops_pointer=loops_pointer, snap=snap,
+                                  notes=notes))
             _print_drift(drift)
             _print_teammates(teammates)
             _print_trailer(trailer)
             return _card_ids(worldcheck_project)
         rulings, decision_count, request_lines, verdict_lines, owed_lines = (
-            _panel_lines(project_dir, worldcheck_project))
+            _panel_lines(project_dir, worldcheck_project, snap))
         # #204: degrade verbatim labels when the receipt can't be locally
         # confirmed. Cheap check (sidecar + byte match).
         degraded = briefing.receipt_degraded(checkpoint)
         _rich_brief(b, degraded, rulings, request_lines, verdict_lines,
-                    owed_lines, decision_count, loops_pointer)
+                    owed_lines, decision_count, loops_pointer, notes)
         _print_drift(drift)
         _print_teammates(teammates)
         _print_trailer(trailer)
@@ -347,7 +358,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     handoff_text = _format_handoff(handoff)
     b = briefing.build(checkpoint)
     if b is None:
-        blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project)
+        blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project, snap, notes)
         text = handoff_text
         if blocks:
             text += "\n\n".join("\n".join(blk) for blk in blocks) + "\n\n"
@@ -366,7 +377,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # request panels all ride inside.
         body = briefing.render(checkpoint, project_dir=project_dir,
                                worldcheck_project=worldcheck_project,
-                               loops_pointer=loops_pointer)
+                               loops_pointer=loops_pointer, snap=snap,
+                               notes=notes)
         # `b` is non-None here, so `briefing.render` always returns text (its
         # own docstring's invariant): narrows `str | None` for the concat below.
         assert body is not None
@@ -375,7 +387,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
              end="")
         return _card_ids(worldcheck_project)
     rulings, decision_count, request_lines, verdict_lines, owed_lines = (
-        _panel_lines(project_dir, worldcheck_project))
+        _panel_lines(project_dir, worldcheck_project, snap))
     # #204: degrade verbatim labels when the receipt can't be locally
     # confirmed. Cheap check (sidecar + byte match).
     degraded = briefing.receipt_degraded(checkpoint)
@@ -391,7 +403,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         request_lines=request_lines, verdict_lines=verdict_lines,
         owed_lines=owed_lines, decision_count=decision_count,
         reserved=reserved, teammate_blocks=_teammate_blocks(teammates or ()),
-        teammate_header=_TEAMMATES_HEADER, loops_pointer=loops_pointer)
+        teammate_header=_TEAMMATES_HEADER, loops_pointer=loops_pointer,
+        notes=notes)
     body = briefing.render_selection(sel)
     briefing._log_render_size(body, sel.budget)
     print(handoff_text + version_text + body + "\n" + drift_text
@@ -448,7 +461,7 @@ def _print_drift(drift) -> None:
 def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 request_lines=(), verdict_lines=(), owed_lines=(),
                 decision_count: str | None = None,
-                loops_pointer: bool = True) -> None:
+                loops_pointer: bool = True, notes=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -458,6 +471,9 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
     if degraded:
         # One header note (#204), parity with the plain path's embedded note.
         console.print(Text(briefing.DEGRADE_NOTE, style="bold red"))
+    for note in notes:
+        # #1132 PR 7a: ledger-health notes, parity with the plain head.
+        console.print(Text(note, style="bold yellow"))
     if rulings:
         # #693: parity with the plain path's top section — same lines, same
         # order (rulings[0] is the header, promoted to the panel title).

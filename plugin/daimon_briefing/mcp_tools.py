@@ -87,18 +87,31 @@ def _brief(arguments: dict) -> str:
     # Strictly scoped read (#94): never the global pointer. A named slug is
     # passed straight through; otherwise the resolved project's own bucket.
     target = slug if slug else cli._resolve_project(project_arg)
-    # #693: one strictly-scoped ledger read serves every return below —
-    # standing rulings exist before the first checkpoint does, so both
-    # no-content returns carry them too.
-    rulings = briefing.ruling_lines(target)
-    ruling_text = ("\n".join(rulings) + "\n\n") if rulings else ""
     # Route.OWN is a DECISION here, not a leftover: an agent tool result
     # carrying another project's briefing is contamination, and a pre-routing
     # store stays read-only for project-scoped surfaces — an un-routed body
     # would hand the agent handles no scoped write could act on.
-    checkpoint = store.read_latest_body(project_dir=target, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
-    if checkpoint is None:
+    # #1132 PR 7a: the same preparation the CLI and Hermes run (the view, the
+    # #268 witness count on the same strictly-scoped target, stale marks), so
+    # an agent consumer reads the world the human brief states. No
+    # worldcheck here: only the CLI same-project path sets that gate. A view
+    # that cannot be built is a tool error, never an unfiltered briefing.
+    now = time.time()
+    try:
+        annotated = briefing.prepare(target, now, route=store.Route.OWN)
+    except Exception as exc:
+        raise ToolError("the briefing could not be prepared "
+                        f"({type(exc).__name__})") from exc
+    notes = annotated.notes
+    snap = annotated.snapshot
+    # #693: one strictly-scoped ledger read serves every return below —
+    # standing rulings exist before the first checkpoint does, so both
+    # no-content returns carry them too.
+    rulings = briefing.ruling_lines(target, snap=snap)
+    ruling_text = "\n".join([*notes, *rulings])
+    ruling_text = ruling_text + "\n\n" if ruling_text else ""
+    filtered = annotated.checkpoint
+    if filtered is None:
         # Orientation without content: name the explicit path, leak nothing
         # (#96, machine edition — an agent tool result carrying another
         # project's briefing is contamination, not convenience).
@@ -111,15 +124,11 @@ def _brief(arguments: dict) -> str:
                 "no projects have checkpoints yet — the first serialized "
                 "session creates one.")
         return f"{ruling_text}no checkpoint for this project. {hint}"
-    # #1128: the same shared annotation step the CLI and Hermes run (withhold,
-    # the #268 witness count on the same strictly-scoped target, stale marks),
-    # so an agent consumer reads the world the human brief states. No
-    # worldcheck here: only the CLI same-project path sets that gate.
-    now = time.time()
-    filtered = briefing.annotate(
-        checkpoint, briefing.AnnotateContext(route=target), now).checkpoint
     b = briefing.build(filtered)
     if b is None:
+        if snap.closed:
+            return (f"{briefing.GREETING}\n\n{ruling_text}"
+                    f"{briefing.CLOSED_LINE}")
         return f"{ruling_text}checkpoint exists but has nothing worth surfacing."
     # Deterministic render only over MCP — the opt-in LLM re-render is a
     # human-display affordance, and a machine consumer wants stable bytes.
@@ -127,7 +136,8 @@ def _brief(arguments: dict) -> str:
     # this same project: never for a named slug or a foreign --project.
     return briefing.render_plain(
         b, briefing.receipt_degraded(filtered), rulings,
-        loops_pointer=not slug and cli.loops_lists_project(target))
+        loops_pointer=not slug and cli.loops_lists_project(target),
+        notes=notes)
 
 
 def _projects(arguments: dict) -> str:

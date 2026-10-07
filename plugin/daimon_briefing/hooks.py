@@ -217,39 +217,32 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # hosts that do not pass a cwd). The leak needs a KNOWN project. The
         # policy lives once, in briefing.injection_read_route, shared with the
         # recall-inject surface so the two cannot drift (#795).
-        checkpoint = store.read_latest_body(
-            project_dir=project,
-            route=briefing.injection_read_route(project),
-            admit=store.Admit.ANY)
-        if checkpoint is None:
+        # #1132 PR 7a: one preparation for every briefing host. `prepare`
+        # opens the checkpoint through the view (withheld values removed, an
+        # unreadable trust ledger closing it), resolved loops dropped, and the
+        # #268 witness count and stale marks stamped. Any raise from the view
+        # lands in the handler below: nothing is injected rather than an
+        # unfiltered briefing.
+        annotated = briefing.prepare(
+            project, time.time(), route=briefing.injection_read_route(project))
+        if annotated.checkpoint is None:
             # #693: standing rulings exist before the first checkpoint does —
             # a day-one ratification must reach the very next session.
-            rulings = briefing.ruling_lines(project)
-            return {"context": "\n".join(rulings)} if rulings else None
-        # Withhold (#103 I1): this in-process injection path used to render the
-        # RAW checkpoint, so a resolved item still auto-injected into every new
-        # session's context — `daimon brief` already suppressed it, this hook
-        # didn't. Same fail-open rule as _cmd_brief: any resolutions() failure
-        # falls back to the unfiltered checkpoint, never blocks injection. No
-        # withheld-count note here — this is context injection, not a human-
-        # facing brief, so suppression stays clean (no note to render).
-        # #1128: one shared annotation step (withhold, #268 witness count,
-        # stale marks), fail-open per step inside briefing.annotate, so the
-        # injected context carries the same marks the human brief does.
-        checkpoint = briefing.annotate(
-            checkpoint, briefing.AnnotateContext(route=project),
-            time.time()).checkpoint
+            rulings = briefing.ruling_lines(project, snap=annotated.snapshot)
+            lines = [*annotated.notes, *rulings]
+            return {"context": "\n".join(lines)} if lines else None
         # #693: rulings are scoped to the RESOLVED project (never the raw
-        # process cwd). Note read_latest above keeps its global fallback, so
+        # process cwd). Note the read above keeps its global fallback, so
         # the checkpoint may be another project's — the rulings are still
         # this project's own.
         # OWN_ELSE_GLOBAL may have served another project's checkpoint (the
         # body read does not say), so `daimon loops` is only pointed at when
         # the read was strictly this project's own.
         text = briefing.render(
-            checkpoint, project_dir=project,
+            annotated.checkpoint, project_dir=project,
             loops_pointer=(briefing.injection_read_route(project)
-                           is store.Route.OWN))
+                           is store.Route.OWN),
+            snap=annotated.snapshot, notes=annotated.notes)
         if not text:
             return None
         return {"context": text}

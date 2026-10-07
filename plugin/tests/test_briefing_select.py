@@ -126,7 +126,14 @@ def test_unbounded_budget_keeps_everything_but_the_cap(monkeypatch):
         assert len(sel.kept[s]) == sel.totals[s]
 
 
-def test_budget_sweep_invariants(monkeypatch):
+NOTES = ("⚠ events.jsonl is degraded (torn)",
+         "⚠ amendments.jsonl is unreadable (EIO)")
+
+
+@pytest.mark.parametrize("notes", [(), NOTES], ids=["no-notes", "notes"])
+def test_budget_sweep_invariants(monkeypatch, notes):
+    # #1132 PR 7a: the ledger-health notes are protected furniture, charged
+    # right after the greeting, so every invariant holds with them too.
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     b = _annotated_b()
     originals = {i["text"]: i for s in briefing._ITEM_SECTIONS
@@ -135,14 +142,16 @@ def test_budget_sweep_invariants(monkeypatch):
     saw_pressure = False
     previous_dropped = None
     prev_lowered = False
-    for budget in _budgets(b, rulings=RULINGS):
-        sel = _sel(b, budget, rulings=RULINGS)
+    for budget in _budgets(b, rulings=RULINGS, notes=notes):
+        sel = _sel(b, budget, rulings=RULINGS, notes=notes)
         text = briefing.render_selection(sel)
         # 0. deterministic: a pure function of its inputs
         assert text == briefing.render_selection(
-            _sel(b, budget, rulings=RULINGS))
+            _sel(b, budget, rulings=RULINGS, notes=notes))
         # 1. greeting first; protected items present
         assert text.splitlines()[0].startswith("While you were away")
+        if notes:
+            assert tuple(text.splitlines()[2:2 + len(notes)]) == notes
         for line in RULINGS:
             assert line in text
         assert "Active topic: the active topic" in text

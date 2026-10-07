@@ -153,12 +153,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "quote audit parses stored checkpoint files raw to check their bytes",
     ("daimon_briefing/cli/brief.py", "_cmd_anchor", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/brief.py", "_cmd_brief", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/brief.py", "_cmd_brief", "store.read_latest_result"):
-        "brief must LABEL a global fallback (scar 0058); moves onto view.open in PR 7",
-    ("daimon_briefing/cli/brief.py", "_team_briefings", "store.read_team"):
-        "team fan-in; moves onto view.team in PR 7",
     ("daimon_briefing/cli/history.py", "_read_pointer", "json.loads"):
         "diff and blame walk pointer files; moves onto view.chain in PR 7",
     ("daimon_briefing/cli/inject.py", "_cmd_recall_inject", "store.read_latest_body"):
@@ -169,8 +163,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "forget binds its target across every surface copy",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.read_latest_body"):
         "forget binds its target in the live checkpoint; view.match in PR 9",
-    ("daimon_briefing/cli/lifecycle.py", "_cmd_loops", "store.read_latest_body"):
-        "lists loops of the live checkpoint; view.open in PR 7",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_resolve", "store.read_latest_body"):
         "resolve binds its target in the live checkpoint; view.match in PR 9",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_reverify", "store.read_latest_body"):
@@ -187,8 +179,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "verifies the raw bytes a receipt binds",
     ("daimon_briefing/cli/status.py", "_print_suppressed", "store.read_latest_body"):
         "lists withheld items from the raw checkpoint; moves onto the view in PR 7",
-    ("daimon_briefing/hooks.py", "pre_llm_call", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/inspector.py", "_item_occurrences", "inspector._project_checkpoints"):
         "why walks every retained copy of an item; moves onto view.lookup in PR 7",
     ("daimon_briefing/inspector.py", "_legacy_source", "store.read_checkpoint"):
@@ -197,8 +187,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "enumerates every pointer and session copy; moves onto view.chain in PR 7",
     ("daimon_briefing/inspector.py", "_read_checkpoint", "json.loads"):
         "parses each retained copy; moves onto view.chain in PR 7",
-    ("daimon_briefing/mcp_tools.py", "_brief", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/receipts.py", "_ensure_pubkey", "json.loads"):
         "receipt key file, not a bucket path",
     ("daimon_briefing/receipts.py", "_load_pubkey", "json.loads"):

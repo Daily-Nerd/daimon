@@ -1176,19 +1176,22 @@ def test_the_mcp_brief_surfaces_the_badge(tmp_checkpoint_dir):
 
 def test_the_brief_survives_an_unreadable_corroboration_fold(
         tmp_checkpoint_dir, monkeypatch, capsys):
-    # Same fail-open posture as withhold and worldcheck: the badge is an
-    # advisory annotation, and a briefing must never die over one.
+    # Same fail-open posture as worldcheck: the badge is an advisory
+    # annotation, and a briefing must never die over one. A fold that raises
+    # is a health state in the view's snapshot (#1132 PR 7a): the item still
+    # briefs, without the badge, and a note names the ledger.
     _corroborated_checkpoint()
 
     def _boom(*args, **kwargs):
         raise RuntimeError("events.jsonl is a smoking crater")
 
-    monkeypatch.setattr(store, "corroborations", _boom)
+    monkeypatch.setattr(store, "fold_corroborations", _boom)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["brief"]) == 0
     out = capsys.readouterr().out
     assert _TEXT in out            # the item still briefs
-    assert "corroborated" not in out
+    assert "corroborated" not in out.replace("events.jsonl", "")
+    assert "⚠ events.jsonl is unreadable" in out
 
 
 def test_a_torn_item_row_never_costs_its_neighbour_a_badge():

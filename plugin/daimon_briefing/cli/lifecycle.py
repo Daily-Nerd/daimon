@@ -808,9 +808,9 @@ def _cmd_loops(args) -> int:
     to pass to `daimon resolve`).
 
     Reuses the SAME item walk `_cmd_resolve` builds (schema.ITEM_LISTS over
-    the latest checkpoint) and the SAME withhold classification `daimon
-    status --suppressed` uses (briefing.withhold over store.resolutions) —
-    the resolved/live split must stay in exactly one place, or this listing
+    the latest checkpoint) and the SAME preparation the briefing runs
+    (briefing.prepare: the view's withheld and closed items, then the stamps)
+    — the resolved/live split must stay in exactly one place, or this listing
     could show an item the briefing itself would withhold (an agent would
     then "resolve" a ghost).
 
@@ -827,19 +827,22 @@ def _cmd_loops(args) -> int:
     # and be refused — every scoped WRITE is own-only, and a listing that
     # hands out handles nothing can act on is worse than an honest refusal.
     # (Making un-routed checkpoints adoptable is a feature, out of #795's scope.)
-    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
+    # #1132 PR 7a: the shared preparation (the view's withheld values and
+    # closed loops, amendments, corroboration, stale stamps), so the listing
+    # and the briefing cannot disagree about which items are open or stale.
+    now = time.time()
+    try:
+        annotated = briefing.prepare(project, now, route=store.Route.OWN)
+    except Exception as exc:  # noqa: BLE001 — reported, never listed around
+        print("error: the loops could not be listed "
+              f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
+        return 2
+    checkpoint = annotated.checkpoint
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to list")
         return 0
-    # #1128: the shared annotation step (withhold with amendments and
-    # quarantine, #691/#1109; corroboration; stale stamps), so the listing and
-    # the briefing cannot disagree about which items are stale. Fail-open per
-    # step inside annotate, same stance as _print_suppressed.
-    now = time.time()
-    annotated = briefing.annotate(
-        checkpoint, briefing.AnnotateContext(route=project), now)
-    checkpoint = annotated.checkpoint
+    if annotated.notes:
+        render.render_lifecycle_lines(list(annotated.notes))
     stale_ids = {id(i) for i in annotated.stale_items}
     rows = []
     for field in schema.ITEM_FIELDS:

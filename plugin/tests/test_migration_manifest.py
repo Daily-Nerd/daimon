@@ -28,10 +28,6 @@ MANIFEST = {
      "store.Route.OWN", "store.Admit.ANY"),
     ("cli/brief.py", "_cmd_anchor", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
-    ("cli/brief.py", "_cmd_brief", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
-    ("cli/brief.py", "_cmd_brief", "read_latest_result",
-     "store.Route.OWN_ELSE_GLOBAL", "store.Admit.ANY"),
     ("cli/inject.py", "_cmd_recall_inject", "read_latest_body",
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
     # #1031: the action surface excludes whatever the briefing carried on the
@@ -51,18 +47,15 @@ MANIFEST = {
      "store.Route.OWN", "store.Admit.ANY"),
     ("cli/lifecycle.py", "_cmd_reverify", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
-    ("cli/lifecycle.py", "_cmd_loops", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
-    ("hooks.py", "pre_llm_call", "read_latest_body",
-     "briefing.injection_read_route(project)", "store.Admit.ANY"),
-    ("mcp_tools.py", "_brief", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
     ("receipts.py", "status_line", "read_latest_body",
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.OWN_OR_UNROUTED"),
     ("store.py", "write_checkpoint", "read_own_stream_latest", None, None),
     # #1132 PR 6a: the read view reads the project's own latest only.
-    ("view.py", "open", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
+    # #1132 PR 7a: `open` takes the route as a parameter (default OWN) and
+    # reads through read_latest_result so the fell_back fact rides with it;
+    # the route each HOST asks for is pinned by PREPARE_MANIFEST below.
+    ("view.py", "open", "read_latest_result",
+     "route", "store.Admit.ANY"),
     ("view.py", "match", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
 }
@@ -138,3 +131,37 @@ def test_own_else_global_never_appears_in_own_only_modules():
                 if (isinstance(n, ast.Attribute) and n.attr == "OWN_ELSE_GLOBAL")
                 or (isinstance(n, ast.Name) and n.id == "OWN_ELSE_GLOBAL")]
         assert hits == [], f"{rel}:{hits} must stay own-route only"
+
+
+# #1132 PR 7a: the briefing hosts no longer call the store's scoped readers;
+# they ask `briefing.prepare` (through `_prepared` on the CLI) for a route, and
+# a wrong route here is the same silent #784 failure as a wrong route above.
+# (file, qualname, callee, route source): None when the call passes no route
+# (the default is the own route, or the caller hands in an `Opened`).
+PREPARE = {"prepare", "_prepared"}
+PREPARE_MANIFEST = {
+    ("briefing.py", "annotate", "prepare", None),
+    ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN"),
+    ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN_ELSE_GLOBAL"),
+    ("cli/brief.py", "_prepared", "prepare", "route"),
+    ("cli/brief.py", "_team_briefings", "prepare", None),
+    ("cli/lifecycle.py", "_cmd_loops", "prepare", "store.Route.OWN"),
+    ("hooks.py", "pre_llm_call", "prepare",
+     "briefing.injection_read_route(project)"),
+    ("mcp_tools.py", "_brief", "prepare", "store.Route.OWN"),
+}
+
+
+def _route_of_prepare(node, src):
+    route = _kw_src(node, "route", src)
+    if route is None and _callee(node) == "_prepared" and len(node.args) > 1:
+        route = ast.get_source_segment(src, node.args[1])
+    return route
+
+
+def test_every_prepare_call_matches_the_frozen_manifest():
+    found = {(rel, qual, _callee(node), _route_of_prepare(node, src))
+             for rel, qual, node, src in _walk(PREPARE)}
+    assert found == PREPARE_MANIFEST, (
+        f"missing: {sorted(PREPARE_MANIFEST - found, key=str)}\n"
+        f"unexpected: {sorted(found - PREPARE_MANIFEST, key=str)}")

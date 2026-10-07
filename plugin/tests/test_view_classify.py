@@ -337,3 +337,11 @@ def test_prose_verdict_can_leave_a_closed_snapshot_unmasked():
 def test_prose_withheld_is_prose_verdict_as_a_bool():
     assert view.prose_withheld("hello", _snap(closed=True)) is True
     assert view.prose_withheld("hello", view.Snapshot.empty()) is False
+
+
+def test_fuzzy_pool_is_the_texts_of_the_fuzzy_events():
+    evt = _evt("pipeline gate loop", text="release pipeline approval step")
+    snap = _res(**{"pipeline gate loop": evt,
+                   "o-aaaaaa": _evt("o-aaaaaa", text="an id-bearing loop")})
+    assert snap.fuzzy_events == (("release pipeline approval step", evt),)
+    assert snap.fuzzy_pool == ("release pipeline approval step",)

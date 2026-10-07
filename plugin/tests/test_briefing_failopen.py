@@ -54,34 +54,41 @@ def test_annotate_returns_a_non_checkpoint_untouched():
         assert out.worldcheck is None and out.ledger_rows == []
 
 
-def test_withhold_failing_costs_only_the_withhold(monkeypatch):
-    monkeypatch.setattr(briefing, "withhold", _boom)
+def test_a_resolution_fold_that_raises_is_a_health_state(monkeypatch):
+    """#1132 PR 7a: no try block hides it; the snapshot marks the ledger
+    UNREADABLE, the loops it would have closed stay open, and the rest of the
+    preparation still runs."""
+    monkeypatch.setattr(store, "fold_resolutions", _boom)
     out = _annotate()
-    assert out.withheld == [] and out.events == {}
+    assert out.withheld == () and len(out.events) == 0
+    assert out.notes and out.notes[0].startswith("⚠ events.jsonl is unreadable")
     assert round(_item(out)["_stale_carried_days"]) == 12   # the rest still ran
 
 
-def test_quarantine_read_failing_costs_only_the_withhold(monkeypatch):
-    monkeypatch.setattr(trust, "active_value_keys", _boom)
+def test_an_unreadable_trust_fold_closes_the_view_and_says_so(monkeypatch):
+    """The reverse of the old posture: a trust ledger that cannot be read can
+    no longer prove an item is not quarantined, so nothing is shown."""
+    monkeypatch.setattr(trust, "records", _boom)
     out = _annotate()
-    assert out.withheld == []
-    assert out.stale_items            # stale stamping is its own step
+    assert out.checkpoint["working_context"]["open_questions"] == []
+    assert out.notes and out.notes[0].startswith("⚠ trust.jsonl is unreadable")
+    assert out.stale_items == []
 
 
-def test_corroboration_failing_leaves_the_badge_absent(monkeypatch):
-    monkeypatch.setattr(briefing, "mark_corroborated", _boom)
+def test_a_corroboration_fold_that_raises_leaves_the_badge_absent(monkeypatch):
+    monkeypatch.setattr(store, "fold_corroborations", _boom)
     out = _annotate()
     assert "_corroborated" not in _item(out)
     assert out.stale_items            # later steps unaffected
+    assert out.notes[0].startswith("⚠ events.jsonl is unreadable")
 
 
-def test_stale_stamping_failing_leaves_the_mark_absent(monkeypatch):
+def test_a_stamping_bug_is_not_swallowed(monkeypatch):
+    """`prepare` has no try blocks around the stamps: a raise from them is a
+    bug the host reports (the CLI prints one error line and exits 2)."""
     monkeypatch.setattr(briefing, "stamp_stale_carried", _boom)
-    out = _annotate()
-    assert out.stale_items == []
-    assert "_stale_carried_days" not in _item(out)
-    text = briefing.render_plain(briefing.build(out.checkpoint))
-    assert "old carried claim" in text and "[? unverified]" not in text
+    with pytest.raises(RuntimeError):
+        _annotate()
 
 
 def test_worldcheck_failing_costs_only_the_worldcheck(monkeypatch):

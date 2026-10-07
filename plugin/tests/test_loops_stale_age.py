@@ -87,15 +87,15 @@ def test_loops_keeps_route_own(tmp_checkpoint_dir, capsys):
     assert "no checkpoint" in capsys.readouterr().out.lower()
 
 
-def test_loops_calls_the_shared_annotate_step(tmp_checkpoint_dir, monkeypatch, capsys):
+def test_loops_calls_the_shared_preparation(tmp_checkpoint_dir, monkeypatch, capsys):
     _write()
     seen = []
-    real = briefing.annotate
+    real = briefing.prepare
 
-    def _spy(cp, ctx, now):
-        seen.append(ctx.route)
-        return real(cp, ctx, now)
-    monkeypatch.setattr(briefing, "annotate", _spy)
+    def _spy(project, now, **kw):
+        seen.append(project)
+        return real(project, now, **kw)
+    monkeypatch.setattr(briefing, "prepare", _spy)
     assert cli.main(["loops", "--project", PROJECT]) == 0
     assert seen == [PROJECT]
 

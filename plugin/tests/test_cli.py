@@ -4199,13 +4199,13 @@ def test_cli_brief_team_header_only_path_withholds_and_says_so(
     assert "1 resolved item(s) withheld (a teammate's)" in out
 
 
-def test_team_briefings_fail_open_when_the_ledger_or_the_fold_raises(
+def test_team_briefings_with_an_events_fold_that_raises_withhold_nothing(
         tmp_checkpoint_dir, sample_checkpoint, monkeypatch, tmp_path):
-    """Same posture as the main path: an unreadable resolution ledger, or a
-    fold that raises, withholds nothing rather than dropping the section.
-    Exercised on the team builder itself, since the main brief path has
-    readers of its own for the same ledger."""
-    from daimon_briefing import briefing, store
+    """An events fold that raises is a health state (#1132 PR 7a): the
+    teammate item the reader resolved is not withheld by a ledger nobody
+    could read, and the section is not dropped."""
+    from daimon_briefing import store
+    from daimon_briefing.cli.brief import _TeamCounts
 
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
@@ -4216,39 +4216,38 @@ def test_team_briefings_fail_open_when_the_ledger_or_the_fold_raises(
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
                        project_dir=proj)
 
-    def failing_once(real):
-        # The team builder reads the ledger FIRST, before the fan-in, whose
-        # own tombstone reader calls the same function and is not this
-        # test's subject: raise on that first call only, then behave.
-        calls = [0]
+    real = store.fold_resolutions
+    calls = [0]
 
-        def wrapper(*a, **k):
-            calls[0] += 1
-            if calls[0] == 1:
-                raise RuntimeError("hand-edited ledger")
-            return real(*a, **k)
-        return wrapper
+    def failing_once(rows):
+        # The view's snapshot folds first, before the fan-in whose own
+        # tombstone reader folds the same ledger and is not this test's
+        # subject: raise on that first call only, then behave.
+        calls[0] += 1
+        if calls[0] == 1:
+            raise RuntimeError("hand-edited ledger")
+        return real(rows)
 
-    for target, name in ((store, "resolutions"), (briefing, "withhold")):
-        with monkeypatch.context() as m:
-            m.setattr(target, name, failing_once(getattr(target, name)))
-            withheld: list = []
-            sections = cli._team_briefings(proj, withheld)
-        assert [a for a, _ in sections] == ["grace"], name
-        texts = [d["text"] for d in sections[0][1]["decisions"]]
-        assert "Single-pass for Slice 1, chunking is Slice 2" in texts, (
-            f"{name} raising must fail open to showing the item")
-        assert withheld == [], name
+    with monkeypatch.context() as m:
+        m.setattr(store, "fold_resolutions", failing_once)
+        counts = _TeamCounts()
+        sections = cli._team_briefings(proj, counts)
+    assert [a for a, _ in sections] == ["grace"]
+    texts = [d["text"] for d in sections[0][1]["decisions"]]
+    assert "Single-pass for Slice 1, chunking is Slice 2" in texts, (
+        "an unreadable events fold must fail open to showing the item")
+    assert (counts.resolved, counts.quarantined) == (0, 0)
 
 
-def test_team_briefings_fail_open_when_the_quarantine_ledger_raises(
+def test_team_briefings_close_when_the_quarantine_ledger_cannot_be_read(
         tmp_checkpoint_dir, sample_checkpoint, monkeypatch, tmp_path):
-    """#1109: the READER's own trust.jsonl read is a separate try/except from
-    the resolutions one above — an unreadable quarantine ledger must fail
-    open the same way, withholding nothing rather than dropping the whole
-    teammate section. Uses a QUARANTINED (not resolved) item, so the failure
-    is provably what keeps it visible, not the resolutions pool."""
+    """#1132 PR 7a (reversing #1109's fail-open): the READER's own trust.jsonl
+    cannot be read, so nothing proves a teammate item is not quarantined and
+    none is shown: the whole teammate section drops. The liveness control is
+    the same store with a readable ledger, where only the quarantined item is
+    withheld."""
     from daimon_briefing import cli as cli_lib, store, trust
+    from daimon_briefing.cli.brief import _TeamCounts
 
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
@@ -4260,22 +4259,23 @@ def test_team_briefings_fail_open_when_the_quarantine_ledger_raises(
                   evidence=["issue:1109"], channel="cli-tty",
                   project_dir=proj)
 
+    # Liveness control: with the ledger readable, only that item is withheld.
+    counts = _TeamCounts()
+    sections = cli_lib._team_briefings(proj, counts)
+    texts = [d["text"] for d in sections[0][1]["decisions"]]
+    assert "Adopt the D-007 prompt for the serializer" not in texts
+    assert "Single-pass for Slice 1, chunking is Slice 2" in texts
+    assert counts.quarantined == 1
+
     def _boom(*a, **kw):
         raise RuntimeError("hand-edited ledger")
 
     with monkeypatch.context() as m:
-        m.setattr(cli_lib.trust_lib, "active_value_keys", _boom)
-        withheld: list = []
-        sections = cli_lib._team_briefings(proj, withheld)
-    assert [a for a, _ in sections] == ["grace"]
-    texts = [d["text"] for d in sections[0][1]["decisions"]]
-    assert "Adopt the D-007 prompt for the serializer" in texts
-    assert withheld == []
-
-    # Liveness control: with the ledger readable, the same item IS withheld.
-    sections = cli_lib._team_briefings(proj, [])
-    texts = [d["text"] for d in sections[0][1]["decisions"]]
-    assert "Adopt the D-007 prompt for the serializer" not in texts
+        m.setattr(cli_lib.trust_lib, "records", _boom)
+        counts = _TeamCounts()
+        sections = cli_lib._team_briefings(proj, counts)
+    assert sections == []
+    assert counts.quarantined == 0       # closed is not a quarantine count
 
 
 def test_cli_brief_team_withheld_note_counts_the_teammates_item(
@@ -6345,11 +6345,11 @@ def test_brief_no_stale_note_when_nothing_stale(
     assert "world-check" not in out
 
 
-def test_brief_fails_open_when_stale_carried_raises(
+def test_brief_renders_nothing_when_the_preparation_raises(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
-    # #215/#977 fail-open: a broken staleness classification must never take
-    # the briefing down with it: the brief still renders and exits clean,
-    # just without the budget line or the per-item unverified stamp.
+    # #1132 PR 7a: a bug in the preparation (here the stale stamping) is not
+    # swallowed into a briefing without its marks: one error line, rc 2, and
+    # nothing rendered. (The #215/#977 fail-open it replaces hid the bug.)
     from daimon_briefing import briefing, store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
 
@@ -6358,28 +6358,30 @@ def test_brief_fails_open_when_stale_carried_raises(
 
     monkeypatch.setattr(briefing, "stamp_stale_carried", _boom)
     rc = cli.main(["brief", "--project", "/repo/x"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "While you were away" in out
-    assert "world-check" not in out
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.count("\n") == 1
+    assert "could not be prepared (RuntimeError)" in captured.err
 
 
 def test_brief_fails_open_when_resolutions_raises(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     # #103: withhold machinery must never take the briefing down with it —
-    # a broken events.jsonl (or any resolutions() failure) still renders the
-    # full, unfiltered brief and exits clean.
+    # a events fold that raises still renders the brief (no loop is closed
+    # by a ledger nobody could read), exits clean, and says which ledger.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(store, "resolutions", _boom)
+    monkeypatch.setattr(store, "fold_resolutions", _boom)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "Chunk threshold for the serializer" in out
+    assert "⚠ events.jsonl is unreadable (fold raised RuntimeError)" in out
 
 
 def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
@@ -9478,17 +9480,19 @@ def test_loops_skips_idless_and_empty_text_items(tmp_checkpoint_dir, capsys, mon
 
 
 def test_loops_fails_open_when_resolutions_fold_raises(tmp_checkpoint_dir, capsys, monkeypatch):
-    # Same stance as _print_suppressed: a broken events.jsonl must not take
-    # the listing down with it — the loops still print, unfiltered.
+    # A broken events fold must not take the listing down with it: the loops
+    # still print (none is closed by a ledger nobody could read) and the
+    # note names the ledger (#1132 PR 7a).
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
-    def boom(project_dir=None):
+    def boom(rows):
         raise RuntimeError("corrupt events log")
-    monkeypatch.setattr(store, "resolutions", boom)
+    monkeypatch.setattr(store, "fold_resolutions", boom)
     assert cli.main(["loops"]) == 0
     out = capsys.readouterr().out
     assert cp["working_context"]["open_questions"][0]["id"] in out
+    assert "⚠ events.jsonl is unreadable" in out
 
 
 def test_loops_no_open_loops_exits_0_with_friendly_message(tmp_checkpoint_dir, capsys, monkeypatch):
@@ -11679,7 +11683,7 @@ def test_team_briefings_skip_a_teammate_with_nothing_to_surface(
                                "contradictions_flagged": []},
     }, project_dir=proj)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    assert cli._team_briefings(proj, []) == []
+    assert cli._team_briefings(proj) == []
 
 
 def test_log_reports_when_the_event_was_not_written(

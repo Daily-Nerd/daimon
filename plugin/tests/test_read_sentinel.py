@@ -538,7 +538,6 @@ KNOWN_LEAKS: set = {
     *{("cli:action-recall", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:amend list", k) for k in ("question",)},
     *{("cli:blame", k) for k in ("contradiction", "question",)},
-    *{("cli:brief", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:decide", k) for k in ("question", "topic",)},
     *{("cli:forget", k) for k in ("question", "topic",)},
     *{("cli:projects", k) for k in ("topic",)},
@@ -571,7 +570,6 @@ KNOWN_LEAKS: set = {
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("cli:why", k) for k in ("question",)},
-    *{("hook:pre_llm_call", k) for k in ("question", "topic",)},
     *{("http:/api/activity", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/checkpoint/", k) for k in ("topic",)},
     *{("http:/api/checkpoints", k) for k in ("topic",)},
@@ -583,7 +581,6 @@ KNOWN_LEAKS: set = {
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/session", k) for k in ("topic",)},
     *{("http:/api/why", k) for k in ("question",)},
-    *{("mcp:daimon_brief", k) for k in ("question", "topic",)},
     *{("mcp:daimon_projects", k) for k in ("topic",)},
     *{("mcp:daimon_recall", k) for k in ("contradiction", "question", "topic",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
@@ -749,45 +746,38 @@ def test_llm_briefing_is_an_exemption_not_an_axis_we_drive():
 # ===========================================================================
 # Uniform failure
 # ===========================================================================
-def _view_consumers():
-    """Modules outside `view` and its re-export layers that import it."""
+# Surfaces that read through the view, each with the module whose code calls
+# `briefing.prepare` (which opens the checkpoint through `view.open`).
+CONVERTED = {
+    "cli:brief": "cli/brief.py",
+    "cli:loops": "cli/lifecycle.py",
+    "mcp:daimon_brief": "mcp_tools.py",
+    "hook:pre_llm_call": "hooks.py",
+}
+
+# Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
+# 7a onward deletes entries as readers convert; an empty set is the goal.
+UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED)
+
+
+def _calls_prepare(rel):
     pkg = Path(daimon_briefing.__file__).parent
-    found = set()
-    for path in [*pkg.rglob("*.py"), *Path(daimon_ui.__file__).parent.rglob("*.py")]:
-        rel = path.relative_to(pkg.parent).as_posix()
-        if rel.endswith(("/view.py", "/api.py", "/effects.py")):
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names = []
-            if isinstance(node, ast.ImportFrom):
-                names = [a.name for a in node.names]
-                if node.module and node.module.split(".")[-1] == "view":
-                    names.append("view")
-            elif isinstance(node, ast.Import):
-                names = [a.name.split(".")[-1] for a in node.names]
-            if "view" in names:
-                found.add(rel)
-    return found
-
-
-# Shrink-only: surfaces that do not yet read through `view.open`. PR 7 and
-# later delete entries as each reader converts; an empty set is the goal.
-UNCONVERTED = {s for s, _ in CASES}
+    tree = ast.parse((pkg / rel).read_text(encoding="utf-8"))
+    return any(isinstance(n, ast.Call)
+               and (getattr(n.func, "attr", None) == "prepare"
+                    or getattr(n.func, "id", None) == "_prepared")
+               for n in ast.walk(tree))
 
 
 def test_unconverted_is_a_subset_of_the_registry():
     assert UNCONVERTED <= all_surfaces()
+    assert not UNCONVERTED & set(CONVERTED)
+    assert UNCONVERTED | set(CONVERTED) == {s for s, _ in CASES}
 
 
-def test_unconverted_names_every_surface_until_a_consumer_exists():
-    consumers = _view_consumers()
-    if not consumers:
-        assert UNCONVERTED == {s for s, _ in CASES}
-    else:
-        assert UNCONVERTED < {s for s, _ in CASES}, (
-            "a module imports view; remove the surfaces it converted from "
-            f"UNCONVERTED: {sorted(consumers)}")
+def test_a_converted_surface_reaches_the_view_through_prepare():
+    for surface, rel in CONVERTED.items():
+        assert _calls_prepare(rel), (surface, rel)
 
 
 def test_a_converted_surface_renders_nothing_when_view_open_raises(
@@ -795,9 +785,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
     from daimon_briefing import view
     world, _l, _d = world_run
     converted = {s for s, _ in CASES} - UNCONVERTED
-    if not converted:
-        pytest.skip("no surface reads through view yet; UNCONVERTED lists "
-                    "all of them")
+    assert converted == set(CONVERTED)
 
     def boom(*_a, **_k):
         raise RuntimeError("view.open failed")
@@ -809,9 +797,17 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         if surface not in converted:
             continue
         _found, results = drive_case(surface, tag, world, pristine)
-        for _label, res in results:
-            for text in (VISIBLE, OTHER, "stays visible"):
-                assert text not in res.text(), (surface, tag)
+        for label, res in results:
+            text = res.text()
+            for shown in (VISIBLE, OTHER, "stays visible", "SENTINEL"):
+                assert shown not in text, (surface, tag, label)
+            if surface.startswith("cli:"):
+                assert res.rc == 2, (surface, tag, label, res.rc)
+                assert text.strip().count("\n") == 0, (surface, tag, label)
+            elif surface.startswith("mcp:"):
+                assert res.rc == "raised", (surface, tag, label)
+            else:
+                assert res.chunks == ["None"], (surface, tag, label)
 
 
 # ===========================================================================
