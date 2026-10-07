@@ -75,31 +75,10 @@ def receipts_enabled(bucket: Path) -> bool:
             return True
     return False
 
-def resolve_data_dir(env=None):
-    import os
-    env = os.environ if env is None else env
-    raw = env.get("DAIMON_CHECKPOINT_DIR")
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".daimon" / "checkpoints"
-
-def project_slug(project_dir):
-    """Behaviorally locked to daimon_briefing.store.project_slug by
-    test_reader_project_slug_stays_in_sync_with_store (#913) — no import
-    here on purpose, this module carries no daimon import (see file
-    docstring). Empty/None input returns None, matching store, not ''."""
-    if not project_dir:
-        return None
-    s = str(project_dir).strip()
-    if not s:
-        return None
-    return re.sub(r"[^\w-]", "-", s) or None
-
 # #1109 PR 2: `_content_key` below is behaviorally locked to
 # daimon_briefing.normalize.content_key by
-# test_reader_content_key_stays_in_sync_with_normalize — same reason as
-# project_slug above (no daimon import here, file docstring). Copied
-# verbatim rather than approximated: a drifted subset would either leak a
+# test_reader_content_key_stays_in_sync_with_normalize (no daimon import
+# here, file docstring). Copied verbatim rather than approximated: a drifted subset would either leak a
 # quarantined value (a narrower fold than the ledger's own) or over-suppress
 # an unrelated one, and there is no way to tell which from this file alone.
 _INVISIBLE = (

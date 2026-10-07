@@ -299,7 +299,10 @@ bounded read-only subset as JSON.
 The viewer has two read paths by design. Its reader normalizes checkpoint files
 without importing Daimon, which tests the file contract a separate consumer receives.
 Its server delegates search, trust inspection, and ledger folds to Daimon's engines so
-those semantics do not fork inside the same distribution.
+those semantics do not fork inside the same distribution. Every request runs with the
+store scoped to the viewer's data directory (set inside the request thread), the
+store and the default project resolve through the same config accessors as the CLI,
+and bucket listing and tenant scope come from `view.buckets`.
 
 ## 7. End-to-end lifecycle
 

@@ -1,36 +1,6 @@
 import json
-from pathlib import Path
 import pytest
 from daimon_ui import reader
-
-def test_resolve_data_dir_env_override(tmp_path):
-    assert reader.resolve_data_dir({"DAIMON_CHECKPOINT_DIR": str(tmp_path)}) == tmp_path
-
-def test_resolve_data_dir_default():
-    assert reader.resolve_data_dir({}) == Path.home() / ".daimon" / "checkpoints"
-
-def test_project_slug_munging():
-    assert reader.project_slug("/Users/x/My Proj") == "-Users-x-My-Proj"
-
-
-def test_reader_project_slug_stays_in_sync_with_store():
-    # #913: reader.py is the 4th copy of the slug rule (the other three are
-    # store.project_slug, the hook-lib copy locked by
-    # test_hook_lib_slug_and_created_epoch_stay_in_sync_with_store, and the
-    # CLI verb, which calls store directly). Same risk class as #510: a
-    # drifted reader shows the wrong project's data with no error. Behavioral
-    # equality only — reader.py carries no daimon import by design (module
-    # docstring: "files are the seam"), so this asserts agreement rather than
-    # sharing code.
-    from daimon_briefing import store
-
-    samples = (
-        "/Users/dev/proj", "/Users/dev/proj/", "C:\\work\\repo",
-        "/tmp/a b/c.d", "/home/dev/ünïcode-プロジェクト", "rel/path",
-        "----", "...", "", "   ", None,
-    )
-    for sample in samples:
-        assert reader.project_slug(sample) == store.project_slug(sample), sample
 
 def test_list_recent_orders_and_filters(bucket):
     got = reader.list_recent(bucket)

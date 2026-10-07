@@ -1,5 +1,5 @@
 ---
-description: "daimon serve abre una vista local de solo lectura de la memoria de un proyecto en tu navegador. Todo renderiza salida existente del motor y nada escribe."
+description: "daimon serve abre una vista local de solo lectura de la memoria de un proyecto en tu navegador. Todo renderiza salida existente del motor y ninguna ruta modifica tu memoria."
 ---
 
 # Visor (solo lectura)
@@ -14,10 +14,12 @@ daimon serve                      # enlaza 127.0.0.1:7717 y abre una pestaña
 daimon serve --port 7800 --no-browser
 ```
 
-Flags: `--data-dir` (directorio de checkpoints, por defecto
-`DAIMON_CHECKPOINT_DIR` y luego `~/.daimon/checkpoints`), `--project-dir`
-(proyecto al que se limita, por defecto el directorio actual), `--port` (por
-defecto 7717), `--no-browser`.
+Flags: `--data-dir` (directorio de checkpoints, y el almacén de todas las
+rutas; por defecto el mismo que usa la CLI: `DAIMON_CHECKPOINT_DIR` del entorno
+o de `~/.daimon/env`, y luego `~/.daimon/checkpoints`), `--project-dir`
+(proyecto al que se limita, por defecto el directorio actual, resuelto a la
+raíz del proyecto como lo hace la CLI con `--project`), `--port` (por defecto
+7717), `--no-browser`.
 
 ## Qué ves
 
@@ -37,10 +39,20 @@ defecto 7717), `--no-browser`.
 
 ## Solo lectura como compromiso
 
-Solo lectura es estructural, no una promesa: el servidor responde únicamente
-peticiones GET — no existe camino de código que escriba. Confirmar una
-relación, resolver un loop u olvidar un item siguen viviendo en la CLI, donde
-la terminal hace cumplir quién está hablando.
+El servidor responde únicamente peticiones GET, y ninguna ruta escribe en tus
+checkpoints, ledgers ni registros de confianza. Confirmar una relación,
+resolver un loop u olvidar un item siguen viviendo en la CLI, donde la
+terminal hace cumplir quién está hablando.
+
+Hay una excepción, un caché derivado: `/api/recall` puede reconstruir el índice
+de recall (`recall.db`) cuando ya no coincide con el almacén, y registra un
+error de índice a su lado. El índice se reconstruye desde tus ledgers y no
+contiene nada que el almacén no tenga.
+
+En un home con alcance de tenant (`DAIMON_TENANT_SCOPED`) el visor lista y abre
+solo el proyecto actual, la misma regla que siguen `daimon projects` y la
+herramienta MCP de proyectos. Si una petición falla dentro del visor, responde
+HTTP 500 con un error JSON genérico que nombra solo el tipo de la excepción.
 
 ## Postura solo-localhost
 
