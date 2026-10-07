@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 110
 type: landmine
 title: A note printed above the greeting without the warning mark becomes the briefing's header for every machine reader
 severity: medium
 confidence: 0.85
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/brief.py
   - path: plugin/daimon_briefing/marks.py
 evidence:
-  - note: "#1132: api.parse_briefing keeps every line holding the warning mark as a warning, then takes the first remaining non-empty line as the header. A `brief --slug X` cross-project note or a serialize-in-flight note without the mark takes the header and the greeting is lost. tests/test_briefing_contract.py pins it over real output."
+  - note: #1132: api.parse_briefing keeps every line holding the warning mark as a warning, then takes the first remaining non-empty line as the header. A `brief --slug X` cross-project note or a serialize-in-flight note without the mark takes the header and the greeting is lost. tests/test_briefing_contract.py pins it over real output.
 expires:
   condition: "the briefing text gains an explicit header marker that parsers read instead of 'first line that is not a warning', or the parser stops depending on line order"
   review_after: 2027-04-01
-status: candidate
+status: active
 ---
 
 `daimon brief` is read by people and by programs: the session hooks of five

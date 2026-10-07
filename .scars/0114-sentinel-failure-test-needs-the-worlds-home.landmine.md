@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 114
 type: landmine
 title: A test that reuses the sentinel world must pin DAIMON_CHECKPOINT_DIR, or its surface finds no buckets and never reaches the raise point it patches
 severity: medium
 confidence: 0.85
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/tests/test_read_sentinel.py
 evidence:
-  - note: "#1132 PR 7b: test_a_converted_surface_renders_nothing_when_view_open_raises first failed for cli:projects with rc 0 and 'no project buckets yet': the module-scoped world was built under the first test's home, and the autouse isolation of every later test points DAIMON_CHECKPOINT_DIR at a fresh empty one. Surfaces that raise before reading (brief, loops) passed anyway."
+  - note: #1132 PR 7b: test_a_converted_surface_renders_nothing_when_view_open_raises first failed for cli:projects with rc 0 and 'no project buckets yet': the module-scoped world was built under the first test's home, and the autouse isolation of every later test points DAIMON_CHECKPOINT_DIR at a fresh empty one. Surfaces that raise before reading (brief, loops) passed anyway.
 expires:
   condition: "the world fixture owns its environment for every test that uses it, or the autouse isolation stops redirecting the checkpoint dir"
   review_after: 2027-04-01
-status: candidate
+status: active
 ---
 
 `world_run` is module-scoped: it builds the store once and the drive tests

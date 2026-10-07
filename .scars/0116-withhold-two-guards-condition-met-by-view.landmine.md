@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 116
 type: landmine
 title: briefing.withhold is now a compatibility wrapper over view.classify and view.closing_event, so scar 0108's two early-return guards no longer carry a quarantine pool
 severity: low
 confidence: 0.8
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/briefing.py
   - pattern: "def withhold"
 evidence:
-  - note: "#1132 PR 7a: the quarantine and resolution branches moved to view (classify, closing_event, live); withhold keeps one guard and exists only for status --suppressed and its tests until PR 7b."
+  - note: #1132 PR 7a: the quarantine and resolution branches moved to view (classify, closing_event, live); withhold keeps one guard and exists only for status --suppressed and its tests until PR 7b.
 expires:
   condition: "withhold is deleted with the status --suppressed conversion (PR 7b)"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 Scar 0108's expiry condition ("withhold() is refactored to a single dispatch

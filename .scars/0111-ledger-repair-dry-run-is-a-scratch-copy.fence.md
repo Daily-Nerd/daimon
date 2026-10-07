@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 111
 type: fence
 title: ledger repair --dry-run runs the real repair on a scratch copy; a deleter that writes outside the bucket escapes it
 severity: medium
 confidence: 0.8
 created: 2026-10-05
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/ledger_repair.py
-  - pattern: _scratch_store
+  - pattern: "_scratch_store"
 evidence:
-  - note: "#1132 stage 2c-2: the single-key scrub has no dry-run mode (only trust.redact_content_key does), so --dry-run copies the bucket's ledger files to a temp dir and overrides config.checkpoint_dir() to it, for the calling context only"
+  - note: #1132 stage 2c-2: the single-key scrub has no dry-run mode (only trust.redact_content_key does), so --dry-run copies the bucket's ledger files to a temp dir and overrides config.checkpoint_dir() to it, for the calling context only
 expires:
   condition: "every deleter in scrub_forgotten_key takes a dry_run flag and repair no longer stages a scratch copy"
   review_after: 2027-04-01
-status: candidate
+status: active
 ---
 
 `daimon ledger repair --dry-run` must report the counts the real run would
