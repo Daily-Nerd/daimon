@@ -2,7 +2,7 @@
 
 Re-exports, plus the one thing daimon owns about its own output: how to read a
 briefing back. A consumer gets the judged read (`view.lookup`, `view.match`),
-the envelope reader, the proposals queue, the requests listings and the pure
+the envelope reader, the cheap receipt check, the proposals queue, the requests listings and the pure
 slug transform without reaching into modules whose layout may move, and
 `parse_briefing` for the text `daimon brief` prints. Write verbs are not part
 of this surface; callers that write keep importing the write modules.
@@ -20,12 +20,14 @@ from dataclasses import dataclass
 from .display import withheld_json, withheld_marker
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
+from .receipts import cheap_state as receipt_state
 from .requests import inbox_listing, listing
 from .store import project_slug, read_meta
 from .view import lookup, match
 
 __all__ = ("lookup", "match", "read_meta", "withheld_marker", "withheld_json", "queue", "listing",
-           "inbox_listing", "project_slug", "Briefing", "parse_briefing")
+           "inbox_listing", "project_slug", "receipt_state", "Briefing",
+           "parse_briefing")
 
 
 @dataclass(frozen=True)
