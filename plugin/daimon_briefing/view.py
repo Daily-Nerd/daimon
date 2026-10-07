@@ -17,6 +17,7 @@ functions because the briefing path will import `view` later.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -33,6 +34,8 @@ LEDGERS = ("events.jsonl", "trust.jsonl", "amendments.jsonl",
            "requests.jsonl", "refutations.jsonl")
 
 Reason = Literal["forgotten", "quarantine", "closed"]
+
+_TOPIC_FIELD = next(f for f in schema.ITEM_FIELDS if f.kind == "topic")
 
 
 def _frozen(mapping) -> Mapping:
@@ -184,6 +187,14 @@ def _bucket(project):
     return config.checkpoint_dir() / slug if slug else None
 
 
+def forgotten_keys() -> frozenset:
+    """The machine-wide forgotten set, the one `snapshot` reads: every local
+    project's tombstones plus what teammates published. Memoized in `store`,
+    so a caller that needs it for many buckets (`peek_topic`) asks once."""
+    return frozenset(store.all_forgotten_content_keys()
+                     | store.foreign_forgotten_content_keys())
+
+
 def snapshot(project) -> Snapshot:
     """Read every ledger once and fold it. Each fold runs in its own try: a
     raise marks that ledger UNREADABLE and empties its result, and the rest of
@@ -232,11 +243,7 @@ def snapshot(project) -> Snapshot:
         return briefing.rulings_read(project)
 
     rulings = folded("refutations.jsonl", read_rulings, None)
-    forgotten = folded(
-        "events.jsonl",
-        lambda: frozenset(store.all_forgotten_content_keys()
-                          | store.foreign_forgotten_content_keys()),
-        frozenset())
+    forgotten = folded("events.jsonl", forgotten_keys, frozenset())
     return Snapshot(
         forgotten=forgotten, quarantined=frozenset(quarantine_ids),
         quarantine_ids=_frozen(quarantine_ids),
@@ -245,6 +252,47 @@ def snapshot(project) -> Snapshot:
         requests=_frozen(asks), health=_frozen(health),
         closed=health["trust.jsonl"] is Health.UNREADABLE,
         details=_frozen(details))
+
+
+def _light(slug, forgotten) -> Snapshot:
+    """A snapshot with only what `classify` reads: the forgotten set the
+    caller holds, this bucket's active quarantines and `closed`. A trust
+    ledger that is UNREADABLE, or whose fold raises, closes it, exactly as in
+    `snapshot`. The fold is `trust.records`, never a copy of it."""
+    bucket = _bucket(slug)
+    if bucket is None:
+        return dataclasses.replace(Snapshot.empty(), forgotten=forgotten)
+    try:
+        closed = jsonl.read(bucket / "trust.jsonl").health is Health.UNREADABLE
+        records = {} if closed else trust.records(project_dir=slug)
+    except Exception:  # noqa: BLE001 — a fold's raise is a health state
+        closed, records = True, {}
+    active = [r for r in records.values()
+              if r.get("state") == "active" and r.get("value_key")]
+    ids = {(r["kind"], r["value_key"]): r["quarantine_id"] for r in active}
+    return dataclasses.replace(
+        Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
+        quarantine_ids=_frozen(ids), closed=closed)
+
+
+def peek_topic(slug, *, forgotten) -> str | None:
+    """The bucket's active topic text as a reader may see it, else None.
+    None covers no bucket, no checkpoint, no topic and every withheld case
+    (forgotten, quarantined, trust ledger unreadable), so a hidden topic reads
+    as an absent one. `forgotten` is `forgotten_keys()`, computed once by a
+    caller that lists many buckets. Equal to the active topic of
+    `open(slug, live=False)`, at the cost of two small ledger reads instead of
+    a whole snapshot. Never raises for data health."""
+    got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
+                                 admit=store.Admit.ANY)
+    topic = ((got or {}).get("working_context") or {}).get("active_topic")
+    if not isinstance(topic, dict):
+        return None
+    if isinstance(classify(_TOPIC_FIELD, topic, _light(slug, forgotten)),
+                  Withheld):
+        return None
+    text = topic.get("text")
+    return text if isinstance(text, str) else None
 
 
 # ---- classify / live ------------------------------------------------------

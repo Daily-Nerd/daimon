@@ -91,6 +91,14 @@ class Pristine:
             shutil.rmtree(keep)
         shutil.copytree(root, keep, symlinks=True)
 
+    @classmethod
+    def adopt(cls, root: Path, keep: Path) -> "Pristine":
+        """The copy a run already made: `keep` is trusted as clean, nothing is
+        copied. For a test that runs after the drive has dirtied `root`."""
+        self = cls.__new__(cls)
+        self.root, self.keep = root, keep
+        return self
+
     def restore(self):
         for child in list(self.root.iterdir()):
             if child.is_dir() and not child.is_symlink():

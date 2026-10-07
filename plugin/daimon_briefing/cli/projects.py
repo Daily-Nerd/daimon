@@ -12,7 +12,7 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import buckets, config, render, store
+from .. import buckets, config, render, store, view
 from ..display import one_line
 from ..ledger import _format_age
 
@@ -38,9 +38,12 @@ def projects_rows(project_arg=None) -> list:
     """One JSON-ready row per checkpoint bucket, newest first. Single
     assembler for `daimon projects --json` AND the MCP projects tool (#261) —
     two consumers, one shape. Torn buckets show with unknown fields rather
-    than vanish: hiding one would read as "no such project"."""
+    than vanish: hiding one would read as "no such project". The topic is the
+    view's call (`view.peek_topic`): a forgotten, quarantined or unverifiable
+    one is None, the same as no topic at all."""
     cur_slug = store.project_slug(_cli._resolve_project(project_arg))
     rows = []
+    forgotten = None  # the machine-wide set, read once and only if needed
     for b in store.list_buckets():
         # #899: enumeration is the other half of the exfiltration primitive;
         # a tenant-scoped home lists the caller's own bucket and no other.
@@ -48,7 +51,11 @@ def projects_rows(project_arg=None) -> list:
             continue
         cp = b["checkpoint"] or {}
         created = cp.get("created")
-        topic = ((cp.get("working_context") or {}).get("active_topic") or {})
+        topic = None
+        if b["checkpoint"] is not None:
+            if forgotten is None:
+                forgotten = view.forgotten_keys()
+            topic = view.peek_topic(b["slug"], forgotten=forgotten)
         name = cp.get("project_name")
         rows.append({
             "slug": b["slug"],
@@ -58,7 +65,7 @@ def projects_rows(project_arg=None) -> list:
             "session_id": cp.get("session_id"),
             "created": created if isinstance(created, str) else None,
             "git_branch": cp.get("git_branch"),
-            "topic": topic.get("text") if isinstance(topic, dict) else None,
+            "topic": topic,
             "current": b["slug"] == cur_slug,
             # display sort key only, never emitted: created stamp when the
             # pointer has one, pointer mtime for torn/stampless buckets
@@ -235,7 +242,12 @@ def _cmd_projects(args) -> int:
     """Read-only orientation for context switching — the crossing itself
     stays explicit (`brief --slug` / `recall --slug`), the #94/#95 lesson."""
     _cli._note_usage("projects")
-    rows = projects_rows(getattr(args, "project", None))
+    try:
+        rows = projects_rows(getattr(args, "project", None))
+    except Exception as exc:  # noqa: BLE001 — reported, never listed around
+        print("error: the projects could not be listed "
+              f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         return 0

@@ -143,7 +143,12 @@ def _brief(arguments: dict) -> str:
 def _projects(arguments: dict) -> str:
     _note("projects")
     from . import cli
-    return json.dumps(cli.projects_rows(None), ensure_ascii=False, indent=2)
+    try:
+        rows = cli.projects_rows(None)
+    except Exception as exc:
+        raise ToolError("the projects could not be listed "
+                        f"({type(exc).__name__})") from exc
+    return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
 def _status(arguments: dict) -> str:
