@@ -252,7 +252,7 @@ def bucket_exists(slug: str, own: str | None) -> bool:
 def forgotten_keys() -> frozenset:
     """The machine-wide forgotten set, the one `snapshot` reads: every local
     project's tombstones plus what teammates published. Memoized in `store`,
-    so a caller that needs it for many buckets (`visible_topic`) asks once."""
+    so a caller that needs it for many buckets (`projects`) asks once."""
     return frozenset(store.all_forgotten_content_keys()
                      | store.foreign_forgotten_content_keys())
 
@@ -347,25 +347,81 @@ def _light(slug, forgotten) -> Snapshot:
         quarantine_ids=_frozen(ids), closed=health is Health.UNREADABLE)
 
 
-def visible_topic(checkpoint, slug, *, forgotten) -> str | None:
-    """The active topic text of a checkpoint the caller already holds, as a
-    reader of bucket `slug` may see it, else None. None covers no checkpoint,
-    no topic and every withheld case (forgotten, quarantined, trust ledger
-    unreadable), so a hidden topic reads as an absent one. `forgotten` is
-    `forgotten_keys()`, computed once by a caller that lists many buckets. It
-    classifies with `classify` over a light snapshot, so a listing pays one
+def _topic_text(checkpoint: dict, snap: Snapshot) -> str | None:
+    """The active topic text of a checkpoint, or None when it has none or
+    `classify` withholds it under `snap`."""
+    context = checkpoint.get("working_context")
+    topic = context.get("active_topic") if isinstance(context, dict) else None
+    if not isinstance(topic, dict) or isinstance(
+            classify(_TOPIC_FIELD, topic, snap), Withheld):
+        return None
+    shown = topic.get("text")
+    return shown if isinstance(shown, str) else None
+
+
+@dataclass(frozen=True)
+class Peek:
+    """What a listing may show of one checkpoint: the active topic text (None
+    for no checkpoint, no topic and every withheld case) and how many list
+    items a reader may see. A withheld item is in neither, so a count never
+    reveals that one exists."""
+
+    topic: str | None
+    visible_items: int
+
+
+def peek(checkpoint, slug, *, forgotten) -> Peek:
+    """The topic and the visible item count of a checkpoint the caller already
+    holds, as a reader of bucket `slug` may see them. A hidden topic reads as
+    an absent one (forgotten, quarantined, trust ledger unreadable). `forgotten`
+    is `forgotten_keys()`, computed once by a caller that lists many buckets.
+    It classifies with `classify` over a light snapshot, so a listing pays one
     small ledger read per bucket instead of a whole `snapshot`, and a row's
-    other fields and its topic come from the same read of the checkpoint.
-    Never raises for data health."""
-    topic = ((checkpoint or {}).get("working_context") or {}).get(
-        "active_topic")
-    if not isinstance(topic, dict):
-        return None
-    if isinstance(classify(_TOPIC_FIELD, topic, _light(slug, forgotten)),
-                  Withheld):
-        return None
-    text = topic.get("text")
-    return text if isinstance(text, str) else None
+    other fields, its topic and its count come from the same read of the
+    checkpoint. Never raises for data health."""
+    if not isinstance(checkpoint, dict):
+        return Peek(None, 0)
+    snap = _light(slug, forgotten)
+    text = _topic_text(checkpoint, snap)
+    count = sum(
+        1 for fld, item in schema.iter_items(checkpoint, dicts_only=False)
+        if not fld.singleton and isinstance(classify(fld, item, snap), Visible))
+    return Peek(text, count)
+
+
+@dataclass(frozen=True)
+class Listed:
+    """One bucket of a project listing: the envelope furniture of its latest
+    pointer plus its `Peek`. `readable` is False for a torn pointer, which
+    stays listed (hiding a bucket would read as no such project)."""
+
+    slug: str
+    mtime: float
+    readable: bool
+    name: Any
+    session_id: Any
+    created: Any
+    git_branch: Any
+    peek: Peek
+
+
+def projects(own: str | None) -> tuple[Listed, ...]:
+    """The buckets a caller may list (`buckets(own)`, the one tenant rule), each
+    with its latest pointer's envelope and `peek`. A checkpoint body is read
+    only for an allowed bucket: another tenant's pointer is never opened.
+    Unsorted; ordering is a display concern."""
+    forgotten = forgotten_keys()
+    out = []
+    for b in store.list_buckets(only=frozenset(buckets(own))):
+        cp = b["checkpoint"]
+        data = cp if isinstance(cp, dict) else {}
+        out.append(Listed(
+            b["slug"], b["mtime"], cp is not None, data.get("project_name"),
+            data.get("session_id"), data.get("created"),
+            data.get("git_branch"),
+            peek(cp, b["slug"], forgotten=forgotten) if cp is not None
+            else Peek(None, 0)))
+    return tuple(out)
 
 
 # ---- classify / live ------------------------------------------------------
@@ -530,6 +586,124 @@ def open(project, *, live: bool,  # noqa: A001 — the projection's name
     got = store.read_latest_result(project_dir=project, route=route,
                                    admit=store.Admit.ANY)
     return _opened(got.checkpoint, snap, live, route, got.fell_back)
+
+
+@dataclass(frozen=True)
+class Pointer:
+    """One rotation pointer of a bucket (`latest`, `prev-N`) through the view.
+    `meta` is its envelope and `opened` its body judged like `open`; both are
+    None / empty-bodied when the file is torn (`readable` False), which stays
+    listed so a short window is not mistaken for a complete one."""
+
+    ref: str
+    readable: bool
+    meta: store.Meta | None
+    opened: Opened
+
+
+def _pointer_order(path) -> int:
+    ref = path.name.removesuffix(".json")
+    return 0 if ref == "latest" else int(ref.split("-")[1])
+
+
+def pointers(project) -> tuple[Pointer, ...]:
+    """The project's pointer window, `latest` then `prev-1`, `prev-2`, ..., each
+    through the view with one shared snapshot. Torn pointers are listed
+    unreadable; a project with no bucket has none."""
+    bucket = _bucket(project)
+    if bucket is None:
+        return ()
+    try:
+        paths = sorted((p for p in bucket.iterdir()
+                        if store._POINTER_RE.match(p.name)),
+                       key=_pointer_order)
+    except OSError:
+        return ()
+    snap = snapshot(project)
+    out = []
+    for path in paths:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = None
+        meta = (store.Meta(*(raw.get(n) for n in store.Meta._fields))
+                if isinstance(raw, dict) else None)
+        out.append(Pointer(path.name.removesuffix(".json"), meta is not None,
+                           meta, _opened(raw if meta else None, snap, False)))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class SessionRow:
+    """One session file in a listing: the file stem, the `created` stamp and
+    the topic a reader may see (None when absent or withheld)."""
+
+    session_id: str
+    created: Any
+    topic: str | None
+
+
+@dataclass(frozen=True)
+class Sessions:
+    """`rows` newest first; `unreadable` counts session files that cannot be
+    parsed (their project cannot be told, so every project is told; under tenant
+    scope none is counted); `notes` are the ledger-health lines of the snapshot the topics were judged by."""
+
+    rows: tuple
+    unreadable: int
+    notes: tuple
+
+
+def sessions(project) -> Sessions:
+    """A light listing of the project's session files: no body is copied or
+    filtered, only each topic is classified. Membership is the payload's
+    `project_slug`, as in `store.project_surfaces`; a file that does not parse
+    is counted, since nothing says whose it was. Under tenant scope (#899) it
+    is not counted: a count of files the caller cannot attribute to its own
+    bucket would report activity in buckets it may not see."""
+    slug = store.project_slug(config.resolve_project_dir(project))
+    root = config.checkpoint_dir()
+    try:
+        files = store._session_files(root)
+    except OSError:
+        files = []
+    snap = snapshot(project)
+    tenant_scoped = config.tenant_scoped()
+    rows, unreadable = [], 0
+    for path in files:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            if not tenant_scoped:
+                unreadable += 1
+            continue
+        if not isinstance(raw, dict) or raw.get("project_slug") != slug:
+            continue
+        rows.append(SessionRow(path.stem, raw.get("created"),
+                               _topic_text(raw, snap)))
+
+    def newest(row: SessionRow):
+        return (row.created if isinstance(row.created, str) else "",
+                row.session_id)
+
+    rows.sort(key=newest, reverse=True)
+    return Sessions(tuple(rows), unreadable, snap.notes())
+
+
+def open_sessions(project, session_ids, *, live: bool) -> dict:
+    """`{session_id: Opened}` for the named session files that exist, parse and
+    belong to the project, one snapshot for all. An id that names nothing the
+    caller may open (a torn file, another project's, an escape from the store)
+    is absent from the result."""
+    slug = store.project_slug(config.resolve_project_dir(project))
+    snap = snapshot(project)
+    out = {}
+    for sid in session_ids:
+        raw = (store.read_checkpoint(sid)
+               if sid and sid == store._safe_name(sid) else None)
+        if isinstance(raw, dict) and raw.get("project_slug") == slug:
+            out[sid] = _opened(raw, snap, live)
+    return out
 
 
 def team(project, *, live: bool) -> tuple:

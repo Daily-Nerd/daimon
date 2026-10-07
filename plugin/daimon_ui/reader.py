@@ -1,4 +1,7 @@
-"""Read daimon checkpoint JSON from disk. No daimon imports — files are the seam."""
+"""The viewer's reads. Checkpoints, pointers, sessions and project listings come
+through `daimon_briefing.view`, so a value a reader may not see never leaves it;
+the activity, ledger, grid, session and biography folds still read files here
+(#1132 PR 8b-2 moves them)."""
 import base64
 import hashlib
 import json
@@ -6,13 +9,15 @@ import re
 import unicodedata
 from pathlib import Path
 
+from daimon_briefing import api, config, view
+
 POINTER_RE = re.compile(r"^(latest|prev-[1-9][0-9]?)$")
 ITEM_ID_RE = re.compile(r"^[a-z]-[0-9a-f]{6,40}(-\d+)?$")
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
 
 # vitni/0.2 outputs_hash: multibase base64url-nopad ("u") over multihash
 # sha2-256 (multicodec 0x12 + 32-byte length 0x20). Re-derived here rather
-# than imported — reader.py has no daimon imports, files are the seam.
+# than imported: the receipt check is a stdlib-only tamper test.
 _MULTIHASH_SHA256 = bytes([0x12, 0x20])
 
 def _multihash_b64(raw: bytes) -> str:
@@ -194,58 +199,38 @@ def _pointer_files(bucket: Path):
         return 0 if ref == "latest" else int(ref.split("-")[1])
     return sorted(out, key=order)
 
-def list_buckets(data_dir: Path) -> list[dict]:
-    """Discover project buckets under data_dir. A bucket is any subdir containing latest.json
-    (mirrors daimon's own store.list_buckets() semantics) — this naturally skips sidecar dirs
-    like .chunk-cache/ and .partials/ without needing to name them."""
-    if not data_dir.is_dir():
-        return []
-    out = []
-    for p in data_dir.iterdir():
-        if not p.is_dir():
-            continue
-        latest = p / "latest.json"
-        if not latest.is_file():
-            continue
-        created = active_topic = item_count = project_name = None
-        try:
-            data = json.loads(latest.read_text(encoding="utf-8"))
-            created = data.get("created")
-            # #672 write-time stamp; None when the bucket predates it.
-            raw_name = data.get("project_name")
-            project_name = raw_name if isinstance(raw_name, str) and raw_name else None
-            wc = data.get("working_context") or {}
-            es = data.get("epistemic_snapshot") or {}
-            topic = wc.get("active_topic") if isinstance(wc, dict) else None
-            active_topic = topic.get("text") if isinstance(topic, dict) else None
-            count = 0
-            for container, key in (
-                (wc, "open_questions"), (wc, "recent_decisions"),
-                (es, "strong_beliefs"), (es, "uncertainties"), (es, "contradictions_flagged"),
-            ):
-                v = container.get(key) if isinstance(container, dict) else None
-                if isinstance(v, list):
-                    count += len(v)
-            item_count = count
-        except (OSError, json.JSONDecodeError, AttributeError):
-            pass  # torn latest.json: keep the bucket listed, fields stay None
-        out.append({"slug": p.name, "project_name": project_name, "created": created,
-                    "active_topic": active_topic, "item_count": item_count})
+def list_buckets(data_dir: Path, own: str | None) -> list[dict]:
+    """The sidebar: every project bucket the caller may list (`view.projects`,
+    the tenant rule included), newest first, a torn pointer last with its
+    fields None. `active_topic` and `item_count` are what a reader may see: a
+    withheld topic is None and withheld items are not counted."""
+    with config.checkpoint_dir_override(data_dir):
+        listed = view.projects(own)
+    out = [{"slug": b.slug,
+            "project_name": b.name if isinstance(b.name, str) and b.name else None,
+            "created": b.created if isinstance(b.created, str) else None,
+            "active_topic": b.peek.topic,
+            "item_count": b.peek.visible_items if b.readable else None}
+           for b in listed]
     out.sort(key=lambda b: b["created"] or "", reverse=True)  # "" sorts lowest, so None lands last
     return out
 
-def list_recent(bucket: Path):
-    out = []
-    for ref, path in _pointer_files(bucket):
-        created = topic = None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            created = data.get("created")
-            topic = (data.get("working_context", {}).get("active_topic") or {}).get("text")
-        except (OSError, json.JSONDecodeError, AttributeError):
-            pass  # torn pointer: keep the entry, fields stay None
-        out.append({"ref": ref, "created": created, "active_topic": topic})
-    return out
+def list_recent(data_dir: Path, slug: str) -> dict:
+    """The sidebar window of one project: its pointers (ref, created, visible
+    topic; a torn pointer keeps its entry with None fields), the number of
+    session files behind them and the ledger-health notes."""
+    with config.checkpoint_dir_override(data_dir):
+        window = view.pointers(slug)
+        listing = view.sessions(slug)
+    checkpoints = []
+    for p in window:
+        cp = p.opened.checkpoint or {}
+        topic = (cp.get("working_context") or {}).get("active_topic")
+        checkpoints.append({
+            "ref": p.ref, "created": p.meta.created if p.meta else None,
+            "active_topic": topic.get("text") if isinstance(topic, dict) else None})
+    return {"checkpoints": checkpoints, "sessions_total": len(listing.rows),
+            "notes": list(listing.notes)}
 
 KNOWN_FORMAT = "D-019"
 
@@ -406,33 +391,45 @@ def _normalize(data, quarantine: set | None = None):
     return meta, sections, partial
 
 def load_checkpoint(data_dir: Path, slug: str, ref: str):
-    bucket = data_dir / slug
     if not POINTER_RE.fullmatch(ref or ""):
         return {"ok": False, "error": {
             "what": f"Checkpoint reference {ref!r} isn't one this inspector serves.",
             "why": "Only 'latest' and 'prev-N' pointers are served.",
             "fix": "Pick a checkpoint from the sidebar.",
         }}
-    path = bucket / f"{ref}.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    with config.checkpoint_dir_override(data_dir):
+        window = view.pointers(slug)
+    mine = next((p for p in window if p.ref == ref), None)
+    if mine is None:
         return {"ok": False, "error": {
             "what": f"Checkpoint {ref} doesn't exist.",
             "why": "The pointer chain is shorter than requested.",
             "fix": "Pick a checkpoint from the sidebar.",
         }}
-    except (OSError, json.JSONDecodeError):
+    if not mine.readable:
         return {"ok": False, "error": {
             "what": f"Couldn't read checkpoint {ref}.",
             "why": "The file isn't complete JSON — possibly a partial write.",
             "fix": "Re-run `daimon heal`, or pick another checkpoint from the sidebar.",
         }}
 
-    meta, sections, partial = _normalize(data, _active_quarantine_keys(bucket))
-    if receipts_enabled(bucket):
-        meta["receipt"] = receipt_state(data_dir, data)
-    return {"ok": True, "partial": partial, "sections": sections, "meta": meta}
+    body = mine.opened.checkpoint or {}
+    meta, sections, partial = _normalize(body)
+    # Has this project opted into receipts? Any pointer of the window says so.
+    if any(p.meta is not None and p.meta.receipts is True for p in window):
+        meta["receipt"] = receipt_state(data_dir, body)
+    return {"ok": True, "partial": partial, "sections": sections, "meta": meta,
+            "notes": list(mine.opened.snapshot.notes())}
+
+def history(data_dir: Path, slug: str) -> dict:
+    """The session list of one project through the view: the file stem as the
+    session id, `created`, the topic a reader may see, the count of session
+    files that could not be read and the ledger-health notes."""
+    with config.checkpoint_dir_override(data_dir):
+        listing = view.sessions(slug)
+    return {"sessions": [{"session_id": r.session_id, "created": r.created,
+                          "active_topic": r.topic} for r in listing.rows],
+            "unreadable": listing.unreadable, "notes": list(listing.notes)}
 
 def project_history(data_dir: Path, slug: str):
     sessions, unreadable = [], 0
@@ -562,27 +559,31 @@ def _load_session(data_dir: Path, sid: str):
     return data, None
 
 def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
-    """A=older, B=newer. sid_a/sid_b must exact-match a session_id from project_history —
-    checked before any path is built, so raw input never reaches the filesystem."""
-    valid_ids = {s["session_id"] for s in project_history(data_dir, slug)["sessions"]}
+    """A=older, B=newer. sid_a/sid_b must exact-match a session id from the
+    project's session list, checked before any session is opened. Both bodies
+    come through the view, so a withheld item is in neither; an item that left
+    and was closed by a resolution (any resolving status: `snapshot.resolved_refs`)
+    is `resolved`, else `gone`."""
+    with config.checkpoint_dir_override(data_dir):
+        valid_ids = {r.session_id for r in view.sessions(slug).rows}
+        for sid in (sid_a, sid_b):
+            if sid not in valid_ids:
+                return {"ok": False, "error": {
+                    "what": f"Session {sid!r} isn't part of {slug}'s history.",
+                    "why": "The session id doesn't match any recorded checkpoint.",
+                    "fix": "Pick a session from the project's history list.",
+                }}
+        opened = view.open_sessions(slug, (sid_a, sid_b), live=False)
     for sid in (sid_a, sid_b):
-        if sid not in valid_ids:
+        if sid not in opened:
             return {"ok": False, "error": {
-                "what": f"Session {sid!r} isn't part of {slug}'s history.",
-                "why": "The session id doesn't match any recorded checkpoint.",
-                "fix": "Pick a session from the project's history list.",
+                "what": f"Session {sid} doesn't exist.",
+                "why": "No checkpoint file was found for that session.",
+                "fix": "Pick a session from the project's history.",
             }}
-
-    data_a, err = _load_session(data_dir, sid_a)
-    if err:
-        return {"ok": False, "error": err}
-    data_b, err = _load_session(data_dir, sid_b)
-    if err:
-        return {"ok": False, "error": err}
-
-    quarantine = _active_quarantine_keys(data_dir / slug)
-    meta_a, sections_a, partial_a = _normalize(data_a, quarantine)
-    meta_b, sections_b, partial_b = _normalize(data_b, quarantine)
+    snap = opened[sid_a].snapshot
+    meta_a, sections_a, partial_a = _normalize(opened[sid_a].checkpoint)
+    meta_b, sections_b, partial_b = _normalize(opened[sid_b].checkpoint)
 
     def index(sections):
         by_id, skipped = {}, 0
@@ -599,15 +600,20 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
     map_b, skipped_b = index(sections_b)
     ids_a, ids_b = set(map_a), set(map_b)
 
-    res_fold = resolutions(data_dir / slug)
-
     born = [map_b[i] for i in sorted(ids_b - ids_a)]
     resolved, gone = [], []
     for iid in sorted(ids_a - ids_b):
         item = map_a[iid]
-        ev = res_fold.get(iid)
-        if ev:
-            resolved.append({"item": item, "note": ev.get("note"), "ts": ev.get("ts")})
+        if iid in snap.resolved_refs:
+            ev = snap.resolutions[iid]
+            note = ev.get("note")
+            verdict = view.prose_verdict(note, snap, closed_masks=False)
+            if verdict is not None:
+                # a quarantined value reads as its marker, as on every host;
+                # a forgotten one reads as absent
+                note = (None if verdict.reason == "forgotten"
+                        else api.withheld_marker(verdict))
+            resolved.append({"item": item, "note": note, "ts": ev.get("ts")})
         else:
             gone.append(item)
 
@@ -635,7 +641,7 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         "a": meta_a, "b": meta_b,
         "born": born, "resolved": resolved, "gone": gone,
         "carried": carried, "changed": changed,
-        "partial": partial,
+        "partial": partial, "notes": list(snap.notes()),
     }
 
 def _walk_transitions(data_dir: Path, slug: str):

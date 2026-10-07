@@ -17,13 +17,14 @@ renderers write with, so the format and its reader cannot drift apart.
 
 from dataclasses import dataclass
 
+from .display import withheld_json, withheld_marker
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
 from .requests import inbox_listing, listing
 from .store import project_slug, read_meta
 from .view import lookup, match
 
-__all__ = ("lookup", "match", "read_meta", "queue", "listing",
+__all__ = ("lookup", "match", "read_meta", "withheld_marker", "withheld_json", "queue", "listing",
            "inbox_listing", "project_slug", "Briefing", "parse_briefing")
 
 

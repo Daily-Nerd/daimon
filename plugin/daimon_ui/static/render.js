@@ -259,7 +259,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '<span class="brief-sub">' + escapeHtml(sub) + "</span></div>" +
       '<p class="page-meta">' + metaParts.map(escapeHtml).join(" · ") + "</p>" +
       receiptBanner(meta.receipt);
-    (data.partial || []).forEach(function (p) {
+    (data.partial || []).concat(data.notes || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">' +
         "ⓘ</span><span>" + escapeHtml(p) + "</span></div>";
     });
@@ -563,7 +563,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(unreadable + " session file(s) couldn't be read and were skipped.") + "</span></div>";
     }
-    (data.partial || []).forEach(function (p) {
+    (data.partial || []).concat(data.notes || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(p) + "</span></div>";
     });

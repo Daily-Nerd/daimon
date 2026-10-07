@@ -232,7 +232,7 @@ def test_projects_records_usage_when_it_exits_2(tmp_checkpoint_dir,
     def boom(*a, **k):
         raise RuntimeError("peek")
 
-    monkeypatch.setattr(view, "visible_topic", boom)
+    monkeypatch.setattr(view, "peek", boom)
     _checkpoint("/p/ec-peek")
     assert cli.main(["projects"]) == 2
     assert ("usage", "projects") in events

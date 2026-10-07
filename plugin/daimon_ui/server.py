@@ -12,8 +12,9 @@ from . import reader
 # Engine imports (#670): search and item inspection are served by daimon's own
 # engines — recall.search is the one matcher (the viewer renders recall, it
 # never grows a second search engine) and inspector.inspect_item is the same
-# read-side receipt `daimon why` prints. reader.py stays daimon-import-free
-# (files are its seam); the engine boundary lives here in dispatch only.
+# read-side receipt `daimon why` prints. reader.py reaches daimon only through
+# the view (`view`, `schema`, `api`, `config`, pinned by tests/test_read_layers.py);
+# the engine boundary lives here in dispatch only.
 from daimon_briefing import (config, inspector, recall, refutations,
                              relations, view)
 
@@ -143,9 +144,7 @@ def _page(h, path, params):
 
 
 def _projects(h, path, params):
-    allowed = set(view.buckets(h.default_slug))
-    h._json({"projects": [b for b in reader.list_buckets(h.data_dir)
-                          if b["slug"] in allowed],
+    h._json({"projects": reader.list_buckets(h.data_dir, h.default_slug),
              "current": h.default_slug})
 
 
@@ -153,13 +152,11 @@ def _checkpoints(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    bucket = h.data_dir / slug
-    # list_recent serves the pointer window; project_history serves every
+    # `checkpoints` is the pointer window; `sessions_total` counts every
     # session file for the slug. The sidebar needs both numbers or it
     # silently presents a window as if it were the whole history.
-    h._json({"project": h._label_for(slug),
-             "checkpoints": reader.list_recent(bucket),
-             "sessions_total": len(reader.project_history(h.data_dir, slug)["sessions"])})
+    h._json(dict(reader.list_recent(h.data_dir, slug),
+                 project=h._label_for(slug)))
 
 
 def _checkpoint(h, path, params):
@@ -174,9 +171,8 @@ def _history(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    result = reader.project_history(h.data_dir, slug)
-    result["project"] = h._label_for(slug)
-    h._json(result)
+    h._json(dict(reader.history(h.data_dir, slug),
+                 project=h._label_for(slug)))
 
 
 def _diff(h, path, params):
@@ -186,8 +182,7 @@ def _diff(h, path, params):
     a = params.get("a", [None])[0]
     b = params.get("b", [None])[0]
     if a is None or b is None:
-        hist = reader.project_history(h.data_dir, slug)
-        sessions = hist["sessions"]
+        sessions = reader.history(h.data_dir, slug)["sessions"]
         if len(sessions) < 2:
             h._json({"ok": True, "empty": "single_checkpoint", "sessions": len(sessions)})
             return
