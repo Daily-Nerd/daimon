@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (briefing, capture, config, harvest, ledger, llm,
-               recall, serializer, store, transcript)
+from . import (briefing, capture, config, effects_commit, harvest, ledger,
+               llm, recall, serializer, store, transcript)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -197,6 +197,10 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
 
     Returns {"context": briefing} to append to the user message, or None. Never raises.
     """
+    # This host records no effects today (no usage line, no stamp, no
+    # telemetry), but it commits through the same seam as every other host so
+    # an effect added here later cannot be dropped.
+    fx = effects_commit.Pending()
     try:
         if config.is_disabled():
             return None
@@ -249,3 +253,5 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
     except Exception:
         log.exception("daimon: pre_llm_call failed (no briefing injected)")
         return None
+    finally:
+        effects_commit.commit(fx.effects)

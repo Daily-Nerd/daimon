@@ -140,6 +140,10 @@ def _checkpoint_for(route):
     return in_hand(_fixture_checkpoint(), route, NOW).checkpoint
 
 
+def _ids(manifest):
+    return {k: {c.request_id for c in v} for k, v in manifest.items()}
+
+
 def test_render_brief_returns_the_ids_of_printed_cards(
         tmp_checkpoint_dir, monkeypatch, capsys):
     q_id = _open_ask()
@@ -148,13 +152,13 @@ def test_render_brief_returns_the_ids_of_printed_cards(
     printed = render.render_brief(cp, project_dir=RECIPIENT,
                                   worldcheck_project=RECIPIENT)
     capsys.readouterr()
-    assert printed == {"request": frozenset({q_id}), "verdict": frozenset()}
+    assert _ids(printed) == {"request": {q_id}, "verdict": set()}
     # collapsed to a count line under budget: no card, no id
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "200")
     printed = render.render_brief(cp, project_dir=RECIPIENT,
                                   worldcheck_project=RECIPIENT)
     capsys.readouterr()
-    assert printed == {"request": frozenset(), "verdict": frozenset()}
+    assert _ids(printed) == {"request": set(), "verdict": set()}
 
 
 def test_no_worldcheck_project_means_no_cards_and_nothing_to_stamp(
@@ -164,7 +168,7 @@ def test_no_worldcheck_project_means_no_cards_and_nothing_to_stamp(
     printed = render.render_brief(_checkpoint_for(RECIPIENT),
                                   project_dir=RECIPIENT)
     capsys.readouterr()
-    assert printed == {"request": frozenset(), "verdict": frozenset()}
+    assert _ids(printed) == {"request": set(), "verdict": set()}
 
 
 def test_rich_path_reports_the_full_cards_it_printed(
@@ -176,7 +180,7 @@ def test_rich_path_reports_the_full_cards_it_printed(
                                   project_dir=RECIPIENT,
                                   worldcheck_project=RECIPIENT)
     capsys.readouterr()
-    assert printed["request"] == frozenset({q_id})
+    assert _ids(printed)["request"] == {q_id}
 
 
 def test_a_missing_manifest_stamps_nothing(tmp_checkpoint_dir, monkeypatch):

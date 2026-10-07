@@ -11,7 +11,7 @@ import re
 import sys
 from contextlib import contextmanager
 
-from . import (briefing, config, display, marks, redact, requests, schema,
+from . import (briefing, config, display, marks, redact, schema,
                serializer)
 from .amendments import found_label as _amend_found_label
 
@@ -187,8 +187,9 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
     """The day-one skeleton-only body (#693/#694) shared by every render
     path when there is no checkpoint yet: a standing ruling, an addressed
     request, or a decided verdict can exist before the first checkpoint
-    does, and must still reach the reader. Returns the block list AND the
-    fixed pointer line, so callers can compose or print them as needed. No
+    does, and must still reach the reader. Returns the block list, the
+    fixed pointer line, so callers can compose or print them as needed, and
+    the request and verdict cards the blocks print (all whole). No
     droppable structure here, so #1044's byte ceiling does not apply to it."""
     mask = briefing.prose_mask(snap)
     rulings = (briefing.ruling_lines(project_dir, snap=snap)
@@ -198,10 +199,10 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
     decision_count = (briefing.decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
     decision_count_block = [decision_count] if decision_count else []
-    request_lines = (briefing.request_panel_lines(worldcheck_project, mask=mask)
-                     if worldcheck_project is not None else [])
-    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project, mask=mask)
-                     if worldcheck_project is not None else [])
+    request_lines, request_cards = briefing.request_panel(
+        worldcheck_project, mask=mask)
+    verdict_lines, verdict_cards = briefing.verdict_panel(
+        worldcheck_project, mask=mask)
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
     closed = snap is not None and snap.closed
@@ -217,54 +218,37 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
     if closed:
         # #1132 PR 7a: the checkpoint exists; its items are withheld.
         pointer = briefing.CLOSED_LINE
-    return blocks, pointer
+    return blocks, pointer, {"request": request_cards,
+                             "verdict": verdict_cards}
 
 
 def _panel_lines(project_dir, worldcheck_project, snap=None):
-    """The four skeleton panels (rulings, decision count, request, verdict,
-    owed) computed once, shared by every render path once a checkpoint
-    exists. Kept as one seam so the rich, plain, and byte-budgeted plain
-    branches read the same ledgers the same way (#693/#694)."""
+    """The skeleton panels (rulings, decision count, request, verdict, owed)
+    computed once, shared by every render path once a checkpoint exists, and
+    the request and verdict cards that same read produced. Kept as one seam
+    so the rich, plain, and byte-budgeted plain branches read the same
+    ledgers the same way (#693/#694)."""
     mask = briefing.prose_mask(snap)
     rulings = (briefing.ruling_lines(project_dir, snap=snap)
               if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel, not rulings.
     decision_count = (briefing.decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
-    request_lines = (briefing.request_panel_lines(worldcheck_project, mask=mask)
-                     if worldcheck_project is not None else [])
-    verdict_lines = (briefing.verdict_panel_lines(worldcheck_project, mask=mask)
-                     if worldcheck_project is not None else [])
+    request_lines, request_cards = briefing.request_panel(
+        worldcheck_project, mask=mask)
+    verdict_lines, verdict_cards = briefing.verdict_panel(
+        worldcheck_project, mask=mask)
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
-    return rulings, decision_count, request_lines, verdict_lines, owed_lines
+    return (rulings, decision_count, request_lines, verdict_lines, owed_lines,
+            {"request": request_cards, "verdict": verdict_cards})
 
 
-def _card_ids(worldcheck_project) -> dict:
-    """The request and verdict ids whose cards the panels print IN FULL
-    (#1128), read from the same rows the panels render. The CLI stamps
-    `surfaced` from this set, never by searching the printed text. Empty
-    without a `worldcheck_project` (no panel was rendered), and on any read
-    failure (stamp nothing rather than something that was not shown)."""
-    out: dict[str, frozenset] = {"request": frozenset(),
-                                 "verdict": frozenset()}
-    if worldcheck_project is None:
-        return out
-    try:
-        out["request"] = frozenset(
-            r["request_id"] for r in
-            requests.decision_renderable(project_dir=worldcheck_project)
-            .get("rows") or [])
-    except Exception:
-        pass
-    try:
-        out["verdict"] = frozenset(
-            r["request_id"] for r in
-            requests.verdict_renderable(project_dir=worldcheck_project)
-            .get("rows") or [])
-    except Exception:
-        pass
-    return out
+def _manifest(cards: dict) -> dict:
+    """`cards` as the manifest `render_brief` returns: both panels always
+    named, an absent one empty."""
+    return {"request": tuple(cards.get("request", ())),
+            "verdict": tuple(cards.get("verdict", ()))}
 
 
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
@@ -294,11 +278,12 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     drift block and `trailer` (advisory lines printed last, e.g. the withheld
     count) are fixed and counted first; the body and the teammates block share
     what is left (`briefing.select`). Returns the manifest of card ids
-    printed in full, {"request": frozenset, "verdict": frozenset}: every card
-    on the rich, LLM and no-checkpoint paths (panels print whole there), only
-    the uncollapsed ones on the budgeted path, empty with no
+    printed in full, {"request": (Card, ...), "verdict": (Card, ...)}, taken
+    from the one read that built each panel's lines: every card on the rich,
+    LLM and no-checkpoint paths (panels print whole there), only the
+    uncollapsed ones on the budgeted path, empty with no
     `worldcheck_project`. The caller stamps `surfaced` from it, never by
-    searching the printed text.
+    searching the printed text or reading the ledger again.
 
     `loops_pointer=False` drops the "See: daimon loops" pointer from the
     section notes: the caller sets it on a route where that command would list
@@ -313,7 +298,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # route) skips the read entirely; an unknown project resolves to no
         # ledger path anyway, so the guard saves the call, not a leak.
         if b is None:
-            blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project, snap, notes)
+            blocks, pointer, cards = _no_checkpoint_lines(
+                project_dir, worldcheck_project, snap, notes)
             if blocks:
                 # #693/#694: standing rulings, addressed requests, and
                 # decided verdicts exist before the first checkpoint does —
@@ -324,7 +310,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             print(pointer)
             _print_teammates(teammates)
             _print_trailer(trailer)
-            return _card_ids(worldcheck_project)
+            return cards
         _print_version_note(checkpoint)
         # Honor the opt-in LLM briefing (DAIMON_LLM_BRIEFING) — same source
         # of truth as the hermes hook. Free-form LLM text can't be sectioned
@@ -334,16 +320,17 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             # Tries LLM, falls back to deterministic; #693 rulings and
             # #694's two request panels all ride inside. Unconditional
             # return: `b` is non-None here, so render() always yields text.
+            llm_cards: dict = {}
             print(briefing.render(checkpoint, project_dir=project_dir,
                                   worldcheck_project=worldcheck_project,
                                   loops_pointer=loops_pointer, snap=snap,
-                                  notes=notes))
+                                  notes=notes, cards_out=llm_cards))
             _print_drift(drift)
             _print_teammates(teammates)
             _print_trailer(trailer)
-            return _card_ids(worldcheck_project)
-        rulings, decision_count, request_lines, verdict_lines, owed_lines = (
-            _panel_lines(project_dir, worldcheck_project, snap))
+            return _manifest(llm_cards)
+        (rulings, decision_count, request_lines, verdict_lines, owed_lines,
+         cards) = _panel_lines(project_dir, worldcheck_project, snap)
         # #204: degrade verbatim labels when the receipt can't be locally
         # confirmed. Cheap check (sidecar + byte match).
         degraded = briefing.receipt_degraded(checkpoint)
@@ -352,14 +339,15 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         _print_drift(drift)
         _print_teammates(teammates)
         _print_trailer(trailer)
-        return _card_ids(worldcheck_project)
+        return cards
 
     # Non-rich path (#1044): see the docstring above. Format every
     # surrounding block BEFORE the body renders.
     handoff_text = _format_handoff(handoff)
     b = briefing.build(checkpoint)
     if b is None:
-        blocks, pointer = _no_checkpoint_lines(project_dir, worldcheck_project, snap, notes)
+        blocks, pointer, cards = _no_checkpoint_lines(
+            project_dir, worldcheck_project, snap, notes)
         text = handoff_text
         if blocks:
             text += "\n\n".join("\n".join(blk) for blk in blocks) + "\n\n"
@@ -367,7 +355,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         print(text, end="")
         _print_teammates(teammates)
         _print_trailer(trailer)
-        return _card_ids(worldcheck_project)
+        return cards
     version_text = _format_version_note(checkpoint)
     drift_text = _format_drift(drift)
     if config.llm_briefing():
@@ -376,19 +364,20 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         # is not bounded by the byte ceiling here (pre-existing behavior).
         # Tries LLM, falls back to deterministic; #693 rulings and #694's two
         # request panels all ride inside.
+        cards = {}
         body = briefing.render(checkpoint, project_dir=project_dir,
                                worldcheck_project=worldcheck_project,
                                loops_pointer=loops_pointer, snap=snap,
-                               notes=notes)
+                               notes=notes, cards_out=cards)
         # `b` is non-None here, so `briefing.render` always returns text (its
         # own docstring's invariant): narrows `str | None` for the concat below.
         assert body is not None
         print(handoff_text + version_text + body + "\n"
              + drift_text + _format_teammates(teammates) + trailer_text,
              end="")
-        return _card_ids(worldcheck_project)
-    rulings, decision_count, request_lines, verdict_lines, owed_lines = (
-        _panel_lines(project_dir, worldcheck_project, snap))
+        return _manifest(cards)
+    (rulings, decision_count, request_lines, verdict_lines, owed_lines,
+     cards) = _panel_lines(project_dir, worldcheck_project, snap)
     # #204: degrade verbatim labels when the receipt can't be locally
     # confirmed. Cheap check (sidecar + byte match).
     degraded = briefing.receipt_degraded(checkpoint)
@@ -405,14 +394,12 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
         owed_lines=owed_lines, decision_count=decision_count,
         reserved=reserved, teammate_blocks=_teammate_blocks(teammates or ()),
         teammate_header=_TEAMMATES_HEADER, loops_pointer=loops_pointer,
-        notes=notes)
+        notes=notes, cards=cards)
     body = briefing.render_selection(sel)
     briefing._log_render_size(body, sel.budget)
     print(handoff_text + version_text + body + "\n" + drift_text
           + briefing.teammates_text(sel) + trailer_text, end="")
-    printed = _card_ids(worldcheck_project)
-    return {name: (ids if name in sel.panel_names_whole else frozenset())
-            for name, ids in printed.items()}
+    return sel.printed_cards()
 
 
 def _print_trailer(trailer) -> None:

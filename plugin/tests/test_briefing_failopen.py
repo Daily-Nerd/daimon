@@ -99,12 +99,17 @@ def test_worldcheck_failing_costs_only_the_worldcheck(monkeypatch):
     assert out.stale_items
 
 
-def test_card_ids_fail_open_to_nothing_stamped(monkeypatch):
-    empty = {"request": frozenset(), "verdict": frozenset()}
+def test_panel_cards_fail_open_to_nothing_stamped(monkeypatch, capsys):
+    """Retargeted from the removed post-print re-read: the manifest now comes
+    from the panels' own read, and a composer that raises there yields no
+    cards, so nothing is stamped."""
     monkeypatch.setattr(requests, "decision_renderable", _boom)
     monkeypatch.setattr(requests, "verdict_renderable", _boom)
-    assert render._card_ids("/p/x") == empty
-    assert render._card_ids(None) == empty
+    for project in ("/p/x", None):
+        got = render.render_brief(_cp(), project_dir=project,
+                                  worldcheck_project=project)
+        assert got == {"request": (), "verdict": ()}
+    capsys.readouterr()
 
 
 def test_is_flagged_ignores_a_non_item():

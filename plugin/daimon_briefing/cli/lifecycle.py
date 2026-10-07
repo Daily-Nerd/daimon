@@ -18,6 +18,7 @@ from .. import (
     briefing,
     carry,
     config,
+    effects_commit,
     ledger_repair,
     normalize,
     pending,
@@ -29,6 +30,7 @@ from .. import (
     store,
     trust,
 )
+from ..effects import Effects
 from ._ledger import _check_sync_warning
 
 
@@ -801,7 +803,8 @@ def _cmd_reverify(args) -> int:
         [f"reopened {item['id']}: {item.get('text', '')}"])
     return 0
 
-def _cmd_loops(args) -> int:
+@effects_commit.committing
+def _cmd_loops(args, fx) -> int:
     """`daimon loops` (#480 slice 1): list open, briefable loop items with
     ids for this project — the read-only counterpart to the id handles
     briefing._line now renders inline (an agent, or a human, needs something
@@ -819,7 +822,7 @@ def _cmd_loops(args) -> int:
     contradictions are valid `daimon resolve` targets too, but are not
     loop-shaped; listing them here would invite resolving settled facts
     (#480 scope guard, mirrors briefing._line's new suffix)."""
-    _cli._note_usage("loops")
+    fx.add(Effects(usage=("loops",)))
     project = _cli._resolve_project(args.project)
     # Route.OWN is a DECISION here, not a leftover: a pre-routing store is
     # read-only for project-scoped commands. If loops listed items off an

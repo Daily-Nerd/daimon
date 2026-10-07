@@ -2,8 +2,9 @@
 
 The briefing renderer (one body for the plain and rich paths, the team
 briefings and the worldcheck/receipt probes it triggers) and the anchor
-resolver. Names tests patch (`_write_worldcheck_ledger`,
-`_note_receipt_probe_usage`) are reached as `_cli.<name>`. Every name is
+resolver. Names tests patch (`_note_usage`, `_write_worldcheck_ledger`,
+`_note_receipt_probe_usage`) are reached as `_cli.<name>` by
+`effects_commit`, which writes them after the output. Every name is
 re-exported from `cli`.
 """
 
@@ -17,12 +18,13 @@ from .. import (
     anchor,
     briefing,
     config,
+    effects_commit,
     ledger,
     recall,
     render,
-    requests,
     store,
 )
+from ..effects import Effects
 from ..ledger import _format_age
 
 
@@ -158,11 +160,13 @@ def _withheld_trailer(own, team) -> list:
     return trailer
 
 
-def _render_briefing_body(annotated, route, *, drift_project, teammates,
+def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                           worldcheck_project=None, team_counts=None,
                           loops_pointer=True) -> int:
-    """Shared tail of `brief` and `brief --slug`: worldcheck bookkeeping,
-    drift, render, footnotes. `annotated` is `briefing.prepare`'s result (the
+    """Shared tail of `brief` and `brief --slug`: drift, render, footnotes,
+    and the effects (worldcheck bookkeeping, surfaced stamps) recorded into
+    `fx` once the output is written; `effects_commit` writes them after it
+    flushes stdout. `annotated` is `briefing.prepare`'s result (the
     checkpoint is already through the view and stamped). `route` is whatever
     the events ledger should be keyed by — a project dir on the normal path, a
     bare slug on the --slug path (the store's slug munging is idempotent, so a
@@ -176,33 +180,6 @@ def _render_briefing_body(annotated, route, *, drift_project, teammates,
     the wrong repo context for those claims."""
     checkpoint = annotated.checkpoint if annotated else None
 
-    if checkpoint:
-        # #1128: worldcheck (#365/#397/#439) runs inside briefing.prepare,
-        # shared with the MCP tool and the Hermes hook. It is opt-in, budget-
-        # bounded and read-only; it only RETURNS its counters and ledger rows,
-        # and the writes below stay here, where the project route is already
-        # resolved (worldcheck writes nothing to disk by contract).
-        if annotated.worldcheck is not None:
-            try:
-                wc_stats = annotated.worldcheck
-                # #397: the dict carries the aggregate outcomes AND a
-                # "<class>:<outcome>" key per class, so one pass emits both the
-                # slice-1 counters (unchanged meaning) and the per-class
-                # fires-true rate the next expansion gate reads.
-                for counter, count in sorted(wc_stats.items()):
-                    for _ in range(int(count)):
-                        _cli._note_usage(f"worldcheck:{counter}")
-                # #919: the receipt-probe axis, project-scoped (see the
-                # helper's own docstring for why this one axis needs project
-                # scope where the loop above deliberately stays machine-wide).
-                _cli._note_receipt_probe_usage(worldcheck_project, wc_stats)
-                # A POINTER and a REASON CODE, never the item's text (#376) —
-                # the same second stream capture writes, for the same reason:
-                # folded into events.jsonl a rejection would HIDE the item it
-                # describes.
-                _cli._write_worldcheck_ledger(annotated.ledger_rows, route)
-            except Exception:
-                pass
     # NOTE: drift is checked against the resolved project root. If read_latest fell
     # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
     # are relative to a different root and may report spurious "hard" drift. Acceptable
@@ -218,7 +195,7 @@ def _render_briefing_body(annotated, route, *, drift_project, teammates,
     trailer = _withheld_trailer(annotated, team_counts)
     # #1128: the note rides INTO render_brief so it is charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the
-    # budgeted brief actually showed of each panel (None: everything).
+    # budgeted brief actually showed of each panel.
     printed = render.render_brief(checkpoint, drift=drift, teammates=teammates,
                                   handoff=handoff, project_dir=route,
                                   worldcheck_project=worldcheck_project,
@@ -227,55 +204,29 @@ def _render_briefing_body(annotated, route, *, drift_project, teammates,
                                   snap=annotated.snapshot if annotated else None,
                                   notes=annotated.notes if annotated else ())
 
-    def _shown(panel, row) -> bool:
-        # #1128: `printed` is the manifest of card ids render_brief printed in
-        # full. A row the budget cut (its panel collapsed to a count line)
-        # never reached the reader, so it is not stamped as surfaced; no
-        # manifest means nothing is known to have been shown.
-        return row["request_id"] in ((printed or {}).get(panel) or ())
-    # #694 PR 2 (D1): the surfaced stamp, AFTER the render+print pipeline
+    # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare, shared
+    # with the MCP tool and the Hermes hook. It is opt-in, budget-bounded and
+    # read-only; it only RETURNED its counters and ledger rows. They are
+    # recorded here, where the project route is resolved and the output is
+    # already written, and committed after the flush (`worldcheck_effects`).
+    if checkpoint and annotated.worldcheck is not None:
+        fx.add(effects_commit.worldcheck_effects(
+            worldcheck_project, route, annotated.worldcheck,
+            annotated.ledger_rows))
+    # #694 PR 2 (D1): the surfaced stamps, AFTER the render+print pipeline
     # above completes — the card has already reached the terminal, so a
-    # crash between here and the write below just re-renders it next brief
-    # (the safe direction) rather than a false "surfaced". Gated on the same
+    # crash before the commit just re-renders it next brief (the safe
+    # direction) rather than a false "surfaced". `printed` is the manifest of
+    # cards `render_brief` printed in full, taken from the one read that
+    # built the panels: a row the budget cut (its panel collapsed to a count
+    # line) never reached the reader, so it is not stamped, and no manifest
+    # means nothing is known to have been shown. Gated on the same
     # `worldcheck_project` parameter as the panel itself (D2) — never on
-    # `route`, which is set on every path including --slug. Fail-open, same
-    # posture as every other best-effort block in this function: a broken
-    # composer must never take the briefing down.
-    if worldcheck_project is not None:
-        try:
-            # #961 slice 3 review item 1: `decision_renderable`, not
-            # `inbox_renderable` — the panel this stamp records as "shown"
-            # is the one `request_panel_lines` actually reads
-            # (briefing.py), and that one excludes `kind == "info"`. An
-            # `info` ask stamped `surfaced` here would give `is_stale` an
-            # anchor for a card that was never printed, decaying the ask
-            # before anyone saw it (`is_stale`'s own `kind == "info"`
-            # branch anchors on `delivered` instead, precisely because this
-            # loop no longer stamps `surfaced` for one).
-            for row in requests.decision_renderable(
-                    project_dir=worldcheck_project).get("rows") or []:
-                if requests.needs_surfaced_stamp(row) and _shown("request", row):
-                    requests.stamp_surfaced(row["request_id"],
-                                            project_dir=worldcheck_project)
-        except Exception:
-            pass
-        # #694 PR 3 (D1, sender side): same posture, same gate, same
-        # post-print timing — a crash before this line just re-renders the
-        # verdict card next brief instead of a false "verdict_surfaced".
-        try:
-            for row in requests.verdict_renderable(
-                    project_dir=worldcheck_project).get("rows") or []:
-                # #1117: one stamp row carries whichever of the epoch and the
-                # late reply the brief just showed.
-                if not _shown("verdict", row):
-                    continue
-                reply_id = requests.unseen_reply_id(row)
-                if requests.needs_verdict_surfaced_stamp(row) or reply_id:
-                    requests.stamp_verdict_surfaced(
-                        row["request_id"], project_dir=worldcheck_project,
-                        reply_event_id=reply_id)
-        except Exception:
-            pass
+    # `route`, which is set on every path including --slug. The stamps go
+    # through `requests.stamp_surfaced` / `stamp_verdict_surfaced`, the
+    # `_stamp` chokepoint (#961 slice 3: the request cards are the panel's
+    # own, `decision_renderable`, which excludes `kind == "info"`).
+    fx.add(effects_commit.surfaced_effects(worldcheck_project, printed))
     # #1128: the standing ">N days unverified" footer is gone. The stale
     # items carry [? unverified] marks in the body, and a section that hid
     # stale carried items says so in its own note, so the footer repeated
@@ -296,8 +247,12 @@ def _prepared(project, route, worldcheck_project=None):
         return None
 
 
-def _cmd_brief(args) -> int:
-    _cli._note_usage("brief:auto" if getattr(args, "auto", False) else "brief")
+@effects_commit.committing
+def _cmd_brief(args, fx) -> int:
+    # Every attempt counts, a refused one included: the usage line is
+    # committed when the verb returns, whatever the exit code.
+    fx.add(Effects(usage=(
+        "brief:auto" if getattr(args, "auto", False) else "brief",)))
     slug = getattr(args, "slug", None)
     if _cli._refuses_caller_scope(slug):
         return 2
@@ -327,7 +282,7 @@ def _cmd_brief(args) -> int:
             return 1
         render.render_brief_note([f"cross-project briefing — project: {slug}"])
         # A named bucket is somebody else's listing: no `daimon loops` pointer.
-        return _render_briefing_body(annotated, slug,
+        return _render_briefing_body(annotated, slug, fx,
                                      drift_project=None, teammates=None,
                                      loops_pointer=False)
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
@@ -410,7 +365,7 @@ def _cmd_brief(args) -> int:
     team_counts = _TeamCounts()
     teammates = (_team_briefings(project, team_counts)
                  if getattr(args, "team", False) else None)
-    return _render_briefing_body(annotated, project,
+    return _render_briefing_body(annotated, project, fx,
                                  drift_project=project, teammates=teammates,
                                  worldcheck_project=None if fallback_used
                                  else project, team_counts=team_counts,
