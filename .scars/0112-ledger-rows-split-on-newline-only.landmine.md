@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 112
 type: landmine
 title: Split ledger text on "\n" only through jsonl.split_rows; str.splitlines() tears rows holding U+2028/U+2029/U+0085
 severity: high
 confidence: 0.9
 created: 2026-10-03
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/jsonl.py
-  - pattern: read_text\(encoding=.utf-8.\)\.splitlines
+  - pattern: "read_text\(encoding=.utf-8.\)\.splitlines"
 evidence:
-  - note: "#1138; every ledger writes json.dumps(ensure_ascii=False), so the three characters sit raw in a row"
+  - note: #1138; every ledger writes json.dumps(ensure_ascii=False), so the three characters sit raw in a row
 expires:
   condition: "readers and rewriters all go through jsonl.split_rows and no splitlines() on ledger text remains"
   review_after: 2027-04-01
-status: candidate
+status: active
 ---
 
 `str.splitlines()` also breaks on U+2028, U+2029, U+0085 (and \x0b, \x0c,

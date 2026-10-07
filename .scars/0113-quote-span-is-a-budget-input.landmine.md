@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 113
 type: landmine
 title: The quote cap is a budget input, so changing QUOTE_CHARS or quote_span's containment rule changes which items survive the briefing
 severity: medium
 confidence: 0.85
 created: 2026-10-03
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/display.py
   - path: plugin/daimon_briefing/briefing.py
 evidence:
-  - note: "#1129 replay (research/experiments/quote-span-1129/measurements.json): at the default budget, 734 of 980 briefings over the local store keep a different set once the quote is a capped span instead of whole; 2857 items gained, none lost"
+  - note: #1129 replay (research/experiments/quote-span-1129/measurements.json): at the default budget, 734 of 980 briefings over the local store keep a different set once the quote is a capped span instead of whole; 2857 items gained, none lost
 expires:
   condition: "the briefing stops charging the quote to the byte budget, or verbatim items stop carrying quotes"
   review_after: 2027-04-01
-status: candidate
+status: active
 ---
 
 Evidence quotes sit almost only on verbatim items, and `briefing._line` puts

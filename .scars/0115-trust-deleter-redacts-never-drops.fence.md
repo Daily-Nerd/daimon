@@ -1,22 +1,24 @@
 ---
-id: 0
+id: 115
 type: fence
 title: The trust ledger deleter redacts prose in place; dropping quarantine rows lifts the withhold
 severity: high
 confidence: 0.9
 created: 2026-10-05
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/trust.py
   - path: plugin/daimon_briefing/surfaces.py
   - path: plugin/daimon_briefing/cli/lifecycle.py
-  - pattern: trust\.forget_content_key
+  - pattern: "trust\.forget_content_key"
 evidence:
-  - note: "#1132 stage 2c-1: trust.forget_content_key dropped every row of a matching quarantine and had no caller; replaced by trust.redact_content_key"
+  - note: #1132 stage 2c-1: trust.forget_content_key dropped every row of a matching quarantine and had no caller; replaced by trust.redact_content_key
 expires:
   condition: "quarantine verdicts leave trust.jsonl, or the withhold stops depending on the rows being present"
   review_after: 2027-04-01
-status: candidate
+status: active
 ---
 
 refutations, amendments and requests each answer a forget by dropping the
