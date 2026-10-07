@@ -11,6 +11,8 @@ each over a store written by the real writers."""
 import ast
 from pathlib import Path
 
+import pytest
+
 import daimon_briefing
 from daimon_briefing import (api, briefing, cli, hooks, ledger, marks,
                              mcp_tools, refutations, store, trust)
@@ -67,23 +69,32 @@ def test_the_parser_applies_the_documented_algorithm():
            "VERIFY BEFORE TRUSTING (x)\n- ⚠ an item that warns\n")
     got = api.parse_briefing(raw)
     assert got.header == "While you were away"
-    assert got.standing_rulings == ["§ a ruling"]
-    assert got.items == ["- [tag] item one", "* item two"]
-    assert got.warnings == ["⚠ a warning", "VERIFY BEFORE TRUSTING (x)",
-                            "- ⚠ an item that warns"]
+    assert got.standing_rulings == ("§ a ruling",)
+    assert got.items == ("- [tag] item one", "* item two")
+    assert got.warnings == ("⚠ a warning", "VERIFY BEFORE TRUSTING (x)",
+                            "- ⚠ an item that warns")
     assert got.raw == raw
 
 
 def test_the_parser_of_nothing_is_empty():
     got = api.parse_briefing("")
     assert (got.header, got.standing_rulings, got.items, got.warnings) == (
-        "", [], [], [])
+        "", (), (), ())
+
+
+def test_the_parsed_briefing_is_frozen_and_holds_tuples():
+    import dataclasses
+    got = api.parse_briefing("h\n- i\n")
+    assert isinstance(got.items, tuple) and isinstance(got.warnings, tuple)
+    assert isinstance(got.standing_rulings, tuple)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        got.header = "x"  # type: ignore[misc]
 
 
 def test_the_parser_is_built_from_the_shared_marks():
     assert api.parse_briefing(f"h\n{marks.RULING_MARK} r\n").standing_rulings
     for mark in marks.ITEM_MARKS:
-        assert api.parse_briefing(f"h\n{mark} i\n").items == [f"{mark} i"]
+        assert api.parse_briefing(f"h\n{mark} i\n").items == (f"{mark} i",)
     for phrase in marks.WARNING_MARKERS:
         assert api.parse_briefing(f"h\nx {phrase} y\n").warnings
 
@@ -155,7 +166,7 @@ def test_a_closed_view_keeps_the_greeting_and_lists_no_items(
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
-    assert got.items == []
+    assert got.items == ()
     assert any("trust.jsonl is unreadable" in w for w in got.warnings)
     assert briefing.CLOSED_LINE in out
 
@@ -186,7 +197,7 @@ def test_the_no_briefing_line_is_plain_and_not_a_warning(
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header.startswith("No briefing for this project yet")
-    assert got.warnings == []
+    assert got.warnings == ()
 
 
 def test_the_teammate_counts_on_the_header_only_path_are_plain(
@@ -203,14 +214,14 @@ def test_the_teammate_counts_on_the_header_only_path_are_plain(
     assert rc == 0
     assert "2 resolved item(s) withheld (a teammate's)" in out
     assert "3 quarantined item(s) withheld (a teammate's)" in out
-    assert api.parse_briefing(out).warnings == []
+    assert api.parse_briefing(out).warnings == ()
 
 
 def test_a_missing_bucket_line_is_plain(
         tmp_checkpoint_dir, monkeypatch, capsys):
     rc, out = _brief(capsys, monkeypatch, "--slug", "-no-such-bucket")
     assert rc == 1
-    assert api.parse_briefing(out).warnings == []
+    assert api.parse_briefing(out).warnings == ()
 
 
 def test_the_mcp_tool_output_parses(tmp_checkpoint_dir):
@@ -229,7 +240,7 @@ def test_the_mcp_closed_view_parses(tmp_checkpoint_dir):
     out = mcp_tools.HANDLERS["daimon_brief"](
         {"slug": store.project_slug(PROJECT)})
     got = api.parse_briefing(out)
-    assert got.header == briefing.GREETING and got.items == []
+    assert got.header == briefing.GREETING and got.items == ()
 
 
 def test_the_hermes_hook_output_parses(tmp_checkpoint_dir, monkeypatch):

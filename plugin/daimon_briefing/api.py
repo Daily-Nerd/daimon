@@ -15,7 +15,7 @@ bucket. Resolving WHICH directory a value means is `config.resolve_project_dir`
 renderers write with, so the format and its reader cannot drift apart.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
@@ -27,7 +27,7 @@ __all__ = ("lookup", "match", "read_meta", "queue", "listing",
            "inbox_listing", "project_slug", "Briefing", "parse_briefing")
 
 
-@dataclass
+@dataclass(frozen=True)
 class Briefing:
     """A briefing split by line kind. `header` is the first line that is not
     a warning, `standing_rulings` start with the ruling mark, `items` with an
@@ -35,9 +35,9 @@ class Briefing:
     is not kept. `raw` is the text as given."""
 
     header: str = ""
-    standing_rulings: list = field(default_factory=list)
-    items: list = field(default_factory=list)
-    warnings: list = field(default_factory=list)
+    standing_rulings: tuple = ()
+    items: tuple = ()
+    warnings: tuple = ()
     raw: str = ""
 
 
@@ -46,19 +46,23 @@ def parse_briefing(text: str) -> Briefing:
     warnings. Tolerant: a line of none of those kinds is dropped, never an
     error. The warning markers are checked first for every line, so a note
     above the greeting never becomes the header."""
-    got = Briefing(raw=text)
+    header = ""
+    rulings: list = []
+    items: list = []
+    warnings: list = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         if any(marker in stripped for marker in WARNING_MARKERS):
-            got.warnings.append(stripped)
+            warnings.append(stripped)
             continue
-        if not got.header:
-            got.header = stripped
+        if not header:
+            header = stripped
             continue
         if stripped.startswith(RULING_MARK):
-            got.standing_rulings.append(stripped)
+            rulings.append(stripped)
         elif stripped.startswith(ITEM_MARKS):
-            got.items.append(stripped)
-    return got
+            items.append(stripped)
+    return Briefing(header, tuple(rulings), tuple(items), tuple(warnings),
+                    text)
