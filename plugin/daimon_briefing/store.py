@@ -2937,7 +2937,7 @@ def all_forgotten_content_keys() -> set[str]:
         children = sorted(root.iterdir())
     except OSError:
         return set()
-    stamp = []
+    stamp: list[tuple] = []
     for child in children:
         try:
             st = (child / "events.jsonl").stat()

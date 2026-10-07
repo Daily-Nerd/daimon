@@ -137,12 +137,16 @@ class Opened:
     """A checkpoint after the view: `checkpoint` is a copy with every
     withheld item removed (None when there is none), `withheld` names what was
     removed, `suppressed` counts loops closed by a resolution (only when the
-    caller asked for `live`)."""
+    caller asked for `live`). `route` is the route the read was asked to take
+    and `fell_back` is the route FACT: the global pointer served the body
+    (scar 0058: read it off the result, never reconstruct it)."""
 
     checkpoint: dict | None
     withheld: tuple
     suppressed: int
     snapshot: Snapshot
+    route: store.Route = store.Route.OWN
+    fell_back: bool = False
 
 
 @dataclass(frozen=True)
@@ -351,21 +355,27 @@ def _filter(raw: dict, snap: Snapshot, live_only: bool):
     return out, tuple(withheld), suppressed
 
 
-def _opened(raw, snap: Snapshot, live_only: bool) -> Opened:
+def _opened(raw, snap: Snapshot, live_only: bool,
+            route: store.Route = store.Route.OWN,
+            fell_back: bool = False) -> Opened:
     if not isinstance(raw, dict):
-        return Opened(None, (), 0, snap)
+        return Opened(None, (), 0, snap, route, fell_back)
     copy_, withheld, suppressed = _filter(raw, snap, live_only)
-    return Opened(copy_, withheld, suppressed, snap)
+    return Opened(copy_, withheld, suppressed, snap, route, fell_back)
 
 
-def open(project, *, live: bool) -> Opened:  # noqa: A001 — the projection's name
-    """The project's own latest checkpoint through the view. `live` is
-    required: True also drops loops a resolution closed (counted in
-    `suppressed`), False keeps them."""
+def open(project, *, live: bool,  # noqa: A001 — the projection's name
+         route: store.Route = store.Route.OWN) -> Opened:
+    """The project's latest checkpoint through the view. `live` is required:
+    True also drops loops a resolution closed (counted in `suppressed`),
+    False keeps them. `route` is the store route: OWN (the default) reads the
+    project's own pointer only, OWN_ELSE_GLOBAL may serve the global pointer,
+    and `Opened.fell_back` says whether it did. `project` may be a bare slug.
+    The snapshot is always the reader's own, whichever body was served."""
     snap = snapshot(project)
-    raw = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                 admit=store.Admit.ANY)
-    return _opened(raw, snap, live)
+    got = store.read_latest_result(project_dir=project, route=route,
+                                   admit=store.Admit.ANY)
+    return _opened(got.checkpoint, snap, live, route, got.fell_back)
 
 
 def team(project, *, live: bool) -> tuple:

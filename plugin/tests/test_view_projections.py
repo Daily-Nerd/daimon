@@ -328,3 +328,54 @@ def _reset():
     if root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True)
+
+
+# ---- route and fell_back (PR 7a) -------------------------------------------
+
+OTHER = "/p/view-projections-other"
+
+
+def test_open_defaults_to_the_own_route_and_reports_no_fallback(
+        tmp_checkpoint_dir):
+    _write()
+    got = view.open(PROJECT, live=False)
+    assert got.route is store.Route.OWN
+    assert got.fell_back is False
+
+
+def test_own_else_global_serves_the_global_pointer_and_says_so(
+        tmp_checkpoint_dir):
+    _write(project=OTHER)
+    got = view.open(PROJECT, live=False, route=store.Route.OWN_ELSE_GLOBAL)
+    assert got.route is store.Route.OWN_ELSE_GLOBAL
+    assert got.fell_back is True
+    assert S_DECISION in _all_texts(got.checkpoint)
+
+
+def test_own_else_global_prefers_the_own_bucket(tmp_checkpoint_dir):
+    _write(project=OTHER)
+    _write()
+    got = view.open(PROJECT, live=False, route=store.Route.OWN_ELSE_GLOBAL)
+    assert got.fell_back is False
+
+
+def test_the_snapshot_of_a_fallback_is_the_readers_own(tmp_checkpoint_dir):
+    _write(project=OTHER)
+    _quarantine(S_TOPIC, "topic")
+    got = view.open(PROJECT, live=False, route=store.Route.OWN_ELSE_GLOBAL)
+    assert got.fell_back is True
+    assert S_TOPIC not in _all_texts(got.checkpoint)
+    assert [w.kind for w in got.withheld] == ["topic"]
+
+
+def test_open_accepts_a_bare_slug_as_the_project(tmp_checkpoint_dir):
+    _write()
+    got = view.open(store.project_slug(PROJECT), live=False)
+    assert S_DECISION in _all_texts(got.checkpoint)
+
+
+def test_open_with_no_checkpoint_keeps_the_route_facts(tmp_checkpoint_dir):
+    got = view.open(PROJECT, live=True, route=store.Route.OWN_ELSE_GLOBAL)
+    assert got.checkpoint is None
+    assert got.fell_back is False
+    assert got.route is store.Route.OWN_ELSE_GLOBAL
