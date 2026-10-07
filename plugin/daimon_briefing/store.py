@@ -989,12 +989,16 @@ def foreign_forgotten_content_keys() -> set[str]:
     ledger is capped — a teammate cannot make every briefing pay for an
     unbounded file. Never raises."""
     keys: set[str] = set()
-    own = project_slug(config.author()) or "unknown"
     try:
         remotes = [d for d in config.team_dir().iterdir()
                    if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
     except OSError:
         return keys
+    if not remotes:
+        return keys
+    # After the cheap exits: `config.author()` may fork `git config`, and a
+    # machine with no sidecar must not pay that on every briefing.
+    own = project_slug(config.author()) or "unknown"
     for remote in remotes:
         try:
             paths = [p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
@@ -2909,6 +2913,10 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     return keys
 
 
+# (checkpoint root) -> (stamp, keys): see all_forgotten_content_keys.
+_all_forgotten_cache: dict = {}
+
+
 def all_forgotten_content_keys() -> set[str]:
     """Union of EVERY local project's forget tombstones (#423). The recall
     index is machine-global and a foreign checkpoint cannot name the local
@@ -2916,17 +2924,37 @@ def all_forgotten_content_keys() -> set[str]:
     suppresses a value forgotten in ANY local project. Over-suppression is
     the fail-safe direction (drop_forgotten's documented posture) — a
     forgotten value re-surfacing via a teammate is the worse failure.
-    Never raises; degrades to the empty set."""
-    keys: set[str] = set()
+    Never raises; degrades to the empty set.
+
+    Memoized per process, because every briefing reads this set through the
+    view and the walk folds one events ledger per bucket (about 25 ms for 50
+    buckets of 200 events). The memo key is the checkpoint root plus each
+    bucket's name and its `events.jsonl` (inode, mtime_ns, size), so a write
+    to any ledger, or a bucket appearing or going, recomputes. The caller gets
+    a copy."""
+    root = config.checkpoint_dir()
     try:
-        children = list(config.checkpoint_dir().iterdir())
+        children = sorted(root.iterdir())
     except OSError:
-        return keys
+        return set()
+    stamp = []
+    for child in children:
+        try:
+            st = (child / "events.jsonl").stat()
+            stamp.append((child.name, st.st_ino, st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append((child.name, None, None, None))
+    key = tuple(stamp)
+    cached = _all_forgotten_cache.get(root)
+    if cached is not None and cached[0] == key:
+        return set(cached[1])
+    keys: set[str] = set()
     for child in children:
         # Bucket dirs are named by slug; project_slug is idempotent on slugs,
         # so the name rides through the project_dir-shaped ledger API.
         if child.is_dir():
             keys |= forgotten_content_keys(child.name)
+    _all_forgotten_cache[root] = (key, frozenset(keys))
     return keys
 
 
