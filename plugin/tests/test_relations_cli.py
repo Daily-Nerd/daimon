@@ -176,3 +176,14 @@ def test_list_withholds_edges_touching_erased_endpoints(seeded, capsys):
     out = capsys.readouterr().out
     assert seeded["rel_id"] not in out
     assert "withheld" in out
+
+
+def test_list_json_says_how_many_edges_were_withheld(seeded, capsys):
+    """An edge touching a forgotten item is withheld from the listing and the
+    JSON output still reports that it was."""
+    store.append_event(seeded["item_ids"][0], "forgotten:deadbeef",
+                       kind="tombstone", tombstone=True, project_dir=PROJECT)
+    capsys.readouterr()
+    assert cli.main(["relations", "list", "--json"]) == 0
+    out = capsys.readouterr().out
+    assert "edge(s) withheld (erased endpoint)" in out
