@@ -99,7 +99,8 @@ the `daimon` CLI. Host-specific payload handling stays in the adapter; serializa
 storage, and rendering stay in the runtime.
 
 Hermes is the secondary in-process integration. The MCP surface is read-only. The
-viewer binds locally and treats files as its compatibility seam.
+viewer binds locally. Its project, checkpoint, session and diff routes read through
+the read view; its ledger, grid, session-page and activity routes still read files.
 
 Host capabilities are not identical. Each adapter implements only the lifecycle
 events its host exposes; the host guides document where capture, start injection, or
@@ -261,7 +262,7 @@ flowchart LR
         Search["Recall search"]
         Inspector["Trust inspector"]
         Folds["Ledger folds"]
-        FileReader["Import-free viewer reader"]
+        FileReader["Viewer reader"]
     end
 
     subgraph Surfaces["Presentation surfaces"]
@@ -296,10 +297,13 @@ The CLI renderer is the source of truth for human-facing terminal output. Host s
 hooks inject that rendered briefing rather than reimplementing it. MCP returns a
 bounded read-only subset as JSON.
 
-The viewer has two read paths by design. Its reader normalizes checkpoint files
-without importing Daimon, which tests the file contract a separate consumer receives.
-Its server delegates search, trust inspection, and ledger folds to Daimon's engines so
-those semantics do not fork inside the same distribution. Every request runs with the
+The viewer's project list, pointer window, session list and diff read through the
+read view, so a value a reader may not see is absent from every payload, counts are
+counts of visible items, and a trust ledger that cannot be read hides items and is
+named in the payload's `notes`. Its ledger, grid, session-page and activity routes
+normalize checkpoint files directly. Its server delegates search, trust inspection,
+and ledger folds to Daimon's engines so those semantics do not fork inside the same
+distribution. Every request runs with the
 store scoped to the viewer's data directory (set inside the request thread), the
 store and the default project resolve through the same config accessors as the CLI,
 and bucket listing and tenant scope come from `view.buckets`.

@@ -65,7 +65,7 @@ def test_list_buckets_counts_every_list_field(tmp_path, section, key, kind):
                   "working_context": {}, "epistemic_snapshot": {}}
     checkpoint[section][key] = [{"text": "one"}]
     (bucket / "latest.json").write_text(json.dumps(checkpoint))
-    [got] = reader.list_buckets(tmp_path)
+    [got] = reader.list_buckets(tmp_path, "-proj")
     assert got["item_count"] == 1
 
 
@@ -76,5 +76,5 @@ def test_list_buckets_does_not_count_the_singleton(tmp_path):
         "created": "2026-08-06T10:00:00Z",
         "working_context": {"active_topic": {"text": "t"}},
         "epistemic_snapshot": {}}))
-    [got] = reader.list_buckets(tmp_path)
+    [got] = reader.list_buckets(tmp_path, "-proj")
     assert got["item_count"] == 0

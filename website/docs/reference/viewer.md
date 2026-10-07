@@ -33,6 +33,19 @@ the CLI resolves `--project`), `--port` (default 7717), `--no-browser`.
   **Check strip**, a checkpoint **Diff**, and a **print view** that sets one
   checkpoint as a printed record.
 
+## What the viewer does not show
+
+The project list, the checkpoint and session lists, a checkpoint and the Diff
+show only what a reader of the project may see. An item you quarantined or
+forgot does not appear in them, and a withheld topic reads as no topic. Counts
+are counts of the items you can see, so a number never tells you that
+something is hidden. If the trust ledger cannot be read, no item is shown and
+the page says which ledger failed.
+
+The Diff lists an item that left between two checkpoints as resolved when a
+resolution closed it, whatever status closed it (the rule `daimon diff` uses),
+and as dropped otherwise.
+
 ## Read-only as a commitment
 
 The server answers GET requests only, and no route writes to your checkpoints,

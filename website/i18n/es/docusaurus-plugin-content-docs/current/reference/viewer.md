@@ -37,6 +37,20 @@ raíz del proyecto como lo hace la CLI con `--project`), `--port` (por defecto
   conocimiento negativo, un **Check strip**, un **Diff** entre checkpoints, y
   una **vista de impresión** que fija un checkpoint como registro impreso.
 
+## Qué no muestra el visor
+
+La lista de proyectos, las listas de checkpoints y de sesiones, un checkpoint
+y el Diff muestran solo lo que un lector del proyecto puede ver. Un item que
+pusiste en cuarentena o que olvidaste no aparece en ellos, y un tema retenido
+se lee como si no hubiera tema. Los conteos son conteos de los items que
+puedes ver, así que un número nunca te dice que hay algo oculto. Si el ledger
+de confianza no se puede leer, no se muestra ningún item y la página dice qué
+ledger falló.
+
+El Diff lista un item que salió entre dos checkpoints como resuelto cuando una
+resolución lo cerró, sea cual sea el estado que lo cerró (la regla que usa
+`daimon diff`), y como descartado en cualquier otro caso.
+
 ## Solo lectura como compromiso
 
 El servidor responde únicamente peticiones GET, y ninguna ruta escribe en tus

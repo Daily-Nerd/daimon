@@ -42,9 +42,6 @@ ALLOWLIST = {
         "rebuilds a checkpoint shape from a Selection (inverse of build)",
     ("render.py", "_SECTIONS"): "titles and colours per section (labels)",
     ("scoring.py", "TYPE_RULES"): "decay parameters keyed by scoring type",
-    ("reader.py", "list_buckets"):
-        "daimon_ui reads files without importing daimon; pinned equal to "
-        "schema.ITEM_LISTS by tests/ui/test_reader_kind_drift.py",
     ("reader.py", "_SECTIONS"):
         "viewer labels and the open_loops split; pinned by the drift test",
     ("reader.py", "_SECTION_KIND"):

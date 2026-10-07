@@ -76,35 +76,6 @@ def test_load_session_missing_and_torn(tmp_path):
     assert data is None and "Couldn't read" in err["what"]
 
 
-def test_diff_surfaces_load_error_for_either_side(tmp_path, monkeypatch):
-    """A session can vanish between the history scan and the read (GC race).
-    Both sides must surface the load error rather than diffing nothing."""
-    valid = [{"session_id": "A", "created": "1"}, {"session_id": "B", "created": "2"}]
-    monkeypatch.setattr(reader, "project_history",
-                        lambda *a: {"sessions": valid, "unreadable": 0})
-    err = {"what": "x", "why": "y", "fix": "z"}
-    real_load = reader._load_session
-
-    def only_b(data_dir, sid):
-        if sid == "A":
-            return None, err
-        return {"session_id": sid}, None
-
-    monkeypatch.setattr(reader, "_load_session", only_b)
-    got = reader.diff_checkpoints(tmp_path, "-p", "A", "B")
-    assert got == {"ok": False, "error": err}
-
-    def only_a(data_dir, sid):
-        if sid == "B":
-            return None, err
-        return {"session_id": sid}, None
-
-    monkeypatch.setattr(reader, "_load_session", only_a)
-    got = reader.diff_checkpoints(tmp_path, "-p", "A", "B")
-    assert got == {"ok": False, "error": err}
-    monkeypatch.setattr(reader, "_load_session", real_load)
-
-
 def test_biography_skips_a_torn_session_and_still_answers(tmp_path, monkeypatch):
     item = {"id": "o-a1b2c3d4e5f6", "text": "t", "trust": "inferred"}
     sessions = [{"session_id": "OLD", "created": "1"},

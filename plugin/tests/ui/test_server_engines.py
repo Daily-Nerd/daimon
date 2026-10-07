@@ -1,7 +1,7 @@
 """Engine endpoints (#670): /api/recall and /api/why dispatch to daimon_briefing's
 own engines. recall.search is THE matcher (one-matcher rule: the viewer renders
 recall, it never grows a second search engine) and inspect_item is the read-side
-receipt behind `daimon why`. reader.py stays daimon-import-free; the engine
+receipt behind `daimon why`. reader.py reaches daimon only through the view; the engine
 imports live in the server dispatch layer only.
 """
 import json

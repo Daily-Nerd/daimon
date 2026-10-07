@@ -555,12 +555,7 @@ KNOWN_LEAKS: set = {
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("cli:why", k) for k in ("question",)},
     *{("http:/api/activity", k) for k in ("contradiction", "question", "topic",)},
-    *{("http:/api/checkpoint/", k) for k in ("topic",)},
-    *{("http:/api/checkpoints", k) for k in ("topic",)},
-    *{("http:/api/diff", k) for k in ("topic",)},
-    *{("http:/api/history", k) for k in ("topic",)},
     *{("http:/api/ledger", k) for k in ("topic",)},
-    *{("http:/api/projects", k) for k in ("topic",)},
     *{("http:/api/recall", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/relations", k) for k in ("question",)},
@@ -734,11 +729,14 @@ def test_llm_briefing_is_an_exemption_not_an_axis_we_drive():
 # ===========================================================================
 # Surfaces that read through the view: the module whose code makes the call,
 # and the names that call may take. `prepare` opens the checkpoint through
-# `view.open`; `open`, `suppressed` and `projects` (with `peek` under it) are
-# the view's own projections. The MCP projects tool reaches `projects` through
-# `cli.projects_rows`, so the module that calls it is cli/projects.py.
+# `view.open`; `open`, `suppressed`, `projects` (with `peek` under it),
+# `pointers`, `sessions` and `open_sessions` are the view's own projections.
+# The MCP projects tool reaches `projects` through `cli.projects_rows`, so the
+# module that calls it is cli/projects.py; the viewer's routes reach theirs
+# through `daimon_ui/reader.py`.
 PREPARE = frozenset({"prepare", "_prepared"})
 PEEK = frozenset({"projects", "peek"})
+VIEWER = "../daimon_ui/reader.py"
 CONVERTED = {
     "cli:brief": ("cli/brief.py", PREPARE),
     "cli:loops": ("cli/lifecycle.py", PREPARE),
@@ -747,6 +745,11 @@ CONVERTED = {
     "mcp:daimon_brief": ("mcp_tools.py", PREPARE),
     "mcp:daimon_projects": ("cli/projects.py", PEEK),
     "hook:pre_llm_call": ("hooks.py", PREPARE),
+    "http:/api/projects": (VIEWER, frozenset({"projects"})),
+    "http:/api/checkpoints": (VIEWER, frozenset({"pointers", "sessions"})),
+    "http:/api/checkpoint/": (VIEWER, frozenset({"pointers"})),
+    "http:/api/history": (VIEWER, frozenset({"sessions"})),
+    "http:/api/diff": (VIEWER, frozenset({"sessions", "open_sessions"})),
 }
 
 # Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
@@ -757,7 +760,10 @@ UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED)
 # Cases of a converted surface that never read a checkpoint item: the status
 # payload carries counts and health, never an item's text (only the
 # `--suppressed` listing reads items), so there is no view call to fail.
-NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json")}
+NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json"),
+                # `/api/checkpoint/S-1` is not a pointer ref: refused before
+                # any read
+                ("http:/api/checkpoint/", "session")}
 
 
 def _calls_view(rel, names):
@@ -790,9 +796,9 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
     def boom(*_a, **_k):
         raise RuntimeError("view.open failed")
 
-    monkeypatch.setattr(view, "open", boom)
-    monkeypatch.setattr(view, "peek", boom)
-    monkeypatch.setattr(view, "projects", boom)
+    for name in ("open", "peek", "projects", "pointers", "sessions",
+                 "open_sessions"):
+        monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
     # never reaches its raise point

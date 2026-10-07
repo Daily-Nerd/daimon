@@ -135,8 +135,8 @@ LAYER: dict[str, str] = {
     "daimon_briefing/cli/trust.py": "read",  # trust verbs
     "daimon_ui/__init__.py": "entry",  # package marker
     "daimon_ui/__main__.py": "entry",  # viewer entry point
-    "daimon_ui/reader.py": "read",  # viewer file reader, no daimon imports; raw reads are its file seam, converted in PR 8
-    "daimon_ui/server.py": "read",  # viewer HTTP server
+    "daimon_ui/reader.py": "read",  # viewer reads; the pointer, session and project routes go through the view, the activity, ledger, grid, session and biography folds still read files (PR 8b-2)
+    "daimon_ui/server.py": "entry",  # viewer HTTP server: routes, no bucket reads
 }
 
 # (module, qualname of the enclosing def, primitive) -> why it is still here.
@@ -204,19 +204,13 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/worldcheck.py", "_verify_probe", "json.loads"):
         "output of the verifier subprocess, not a bucket path",
     ("daimon_ui/reader.py", "_load_session", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
-    ("daimon_ui/reader.py", "list_buckets", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
-    ("daimon_ui/reader.py", "list_recent", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
-    ("daimon_ui/reader.py", "load_checkpoint", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
+        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
     ("daimon_ui/reader.py", "project_history", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
+        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
     ("daimon_ui/reader.py", "receipt_state", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
+        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
     ("daimon_ui/reader.py", "receipts_enabled", "json.loads"):
-        "viewer file seam (no daimon imports), converted in PR 8",
+        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
 }
 
 
@@ -358,6 +352,51 @@ def test_the_raw_read_sites_are_exactly_the_listed_ones():
         f"{sorted(found - listed)}")
     assert listed - found == set(), (
         f"stale RAW_READ_SITES entries (delete them): {sorted(listed - found)}")
+
+
+VIEWER_READER_MAY_IMPORT = {"view", "schema", "api", "config"}
+
+
+def _daimon_briefing_imports(tree):
+    """The `daimon_briefing` submodules a tree imports, by any spelling."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            parts = node.module.split(".")
+            if parts[0] == "daimon_briefing":
+                if len(parts) > 1:
+                    found.add(parts[1])
+                else:
+                    found.update(a.name for a in node.names)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] == "daimon_briefing" and len(parts) > 1:
+                    found.add(parts[1])
+    return found
+
+
+def test_the_viewer_reader_imports_only_the_view_side():
+    """`reader.py` reaches the store through the view (`view`, the `schema`
+    table, the `api` re-exports, `config`), never through a module that owns a
+    ledger or a pointer, so it cannot grow a second judgement of what a reader
+    may see."""
+    tree = ast.parse(modules()["daimon_ui/reader.py"].read_text(
+        encoding="utf-8"))
+    imported = _daimon_briefing_imports(tree)
+    assert imported, "the scan found no daimon_briefing import: it is vacuous"
+    assert imported <= VIEWER_READER_MAY_IMPORT, sorted(
+        imported - VIEWER_READER_MAY_IMPORT)
+
+
+def test_the_import_scan_sees_every_spelling():
+    tree = ast.parse(
+        "from daimon_briefing import config, view\n"
+        "from daimon_briefing.store import read_meta\n"
+        "import daimon_briefing.trust\n"
+        "import json\n")
+    assert _daimon_briefing_imports(tree) == {"config", "view", "store",
+                                              "trust"}
 
 
 def test_every_listed_site_says_why():
