@@ -76,6 +76,12 @@ def test_no_events_ledger_is_no_events(tmp_checkpoint_dir):
     assert view.verifications(PROJECT) == ()
 
 
+@pytest.mark.parametrize("project", ["", None])
+def test_no_project_has_no_rows(tmp_checkpoint_dir, project):
+    assert view.events(project) == ()
+    assert view.verifications(project) == ()
+
+
 def test_torn_lines_and_non_object_rows_are_skipped(tmp_checkpoint_dir):
     _event("o-aaaaaaaaaaaa")
     _append_raw("events.jsonl", "{broken", "[1, 2]", "")
