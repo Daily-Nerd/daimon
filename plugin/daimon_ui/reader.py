@@ -444,6 +444,11 @@ def project_ledger(slug: str) -> dict:
         head = {"session_id": hist_sessions[0].session_id,
                 "created": hist_sessions[0].created}
 
+    # A forget is counted nowhere: a tombstone ref is neither a resolution in
+    # the total nor an item's last event, whatever the kernel fold says of it.
+    forgotten_refs = {e.item_ref for e in view.events(slug, snap=snap)
+                      if e.tombstone}
+    resolved = snap.resolved_refs - forgotten_refs
     ver_rows = view.verifications(slug)
     latest_check: dict[str, str] = {}
     for row in ver_rows:
@@ -457,7 +462,7 @@ def project_ledger(slug: str) -> dict:
     by_sid: dict[str, dict] = {}
     for iid, tr in latest_tr.items():
         last_event = {"kind": tr["kind"], "ts": tr["ts"]}
-        if iid in snap.resolved_refs:
+        if iid in resolved:
             res_ts = snap.resolutions[iid].get("ts")
             if (res_ts or "") > (last_event["ts"] or ""):
                 last_event = {"kind": "resolved", "ts": res_ts}
@@ -484,7 +489,7 @@ def project_ledger(slug: str) -> dict:
 
     return {"ok": True, "groups": groups, "head": head,
             "totals": {"objects": len(walk["items"]),
-                       "events": (len(walk["events"]) + len(snap.resolved_refs)
+                       "events": (len(walk["events"]) + len(resolved)
                                   + len(ver_rows))},
             "partial": _ledger_partial(walk["unreadable"]),
             "notes": walk["notes"]}

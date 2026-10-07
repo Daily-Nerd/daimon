@@ -156,6 +156,23 @@ def test_ledger_totals_count_one_resolution_per_resolved_ref(base):
     assert _get(base, "/api/ledger")["totals"]["events"] == walk_events + 1
 
 
+def test_a_forget_is_counted_nowhere_in_the_ledger(base):
+    """A forgotten value is in no list and no count: a tombstone, even one
+    whose ref is a visible item, adds nothing to the event total and does not
+    become that item's last event."""
+    before = _get(base, "/api/ledger")
+    key = normalize.content_key("some unrelated forgotten value")
+    for ref in ("i-gone", B):
+        store.append_event(ref, f"forgotten:{key}", kind="tombstone",
+                           tombstone=True, project_dir=PROJECT)
+    after = _get(base, "/api/ledger")
+    assert after["totals"] == before["totals"]
+    [row] = [r for g in after["groups"] for r in g["rows"] if r["id"] == B]
+    [old] = [r for g in before["groups"] for r in g["rows"] if r["id"] == B]
+    assert row["last_event"] == old["last_event"]
+    assert row["last_event"]["kind"] != "resolved"
+
+
 def test_ledger_reopened_item_is_not_resolved(base):
     store.append_event(A, "resolved", project_dir=PROJECT)
     store.append_event(A, "reopened", project_dir=PROJECT)
