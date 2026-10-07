@@ -333,14 +333,6 @@ def visible_topic(checkpoint, slug, *, forgotten) -> str | None:
     return text if isinstance(text, str) else None
 
 
-def peek_topic(slug, *, forgotten) -> str | None:
-    """`visible_topic` of the bucket's latest checkpoint, read here. Equal to
-    the active topic of `open(slug, live=False)`."""
-    got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
-                                 admit=store.Admit.ANY)
-    return visible_topic(got, slug, forgotten=forgotten)
-
-
 # ---- classify / live ------------------------------------------------------
 
 

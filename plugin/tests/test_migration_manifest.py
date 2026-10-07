@@ -56,9 +56,6 @@ MANIFEST = {
      "route", "store.Admit.ANY"),
     ("view.py", "match", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
-    # #1132 PR 7b: the topic peek behind `projects`, own bucket only.
-    ("view.py", "peek_topic", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
 }
 
 # Wrapper-internal calls in store.py that are not migration sites. The two

@@ -1,11 +1,11 @@
-"""`view.peek_topic` and `view.forgotten_keys` (#1132 PR 7b).
+"""`view.visible_topic` and `view.forgotten_keys` (#1132 PR 7b).
 
 The cheap topic read behind `daimon projects`: one bucket's active topic
 judged by the SAME `classify` the full view uses, over a light snapshot, so a
 machine-wide listing does not pay for a whole `snapshot` per bucket. The twin
-property is the contract: for any store, `peek_topic(slug)` is the topic text
-of `view.open(slug, live=False)`, or None when that view hides it. Stores are
-built by the real writers."""
+property is the contract: for any store, `visible_topic` of the stored latest
+is the topic text of `view.open(slug, live=False)`, or None when that view
+hides it. Stores are built by the real writers."""
 
 import json
 import random
@@ -47,6 +47,13 @@ def _plant(slug, name, data: bytes):
         fh.write(data)
 
 
+def _peek(slug, *, forgotten):
+    """`visible_topic` of the bucket's stored latest checkpoint."""
+    got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
+                                 admit=store.Admit.ANY)
+    return view.visible_topic(got, slug, forgotten=forgotten)
+
+
 def _twin(project):
     got = view.open(project, live=False).checkpoint
     topic = ((got or {}).get("working_context") or {}).get("active_topic")
@@ -55,20 +62,20 @@ def _twin(project):
 
 def test_a_visible_topic_is_returned(tmp_checkpoint_dir):
     slug = _write("/p/peek-a", "the weekly sync cadence")
-    assert view.peek_topic(slug, forgotten=view.forgotten_keys()) == (
+    assert _peek(slug, forgotten=view.forgotten_keys()) == (
         "the weekly sync cadence")
 
 
 def test_a_missing_bucket_or_checkpoint_is_none(tmp_checkpoint_dir):
-    assert view.peek_topic("-no-such-bucket",
+    assert _peek("-no-such-bucket",
                            forgotten=frozenset()) is None
-    assert view.peek_topic("", forgotten=frozenset()) is None
+    assert _peek("", forgotten=frozenset()) is None
 
 
 def test_a_forgotten_topic_reads_as_absent(tmp_checkpoint_dir):
     slug = _write("/p/peek-f", "the weekly sync cadence")
     _forget("/p/peek-f", "the weekly sync cadence")
-    assert view.peek_topic(slug, forgotten=view.forgotten_keys()) is None
+    assert _peek(slug, forgotten=view.forgotten_keys()) is None
 
 
 def test_the_forgotten_set_is_machine_wide(tmp_checkpoint_dir):
@@ -76,23 +83,23 @@ def test_the_forgotten_set_is_machine_wide(tmp_checkpoint_dir):
     slug = _write("/p/peek-g", "shared wording about the cache")
     _write("/p/peek-other", "something else")
     _forget("/p/peek-other", "shared wording about the cache")
-    assert view.peek_topic(slug, forgotten=view.forgotten_keys()) is None
+    assert _peek(slug, forgotten=view.forgotten_keys()) is None
 
 
 def test_a_quarantined_topic_is_none_but_only_for_its_kind(tmp_checkpoint_dir):
     slug = _write("/p/peek-q", "adopt the plan nobody reviewed")
     _quarantine("/p/peek-q", "adopt the plan nobody reviewed", kind="decision")
-    assert view.peek_topic(slug, forgotten=frozenset()) == (
+    assert _peek(slug, forgotten=frozenset()) == (
         "adopt the plan nobody reviewed")
     _quarantine("/p/peek-q", "adopt the plan nobody reviewed", kind="topic")
-    assert view.peek_topic(slug, forgotten=frozenset()) is None
+    assert _peek(slug, forgotten=frozenset()) is None
 
 
 def test_an_unreadable_trust_ledger_fails_closed(tmp_checkpoint_dir):
     slug = _write("/p/peek-u", "the weekly sync cadence")
     _plant(slug, "trust.jsonl", b"<<<<<<< HEAD\n")
     assert view.snapshot("/p/peek-u").health["trust.jsonl"] is Health.UNREADABLE
-    assert view.peek_topic(slug, forgotten=frozenset()) is None
+    assert _peek(slug, forgotten=frozenset()) is None
 
 
 def test_a_trust_fold_that_raises_fails_closed(tmp_checkpoint_dir, monkeypatch):
@@ -102,7 +109,7 @@ def test_a_trust_fold_that_raises_fails_closed(tmp_checkpoint_dir, monkeypatch):
         raise RuntimeError("fold")
 
     monkeypatch.setattr(trust, "records", boom)
-    assert view.peek_topic(slug, forgotten=frozenset()) is None
+    assert _peek(slug, forgotten=frozenset()) is None
 
 
 def test_visible_topic_classifies_the_checkpoint_it_is_handed(
@@ -146,7 +153,7 @@ def test_a_non_dict_topic_is_none(tmp_checkpoint_dir):
           "working_context": {"active_topic": "bare string"},
           "epistemic_snapshot": {}}
     store.write_checkpoint("S-1", cp, project_dir="/p/peek-n")
-    assert view.peek_topic(store.project_slug("/p/peek-n"),
+    assert _peek(store.project_slug("/p/peek-n"),
                            forgotten=frozenset()) is None
 
 
@@ -175,13 +182,13 @@ def _seed(rng, i):
 
 
 def test_the_twin_property_peek_equals_the_full_view(tmp_checkpoint_dir):
-    """For seeded stores, `peek_topic(slug)` is the topic `view.open` serves.
+    """For seeded stores, `visible_topic` of the stored latest is the topic `view.open` serves.
     Anti-vacuity: some cases withhold, some do not."""
     shown = hidden = 0
     for i in range(CASES):
         project, slug, topic = _seed(random.Random(i), i)
         forgotten = view.forgotten_keys()
-        got = view.peek_topic(slug, forgotten=forgotten)
+        got = _peek(slug, forgotten=forgotten)
         assert got == _twin(project), (i, topic)
         if got is None:
             hidden += 1
@@ -198,7 +205,7 @@ def test_the_twin_holds_for_a_checkpoint_with_no_topic(tmp_checkpoint_dir, seed)
           "working_context": {}, "epistemic_snapshot": {}}
     store.write_checkpoint("S-1", cp, project_dir=project)
     slug = store.project_slug(project)
-    assert view.peek_topic(slug, forgotten=frozenset()) is None
+    assert _peek(slug, forgotten=frozenset()) is None
     assert _twin(project) is None
 
 
