@@ -34,6 +34,7 @@ import stat
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from . import (config, jsonl, normalize, policy, receipts, redact, schema,
                serializer, surfaces, teamproject)
@@ -1547,6 +1548,39 @@ def read_checkpoint(session_id: str) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+class Meta(NamedTuple):
+    """The envelope of a checkpoint file: the code-owned keys
+    `field_table.ENVELOPE_RULES` declares, plus `session_id`, and no item
+    field of any kind (#1132). Every value is None when the file lacks it."""
+
+    session_id: str | None
+    created: str | None
+    author: str | None
+    format_version: str | None
+    project_slug: str | None
+    project_name: str | None
+    git_branch: str | None
+    source: str | None
+    transcript_hash: str | None
+    receipts: bool | None
+    team_project: str | None
+
+
+def read_meta(path) -> "Meta | None":
+    """The envelope of a pointer (`latest.json`, `prev-N.json`) or a session
+    file, or None when the file is missing, torn or not a JSON object. The
+    file is parsed whole, but only the envelope keys leave this function, so
+    a caller that wants to know WHEN or WHO cannot be handed a withheld
+    value by accident."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return Meta(*(data.get(name) for name in Meta._fields))
 
 
 class Route(enum.Enum):
