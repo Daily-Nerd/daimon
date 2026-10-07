@@ -20,10 +20,9 @@ from dataclasses import dataclass
 from .display import withheld_json, withheld_marker
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
-from .receipts import cheap_state as receipt_state
 from .requests import inbox_listing, listing
 from .store import project_slug, read_meta
-from .view import lookup, match
+from .view import lookup, match, receipt_state
 
 __all__ = ("lookup", "match", "read_meta", "withheld_marker", "withheld_json", "queue", "listing",
            "inbox_listing", "project_slug", "receipt_state", "Briefing",

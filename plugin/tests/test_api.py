@@ -4,8 +4,7 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import (api, display, pending, receipts, requests, store,
-                             view)
+from daimon_briefing import api, display, pending, requests, store, view
 
 REEXPORTS = ("lookup", "match", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing",
@@ -29,7 +28,7 @@ def test_every_name_is_the_source_object():
     assert api.listing is requests.listing
     assert api.inbox_listing is requests.inbox_listing
     assert api.project_slug is store.project_slug
-    assert api.receipt_state is receipts.cheap_state
+    assert api.receipt_state is view.receipt_state
 
 
 def test_only_the_briefing_parser_is_defined_in_the_module():

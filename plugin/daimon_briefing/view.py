@@ -16,8 +16,10 @@ functions because the briefing path will import `view` later.
 
 from __future__ import annotations
 
+import base64
 import copy
 import dataclasses
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -705,6 +707,58 @@ def open_sessions(project, session_ids, *, live: bool) -> dict:
         if isinstance(raw, dict) and raw.get("project_slug") == slug:
             out[sid] = _opened(raw, snap, live)
     return out
+
+
+# ---- receipt check ----------------------------------------------------------
+
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+# vitni outputs_hash: multibase base64url-nopad ("u") over a sha2-256
+# multihash (0x12 0x20 + digest). Pinned equal to `receipts._multibase_sha256`
+# by a test; `receipts` mints and so cannot be imported by a read module.
+_MULTIHASH_SHA256 = bytes([0x12, 0x20])
+
+
+def _multibase_sha256(data: bytes) -> str:
+    digest = _MULTIHASH_SHA256 + hashlib.sha256(data).digest()
+    return "u" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def receipt_state(checkpoint) -> dict:
+    """The viewer's tamper check of one checkpoint's receipt: `{"state":
+    "unsigned" | "missing" | "match" | "mismatch", "detail": str | None}`. The
+    sidecar (`<session_id>.receipt`) must be present and its outputs_hash must
+    cover the bytes of the session's ROOT file (`<checkpoint dir>/
+    <session_id>.json`): a receipt is a statement about a SESSION, not about
+    whichever pointer copy was opened, and only the final root bytes are
+    bound. No `receipts` marker is quiet (unsigned); a broken claim is loud.
+    Signature verification is `daimon verify-receipt` and needs the vitni CLI;
+    this is a file read and a sha256. Never raises."""
+    if not isinstance(checkpoint, dict) or checkpoint.get("receipts") is not True:
+        return {"state": "unsigned", "detail": None}
+    sid = checkpoint.get("session_id")
+    # sid arrives from file content and is about to be joined to a path, twice.
+    if not isinstance(sid, str) or not _SESSION_ID_RE.fullmatch(sid):
+        return {"state": "missing", "detail": None}
+    root = config.checkpoint_dir() / f"{sid}.json"
+    sidecar = root.with_suffix(".receipt")
+    try:
+        want = json.loads(sidecar.read_text(encoding="utf-8"))["receipt"]["outputs_hash"]
+        if not isinstance(want, str):
+            raise KeyError("outputs_hash")
+    except FileNotFoundError:
+        return {"state": "missing", "detail": None}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"state": "missing",
+                "detail": f"{sidecar.name} is not a readable receipt"}
+    except (KeyError, TypeError):
+        # The sidecar parsed as JSON and just does not carry outputs_hash: not
+        # an unreadable file, so it gets no detail claiming otherwise.
+        return {"state": "missing", "detail": None}
+    try:
+        got = _multibase_sha256(root.read_bytes())
+    except OSError:
+        return {"state": "missing", "detail": None}
+    return {"state": "match" if got == want else "mismatch", "detail": None}
 
 
 # ---- ledger rows ------------------------------------------------------------

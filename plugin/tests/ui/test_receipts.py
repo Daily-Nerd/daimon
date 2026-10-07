@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import api, config, receipts
+from daimon_briefing import api, config, receipts, view
 
 from .scope import scoped
 
@@ -197,5 +197,6 @@ def test_gate_survives_a_non_dict_pointer_list(tmp_path):
     got = scoped(tmp_path).load_checkpoint("-proj", "latest")
     assert got["ok"] is True and "receipt" not in got["meta"]
 
-def test_the_check_is_the_kernels_and_the_viewer_reads_no_file_for_it():
-    assert api.receipt_state is receipts.cheap_state
+def test_the_check_is_the_views_and_its_hash_is_the_receipts():
+    assert api.receipt_state is view.receipt_state
+    assert view._multibase_sha256(b"abc") == receipts._multibase_sha256(b"abc")

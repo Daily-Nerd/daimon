@@ -307,7 +307,7 @@ hides items and is named in the payload's `notes`. The activity feed never shows
 forgotten value or the key that names it: a forget tombstone reads as the bare
 status `forgotten`. A resolution is the kernel's (`store.is_resolved`), the rule
 `daimon diff` applies. The viewer's reader opens no file and parses no ledger; the
-one file check it needs, the cheap receipt tamper test, is `receipts.cheap_state`.
+one file check it needs, the cheap receipt tamper test, is `view.receipt_state`.
 Its server delegates search, trust inspection, refutations and relations to Daimon's
 engines so those semantics do not fork inside the same distribution. Every request
 runs with the store scoped to the viewer's data directory (set inside the request

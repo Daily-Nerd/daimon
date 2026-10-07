@@ -193,8 +193,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "receipt key file, not a bucket path",
     ("daimon_briefing/receipts.py", "_verify_receipt", "json.loads"):
         "receipt sidecar and checkpoint bytes it binds",
-    ("daimon_briefing/receipts.py", "cheap_state", "json.loads"):
-        "receipt sidecar next to a checkpoint; the viewer's cheap tamper check",
     ("daimon_briefing/receipts.py", "status_line", "store.read_latest_body"):
         "receipt status of the own latest checkpoint",
     ("daimon_briefing/receipts.py", "verbatim_degraded", "json.loads"):
