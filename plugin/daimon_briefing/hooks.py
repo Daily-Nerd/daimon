@@ -223,6 +223,8 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # #268 witness count and stale marks stamped. Any raise from the view
         # lands in the handler below: nothing is injected rather than an
         # unfiltered briefing.
+        # This host records no effects: no usage line, no stamp, no telemetry
+        # (an empty `Effects`), so nothing is committed after the return.
         annotated = briefing.prepare(
             project, time.time(), route=briefing.injection_read_route(project))
         if annotated.checkpoint is None:

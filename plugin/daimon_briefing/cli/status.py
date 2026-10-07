@@ -19,6 +19,7 @@ from .. import (
     buckets,
     config,
     display,
+    effects_commit,
     ledger_census,
     llm,
     recall,
@@ -34,6 +35,7 @@ from .. import (
     view,
     worldcheck,
 )
+from ..effects import Effects
 from ..ledger import (
     _compute_outstanding,
     _format_age,
@@ -703,8 +705,9 @@ def status_payload(project_arg=None) -> tuple:
     return payload, w["rc"]
 
 
-def _cmd_status(args) -> int:
-    _cli._note_usage("status")
+@effects_commit.committing
+def _cmd_status(args, fx) -> int:
+    fx.add(Effects(usage=("status",)))
     if getattr(args, "suppressed", False):
         return _print_suppressed(_cli._resolve_project(args.project))
     if args.json:

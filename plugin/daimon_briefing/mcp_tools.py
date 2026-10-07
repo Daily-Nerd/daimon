@@ -8,26 +8,42 @@ this module owns argument validation and JSON/text serialization only.
 
 Usage counters: every call notes `mcp:<tool>` through the same local ledger
 as the CLI (#54) — the #257 demand counters must see MCP reads
-distinguishably or the gate they measure goes blind.
+distinguishably or the gate they measure goes blind. The line is an effect,
+committed by `effects_commit` once the response is built, also when the
+handler raises a ToolError (every attempt counts); a handler's own effects
+(the recall telemetry row) commit the same way.
 """
+import functools
 import json
 import time
 
-from . import (briefing, config, recall, recall_telemetry,
+from . import (briefing, config, effects_commit, recall, recall_telemetry,
                requests, store)
+from .effects import Effects
 
 
 class ToolError(Exception):
     """A tool-level failure the calling agent should read, not a crash."""
 
 
-def _note(tool: str) -> None:
-    from . import cli
-    cli._note_usage(f"mcp:{tool}")
+def _tool(name: str):
+    """A handler `fn(arguments, fx)` as `fn(arguments)`: `mcp:<name>` usage is
+    recorded up front and committed after the payload is built or the
+    handler raised; whatever the handler adds to `fx` commits with it."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def run(arguments: dict) -> str:
+            fx = effects_commit.Pending(f"mcp:{name}")
+            try:
+                return fn(arguments, fx)
+            finally:
+                effects_commit.commit(fx.effects)
+        return run
+    return deco
 
 
-def _recall(arguments: dict) -> str:
-    _note("recall")
+@_tool("recall")
+def _recall(arguments: dict, fx) -> str:
     query = str(arguments.get("query") or "").strip()
     if not query:
         raise ToolError("query is required")
@@ -56,26 +72,28 @@ def _recall(arguments: dict) -> str:
                              all_projects=all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
+    # Best-effort (#1053): the row is committed after the payload is built,
+    # and a telemetry failure must never take the tool call down with it —
+    # the agent still gets its rows back. The rows are copied now, before
+    # `status` is added below, so the recall-delivery ledger's row shape is
+    # untouched.
     try:
-        # Best-effort (#1053): a telemetry failure must never take the tool
-        # call down with it — the agent still gets its rows back.
-        recall_telemetry.record(
-            rows, query_terms=recall.salient_terms(query),
-            surface="recall-search", via="mcp", injected_into=session)
+        fx.add(Effects(telemetry=(([dict(r) for r in rows], {
+            "query_terms": recall.salient_terms(query),
+            "surface": "recall-search", "via": "mcp",
+            "injected_into": session}),)))
     except Exception:  # noqa: BLE001 — see comment above
         pass
     # #1079: `status` in the SAME words `daimon recall` (text mode) prints
-    # inside its `[...]` markers — None for a live row. Added AFTER telemetry
-    # records above so the recall-delivery ledger's row shape is untouched;
-    # it is a display field for the agent reading this result, not a
-    # measurement.
+    # inside its `[...]` markers — None for a live row. A display field for
+    # the agent reading this result, not a measurement.
     for row in rows:
         row["status"] = recall.describe_status(row)
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
-def _brief(arguments: dict) -> str:
-    _note("brief")
+@_tool("brief")
+def _brief(arguments: dict, fx) -> str:
     slug = arguments.get("slug") or None
     project_arg = arguments.get("project") or None
     if slug and project_arg:
@@ -140,8 +158,8 @@ def _brief(arguments: dict) -> str:
         notes=notes)
 
 
-def _projects(arguments: dict) -> str:
-    _note("projects")
+@_tool("projects")
+def _projects(arguments: dict, fx) -> str:
     from . import cli
     try:
         rows = cli.projects_rows(None)
@@ -151,20 +169,20 @@ def _projects(arguments: dict) -> str:
     return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
-def _status(arguments: dict) -> str:
-    _note("status")
+@_tool("status")
+def _status(arguments: dict, fx) -> str:
     from . import cli
     payload, _rc = cli.status_payload(arguments.get("project") or None)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _requests_inbox(arguments: dict) -> str:
+@_tool("requests_inbox")
+def _requests_inbox(arguments: dict, fx) -> str:
     """Read-only pull (#694 PR 2): requests other projects have addressed to
     this one. Deliberate — daimon_brief does NOT carry this content (D2's
     CLI-only gate); an MCP client that wants it calls this tool explicitly.
     Every write verb (open/revise/accept/reject/needs-info/suppress/reply/done)
     stays CLI-only — no tool here mutates the ledger."""
-    _note("requests_inbox")
     from . import cli
     project = cli._resolve_project(arguments.get("project") or None)
     rows = requests.inbox_listing(project_dir=project)

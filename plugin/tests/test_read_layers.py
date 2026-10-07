@@ -45,6 +45,7 @@ FILE_READ_CALLS = {"read_text", "read_bytes", "read"}
 LAYER: dict[str, str] = {
     "daimon_briefing/__init__.py": "entry",  # package entry: Hermes register()
     "daimon_briefing/mcp_server.py": "entry",  # MCP stdio server
+    "daimon_briefing/effects_commit.py": "entry",  # commits a read's Effects after its output
     "daimon_briefing/recall.py": "index",  # the derived recall index, rebuilt from checkpoints and ledgers
     "daimon_briefing/amendments.py": "ledger",  # owns amendments.jsonl and its fold
     "daimon_briefing/buckets.py": "ledger",  # bucket migration and its receipt ledger (migrations.jsonl)

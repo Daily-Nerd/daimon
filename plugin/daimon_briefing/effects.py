@@ -3,7 +3,8 @@
 A read verb used to write as it went: usage lines, telemetry rows, the seen
 state, a delivered mark. `Effects` is the record of those intentions, built
 by pure code and committed once after the output is flushed. This module ships
-the type and its algebra only; nothing commits an `Effects` yet.
+the type and its algebra only; `effects_commit` (an entry module) performs the
+writes.
 
 Stdlib only, no imports from the package: it sits below everything.
 """

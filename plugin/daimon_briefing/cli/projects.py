@@ -12,7 +12,8 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import buckets, config, render, store, view
+from .. import buckets, config, effects_commit, render, store, view
+from ..effects import Effects
 from ..display import one_line
 from ..ledger import _format_age
 
@@ -239,10 +240,11 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     return lines
 
 
-def _cmd_projects(args) -> int:
+@effects_commit.committing
+def _cmd_projects(args, fx) -> int:
     """Read-only orientation for context switching — the crossing itself
     stays explicit (`brief --slug` / `recall --slug`), the #94/#95 lesson."""
-    _cli._note_usage("projects")
+    fx.add(Effects(usage=("projects",)))
     try:
         rows = projects_rows(getattr(args, "project", None))
     except Exception as exc:  # noqa: BLE001 — reported, never listed around
