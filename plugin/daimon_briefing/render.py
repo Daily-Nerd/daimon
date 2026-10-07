@@ -11,7 +11,8 @@ import re
 import sys
 from contextlib import contextmanager
 
-from . import briefing, config, display, redact, requests, schema, serializer
+from . import (briefing, config, display, marks, redact, requests, schema,
+               serializer)
 from .amendments import found_label as _amend_found_label
 
 _TRUTHY = ("1", "true", "yes", "on")
@@ -91,7 +92,7 @@ def _trust_key(item) -> str:
 # shared with the plain render.
 _SECTIONS = [
     ("decisions", "Decisions made", "green"),
-    ("external", "⚠ VERIFY BEFORE TRUSTING", "red"),
+    ("external", f"{marks.WARNING_MARK} {marks.VERIFY_PHRASE}", "red"),
     ("open_loops", "Open loops", "cyan"),
     ("beliefs", "Beliefs held", "blue"),
     ("uncertainties", "Was uncertain about", "magenta"),
@@ -1801,7 +1802,18 @@ def render_configure_lines(lines) -> None:
 
 
 def render_brief_note(lines) -> None:
-    """`daimon brief` advisory notes — the ⚠ global-fallback warning."""
+    """`daimon brief` advisory WARNINGS (the global fallback, a serialize in
+    flight, a cross-project read). Each line gets the warning mark here, once,
+    so a caller passes plain text and a machine reader of the briefing keeps
+    the note as a warning instead of taking it for the header. A line that is
+    not a warning goes through `render_brief_line`."""
+    _render_lines([marks.warning(ln) for ln in lines])
+
+
+def render_brief_line(lines) -> None:
+    """`daimon brief` orientation lines that are not warnings ("no briefing
+    for this project yet", "no checkpoint bucket for slug ..."), printed as
+    they are."""
     _render_lines(lines)
 
 

@@ -62,6 +62,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/anchor.py": "read",  # drift scan of anchored items; no bucket reads
     "daimon_briefing/briefing.py": "read",  # builds and renders the briefing
     "daimon_briefing/display.py": "read",  # bounded display helpers for foreign text
+    "daimon_briefing/marks.py": "read",  # the briefing text marks the renderers and api.parse_briefing share; stdlib only
     "daimon_briefing/hooks.py": "read",  # Hermes pre_llm_call injects a briefing
     "daimon_briefing/inspector.py": "read",  # `why`: the evidence receipt for one item
     "daimon_briefing/mcp_tools.py": "read",  # MCP tool handlers: render briefings, recall and status

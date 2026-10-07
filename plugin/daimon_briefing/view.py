@@ -24,8 +24,8 @@ from functools import cached_property
 from types import MappingProxyType
 from typing import Any, Iterator, Literal, Mapping
 
-from . import (amendments, carry, config, jsonl, normalize, requests, schema,
-               store, trust)
+from . import (amendments, carry, config, jsonl, marks, normalize, requests,
+               schema, store, trust)
 from .jsonl import Health
 
 # The bucket ledgers a snapshot reports health for, by file name (declared in
@@ -89,8 +89,8 @@ class Snapshot:
             if state in (Health.OK, Health.ABSENT):
                 continue
             detail = self.details.get(name)
-            out.append(f"⚠ {name} is {state.value}"
-                       + (f" ({detail})" if detail else ""))
+            out.append(marks.warning(f"{name} is {state.value}"
+                                     + (f" ({detail})" if detail else "")))
         return tuple(out)
 
     @cached_property

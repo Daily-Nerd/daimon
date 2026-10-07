@@ -33,6 +33,7 @@ from . import (capture, checks_host, checks_runtime, config, display,
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
 from .amendments import found_label as _amend_found_label
+from .marks import GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE
 
 log = logging.getLogger("daimon.briefing")
 
@@ -199,7 +200,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
         # so this never rewrites the stored trust value.
         was_label = _trust_label(item)
         mark = _STALE_CARRIED_MARK
-    base = f'- [{mark}] {text}'
+    base = f'{ITEM_MARKS[0]} [{mark}] {text}'
     if item.get("carried_from"):
         # Epistemic honesty, same philosophy as trust marks: a loop carried
         # from an older session must not read as fresh context (#33 Phase 2).
@@ -1073,12 +1074,12 @@ def _policy_line(policy) -> str | None:
         to = policy.get("to")
         if not to:
             return None
-        return f"§ policy: agent may open {kind} asks → {_slug_label(to)}"
+        return f"{RULING_MARK} policy: agent may open {kind} asks → {_slug_label(to)}"
     if verb == "accept":
         sender = policy.get("sender")
         if not sender:
             return None
-        return (f"§ policy: {_slug_label(sender)}'s agent may accept "
+        return (f"{RULING_MARK} policy: {_slug_label(sender)}'s agent may accept "
                 f"{kind} asks here")
     return None
 
@@ -1105,7 +1106,7 @@ def _check_line(row, check) -> str | None:
     ruling_id = str(row.get("refutation_id") or "").strip()
     if not subject or not ruling_id:
         return None
-    return f"§ enforced: {subject} (daimon ruling show {ruling_id})"
+    return f"{RULING_MARK} enforced: {subject} (daimon ruling show {ruling_id})"
 
 
 def _compact_line(row):
@@ -1253,7 +1254,7 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
             root = str(entry.get("project_dir") or "")
             if not match or not root:
                 continue
-            lines.append(f"§ enforced from {config.home_relative(root)}: "
+            lines.append(f"{RULING_MARK} enforced from {config.home_relative(root)}: "
                         f"{match}  [{ruling_id}]")
             rendered_ids.add(ruling_id)
         except Exception:
@@ -1359,7 +1360,7 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
         authored = row.get("text_authored_by")
         authored_suffix = (f"  [{authored}-written]"
                           if authored and authored != "human" else "")
-        lines.append(f"§ {verdict}{authored_suffix}{suffix}")
+        lines.append(f"{RULING_MARK} {verdict}{authored_suffix}{suffix}")
     if policy_rendered:
         lines.append(_POLICY_LEGEND)
     lines.extend(manifest_lines)
@@ -1663,7 +1664,6 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
 
 
 
-GREETING = "While you were away — here's where we left off."
 # Printed in place of the body when the view is CLOSED (the trust ledger cannot
 # be read, so no item can be proven safe to show): the greeting, the ledger
 # note and the standing furniture still render, and this line says why the
@@ -1759,7 +1759,7 @@ BRIEFABLE_SECTIONS = frozenset(s for s in SECTION_ORDER
 
 SECTION_HEADERS = {
     "decisions": "Decisions made:",
-    "external": "VERIFY BEFORE TRUSTING (state may have changed outside "
+    "external": f"{VERIFY_PHRASE} (state may have changed outside "
                 "this session):",
     "open_loops": "Open loops:",
     "beliefs": "Beliefs held:",

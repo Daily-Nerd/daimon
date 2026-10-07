@@ -321,7 +321,7 @@ def _cmd_brief(args) -> int:
         if annotated is None:
             return 2
         if not isinstance(annotated.checkpoint, dict):
-            render.render_brief_note([
+            render.render_brief_line([
                 f"no checkpoint bucket for slug {slug} — "
                 "`daimon projects` lists what exists"])
             return 1
@@ -364,8 +364,8 @@ def _cmd_brief(args) -> int:
         # swallow it on the header-only path. Read-only: consumption stays
         # serialize-count-based in store.active_handoff.
         render.render_handoff(store.active_handoff(project))
-        render.render_brief_note([
-            *annotated.notes,
+        render.render_brief_note(list(annotated.notes))
+        render.render_brief_line([
             "No briefing for this project yet — the first serialized session "
             "will create one.",
             f"(Most recent activity elsewhere: {slug}, {age}.)",
@@ -381,11 +381,11 @@ def _cmd_brief(args) -> int:
             counts = _TeamCounts()
             render.render_teammates(_team_briefings(project, counts))
             if counts.resolved:
-                render.render_brief_note([
+                render.render_brief_line([
                     f"{counts.resolved} resolved item(s) withheld "
                     "(a teammate's)"])
             if counts.quarantined:
-                render.render_brief_note([
+                render.render_brief_line([
                     f"{counts.quarantined} quarantined item(s) withheld "
                     "(a teammate's)"])
         return 0
@@ -393,7 +393,7 @@ def _cmd_brief(args) -> int:
     # "global checkpoint (fallback)"; brief must not present another project's
     # state as this project's without saying so.
     if fallback_used:
-        render.render_brief_note(["⚠ no checkpoint for this project — showing the global "
+        render.render_brief_note(["no checkpoint for this project — showing the global "
                                   "checkpoint (fallback), possibly another project's."])
     # #534: a LIVE serialize for this project means a fresher checkpoint is
     # being written right now — say so instead of silently briefing one
@@ -403,7 +403,7 @@ def _cmd_brief(args) -> int:
     # would be worse than the silence this fixes.
     if ledger.serialize_in_flight(store.project_slug(project) or ""):
         render.render_brief_note([
-            "⏳ a serialize is in flight — this briefing may be one session "
+            "a serialize is in flight — this briefing may be one session "
             "behind; re-run `daimon brief` in a few minutes for the fresh one."])
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
