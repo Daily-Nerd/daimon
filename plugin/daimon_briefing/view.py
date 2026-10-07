@@ -646,8 +646,8 @@ class SessionRow:
 @dataclass(frozen=True)
 class Sessions:
     """`rows` newest first; `unreadable` counts session files that cannot be
-    parsed (their project cannot be told, so every project is told); `notes`
-    are the ledger-health lines of the snapshot the topics were judged by."""
+    parsed (their project cannot be told, so every project is told; under tenant
+    scope none is counted); `notes` are the ledger-health lines of the snapshot the topics were judged by."""
 
     rows: tuple
     unreadable: int
@@ -658,7 +658,9 @@ def sessions(project) -> Sessions:
     """A light listing of the project's session files: no body is copied or
     filtered, only each topic is classified. Membership is the payload's
     `project_slug`, as in `store.project_surfaces`; a file that does not parse
-    is counted, since nothing says whose it was."""
+    is counted, since nothing says whose it was. Under tenant scope (#899) it
+    is not counted: a count of files the caller cannot attribute to its own
+    bucket would report activity in buckets it may not see."""
     slug = store.project_slug(config.resolve_project_dir(project))
     root = config.checkpoint_dir()
     try:
@@ -666,12 +668,14 @@ def sessions(project) -> Sessions:
     except OSError:
         files = []
     snap = snapshot(project)
+    tenant_scoped = config.tenant_scoped()
     rows, unreadable = [], 0
     for path in files:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            unreadable += 1
+            if not tenant_scoped:
+                unreadable += 1
             continue
         if not isinstance(raw, dict) or raw.get("project_slug") != slug:
             continue

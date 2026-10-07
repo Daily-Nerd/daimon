@@ -226,10 +226,20 @@ def test_diff_keeps_a_reopened_item_gone_not_resolved(base):
     assert [i["id"] for i in got["gone"]] == ["o-aaaaaaaaaaaa"]
 
 
-def test_diff_does_not_print_a_resolution_note_that_is_a_withheld_value(base):
+def test_a_quarantined_resolution_note_reads_as_the_marker(base):
     store.append_event("o-aaaaaaaaaaaa", "resolved", note=HIDE,
                        project_dir=PROJECT)
-    _quarantine(HIDE)
+    rec = _quarantine(HIDE)
+    got = _diff(base)
+    assert [r["note"] for r in got["resolved"]] == [
+        f"[withheld: quarantine {rec}]"]
+    assert HIDE not in json.dumps(got)
+
+
+def test_a_forgotten_resolution_note_reads_as_absent(base):
+    store.append_event("o-aaaaaaaaaaaa", "resolved", note=HIDE,
+                       project_dir=PROJECT)
+    _forget(HIDE)
     got = _diff(base)
     assert [r["note"] for r in got["resolved"]] == [None]
     assert HIDE not in json.dumps(got)

@@ -9,7 +9,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from daimon_briefing import config, view
+from daimon_briefing import api, config, view
 
 POINTER_RE = re.compile(r"^(latest|prev-[1-9][0-9]?)$")
 ITEM_ID_RE = re.compile(r"^[a-z]-[0-9a-f]{6,40}(-\d+)?$")
@@ -607,8 +607,12 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         if iid in snap.resolved_refs:
             ev = snap.resolutions[iid]
             note = ev.get("note")
-            if view.prose_verdict(note, snap, closed_masks=False) is not None:
-                note = None  # a note that is a withheld value is not shown
+            verdict = view.prose_verdict(note, snap, closed_masks=False)
+            if verdict is not None:
+                # a quarantined value reads as its marker, as on every host;
+                # a forgotten one reads as absent
+                note = (None if verdict.reason == "forgotten"
+                        else api.withheld_marker(verdict))
             resolved.append({"item": item, "note": note, "ts": ev.get("ts")})
         else:
             gone.append(item)

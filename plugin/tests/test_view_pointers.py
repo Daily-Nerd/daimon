@@ -173,6 +173,17 @@ def test_a_torn_session_file_is_counted_not_listed(three):
     assert [r.session_id for r in got.rows] == ["S-3", "S-2", "S-1"]
 
 
+def test_under_tenant_scope_an_unattributable_file_is_not_counted(
+        three, monkeypatch):
+    """A torn file names no project, so counting it for a tenant-scoped
+    caller would report activity in buckets it may not see."""
+    (config.checkpoint_dir() / "torn.json").write_text("{nope")
+    assert view.sessions(PROJECT).unreadable == 1
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    got = view.sessions(PROJECT)
+    assert got.unreadable == 0 and len(got.rows) == 3
+
+
 def test_an_unreadable_trust_ledger_hides_topics_and_says_why(three):
     with open(_bucket() / "trust.jsonl", "ab") as fh:
         fh.write(b"<<<<<<< HEAD\n")
