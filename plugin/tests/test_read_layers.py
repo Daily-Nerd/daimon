@@ -62,6 +62,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/anchor.py": "read",  # drift scan of anchored items; no bucket reads
     "daimon_briefing/briefing.py": "read",  # builds and renders the briefing
     "daimon_briefing/display.py": "read",  # bounded display helpers for foreign text
+    "daimon_briefing/marks.py": "read",  # the briefing text marks the renderers and api.parse_briefing share; stdlib only
     "daimon_briefing/hooks.py": "read",  # Hermes pre_llm_call injects a briefing
     "daimon_briefing/inspector.py": "read",  # `why`: the evidence receipt for one item
     "daimon_briefing/mcp_tools.py": "read",  # MCP tool handlers: render briefings, recall and status
@@ -177,8 +178,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "pointer envelope for status; moves onto store.read_meta in PR 7",
     ("daimon_briefing/cli/status.py", "_cmd_verify_receipt", "store.read_latest_body"):
         "verifies the raw bytes a receipt binds",
-    ("daimon_briefing/cli/status.py", "_print_suppressed", "store.read_latest_body"):
-        "lists withheld items from the raw checkpoint; moves onto the view in PR 7",
     ("daimon_briefing/inspector.py", "_item_occurrences", "inspector._project_checkpoints"):
         "why walks every retained copy of an item; moves onto view.lookup in PR 7",
     ("daimon_briefing/inspector.py", "_legacy_source", "store.read_checkpoint"):

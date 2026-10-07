@@ -102,7 +102,7 @@ def run(session_id: str, messages, *, project, chat, deadline,
         log.warning("agent resolution verification pass failed", exc_info=True)
     # #691: same posture for pending agent amendments, as its own pass —
     # deliberately NOT folded into _verify_agent_resolutions (that function
-    # has two other consumers, briefing.withhold and cli._stats_resolutions,
+    # has two other consumers, the view and cli._stats_resolutions,
     # whose populations must stay honestly apart). Same independence from
     # carry, same never-cost-the-checkpoint try/except.
     try:

@@ -289,7 +289,7 @@ SURFACES: tuple[Surface, ...] = (
     #    refutations.py uses.
     #    Never audit_exempt: growth must be measured, never silent, the same
     #    posture every other plaintext ledger here holds. Readers: the briefing,
-    #    recall's rebuild (hence `index_content`) and the cli withhold pool
+    #    recall's rebuild (hence `index_content`) and the cli quarantine reads
     #    read the ACTIVE quarantines through trust.active_value_keys, and
     #    pending.queue lists the PROPOSED ones for a human. Registered so it
     #    can never repeat #645's unknown->unscannable->exit-3 arc. --

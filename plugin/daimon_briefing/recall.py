@@ -602,7 +602,7 @@ def _apply_quarantine_withholding(conn: sqlite3.Connection) -> None:
     value under a different item id is still caught here. Unlike forget, this
     reads a SEPARATE ledger that never rewrites the source checkpoint — only
     this derived index drops the row; the checkpoint on disk (and carry's copy
-    of it) is untouched, same "withhold, don't drop" posture briefing.withhold
+    of it) is untouched, same "withhold, don't drop" posture the view
     uses. `trust.active_value_keys` already fails open (an unreadable or
     missing trust.jsonl is the empty set), so a broken ledger withholds
     nothing here either, rather than blanking a whole project's index."""

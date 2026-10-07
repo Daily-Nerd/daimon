@@ -13,6 +13,8 @@ import pytest
 
 from daimon_briefing import amendments, jsonl
 
+from ._prepared import shown, synthetic
+
 
 @pytest.fixture
 def project(tmp_checkpoint_dir):
@@ -296,29 +298,26 @@ def _checkpoint_with_item():
     }
 
 
-def test_withhold_stamps_renderable_amendment(project):
-    from daimon_briefing import briefing
+def test_stamp_marks_a_renderable_amendment(project):
     a_id = _propose(project)
     amendments.verify(a_id, role="assistant", project_dir=project)
-    out, withheld, candidates = briefing.withhold(
-        _checkpoint_with_item(), {},
-        amendments=amendments.renderable(project_dir=project))
+    snap = synthetic(amendments=amendments.renderable(project_dir=project))
+    out, opened, candidates = shown(_checkpoint_with_item(), snap)
     stamped = out["working_context"]["open_questions"][0]["_amend"]
     assert stamped["rows"][0]["change"] == "progressed"
     assert stamped["rows"][0]["id"] == a_id
     assert stamped["rows"][0]["by"] == "agent"
     assert stamped["rows"][0]["state"] == "verified"
-    assert not withheld and not candidates
+    assert not opened.withheld and not candidates
 
 
-def test_withhold_never_stamps_a_candidate(project):
-    from daimon_briefing import briefing
+def test_stamp_never_marks_a_candidate(project):
     _propose(project)
     cp = _checkpoint_with_item()
-    out, _, _ = briefing.withhold(
-        cp, {}, amendments=amendments.renderable(project_dir=project))
-    assert out is cp  # no renderable amendments -> untouched, no deepcopy
-    assert "_amend" not in cp["working_context"]["open_questions"][0]
+    snap = synthetic(amendments=amendments.renderable(project_dir=project))
+    out, _, _ = shown(cp, snap)
+    assert out == cp  # no renderable amendments -> nothing stamped
+    assert "_amend" not in out["working_context"]["open_questions"][0]
 
 
 def test_line_renders_verified_as_flagged_unconfirmed_claim():
@@ -344,9 +343,8 @@ def test_line_renders_ratified_as_settled_with_proposer(project):
     from daimon_briefing import briefing
     a_id = _propose(project)
     amendments.ratify(a_id, channel="cli-tty", project_dir=project)
-    out, _, _ = briefing.withhold(
-        _checkpoint_with_item(), {},
-        amendments=amendments.renderable(project_dir=project))
+    snap = synthetic(amendments=amendments.renderable(project_dir=project))
+    out, _, _ = shown(_checkpoint_with_item(), snap)
     line = briefing._line(out["working_context"]["open_questions"][0],
                           briefable=True)
     assert "↷ amended" in line

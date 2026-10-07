@@ -18,7 +18,7 @@ Hard constraints (the briefing must never block or fail on the network):
 - `gh` missing / no GitHub remote / non-zero exit / bad output -> skip
   SILENTLY: the render is exactly what it would be without this module.
 
-The stamp is TRANSIENT (underscore key, same convention as withhold's
+The stamp is TRANSIENT (underscore key, same convention as the machine-claim stamps'
 `_supersede_candidate`): it lives only on the in-memory checkpoint the brief
 renders; nothing here writes to disk. Probes are read-only by construction —
 `gh pr view` / `gh issue view` only.

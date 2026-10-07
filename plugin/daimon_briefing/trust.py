@@ -10,7 +10,7 @@ act on, such as a planted instruction or a fabricated decision.
 This module is the discrete, human-only, LATCHED exception: a value a human
 has quarantined stays quarantined until a human releases it, no matter what
 machine signal fires. The briefing, recall (so suggest and the MCP recall
-tools too) and the cli withhold pool read the active quarantines through
+tools too) and the cli quarantine reads read the active quarantines through
 `active_value_keys` below (#1109 PR 2).
 
 Identity is VALUE-keyed, not id-keyed, and this is the module's central

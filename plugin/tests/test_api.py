@@ -1,12 +1,15 @@
-"""`daimon_briefing.api`: re-exports only, pinned two ways (#1132 PR 6a)."""
+"""`daimon_briefing.api`: re-exports plus the briefing parser, pinned two ways
+(#1132 PR 6a, PR 7b)."""
 
 import ast
 from pathlib import Path
 
 from daimon_briefing import api, pending, requests, store, view
 
-EXPECTED = ("lookup", "match", "read_meta", "queue", "listing",
-            "inbox_listing", "project_slug")
+REEXPORTS = ("lookup", "match", "read_meta", "queue", "listing",
+             "inbox_listing", "project_slug")
+OWNED = ("Briefing", "parse_briefing")
+EXPECTED = REEXPORTS + OWNED
 
 
 def test_all_is_exactly_the_declared_surface():
@@ -24,12 +27,15 @@ def test_every_name_is_the_source_object():
     assert api.project_slug is store.project_slug
 
 
-def test_nothing_else_public_is_defined_in_the_module():
-    """Two-way: no public name besides `__all__` (a function or class defined
-    here would be a second implementation, not a re-export)."""
+def test_only_the_briefing_parser_is_defined_in_the_module():
+    """Two-way: the only public definitions are the parser and its result
+    (a read function defined here would be a second implementation, not a
+    re-export). No other public name exists besides `__all__`."""
     tree = ast.parse(Path(api.__file__).read_text(encoding="utf-8"))
     defined = [n.name for n in tree.body
                if isinstance(n, (ast.FunctionDef, ast.ClassDef))]
-    assert defined == []
+    assert sorted(defined) == sorted(OWNED)
     public = {n for n in vars(api) if not n.startswith("_")}
-    assert public == set(EXPECTED)
+    assert public - set(EXPECTED) <= {"dataclass", "field", "ITEM_MARKS",
+                                      "RULING_MARK", "WARNING_MARKERS"}
+    assert set(EXPECTED) <= public

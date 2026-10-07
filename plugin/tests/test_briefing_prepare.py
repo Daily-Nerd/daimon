@@ -11,6 +11,8 @@ import pytest
 from daimon_briefing import (amendments, briefing, normalize, store, trust,
                              view)
 
+from ._prepared import in_hand
+
 PROJECT = "/p/prepare"
 OTHER = "/p/prepare-other"
 NOW = time.time()
@@ -315,20 +317,79 @@ def test_the_amendment_stamp_reaches_prepare(tmp_checkpoint_dir):
     assert item["_amend"]["rows"]
 
 
-# ---- annotate: the in-hand form --------------------------------------------
+# ---- a checkpoint in hand --------------------------------------------------
 
 
-def test_annotate_is_prepare_for_a_checkpoint_in_hand(tmp_checkpoint_dir):
+def test_prepare_over_a_checkpoint_in_hand(tmp_checkpoint_dir):
     _write()
     _withhold_three()
     cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
-    got = briefing.annotate(cp, briefing.AnnotateContext(route=PROJECT), NOW)
+    got = in_hand(cp, PROJECT, NOW)
     assert _texts(got.checkpoint) == [T_KEPT]
     assert (got.suppressed, got.quarantined) == (1, 1)
-    empty = briefing.annotate(None, briefing.AnnotateContext(route=PROJECT),
-                              NOW)
+    empty = in_hand(None, PROJECT, NOW)
     assert empty.checkpoint is None and empty.notes == ()
+
+
+def _stale_checkpoint(first_seen):
+    return {"session_id": "S-stale",
+            "working_context": {
+                "open_questions": [{"text": "a carried claim",
+                                    "trust": "inferred", "id": "o-aaaaaa",
+                                    "carried_from": "S-prev",
+                                    "first_seen": first_seen}],
+                "recent_decisions": []},
+            "epistemic_snapshot": {}}
+
+
+def _days_ago(days, now=NOW):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - days * 86400))
+
+
+def test_a_future_stamp_clamps_to_age_zero(tmp_checkpoint_dir):
+    cp = _stale_checkpoint(_days_ago(-5))
+    assert briefing._carried_age_days(
+        cp["working_context"]["open_questions"][0], {}, NOW) == 0.0
+    assert in_hand(cp, PROJECT, NOW).stale_items == []
+
+
+def test_a_missing_stamp_is_fail_open_not_stale(tmp_checkpoint_dir):
+    cp = _stale_checkpoint(None)
+    assert in_hand(cp, PROJECT, NOW).stale_items == []
+
+
+def test_every_host_carries_the_stale_mark_and_calls_prepare(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """The CLI brief, `daimon loops`, the MCP tool and the Hermes hook all
+    go through `prepare`, so the stale mark cannot differ by host."""
+    from daimon_briefing import cli, hooks, mcp_tools
+    cp = _stale_checkpoint(_days_ago(12, time.time()))
+    cp["working_context"]["open_questions"][0]["text"] = (
+        "stale carried claim")
+    store.write_checkpoint("S-stale", cp, project_dir=PROJECT)
+    seen = []
+    real = briefing.prepare
+
+    def _spy(project, now, **kw):
+        seen.append(project)
+        return real(project, now, **kw)
+    monkeypatch.setattr(briefing, "prepare", _spy)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    assert cli.main(["brief", "--project", PROJECT]) == 0
+    assert "[? unverified] stale carried claim" in capsys.readouterr().out
+    assert len(seen) == 1
+    out = mcp_tools.HANDLERS["daimon_brief"](
+        {"slug": store.project_slug(PROJECT)})
+    assert "[? unverified] stale carried claim" in out
+    assert len(seen) == 2
+    ctx = hooks.pre_llm_call(session_id="S-new", user_message="hi",
+                             conversation_history=[], is_first_turn=True,
+                             model="m", platform="cli")
+    assert "[? unverified] stale carried claim" in ctx["context"]
+    assert len(seen) == 3
+    assert cli.main(["loops", "--project", PROJECT]) == 0
+    assert len(seen) == 4
 
 
 # ---- json check that the stored body is untouched --------------------------

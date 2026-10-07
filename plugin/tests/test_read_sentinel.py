@@ -540,7 +540,6 @@ KNOWN_LEAKS: set = {
     *{("cli:blame", k) for k in ("contradiction", "question",)},
     *{("cli:decide", k) for k in ("question", "topic",)},
     *{("cli:forget", k) for k in ("question", "topic",)},
-    *{("cli:projects", k) for k in ("topic",)},
     *{("cli:recall", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:recall-inject", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:refute list", k) for k in ("topic",)},
@@ -566,7 +565,6 @@ KNOWN_LEAKS: set = {
     *{("cli:ruling retire", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling revise", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling show", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:status", k) for k in ("question",)},
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("cli:why", k) for k in ("question",)},
@@ -581,7 +579,6 @@ KNOWN_LEAKS: set = {
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/session", k) for k in ("topic",)},
     *{("http:/api/why", k) for k in ("question",)},
-    *{("mcp:daimon_projects", k) for k in ("topic",)},
     *{("mcp:daimon_recall", k) for k in ("contradiction", "question", "topic",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
 }
@@ -746,13 +743,21 @@ def test_llm_briefing_is_an_exemption_not_an_axis_we_drive():
 # ===========================================================================
 # Uniform failure
 # ===========================================================================
-# Surfaces that read through the view, each with the module whose code calls
-# `briefing.prepare` (which opens the checkpoint through `view.open`).
+# Surfaces that read through the view: the module whose code makes the call,
+# and the names that call may take. `prepare` opens the checkpoint through
+# `view.open`; `open`, `suppressed` and `visible_topic` are the view's own
+# projections. The MCP projects tool reaches `visible_topic` through
+# `cli.projects_rows`, so the module that calls it is cli/projects.py.
+PREPARE = frozenset({"prepare", "_prepared"})
+PEEK = frozenset({"visible_topic"})
 CONVERTED = {
-    "cli:brief": "cli/brief.py",
-    "cli:loops": "cli/lifecycle.py",
-    "mcp:daimon_brief": "mcp_tools.py",
-    "hook:pre_llm_call": "hooks.py",
+    "cli:brief": ("cli/brief.py", PREPARE),
+    "cli:loops": ("cli/lifecycle.py", PREPARE),
+    "cli:projects": ("cli/projects.py", PEEK),
+    "cli:status": ("cli/status.py", frozenset({"suppressed"})),
+    "mcp:daimon_brief": ("mcp_tools.py", PREPARE),
+    "mcp:daimon_projects": ("cli/projects.py", PEEK),
+    "hook:pre_llm_call": ("hooks.py", PREPARE),
 }
 
 # Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
@@ -760,12 +765,18 @@ CONVERTED = {
 UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED)
 
 
-def _calls_prepare(rel):
+# Cases of a converted surface that never read a checkpoint item: the status
+# payload carries counts and health, never an item's text (only the
+# `--suppressed` listing reads items), so there is no view call to fail.
+NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json")}
+
+
+def _calls_view(rel, names):
     pkg = Path(daimon_briefing.__file__).parent
     tree = ast.parse((pkg / rel).read_text(encoding="utf-8"))
     return any(isinstance(n, ast.Call)
-               and (getattr(n.func, "attr", None) == "prepare"
-                    or getattr(n.func, "id", None) == "_prepared")
+               and (getattr(n.func, "attr", None) in names
+                    or getattr(n.func, "id", None) in names)
                for n in ast.walk(tree))
 
 
@@ -775,9 +786,9 @@ def test_unconverted_is_a_subset_of_the_registry():
     assert UNCONVERTED | set(CONVERTED) == {s for s, _ in CASES}
 
 
-def test_a_converted_surface_reaches_the_view_through_prepare():
-    for surface, rel in CONVERTED.items():
-        assert _calls_prepare(rel), (surface, rel)
+def test_a_converted_surface_reaches_the_view():
+    for surface, (rel, names) in CONVERTED.items():
+        assert _calls_view(rel, names), (surface, rel)
 
 
 def test_a_converted_surface_renders_nothing_when_view_open_raises(
@@ -791,10 +802,17 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         raise RuntimeError("view.open failed")
 
     monkeypatch.setattr(view, "open", boom)
+    monkeypatch.setattr(view, "visible_topic", boom)
+    # the autouse isolation points this test at a fresh empty home; the world
+    # lives where the fixture built it, and a surface that finds no bucket
+    # never reaches its raise point
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
     tmp = world.root
-    pristine = drive.Pristine(tmp, tmp.parent / (tmp.name + "-keep3"))
+    # the fixture's own clean copy: earlier drives have dirtied `tmp`, and a
+    # raise point that is never reached (no buckets) would pass vacuously
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
     for surface, tag in CASES:
-        if surface not in converted:
+        if surface not in converted or (surface, tag) in NO_ITEM_READ:
             continue
         _found, results = drive_case(surface, tag, world, pristine)
         for label, res in results:

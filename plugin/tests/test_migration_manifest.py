@@ -35,8 +35,6 @@ MANIFEST = {
     # route and the same admit frame.
     ("cli/action_recall.py", "_cmd_action_recall", "read_latest_body",
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
-    ("cli/status.py", "_print_suppressed", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
     ("cli/status.py", "_cmd_verify_receipt", "read_latest_body",
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.OWN_OR_UNROUTED"),
     ("cli/amend.py", "_cmd_amend_propose", "read_latest_body",
@@ -140,7 +138,6 @@ def test_own_else_global_never_appears_in_own_only_modules():
 # (the default is the own route, or the caller hands in an `Opened`).
 PREPARE = {"prepare", "_prepared"}
 PREPARE_MANIFEST = {
-    ("briefing.py", "annotate", "prepare", None),
     ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN"),
     ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN_ELSE_GLOBAL"),
     ("cli/brief.py", "_prepared", "prepare", "route"),

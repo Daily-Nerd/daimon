@@ -12,13 +12,12 @@ distinctly from inferred ones.
 """
 
 import copy
-import dataclasses
 import logging
 import os
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, NamedTuple
 
 # store/carry import graph checked (#103): neither store, carry, recall,
@@ -29,13 +28,12 @@ from typing import Any, NamedTuple
 # (#1093: the manifest-derived enforce lines read it directly).
 from . import (capture, checks_host, checks_runtime, config, display,
                llm, pending, receipts, refutations, requests, schema,
-               scoring, serializer, store)
-# Imported as constants, not as the module: withhold()'s `amendments`
-# parameter (the public keyword every caller uses) would shadow the module
-# name inside that function.
+               scoring, store)
+# Imported as constants, not as the module.
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
 from .amendments import found_label as _amend_found_label
+from .marks import GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE
 
 log = logging.getLogger("daimon.briefing")
 
@@ -47,7 +45,7 @@ _UNTAGGED_MARK = "? untagged"
 # tag; the tag and age ride in a trailing suffix. Render-time only: the
 # stored trust value is never rewritten, and `daimon reverify` restores the
 # tag on the next brief via the resolutions fold (a fresh event ts is the
-# newest age candidate, same rule stale_carried already applies).
+# newest age candidate, same rule stamp_stale_carried applies).
 _STALE_CARRIED_MARK = "? unverified"
 # #204: when a receipt-era checkpoint's provenance can't be locally confirmed at
 # brief time, a `verbatim` label has NOT earned its checkmark — the stored bytes
@@ -202,7 +200,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
         # so this never rewrites the stored trust value.
         was_label = _trust_label(item)
         mark = _STALE_CARRIED_MARK
-    base = f'- [{mark}] {text}'
+    base = f'{ITEM_MARKS[0]} [{mark}] {text}'
     if item.get("carried_from"):
         # Epistemic honesty, same philosophy as trust marks: a loop carried
         # from an older session must not read as fresh context (#33 Phase 2).
@@ -274,7 +272,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
         # claim with the #14/#365/#480 confirm/reject shape — the byte-check
         # certifies transcription, not truth, and an agent can manufacture
         # the quote by speaking it. Every part is re-bounded at the stamp
-        # site (withhold): closed change vocab, clipped role, truncated
+        # site (_machine_stamps): closed change vocab, clipped role, truncated
         # quote/note. ADDED lines only; the pinned prefix never changes.
         rows = amends.get("rows")
         for amend in rows if isinstance(rows, list) else []:
@@ -382,7 +380,7 @@ def build(checkpoint, now=None) -> dict | None:
     }
 
 
-# ---- #103: withhold event-resolved items at render time ----
+# ---- #103: event-resolved items and machine claims at render time ----
 
 # #14 shape gate for a supersede-candidate's new-id payload: kind initial +
 # hex slice (+ optional collision counter), same shape store._stamp_item_ids
@@ -531,66 +529,8 @@ def stamp(checkpoint, snap, now, *, with_stale: bool = True) -> tuple:
     out = mark_corroborated(out, snap.corroborations)
     stale: list = []
     if with_stale:
-        # a plain dict: the stale fold type-checks its resolutions
-        out, stale = stamp_stale_carried(out, dict(snap.resolutions), now)
+        out, stale = stamp_stale_carried(out, snap.resolutions, now)
     return out, candidates, stale
-
-
-def withhold(checkpoint: dict, resolutions: dict,
-             amendments=None, quarantine=None) -> tuple[dict, list, list]:
-    """Compatibility wrapper kept for `status --suppressed` and the tests
-    written against it; it is deleted with the `status --suppressed`
-    conversion (PR 7b). The decisions are `view`'s: a quarantined value goes
-    through `view.classify`, a resolved loop through `view.closing_event`;
-    the stamps are `_machine_stamps`. What is returned keeps the old shape:
-    `(checkpoint, withheld, candidates)` where `withheld` is
-    `[(key, item, event)]`, a quarantined item carrying the synthetic event
-    `{"status": "quarantined"}`, and the input UNCHANGED (same object) when
-    nothing is dropped or stamped. Only dict items of the list fields are
-    considered, as before."""
-    from . import view
-    if not isinstance(checkpoint, dict) or (
-            not resolutions and not amendments and not quarantine):
-        return checkpoint, [], []
-    snap = dataclasses.replace(
-        view.Snapshot.empty(),
-        resolutions=MappingProxyType(dict(resolutions or {})),
-        amendments=MappingProxyType(
-            dict(amendments) if isinstance(amendments, dict) else {}),
-        quarantined=frozenset(quarantine or ()))
-    stamped, candidates = _machine_stamps(checkpoint, snap)
-    to_drop = []  # [(section, key, index, item, event)]
-    for section, key in schema.ITEM_LISTS:
-        items = (checkpoint.get(section) or {}).get(key)
-        if not isinstance(items, list):
-            continue
-        field = _FIELD_OF[(section, key)]
-        for idx, item in enumerate(items):
-            if not isinstance(item, dict):
-                continue
-            if isinstance(view.classify(field, item, snap), view.Withheld):
-                to_drop.append((section, key, idx, item,
-                                {"status": "quarantined"}))
-                continue
-            evt = view.closing_event(item, snap)
-            if evt is not None:
-                to_drop.append((section, key, idx, item, evt))
-    dropped_ids = {item.get("id") for *_, item, _evt in to_drop
-                   if item.get("id")}
-    # a quarantined or closed item is gone: it is no candidate either
-    candidates = [c for c in candidates if c[1].get("id") not in dropped_ids]
-    if not to_drop:
-        return stamped, [], candidates
-    out = stamped if stamped is not checkpoint else copy.deepcopy(checkpoint)
-    withheld = []
-    drop_idx_by_list: dict[tuple[str, str], set] = {}
-    for section, key, idx, item, evt in to_drop:
-        drop_idx_by_list.setdefault((section, key), set()).add(idx)
-        withheld.append((key, item, evt))
-    for (section, key), idxs in drop_idx_by_list.items():
-        items = out[section][key]
-        items[:] = [it for i, it in enumerate(items) if i not in idxs]
-    return out, withheld, candidates
 
 
 # ---- #268: corroboration — independent sightings, stamped for the render ----
@@ -598,8 +538,8 @@ def withhold(checkpoint: dict, resolutions: dict,
 
 def mark_corroborated(checkpoint, corroborations: dict):
     """Stamp corroborated items with a transient `_corroborated = N` count and
-    return the result; pure, no I/O — the caller does the read, exactly as
-    `withhold` takes `store.resolutions()`'s output (#268 slice 4).
+    return the result; pure, no I/O — the caller does the read
+    (`view.snapshot` folds it once, #268 slice 4).
 
     `corroborations` is `store.corroborations()`'s shape, keyed by bare item
     id. N = 1 + the EFFECTIVE origins: the origin of record is the claim's
@@ -610,17 +550,17 @@ def mark_corroborated(checkpoint, corroborations: dict):
     Below `CORROBORATION_MIN` nothing is stamped at all, so an uncorroborated
     item is byte-identical to its pre-#268 render.
 
-    Transient like withhold's candidate stamps and worldcheck's flags: the
+    Transient like the machine-claim stamps and worldcheck's flags: the
     count lives in events.jsonl, and a `_corroborated` key on a stored
     checkpoint would be a second, forgeable copy of it. Nothing here writes.
 
     No corroborations, or a non-dict checkpoint -> the input UNCHANGED, same
-    no-op idiom as withhold/carry.merge: no copy unless something is actually
+    no-op idiom as `stamp`/carry.merge: no copy unless something is actually
     stamped, so the common case (nothing witnessed yet) costs nothing."""
     if not isinstance(checkpoint, dict) or not corroborations:
         return checkpoint
 
-    # Dry run over the ORIGINAL, then one deepcopy — withhold's shape exactly.
+    # Dry run over the ORIGINAL, then one deepcopy — `_machine_stamps`' shape.
     to_stamp = []  # [(section, key, index, n)]
     for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
@@ -655,11 +595,13 @@ def mark_corroborated(checkpoint, corroborations: dict):
 def _carried_age_days(item, resolutions, now):
     """#977: the EFFECTIVE last-verified age in days for a CARRIED item, or
     None when the item is not carried or has no parseable stamp at all
-    (fail-open, same house rule as stale_carried). Single source for the
-    newest-of-candidates rule so the classification (stale_carried) and the
-    render stamp (stamp_stale_carried) can never disagree about an age.
+    (fail-open: an unparseable stamp is never itself a false alarm). Single
+    source for the newest-of-candidates rule so the render stamp
+    (stamp_stale_carried) and the loops listing age (`listing_age_days`) can
+    never disagree about an age.
 
-    `resolutions` is store.resolutions()'s {item_ref: latest_event} shape."""
+    `resolutions` is a `{item_ref: latest_event}` mapping, the fold
+    `view.Snapshot.resolutions` holds."""
     if not isinstance(item, dict) or not item.get("carried_from"):
         return None
     candidates = []
@@ -694,70 +636,27 @@ def listing_age_days(item, resolutions, now):
     return None if born is None else max(0.0, (now - born) / 86400.0)
 
 
-def stale_carried(checkpoint, resolutions: dict, now, threshold_days=None) -> list:
-    """Carried items whose EFFECTIVE last-verified age exceeds
-    `threshold_days`, or [] if none. Pure — `now` is injected (mirrors
-    cli._status_health's purity), no I/O; the caller does resolutions'
-    read (store.resolutions(), same shape `withhold` already consumes) and
-    passes it in.
-
-    Why this exists: a carried item survives into a fresh checkpoint by
-    exact-copy (carry.merge), and the fresh checkpoint restating it is
-    NOT corroboration — both sources trace back to the same original
-    extraction. This is the render-time signal that a carried claim has
-    ridden along for a while with nobody actually re-checking it against the
-    world (code, git, issue tracker).
-
-    A candidate must carry `carried_from` (native, this-session items were
-    just re-extracted — not in question). Its EFFECTIVE last-verified is the
-    NEWEST of, when parseable:
-      - `last_verified` (#215/#125: stamped by verify_quotes at serialize
-        time, ONLY there — checkpoints are append-only, so this field is
-        never rewritten by carry or by a resolve/reverify action)
-      - the latest events.jsonl event's `ts` for the item's id, from
-        `resolutions` (store.resolutions()'s {item_ref: latest_event} shape
-        — the read-time fold of `daimon resolve`/`reverify`, which is where a
-        user's real world-check moment lands; carry never touches the
-        checkpoint for it, per #215's design constraint)
-      - `first_seen` (birth stamp, the oldest and least informative fallback)
-
-    Timestamps are parsed via store._created_epoch, which returns None on
-    anything torn/legacy/malformed — fail-open: an unparseable candidate
-    contributes NOTHING to the age (never itself the reason for a false
-    alarm), and an item where EVERY candidate is unparseable is not counted
-    stale at all (house rule: no evidence beats a false no-line guarantee,
-    same as _status_health's no-age-threshold-without-data stance)."""
-    if threshold_days is None:
-        threshold_days = config.stale_days()
-    if not isinstance(checkpoint, dict):
-        return []
-    resolutions = resolutions if isinstance(resolutions, dict) else {}
-    stale = []
-    for item in serializer.iter_items(checkpoint):
-        age_days = _carried_age_days(item, resolutions, now)
-        if age_days is not None and age_days > threshold_days:
-            stale.append(item)
-    return stale
-
-
-def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None):
+def stamp_stale_carried(checkpoint, resolutions: Mapping, now,
+                        threshold_days=None):
     """#977: the render-time half of the staleness budget. Returns
     (checkpoint, stale_items) where every carried item past the threshold
     carries a transient `_stale_carried_days` stamp (its effective age in
     days) that `_line` / render._rich_brief turn into the `[? unverified]`
     mark plus the `(was <tag>, carried Nd)` suffix.
 
-    Same classification as stale_carried (one shared `_carried_age_days`, so
-    the two can never disagree): callers that render should prefer this over
-    stale_carried plus a second pass. Transient like mark_corroborated's count:
-    the stamp rides the IN-MEMORY item only, deep-copied when something is
-    stamped and returned UNCHANGED otherwise, so the stored trust value is
-    never rewritten and a no-stale brief costs nothing."""
+    A carried item's age is the NEWEST of `last_verified`, the latest
+    resolutions event `ts` for its id (`resolutions` may be any Mapping: a
+    `view.Snapshot` holds a read-only one) and `first_seen`; an unparseable
+    stamp contributes nothing, and an item with none is never stale. Transient
+    like mark_corroborated's count: the stamp rides the IN-MEMORY item only,
+    deep-copied when something is stamped and returned UNCHANGED otherwise, so
+    the stored trust value is never rewritten and a no-stale brief costs
+    nothing."""
     if threshold_days is None:
         threshold_days = config.stale_days()
     if not isinstance(checkpoint, dict):
         return checkpoint, []
-    resolutions = resolutions if isinstance(resolutions, dict) else {}
+    resolutions = resolutions if isinstance(resolutions, Mapping) else {}
     to_stamp = []  # [(section, key, index, age_days)]
     for section, key in schema.ITEM_LISTS:
         items = (checkpoint.get(section) or {}).get(key)
@@ -781,16 +680,6 @@ def stamp_stale_carried(checkpoint, resolutions: dict, now, threshold_days=None)
 
 
 # ---- #1128: the one annotation step every host shares ----
-
-
-class AnnotateContext(NamedTuple):
-    """Where `annotate`'s ledgers are read from. `route` keys the snapshot (a
-    project dir on the normal path, a bare slug on --slug).
-    `worldcheck_project` is the one optional annotator's gate: set only on the
-    CLI same-project path, exactly like the request panels (D2); None means
-    the spot-check never runs."""
-    route: object
-    worldcheck_project: object = None
 
 
 class Annotated(NamedTuple):
@@ -864,18 +753,6 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
         snap.notes(), opened.fell_back)
-
-
-def annotate(checkpoint, ctx: AnnotateContext, now) -> Annotated:
-    """`prepare` for a checkpoint the caller already holds: the in-hand form,
-    kept for the tests written against it and deleted with `withhold` (PR 7b).
-    The snapshot is `ctx.route`'s; the view and the stamps are `prepare`'s."""
-    from . import view
-    if not checkpoint or not isinstance(checkpoint, dict):
-        return Annotated(checkpoint, [], {}, [], None, [])
-    snap = view.snapshot(ctx.route)
-    return prepare(ctx.route, now, worldcheck_project=ctx.worldcheck_project,
-                   opened=view._opened(checkpoint, snap, True))
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -1197,12 +1074,12 @@ def _policy_line(policy) -> str | None:
         to = policy.get("to")
         if not to:
             return None
-        return f"§ policy: agent may open {kind} asks → {_slug_label(to)}"
+        return f"{RULING_MARK} policy: agent may open {kind} asks → {_slug_label(to)}"
     if verb == "accept":
         sender = policy.get("sender")
         if not sender:
             return None
-        return (f"§ policy: {_slug_label(sender)}'s agent may accept "
+        return (f"{RULING_MARK} policy: {_slug_label(sender)}'s agent may accept "
                 f"{kind} asks here")
     return None
 
@@ -1229,7 +1106,7 @@ def _check_line(row, check) -> str | None:
     ruling_id = str(row.get("refutation_id") or "").strip()
     if not subject or not ruling_id:
         return None
-    return f"§ enforced: {subject} (daimon ruling show {ruling_id})"
+    return f"{RULING_MARK} enforced: {subject} (daimon ruling show {ruling_id})"
 
 
 def _compact_line(row):
@@ -1377,7 +1254,7 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
             root = str(entry.get("project_dir") or "")
             if not match or not root:
                 continue
-            lines.append(f"§ enforced from {config.home_relative(root)}: "
+            lines.append(f"{RULING_MARK} enforced from {config.home_relative(root)}: "
                         f"{match}  [{ruling_id}]")
             rendered_ids.add(ruling_id)
         except Exception:
@@ -1483,7 +1360,7 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
         authored = row.get("text_authored_by")
         authored_suffix = (f"  [{authored}-written]"
                           if authored and authored != "human" else "")
-        lines.append(f"§ {verdict}{authored_suffix}{suffix}")
+        lines.append(f"{RULING_MARK} {verdict}{authored_suffix}{suffix}")
     if policy_rendered:
         lines.append(_POLICY_LEGEND)
     lines.extend(manifest_lines)
@@ -1787,7 +1664,6 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
 
 
 
-GREETING = "While you were away — here's where we left off."
 # Printed in place of the body when the view is CLOSED (the trust ledger cannot
 # be read, so no item can be proven safe to show): the greeting, the ledger
 # note and the standing furniture still render, and this line says why the
@@ -1883,7 +1759,7 @@ BRIEFABLE_SECTIONS = frozenset(s for s in SECTION_ORDER
 
 SECTION_HEADERS = {
     "decisions": "Decisions made:",
-    "external": "VERIFY BEFORE TRUSTING (state may have changed outside "
+    "external": f"{VERIFY_PHRASE} (state may have changed outside "
                 "this session):",
     "open_loops": "Open loops:",
     "beliefs": "Beliefs held:",
@@ -1903,7 +1779,7 @@ _BACKGROUND = frozenset({"beliefs", "uncertainties"})
 
 # Where a hidden-items note points. beliefs/uncertainties have no listing
 # command, so their notes carry no pointer. `daimon loops --stale` lists what
-# the stale rule hid (the same annotate() set); a note that also lost items
+# the stale rule hid (the `prepare` stale set); a note that also lost items
 # for plain budget points at the whole listing, whose rows carry an age.
 _NOTE_POINTER = {"external": "daimon loops", "open_loops": "daimon loops"}
 _STALE_POINTER_SUFFIX = " --stale"

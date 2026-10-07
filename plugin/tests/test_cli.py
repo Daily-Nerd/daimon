@@ -6386,8 +6386,8 @@ def test_brief_fails_open_when_resolutions_raises(
 
 def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
     # #103: `daimon status --suppressed` answers the brief's "N resolved
-    # item(s) withheld" note with the actual listing, reusing briefing.withhold
-    # rather than reimplementing the classification.
+    # item(s) withheld" note with the actual listing, formatting what view.suppressed
+    # decides rather than reimplementing the classification.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
     written = store.read_latest_body(project_dir="/repo/x",
@@ -6410,20 +6410,67 @@ def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkp
 def test_status_suppressed_lists_a_quarantined_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
     # #1109 PR 2 review: a confirmed quarantine must show up in the
     # suppressed listing too, the same way a resolution does.
+    # #1132 PR 7b: the row names the item and the record, never the text.
     from daimon_briefing import store, trust
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
-    trust.propose(text="Chunk threshold for the serializer", kind="question",
-                  reason="planted, not a real open question",
-                  evidence=["issue:1109"], channel="cli-tty",
-                  project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
+    item_id = next(
+        i["id"] for i in written["working_context"]["open_questions"]
+        if i["text"] == "Chunk threshold for the serializer")
+    qid = trust.propose(text="Chunk threshold for the serializer",
+                        kind="question",
+                        reason="planted, not a real open question",
+                        evidence=["issue:1109"], channel="cli-tty",
+                        project_dir="/repo/x")
     rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "suppressed items (1):" in out
-    assert "Chunk threshold for the serializer" in out
-    assert "quarantined" in out
+    assert "Chunk threshold for the serializer" not in out
+    assert f"{item_id}  [question] [withheld: quarantine {qid}]" in out
     # the live item must never show up in the suppressed listing
     assert "PR #6 state" not in out
+
+
+def test_status_suppressed_never_lists_a_forgotten_item(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # #1132 PR 7b: a forgotten value reads as absent here, listed or counted
+    # nowhere, even when a resolution also closed it.
+    from daimon_briefing import normalize, store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    written = store.read_latest_body(project_dir="/repo/x",
+                                     route=store.Route.OWN,
+                                     admit=store.Admit.ANY)
+    item = written["working_context"]["open_questions"][1]
+    store.append_event(item["id"], "resolved", project_dir="/repo/x")
+    key = normalize.content_key(item["text"])
+    store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
+                       tombstone=True, project_dir="/repo/x")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert item["text"] not in out and item["id"] not in out
+    assert "forgotten" not in out and "quarantine" not in out
+    assert out.strip() == "no suppressed items"
+
+
+def test_status_suppressed_says_so_when_the_trust_ledger_cannot_be_read(
+        tmp_checkpoint_dir, sample_checkpoint, capsys):
+    # never "no suppressed items": nothing can be proven not quarantined
+    from daimon_briefing import config, store
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    bucket = config.checkpoint_dir() / store.project_slug("/repo/x")
+    with open(bucket / "trust.jsonl", "ab") as fh:
+        fh.write(b"<<<<<<< HEAD\n")
+    rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "⚠ trust.jsonl is unreadable" in out
+    assert "item(s) withheld while the trust ledger cannot be read" in out
+    assert "no suppressed items" not in out
+    assert "Chunk threshold for the serializer" not in out
 
 
 def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, sample_checkpoint, capsys):
@@ -11774,7 +11821,27 @@ def test_tail_log_info_is_none_for_an_empty_or_blank_log(tmp_path):
     assert cli._tail_log_info(blank, time.time()) is None
 
 
-def test_status_suppressed_fails_open_when_the_fold_raises(
+def test_status_suppressed_fails_closed_when_the_view_raises(
+        tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
+    # #1132 PR 7b: one error line and rc 2, never "no suppressed items". The
+    # raise point is `view.open`: a ledger fold that raises is a health note
+    # in the snapshot (next test), not an exception.
+    from daimon_briefing import store, view
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+
+    def boom(*a, **k):
+        raise RuntimeError("view broke")
+
+    monkeypatch.setattr(view, "open", boom)
+    assert cli.main(["status", "--suppressed", "--project", "/repo/x"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip().count("\n") == 0
+    assert "RuntimeError" in captured.err
+    assert "nothing was rendered" in captured.err
+
+
+def test_status_suppressed_names_a_fold_that_raised(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
@@ -11782,9 +11849,10 @@ def test_status_suppressed_fails_open_when_the_fold_raises(
     def boom(*a, **k):
         raise RuntimeError("hand-edited ledger")
 
-    monkeypatch.setattr(store, "resolutions", boom)
+    monkeypatch.setattr(store, "fold_resolutions", boom)
     assert cli.main(["status", "--suppressed", "--project", "/repo/x"]) == 0
-    assert "no suppressed items" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "⚠ events.jsonl is unreadable (fold raised RuntimeError)" in out
 
 
 def test_status_suppressed_prints_the_note_a_resolution_carried(

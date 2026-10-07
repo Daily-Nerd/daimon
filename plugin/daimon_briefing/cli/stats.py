@@ -451,7 +451,7 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
     - `agent_pending`: refs whose FOLDED latest event is still a pending
       agent candidate — reuses capture._pending_agent_candidates over
       store.resolutions()'s fold rather than re-deriving the same status/
-      source filter a second time (the same reuse briefing.withhold's #480
+      source filter a second time (the same reuse the view's #480
       slice 4 stamp makes).
     - `refused`: the `resolve:no-evidence` usage-log tag (#303/#482) — an
       agent that tried `--by agent` with no evidence, refused before any

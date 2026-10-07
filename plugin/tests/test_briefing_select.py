@@ -9,6 +9,8 @@ import pytest
 
 from daimon_briefing import briefing, display
 
+from ._prepared import in_hand
+
 NOW = 1_800_000_000.0
 
 
@@ -73,7 +75,7 @@ def _annotated_b(cp=None, mutate=None):
     cp = cp or _fixture_checkpoint()
     if mutate:
         mutate(cp)
-    out = briefing.annotate(cp, briefing.AnnotateContext(route="/repo/x"), NOW)
+    out = in_hand(cp, "/repo/x", NOW)
     return briefing.build(out.checkpoint, now=NOW)
 
 

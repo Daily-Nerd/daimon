@@ -216,13 +216,13 @@ def stamp_item_ids(checkpoint: dict) -> None:
     counter suffix (same text, same kind, still two loops).
 
     #487: the slice is 12 hex, not 6, because the id is a PROJECT-GLOBAL key
-    (store.resolutions folds events by bare ref, briefing.withhold binds on
+    (store.resolutions folds events by bare ref, the view binds on
     exact equality, recall's rebuild scrub updates bucket-wide) while `seen`
     below is scoped to ONE checkpoint — so a cross-session collision is
     undetectable here by construction. At 6 hex that is ~2.4% over ~2k
     distinct texts per project and grows quadratically; the consequence is a
     `resolve` or `forget` silently withholding an unrelated live memory, which
-    briefing.withhold's docstring names as the worst failure it can have.
+    the view's classify docstring names as the worst failure it can have.
     Narrowing the hash is free, so the width carries the guarantee instead.
     Ids already stamped keep their width forever and both shapes coexist:
     every consumer regex accepts {6,} (briefing's bounds it at {6,40})."""

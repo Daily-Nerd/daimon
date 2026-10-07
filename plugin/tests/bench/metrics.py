@@ -133,7 +133,7 @@ def assembled_brief_text(recall_results: list[dict], k: int) -> str:
     Two assembly steps mirror the briefing, and are exactly what makes this
     differ from the raw retriever output:
       - WITHHOLD: rows carrying a `superseded_by` stamp (event-resolved or
-        superseded — a downgraded standing) are dropped, as briefing.withhold
+        superseded — a downgraded standing) are dropped, as the view
         drops them, even though recall still returns them ranked-down. A withheld
         row does not consume a top-k slot.
       - WINDOW: only the first k survivors reach the prompt; a match ranked below

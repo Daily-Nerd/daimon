@@ -1248,7 +1248,7 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
     `last_verified` is checkpoint-append-only by design (#215): it is stamped
     ONLY here, at serialize time. No other code path may rewrite it — user
     resolve/reverify actions live in events.jsonl and are folded in at READ
-    time (briefing.stale_carried), never written back onto the item.
+    time (briefing.stamp_stale_carried), never written back onto the item.
 
     No injected `now` here (unlike briefing.build's now=None idiom): this
     function's signature is called from exactly one production site

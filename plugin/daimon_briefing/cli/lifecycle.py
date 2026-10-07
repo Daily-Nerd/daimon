@@ -858,7 +858,7 @@ def _cmd_loops(args) -> int:
             if item.get("_agent_claim"):
                 # #480 slice 4: the listing agrees with the briefing — an
                 # item carrying a still-pending, unverified agent claim
-                # (briefing.withhold's transient stamp) is marked here too.
+                # (the transient `_agent_claim` stamp) is marked here too.
                 text += " (agent claim pending)"
             amend_stamp = item.get("_amend")
             if isinstance(amend_stamp, dict):

@@ -8,6 +8,7 @@ re-exported from `cli`.
 
 import functools
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,9 +16,9 @@ from pathlib import Path
 import daimon_briefing.cli as _cli
 
 from .. import (
-    briefing,
     buckets,
     config,
+    display,
     ledger_census,
     llm,
     recall,
@@ -30,7 +31,7 @@ from .. import (
     serializer,
     store,
     teamsync,
-    trust as trust_lib,
+    view,
     worldcheck,
 )
 from ..ledger import (
@@ -317,58 +318,55 @@ def _crash_log_info(path: Path, now: float) -> dict | None:
 def _print_suppressed(project) -> int:
     """`daimon status --suppressed` (#103): the visibility answer to brief's
     silent-suppression note ("N resolved item(s) withheld — `daimon status
-    --suppressed` to list"). Reuses briefing.withhold for the classification
-    rather than reimplementing it — the resolved/live split must stay in
-    exactly one place. Reads ONLY this project's own latest checkpoint
-    (Route.OWN, same rule as carry #94): listing another project's
-    withheld items under this project's status would be worse than listing
-    none. Fails open like brief's withhold call — a broken events.jsonl
-    must not crash `status`, it should just report nothing suppressed."""
-    # Route.OWN is a DECISION here, not a leftover: this is a read-only
-    # reporting surface, and a pre-routing store is read-only for
-    # project-scoped commands — its content comes from briefing.withhold over
-    # store.resolutions(project), whose writers are all own-only, so an
-    # un-routed checkpoint can have nothing suppressed to report anyway.
-    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
-    withheld: list = []
-    candidates: list = []
-    if checkpoint:
-        try:
-            events = store.resolutions(project_dir=project)
-            quarantine = trust_lib.active_value_keys(project_dir=project)
-            _, withheld, candidates = briefing.withhold(
-                checkpoint, events, quarantine=quarantine)
-        except Exception:
-            withheld = []
-            candidates = []
-    if not withheld and not candidates:
+    --suppressed` to list"). Formatting only: `view.suppressed` decides what
+    is resolved, quarantined or forgotten, so the resolved/live split stays in
+    exactly one place. A quarantined row names the item and the record, never
+    the text; a forgotten value is not here at all. Reads ONLY this project's
+    own latest checkpoint (Route.OWN, same rule as carry #94): listing another
+    project's withheld items under this project's status would be worse than
+    listing none. Fails CLOSED like brief and loops (#1132 PR 7b): a view that
+    raises is one error line and rc 2, never "no suppressed items"."""
+    try:
+        sup = view.suppressed(project, time.time())
+    except Exception as exc:  # noqa: BLE001 — reported, never listed around
+        print("error: the suppressed list could not be built "
+              f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
+        return 2
+    for note in sup.notes:
+        print(note)
+    if not (sup.resolved or sup.withheld or sup.closed or sup.candidates):
         print("no suppressed items")
         return 0
-    if withheld:
-        print(f"suppressed items ({len(withheld)}):")
-        for key, item, evt in withheld:
-            item_id = item.get("id") or "-"
-            text = str(item.get("text") or "").strip()
-            status = str(evt.get("status") or "")
-            ts = str(evt.get("ts") or "")
-            note = str(evt.get("note") or "").strip()
-            paren = f"{status} {ts}"
-            if note:
-                paren += f", {note}"
-            if item.get("restated_after_resolve") is True:
-                # #980: carry matched this session's item to a closed one and
-                # handed it the closed id; the wording shown is this
-                # session's own, so a person can tell a match from a
-                # resolution they recorded.
-                paren += ("; identity inherited from a resolved item, "
-                          "wording is this session's own")
-            print(f"  {item_id}  [{key}] {text}  ({paren})")
-    if candidates:
+    if sup.resolved or sup.withheld:
+        print(f"suppressed items ({len(sup.resolved) + len(sup.withheld)}):")
+    for row in sup.resolved:
+        item, evt = row.item, row.event
+        item_id = item.get("id") or "-"
+        text = str(item.get("text") or "").strip()
+        status = str(evt.get("status") or "")
+        ts = str(evt.get("ts") or "")
+        note = str(evt.get("note") or "").strip()
+        paren = f"{status} {ts}"
+        if note:
+            paren += f", {note}"
+        if item.get("restated_after_resolve") is True:
+            # #980: carry matched this session's item to a closed one and
+            # handed it the closed id; the wording shown is this
+            # session's own, so a person can tell a match from a
+            # resolution they recorded.
+            paren += ("; identity inherited from a resolved item, "
+                      "wording is this session's own")
+        print(f"  {item_id}  [{row.field.key}] {text}  ({paren})")
+    for w in sup.withheld:
+        print(f"  {w.item_id or '-'}  [{w.kind}] {display.withheld_marker(w)}")
+    if sup.closed:
+        print(f"{sup.closed} item(s) withheld while the trust ledger "
+              "cannot be read")
+    if sup.candidates:
         # #14: machine SUGGESTIONS, not resolutions — a separate subsection
         # so they never read as confirmed suppressions.
         print("likely superseded (unconfirmed):")
-        for key, item, evt in candidates:
+        for key, item, evt in sup.candidates:
             item_id = item.get("id") or "-"
             text = str(item.get("text") or "").strip()
             new_id = item.get("_supersede_candidate") or "-"

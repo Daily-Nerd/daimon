@@ -17,14 +17,15 @@ functions because the briefing path will import `view` later.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
 from typing import Any, Iterator, Literal, Mapping
 
-from . import (amendments, carry, config, jsonl, normalize, requests, schema,
-               store, trust)
+from . import (amendments, carry, config, jsonl, marks, normalize, requests,
+               schema, store, trust)
 from .jsonl import Health
 
 # The bucket ledgers a snapshot reports health for, by file name (declared in
@@ -33,6 +34,8 @@ LEDGERS = ("events.jsonl", "trust.jsonl", "amendments.jsonl",
            "requests.jsonl", "refutations.jsonl")
 
 Reason = Literal["forgotten", "quarantine", "closed"]
+
+_TOPIC_FIELD = next(f for f in schema.ITEM_FIELDS if f.kind == "topic")
 
 
 def _frozen(mapping) -> Mapping:
@@ -86,8 +89,8 @@ class Snapshot:
             if state in (Health.OK, Health.ABSENT):
                 continue
             detail = self.details.get(name)
-            out.append(f"⚠ {name} is {state.value}"
-                       + (f" ({detail})" if detail else ""))
+            out.append(marks.warning(f"{name} is {state.value}"
+                                     + (f" ({detail})" if detail else "")))
         return tuple(out)
 
     @cached_property
@@ -156,6 +159,33 @@ class Opened:
 
 
 @dataclass(frozen=True)
+class Resolved:
+    """A loop a resolution closed: the item as the checkpoint holds it, its
+    field and the closing event. Only a value the reader may see."""
+
+    item: dict
+    field: schema.ItemField
+    event: dict
+
+
+@dataclass(frozen=True)
+class Suppression:
+    """What `status --suppressed` lists. `resolved` are closed loops;
+    `withheld` are quarantined values (identity and reason, never text; a
+    forgotten value is in neither list and in no count); `closed` counts what
+    is hidden because the trust ledger cannot be read (nothing is listed,
+    nothing can be proven not quarantined); `candidates` are the #14
+    `(list key, item, event)` supersede suggestions, which are not
+    resolutions; `notes` are the ledger-health lines."""
+
+    resolved: tuple
+    withheld: tuple
+    closed: int
+    candidates: tuple
+    notes: tuple
+
+
+@dataclass(frozen=True)
 class Found:
     item: dict
     field: schema.ItemField
@@ -182,6 +212,33 @@ class Match:
 def _bucket(project):
     slug = store.project_slug(config.resolve_project_dir(project))
     return config.checkpoint_dir() / slug if slug else None
+
+
+def forgotten_keys() -> frozenset:
+    """The machine-wide forgotten set, the one `snapshot` reads: every local
+    project's tombstones plus what teammates published. Memoized in `store`,
+    so a caller that needs it for many buckets (`visible_topic`) asks once."""
+    return frozenset(store.all_forgotten_content_keys()
+                     | store.foreign_forgotten_content_keys())
+
+
+def _trust_index(project, read: jsonl.Read) -> tuple:
+    """`(quarantine_ids, health, detail)` for one bucket's trust ledger: the
+    active quarantines as `{(kind, value_key): quarantine_id}`, and what the
+    ledger is. `read` is `jsonl.read` of trust.jsonl; a fold that raises marks
+    the ledger UNREADABLE, which closes the view. The one place the quarantine
+    rule and that closing rule live, for `snapshot` and `_light` alike; the
+    fold is `trust.records`, never a copy of it."""
+    health, detail = read.health, read.detail
+    try:
+        records = trust.records(project_dir=project)
+    except Exception as exc:  # noqa: BLE001 — a fold's raise is a health state
+        records = {}
+        health, detail = Health.UNREADABLE, f"fold raised {type(exc).__name__}"
+    ids = {(r["kind"], r["value_key"]): r["quarantine_id"]
+           for r in records.values()
+           if r.get("state") == "active" and r.get("value_key")}
+    return ids, health, detail
 
 
 def snapshot(project) -> Snapshot:
@@ -214,12 +271,10 @@ def snapshot(project) -> Snapshot:
                          lambda: store.fold_resolutions(rows), {})
     corroborations = folded("events.jsonl",
                             lambda: store.fold_corroborations(rows), {})
-    records = folded("trust.jsonl",
-                     lambda: trust.records(project_dir=project), {})
-    active = [r for r in records.values()
-              if r.get("state") == "active" and r.get("value_key")]
-    quarantine_ids = {(r["kind"], r["value_key"]): r["quarantine_id"]
-                      for r in active}
+    quarantine_ids, health["trust.jsonl"], detail = _trust_index(
+        project, reads["trust.jsonl"])
+    if detail:
+        details["trust.jsonl"] = detail
     amend = folded(
         "amendments.jsonl",
         lambda: amendments.render_groups(
@@ -232,11 +287,7 @@ def snapshot(project) -> Snapshot:
         return briefing.rulings_read(project)
 
     rulings = folded("refutations.jsonl", read_rulings, None)
-    forgotten = folded(
-        "events.jsonl",
-        lambda: frozenset(store.all_forgotten_content_keys()
-                          | store.foreign_forgotten_content_keys()),
-        frozenset())
+    forgotten = folded("events.jsonl", forgotten_keys, frozenset())
     return Snapshot(
         forgotten=forgotten, quarantined=frozenset(quarantine_ids),
         quarantine_ids=_frozen(quarantine_ids),
@@ -245,6 +296,41 @@ def snapshot(project) -> Snapshot:
         requests=_frozen(asks), health=_frozen(health),
         closed=health["trust.jsonl"] is Health.UNREADABLE,
         details=_frozen(details))
+
+
+def _light(slug, forgotten) -> Snapshot:
+    """A snapshot with only what `classify` reads: the forgotten set the
+    caller holds, this bucket's active quarantines and `closed`, from the same
+    `_trust_index` step `snapshot` uses."""
+    bucket = _bucket(slug)
+    if bucket is None:
+        return dataclasses.replace(Snapshot.empty(), forgotten=forgotten)
+    ids, health, _detail = _trust_index(
+        slug, jsonl.read(bucket / "trust.jsonl"))
+    return dataclasses.replace(
+        Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
+        quarantine_ids=_frozen(ids), closed=health is Health.UNREADABLE)
+
+
+def visible_topic(checkpoint, slug, *, forgotten) -> str | None:
+    """The active topic text of a checkpoint the caller already holds, as a
+    reader of bucket `slug` may see it, else None. None covers no checkpoint,
+    no topic and every withheld case (forgotten, quarantined, trust ledger
+    unreadable), so a hidden topic reads as an absent one. `forgotten` is
+    `forgotten_keys()`, computed once by a caller that lists many buckets. It
+    classifies with `classify` over a light snapshot, so a listing pays one
+    small ledger read per bucket instead of a whole `snapshot`, and a row's
+    other fields and its topic come from the same read of the checkpoint.
+    Never raises for data health."""
+    topic = ((checkpoint or {}).get("working_context") or {}).get(
+        "active_topic")
+    if not isinstance(topic, dict):
+        return None
+    if isinstance(classify(_TOPIC_FIELD, topic, _light(slug, forgotten)),
+                  Withheld):
+        return None
+    text = topic.get("text")
+    return text if isinstance(text, str) else None
 
 
 # ---- classify / live ------------------------------------------------------
@@ -508,3 +594,30 @@ def match(project, query: str) -> Match:
         else:
             hits.append(Found(item, fld, (_occurrence(raw),)))
     return Match(tuple(hits), withheld)
+
+
+def suppressed(project, now: float) -> Suppression:
+    """The project's own suppressed items, for `status --suppressed`. Built on
+    `open(live=False)`: what `open` withholds is the quarantined list (and the
+    `closed` count), what it keeps and `closing_event` closes is the resolved
+    list, and the #14 candidates come from `briefing.stamp` over the opened
+    checkpoint, so a withheld item is never one. A forgotten value is dropped
+    by `open` and reported nowhere. `briefing` is imported inside the
+    function, as in `Snapshot.fuzzy_events`."""
+    from . import briefing
+    opened = open(project, live=False, route=store.Route.OWN)
+    snap = opened.snapshot
+    resolved = []
+    candidates: tuple = ()
+    if opened.checkpoint is not None:
+        for fld, item in schema.iter_items(opened.checkpoint):
+            event = None if fld.singleton else closing_event(item, snap)
+            if event is not None:
+                resolved.append(Resolved(item, fld, event))
+        candidates = tuple(
+            briefing.stamp(opened.checkpoint, snap, now, with_stale=False)[1])
+    return Suppression(
+        tuple(resolved),
+        tuple(w for w in opened.withheld if w.reason == "quarantine"),
+        sum(w.reason == "closed" for w in opened.withheld),
+        candidates, snap.notes())
