@@ -99,8 +99,9 @@ the `daimon` CLI. Host-specific payload handling stays in the adapter; serializa
 storage, and rendering stay in the runtime.
 
 Hermes is the secondary in-process integration. The MCP surface is read-only. The
-viewer binds locally. Its project, checkpoint, session and diff routes read through
-the read view; its ledger, grid, session-page and activity routes still read files.
+viewer binds locally. Every viewer route that shows project content reads through
+the read view, or through the engine that owns the fold (search, trust inspection,
+refutations and relations); the viewer reads no ledger file directly.
 
 Host capabilities are not identical. Each adapter implements only the lifecycle
 events its host exposes; the host guides document where capture, start injection, or
@@ -262,7 +263,7 @@ flowchart LR
         Search["Recall search"]
         Inspector["Trust inspector"]
         Folds["Ledger folds"]
-        FileReader["Viewer reader"]
+        FileReader["Viewer reader (read view)"]
     end
 
     subgraph Surfaces["Presentation surfaces"]
@@ -297,16 +298,22 @@ The CLI renderer is the source of truth for human-facing terminal output. Host s
 hooks inject that rendered briefing rather than reimplementing it. MCP returns a
 bounded read-only subset as JSON.
 
-The viewer's project list, pointer window, session list and diff read through the
-read view, so a value a reader may not see is absent from every payload, counts are
-counts of visible items, and a trust ledger that cannot be read hides items and is
-named in the payload's `notes`. Its ledger, grid, session-page and activity routes
-normalize checkpoint files directly. Its server delegates search, trust inspection,
-and ledger folds to Daimon's engines so those semantics do not fork inside the same
-distribution. Every request runs with the
-store scoped to the viewer's data directory (set inside the request thread), the
-store and the default project resolve through the same config accessors as the CLI,
-and bucket listing and tenant scope come from `view.buckets`.
+The viewer's project list, pointer window, session list, diff, activity feed,
+ledger, check strip, session page and item biography read through the read view
+(`view.sessions`, `view.open_sessions`, `view.events`, `view.verifications` and the
+snapshot's resolution fold), so a value a reader may not see is absent from every
+payload, counts are counts of visible items, and a trust ledger that cannot be read
+hides items and is named in the payload's `notes`. The activity feed never shows a
+forgotten value or the key that names it: a forget tombstone reads as the bare
+status `forgotten`. A resolution is the kernel's (`store.is_resolved`), the rule
+`daimon diff` applies. The viewer's reader opens no file and parses no ledger; the
+one file check it needs, the cheap receipt tamper test, is `receipts.cheap_state`.
+Its server delegates search, trust inspection, refutations and relations to Daimon's
+engines so those semantics do not fork inside the same distribution. Every request
+runs with the store scoped to the viewer's data directory (set inside the request
+thread, the one place the store is set), the store and the default project resolve
+through the same config accessors as the CLI, and bucket listing and tenant scope
+come from `view.buckets`.
 
 ## 7. End-to-end lifecycle
 

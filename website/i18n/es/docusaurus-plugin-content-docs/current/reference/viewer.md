@@ -39,17 +39,27 @@ raíz del proyecto como lo hace la CLI con `--project`), `--port` (por defecto
 
 ## Qué no muestra el visor
 
-La lista de proyectos, las listas de checkpoints y de sesiones, un checkpoint
-y el Diff muestran solo lo que un lector del proyecto puede ver. Un item que
-pusiste en cuarentena o que olvidaste no aparece en ellos, y un tema retenido
-se lee como si no hubiera tema. Los conteos son conteos de los items que
-puedes ver, así que un número nunca te dice que hay algo oculto. Si el ledger
-de confianza no se puede leer, no se muestra ningún item y la página dice qué
-ledger falló.
+La lista de proyectos, las listas de checkpoints y de sesiones, un checkpoint,
+el Diff, el feed de actividad, el ledger, el check strip, una página de sesión
+y el panel Life de un item muestran solo lo que un lector del proyecto puede
+ver. Un item que pusiste en cuarentena o que olvidaste no aparece en ellos, y
+un tema retenido se lee como si no hubiera tema. Un valor en cuarentena dentro
+de una nota o de un evento se lee como un marcador de retenido. Un valor
+olvidado se lee como ausente, y también la clave que lo nombra: el feed de
+actividad muestra un olvido como la palabra `forgotten`. Los conteos son
+conteos de los items que puedes ver, así que un número nunca te dice que hay
+algo oculto. Si el ledger de confianza no se puede leer, no se muestra ningún
+item (las notas siguen legibles) y la página dice qué ledger falló.
 
-El Diff lista un item que salió entre dos checkpoints como resuelto cuando una
-resolución lo cerró, sea cual sea el estado que lo cerró (la regla que usa
-`daimon diff`), y como descartado en cualquier otro caso.
+El visor no lee ningún archivo de ledger por sí mismo: cada ruta que muestra
+contenido del proyecto le pregunta a la misma vista de lectura que usa la CLI
+(search, why, refutations y relations preguntan a sus propios motores).
+
+El Diff, el ledger y el panel Life de un item cierran un item con la misma
+regla: una resolución lo cierra, sea cual sea el estado que lo cerró (la regla
+que usa `daimon diff`), salvo que un evento posterior lo reabriera. El Diff
+lista un item que salió entre dos checkpoints como resuelto en ese caso, y
+como descartado en cualquier otro.
 
 ## Solo lectura como compromiso
 
