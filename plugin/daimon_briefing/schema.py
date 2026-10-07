@@ -69,6 +69,11 @@ ITEM_FIELDS: tuple[ItemField, ...] = (
     ItemField("epistemic_snapshot", "contradictions_flagged", False, "contradiction", None, False, False),
 )
 
+# The item columns that hold content a reader could be shown: the ones a
+# withhold decision matches by canonical value (#1132). A column here is
+# checked wherever a value can surface; one that is not is never inspected.
+VALUE_FIELDS: tuple[str, ...] = ("text", "quote", "scene")
+
 # (section, key) for the list sections that hold checkpoint items — store's
 # redaction/id-stamping view. active_topic is a single per-session dict and
 # never needs an id (it does not carry, #33).

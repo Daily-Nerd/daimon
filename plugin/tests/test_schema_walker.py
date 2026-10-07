@@ -129,3 +129,7 @@ def test_a_checkpoint_that_is_not_a_dict_yields_nothing():
     for cp in ("torn", None, ["x"], 7):
         assert list(schema.iter_fields(cp)) == []
         assert list(schema.iter_items(cp)) == []
+
+
+def test_value_fields_are_the_three_content_columns():
+    assert schema.VALUE_FIELDS == ("text", "quote", "scene")
