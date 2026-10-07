@@ -19,13 +19,14 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import re
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
 from typing import Any, Iterator, Literal, Mapping
 
-from . import (amendments, carry, config, jsonl, marks, normalize, requests,
-               schema, store, trust)
+from . import (amendments, carry, config, display, jsonl, marks, normalize,
+               requests, schema, store, trust)
 from .jsonl import Health
 
 # The bucket ledgers a snapshot reports health for, by file name (declared in
@@ -704,6 +705,109 @@ def open_sessions(project, session_ids, *, live: bool) -> dict:
         if isinstance(raw, dict) and raw.get("project_slug") == slug:
             out[sid] = _opened(raw, snap, live)
     return out
+
+
+# ---- ledger rows ------------------------------------------------------------
+
+# The marker `store.scrub_event_fields` leaves where a forgotten value was: it
+# carries the tombstoned key, so a reader never shows it.
+_MARKER_HEAD, _MARKER_TAIL = store._FORGOTTEN_FIELD_MARKER.split("{}")
+_SCRUBBED = re.compile(
+    re.escape(_MARKER_HEAD) + "[0-9a-f]+" + re.escape(_MARKER_TAIL))
+
+
+@dataclass(frozen=True)
+class Event:
+    """One `events.jsonl` row. `note`, `item_text` and `status` are the
+    declared prose columns, already judged: a quarantined or closed value is
+    the withheld marker, a forgotten or scrubbed one is None. A forget
+    tombstone (`tombstone`) has the bare status `forgotten` and no item text:
+    its status names the key of the value it tombstones. A column that is not
+    text is None."""
+
+    ts: str | None
+    kind: str | None
+    item_ref: str | None
+    status: str | None
+    source: str | None
+    note: str | None
+    item_text: str | None
+    tombstone: bool = False
+
+
+@dataclass(frozen=True)
+class Verification:
+    """One `verification.jsonl` row: a pointer and a reason code, never the
+    rejected text (the ledger holds no plaintext, so nothing here is judged)."""
+
+    ts: str | None
+    item_ref: str | None
+    check: str | None
+    reason: str | None
+
+
+def _text(value) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _judged(value, snap: Snapshot, *, closed_masks: bool) -> str | None:
+    """A prose column as a reader may see it: None for absent, forgotten or
+    scrubbed text, the withheld marker for a quarantined (or, when
+    `closed_masks`, any value under a closed snapshot), else the text."""
+    text = _text(value)
+    if text is None or _SCRUBBED.search(text):
+        return None
+    verdict = prose_verdict(text, snap, closed_masks=closed_masks)
+    if verdict is None:
+        return text
+    return None if verdict.reason == "forgotten" else display.withheld_marker(
+        verdict)
+
+
+def _event(row: dict, snap: Snapshot) -> Event:
+    status = _text(row.get("status"))
+    tombstone = store.is_tombstone_status(status)
+    if tombstone:
+        status, item_text = "forgotten", None
+    else:
+        # Status is a lifecycle word, not an item value: a closed ledger does
+        # not mask it, a forgotten or quarantined whole value does. A scrubbed
+        # status keeps the class token `scrub_event_fields` preserved.
+        status = _judged(_SCRUBBED.sub("", status).strip() if status else None,
+                         snap, closed_masks=False)
+        item_text = _judged(row.get("item_text"), snap, closed_masks=True)
+    return Event(_text(row.get("ts")), _text(row.get("kind")),
+                 _text(row.get("item_ref")), status, _text(row.get("source")),
+                 _judged(row.get("note"), snap, closed_masks=False),
+                 item_text, tombstone)
+
+
+def events(project, *, snap: Snapshot | None = None) -> tuple[Event, ...]:
+    """The project's `events.jsonl` rows in file order, the prose columns
+    judged over one snapshot (`snap`, or a fresh one: a caller that already
+    holds the snapshot of its read passes it). Notes are human prose, so they
+    stay readable when the trust ledger is unreadable; an item value does not.
+    An absent ledger is no rows; torn lines and non-object rows are skipped."""
+    bucket = _bucket(project)
+    if bucket is None:
+        return ()
+    snap = snap if snap is not None else snapshot(project)
+    return tuple(_event(row, snap)
+                 for row in jsonl.read(bucket / "events.jsonl").rows
+                 if isinstance(row, dict))
+
+
+def verifications(project) -> tuple[Verification, ...]:
+    """The project's `verification.jsonl` rows in file order. The ledger holds
+    pointers and reason codes only, so the rows pass through typed."""
+    bucket = _bucket(project)
+    if bucket is None:
+        return ()
+    return tuple(
+        Verification(_text(row.get("ts")), _text(row.get("item_ref")),
+                     _text(row.get("check")), _text(row.get("reason")))
+        for row in jsonl.read(bucket / "verification.jsonl").rows
+        if isinstance(row, dict))
 
 
 def team(project, *, live: bool) -> tuple:
