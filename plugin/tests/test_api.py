@@ -4,10 +4,11 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import api, pending, requests, store, view
+from daimon_briefing import api, display, pending, requests, store, view
 
-REEXPORTS = ("lookup", "match", "read_meta", "queue", "listing",
-             "inbox_listing", "project_slug")
+REEXPORTS = ("lookup", "match", "read_meta", "withheld_marker",
+             "withheld_json", "queue", "listing", "inbox_listing",
+             "project_slug")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -21,6 +22,8 @@ def test_every_name_is_the_source_object():
     assert api.lookup is view.lookup
     assert api.match is view.match
     assert api.read_meta is store.read_meta
+    assert api.withheld_marker is display.withheld_marker
+    assert api.withheld_json is display.withheld_json
     assert api.queue is pending.queue
     assert api.listing is requests.listing
     assert api.inbox_listing is requests.inbox_listing
