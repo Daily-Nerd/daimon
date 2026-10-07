@@ -7,6 +7,7 @@ import pytest
 
 from daimon_briefing import briefing, cli, render, requests, store
 
+from ._prepared import in_hand
 from .test_briefing_select import NOW, _fixture_checkpoint
 
 
@@ -35,9 +36,7 @@ def _teammates(n=5, per=4):
 
 
 def _printed(capsys, **kw):
-    cp = briefing.annotate(
-        _fixture_checkpoint(), briefing.AnnotateContext(route="/repo/x"),
-        NOW).checkpoint
+    cp = in_hand(_fixture_checkpoint(), "/repo/x", NOW).checkpoint
     render.render_brief(cp, **kw)
     return capsys.readouterr().out
 
@@ -138,8 +137,7 @@ def test_a_request_row_that_was_printed_is_stamped(
 
 
 def _checkpoint_for(route):
-    return briefing.annotate(_fixture_checkpoint(),
-                             briefing.AnnotateContext(route=route), NOW).checkpoint
+    return in_hand(_fixture_checkpoint(), route, NOW).checkpoint
 
 
 def test_render_brief_returns_the_ids_of_printed_cards(

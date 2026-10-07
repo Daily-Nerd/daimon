@@ -659,7 +659,7 @@ def test_pre_llm_call_env_opt_in_restores_the_global_fallback(tmp_checkpoint_dir
 def test_pre_llm_call_withholds_resolved_item(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     # hermes' pre_llm_call rendered the RAW checkpoint — a resolved item still
     # auto-injected into every new session's context. Fix mirrors _cmd_brief:
-    # read this project's resolutions, apply briefing.withhold, then render.
+    # read this project's resolutions, open it through the view, then render.
     # A project_dir is required: resolutions() no-ops (empty dict) for the
     # unrouted/global bucket (project_slug(None) is None), so the fixture
     # must route through a real project like the CLI-level #103 tests do.

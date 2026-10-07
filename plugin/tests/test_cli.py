@@ -6386,8 +6386,8 @@ def test_brief_fails_open_when_resolutions_raises(
 
 def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkpoint, capsys):
     # #103: `daimon status --suppressed` answers the brief's "N resolved
-    # item(s) withheld" note with the actual listing, reusing briefing.withhold
-    # rather than reimplementing the classification.
+    # item(s) withheld" note with the actual listing, formatting what view.suppressed
+    # decides rather than reimplementing the classification.
     from daimon_briefing import store
     store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
     written = store.read_latest_body(project_dir="/repo/x",

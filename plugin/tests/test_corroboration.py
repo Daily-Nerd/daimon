@@ -39,6 +39,8 @@ from daimon_briefing import (briefing, capture, carry, cli, config, hooks,
                              mcp_tools, normalize, recall, render, scoring,
                              serializer, store, transcript)
 
+from ._prepared import shown, synthetic
+
 PROJECT = "/p/corroborate"
 ITEM = "o-a1d001"
 ORIGIN = "S-origin"
@@ -494,9 +496,9 @@ def _corroborated_checkpoint(session="S-old", text=_TEXT, project=PROJECT):
 
 def test_a_corroborated_item_is_still_shown_by_the_briefing(tmp_checkpoint_dir):
     item_id, stored = _corroborated_checkpoint()
-    out, withheld, stamped = briefing.withhold(
-        stored, store.resolutions(project_dir=PROJECT))
-    assert withheld == [] and stamped == []
+    snap = synthetic(store.resolutions(project_dir=PROJECT))
+    out, opened, stamped = shown(stored, snap)
+    assert opened.withheld == () and opened.suppressed == 0 and stamped == []
     kept = out["working_context"]["open_questions"]
     assert [i["id"] for i in kept] == [item_id]
     # And no supersede-candidate annotation was invented for it either.

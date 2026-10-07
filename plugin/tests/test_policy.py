@@ -509,11 +509,11 @@ def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
 
 # --- #487: minted id width -------------------------------------------------
 # The id is a PROJECT-GLOBAL key (store.resolutions folds events by bare ref,
-# briefing.withhold binds on exact equality, recall's rebuild scrub runs
+# view.closing_event binds on exact equality, recall's rebuild scrub runs
 # UPDATE ... WHERE item_id = ? bucket-wide) while collision detection is scoped
 # to ONE checkpoint. At 6 hex the birthday probability over ~2k distinct texts
 # per project is ~2.4% and grows quadratically; a collision silently withholds
-# an unrelated live memory, which briefing.withhold's own docstring names as
+# an unrelated live memory, which the view's own docstring names as
 # the worst failure this feature can have.
 
 def _stamp_one(text, kind="open_questions"):

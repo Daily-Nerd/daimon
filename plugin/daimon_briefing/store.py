@@ -2535,7 +2535,7 @@ def scrub_event_fields(content_hash: str, project_dir=None) -> int:
     (_tie_wins) involving a scrubbed row can flip its content tie-break —
     class rank is preserved, only the arbitrary-but-deterministic byte
     comparison moves, and content removal cannot leave content unchanged;
-    (2) briefing.withhold's legacy fuzzy pool loses entries whose item_text
+    (2) the view's legacy fuzzy pool loses entries whose item_text
     was scrubbed, so an id-less PARAPHRASE of the value may resurface —
     that suppression only ever worked because this plaintext residue
     existed, and keeping it would mean keeping the value.
@@ -2716,7 +2716,7 @@ def is_resolved(event) -> bool:
     status = str(event.get("status") or "").lower()
     if status.startswith(("supersede-candidate", "corroborat", "resolving-candidate")):
         return False  # a machine SUGGESTION is live by construction (#14):
-                      # every consumer (carry, withhold, future) inherits
+                      # every consumer (carry, the view, future) inherits
                       # no-suppression without knowing candidates exist.
                       # #268 corroboration is the same shape one step
                       # further: a row that RAISES trust must never gain the
@@ -2901,7 +2901,7 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     VALUE only (never a subject/predicate/scope tuple): free-text items have no
     such tuple, and per-key scoping would let the same value be re-asserted
     under a different framing. Only the LATEST event per ref counts, so a later
-    `reopen` lifts the tombstone (same fold recall/withhold use). Fails open to
+    `reopen` lifts the tombstone (same fold recall and the view use). Fails open to
     an empty set (missing/corrupt log, unknown project)."""
     keys: set[str] = set()
     for evt in resolutions(project_dir=project_dir).values():

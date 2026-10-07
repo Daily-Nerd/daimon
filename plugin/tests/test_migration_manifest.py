@@ -141,7 +141,6 @@ def test_own_else_global_never_appears_in_own_only_modules():
 # (the default is the own route, or the caller hands in an `Opened`).
 PREPARE = {"prepare", "_prepared"}
 PREPARE_MANIFEST = {
-    ("briefing.py", "annotate", "prepare", None),
     ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN"),
     ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN_ELSE_GLOBAL"),
     ("cli/brief.py", "_prepared", "prepare", "route"),

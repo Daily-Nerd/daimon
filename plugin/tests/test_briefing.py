@@ -1,6 +1,8 @@
 import time as _time
 
-from daimon_briefing import briefing
+from daimon_briefing import briefing, view
+
+from ._prepared import qkeys, shown, synthetic
 
 
 def test_render_none_for_empty_checkpoint():
@@ -989,7 +991,11 @@ def test_mark_untagged_trust_is_not_inferred():
     assert briefing._mark({"text": "x", "trust": "verbatim"}) == "✓ verbatim"
 
 
-# ---- #103: withhold event-resolved items at render time ----
+# ---- #103: closed loops leave the briefing, by the view ----
+#
+# #1132 PR 7b: these pinned `briefing.withhold`. The same rules now live in
+# `view.closing_event` / `view.classify` (what the reader may see) and
+# `briefing.stamp` (the machine-claim marks), over a snapshot of plain data.
 
 
 def _res_evt(ref, status="resolved", text=""):
@@ -1000,43 +1006,44 @@ def _res_evt(ref, status="resolved", text=""):
     return e
 
 
-def test_withhold_by_exact_id():
+def test_resolved_by_exact_id():
     cp = {"working_context": {"open_questions": [
         {"text": "is the gateway stable", "id": "o-aaa"},
         {"text": "does carry hold", "id": "o-bbb"}]}}
-    filtered, withheld, candidates = briefing.withhold(cp, {"o-aaa": _res_evt("o-aaa")})
+    filtered, opened, candidates = shown(
+        cp, synthetic({"o-aaa": _res_evt("o-aaa")}))
     texts = [i["text"] for i in filtered["working_context"]["open_questions"]]
     assert texts == ["does carry hold"]
-    assert withheld[0][1]["id"] == "o-aaa"
+    assert (opened.suppressed, opened.withheld) == (1, ())
     assert candidates == []
     assert len(cp["working_context"]["open_questions"]) == 2  # input untouched
 
 
-def test_reopen_event_does_not_withhold():
+def test_reopen_event_does_not_close_the_loop():
     cp = {"working_context": {"open_questions": [{"text": "x y z", "id": "o-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"o-aaa": _res_evt("o-aaa", status="reopened")})
-    assert withheld == []
+    filtered, opened, candidates = shown(
+        cp, synthetic({"o-aaa": _res_evt("o-aaa", status="reopened")}))
+    assert (opened.suppressed, opened.withheld) == (0, ())
     assert candidates == []
     assert filtered["working_context"]["open_questions"]
 
 
-def test_legacy_idless_item_withheld_by_item_text_fuzzy():
+def test_legacy_idless_item_closed_by_item_text_fuzzy():
     cp = {"working_context": {"open_questions": [
         {"text": "release pipeline approval step still awaiting manual gate"}]}}  # no id
     ev = _res_evt("o-old01", text="release pipeline manual approval gate awaiting")
-    filtered, withheld, candidates = briefing.withhold(cp, {"o-old01": ev})
+    filtered, opened, candidates = shown(cp, synthetic({"o-old01": ev}))
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 1
+    assert opened.suppressed == 1
     assert candidates == []
 
 
-def test_id_bearing_item_never_fuzzy_withheld():
+def test_id_bearing_item_never_fuzzy_closed():
     cp = {"working_context": {"open_questions": [
         {"text": "release pipeline manual approval gate awaiting", "id": "o-live1"}]}}
     ev = _res_evt("o-old01", text="release pipeline manual approval gate awaiting")
-    filtered, withheld, candidates = briefing.withhold(cp, {"o-old01": ev})
-    assert withheld == []  # exact text match but id-bearing: never fuzzy-bound
+    _filtered, opened, candidates = shown(cp, synthetic({"o-old01": ev}))
+    assert opened.suppressed == 0  # exact text match but id-bearing: never fuzzy-bound
     assert candidates == []
 
 
@@ -1048,8 +1055,8 @@ def test_live_idless_item_survives_id_bearing_resolved_overlap():
     cp = {"working_context": {"open_questions": [
         {"text": "release pipeline approval step still awaiting manual gate"}]}}  # no id
     ev = _res_evt("o-3f2a9c", text="release pipeline manual approval gate awaiting")
-    filtered, withheld, candidates = briefing.withhold(cp, {"o-3f2a9c": ev})
-    assert withheld == []
+    filtered, opened, candidates = shown(cp, synthetic({"o-3f2a9c": ev}))
+    assert opened.suppressed == 0
     assert candidates == []
     assert filtered["working_context"]["open_questions"] == \
         cp["working_context"]["open_questions"]
@@ -1065,11 +1072,13 @@ def test_idless_resolution_still_fuzzy_suppresses_among_id_bearing_ones():
     legacy_ev = _res_evt("pipeline gate loop",  # legacy ref: not id-shaped
                          text="release pipeline manual approval gate awaiting")
     id_ev = _res_evt("o-9bd41e", text="gateway retry budget confirmed stable")
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"pipeline gate loop": legacy_ev, "o-9bd41e": id_ev})
+    snap = synthetic({"pipeline gate loop": legacy_ev, "o-9bd41e": id_ev})
+    filtered, opened, candidates = shown(cp, snap)
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 1
-    assert withheld[0][2] is legacy_ev  # bound to the legacy event, not the id one
+    assert opened.suppressed == 1
+    item = cp["working_context"]["open_questions"][0]
+    # bound to the legacy event, not the id one
+    assert view.closing_event(item, snap) is legacy_ev
     assert candidates == []
 
 
@@ -1079,130 +1088,128 @@ def test_exact_id_suppression_unchanged_by_fuzzy_pool_restriction():
     cp = {"working_context": {"open_questions": [
         {"text": "release pipeline manual approval gate awaiting", "id": "o-3f2a9c"}]}}
     ev = _res_evt("o-3f2a9c", text="release pipeline manual approval gate awaiting")
-    filtered, withheld, candidates = briefing.withhold(cp, {"o-3f2a9c": ev})
+    filtered, opened, candidates = shown(cp, synthetic({"o-3f2a9c": ev}))
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 1
+    assert opened.suppressed == 1
     assert candidates == []
 
 
-def test_no_resolved_events_returns_input_unchanged():
+def test_nothing_resolved_or_quarantined_changes_nothing():
     cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
-    filtered, withheld, candidates = briefing.withhold(cp, {})
-    assert filtered is cp and withheld == [] and candidates == []
+    filtered, opened, candidates = shown(cp, synthetic({}))
+    assert filtered == cp
+    assert (opened.suppressed, opened.withheld, candidates) == (0, (), [])
 
 
-def test_withhold_covers_strong_beliefs():
-    # #103 I2: withhold used to iterate only carry._CARRIED_KINDS (3 of 5
-    # item kinds), so a resolved strong_beliefs id never suppressed — even
-    # though `daimon resolve` accepts it. withhold must cover all five
-    # schema.ITEM_LISTS kinds; carry's own 3-kind carry policy is untouched.
+def test_resolved_covers_strong_beliefs():
+    # #103 I2: the withhold pass used to iterate only carry._CARRIED_KINDS
+    # (3 of 5 item kinds), so a resolved strong_beliefs id never suppressed —
+    # even though `daimon resolve` accepts it. All five schema.ITEM_LISTS
+    # kinds are covered; carry's own 3-kind carry policy is untouched.
     cp = {"epistemic_snapshot": {"strong_beliefs": [
         {"text": "extractive pinning prevents silent fact loss", "id": "b-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(cp, {"b-aaa": _res_evt("b-aaa")})
+    filtered, opened, candidates = shown(
+        cp, synthetic({"b-aaa": _res_evt("b-aaa")}))
     assert filtered["epistemic_snapshot"]["strong_beliefs"] == []
-    assert withheld[0][1]["id"] == "b-aaa"
+    assert opened.suppressed == 1
     assert candidates == []
 
 
-def test_withhold_covers_contradictions_flagged():
+def test_resolved_covers_contradictions_flagged():
     cp = {"epistemic_snapshot": {"contradictions_flagged": [
         {"text": "conflicting claims about the gateway", "id": "c-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(cp, {"c-aaa": _res_evt("c-aaa")})
+    filtered, opened, candidates = shown(
+        cp, synthetic({"c-aaa": _res_evt("c-aaa")}))
     assert filtered["epistemic_snapshot"]["contradictions_flagged"] == []
-    assert withheld[0][1]["id"] == "c-aaa"
+    assert opened.suppressed == 1
     assert candidates == []
 
 
-# ---- #1109 PR 2: withhold's sixth outcome — a human quarantine, value-keyed ----
+# ---- #1109 PR 2: a human quarantine, value-keyed ----
 
 
 _QVALUE = "the deploy key rotation runbook was fabricated by the agent"
 
 
-def _qkeys(*texts, kind="decision"):
-    from daimon_briefing import normalize
-    return {(kind, normalize.content_key(t)) for t in texts}
-
-
-def test_withhold_drops_quarantined_id_bearing_item():
+def test_view_drops_quarantined_id_bearing_item():
     cp = {"working_context": {"recent_decisions": [
         {"text": _QVALUE, "id": "d-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {}, quarantine=_qkeys(_QVALUE))
+    filtered, opened, candidates = shown(
+        cp, synthetic(quarantine=qkeys(_QVALUE)))
     assert filtered["working_context"]["recent_decisions"] == []
-    assert withheld[0][1]["id"] == "d-aaa"
-    assert withheld[0][2]["status"] == "quarantined"
+    [w] = opened.withheld
+    assert (w.item_id, w.reason, w.kind) == ("d-aaa", "quarantine", "decision")
     assert candidates == []
 
 
-def test_withhold_drops_quarantined_id_less_item():
+def test_view_drops_quarantined_id_less_item():
     # Unlike the resolved-events pool, quarantine has no id-bearing exemption
     # — surviving an id change (carry, re-extraction) is the whole point.
     cp = {"working_context": {"recent_decisions": [{"text": _QVALUE}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {}, quarantine=_qkeys(_QVALUE))
+    filtered, opened, _candidates = shown(
+        cp, synthetic(quarantine=qkeys(_QVALUE)))
     assert filtered["working_context"]["recent_decisions"] == []
-    assert len(withheld) == 1
+    assert len(opened.withheld) == 1
 
 
-def test_withhold_quarantine_matches_quote_field_too():
+def test_quarantine_matches_quote_field_too():
     cp = {"working_context": {"recent_decisions": [
         {"text": "short label", "quote": _QVALUE, "id": "d-bbb"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {}, quarantine=_qkeys(_QVALUE))
+    filtered, _opened, _candidates = shown(
+        cp, synthetic(quarantine=qkeys(_QVALUE)))
     assert filtered["working_context"]["recent_decisions"] == []
 
 
-def test_withhold_quarantine_scoped_by_kind():
+def test_quarantine_scoped_by_kind():
     cp = {"working_context": {"recent_decisions": [{"text": _QVALUE, "id": "d-a"}]},
          "epistemic_snapshot": {"strong_beliefs": [{"text": _QVALUE, "id": "b-a"}]}}
     # Quarantined as a DECISION only — the identical-text belief survives.
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {}, quarantine=_qkeys(_QVALUE, kind="decision"))
+    filtered, _opened, _candidates = shown(
+        cp, synthetic(quarantine=qkeys(_QVALUE, kind="decision")))
     assert filtered["working_context"]["recent_decisions"] == []
     assert filtered["epistemic_snapshot"]["strong_beliefs"] == \
         cp["epistemic_snapshot"]["strong_beliefs"]
 
 
-def test_withhold_quarantine_wins_over_supersede_candidate_stamp():
+def test_quarantine_wins_over_supersede_candidate_stamp():
     # A quarantined item is dropped outright, never stamped as a live
-    # suggestion — design §5: withhold wins over every machine signal.
+    # suggestion — design §5: the view's decision wins over every machine
+    # signal, because `stamp` only ever sees what the view kept.
     cp = {"working_context": {"open_questions": [
         {"text": _QVALUE, "id": "o-aaa"}]}}
     ev = _res_evt("o-aaa", status="supersede-candidate:o-3f2a9c11")
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"o-aaa": ev}, quarantine=_qkeys(_QVALUE, kind="question"))
+    filtered, opened, candidates = shown(
+        cp, synthetic({"o-aaa": ev}, quarantine=qkeys(_QVALUE, kind="question")))
     assert filtered["working_context"]["open_questions"] == []
     assert candidates == []
-    assert len(withheld) == 1
+    assert len(opened.withheld) == 1
 
 
-def test_no_quarantine_no_resolutions_returns_input_unchanged():
-    cp = {"working_context": {"open_questions": [{"text": "x", "id": "o-a"}]}}
-    filtered, withheld, candidates = briefing.withhold(cp, {}, quarantine=set())
-    assert filtered is cp and withheld == [] and candidates == []
+def test_a_forgotten_value_is_dropped_and_not_listed():
+    from daimon_briefing import normalize
+    cp = {"working_context": {"recent_decisions": [
+        {"text": _QVALUE, "id": "d-aaa"}]}}
+    filtered, opened, _candidates = shown(
+        cp, synthetic(forgotten={normalize.content_key(_QVALUE)}))
+    assert filtered["working_context"]["recent_decisions"] == []
+    # withheld, but as `forgotten`: it carries no text and no quarantine id
+    assert [w.reason for w in opened.withheld] == ["forgotten"]
 
 
-def test_withhold_quarantine_none_is_a_pure_noop():
-    cp = {"working_context": {"open_questions": [{"text": _QVALUE, "id": "o-a"}]}}
-    filtered, withheld, candidates = briefing.withhold(cp, {})
-    assert filtered is cp and withheld == []
+# ---- #14: supersede-candidate is a live SUGGESTION, stamped not dropped ----
 
 
-# ---- #14: withhold's third outcome — supersede-candidate is a live SUGGESTION ----
-
-
-def test_withhold_candidate_kept_and_stamped():
+def test_candidate_kept_and_stamped():
     cp = {"working_context": {"recent_decisions": [
         {"text": "use the old gateway timeout", "id": "r-old"}]}}
     resolutions = {"r-old": _res_evt("r-old", status="supersede-candidate:r-9f3a2b")}
-    filtered, withheld, candidates = briefing.withhold(cp, resolutions)
+    filtered, opened, candidates = shown(cp, synthetic(resolutions))
     # item PRESENT in filtered, and stamped on the returned copy only.
     kept = filtered["working_context"]["recent_decisions"]
     assert len(kept) == 1
     assert kept[0]["id"] == "r-old"
     assert kept[0]["_supersede_candidate"] == "r-9f3a2b"
-    assert withheld == []
+    assert (opened.suppressed, opened.withheld) == (0, ())
     assert len(candidates) == 1
     assert candidates[0][0] == "recent_decisions"
     assert candidates[0][1]["id"] == "r-old"
@@ -1212,7 +1219,7 @@ def test_withhold_candidate_kept_and_stamped():
     assert "_supersede_candidate" not in cp["working_context"]["recent_decisions"][0]
 
 
-def test_withhold_candidate_malformed_new_id_never_stamped():
+def test_candidate_malformed_new_id_never_stamped():
     # The status field is free-form by design, so a candidate's payload can
     # carry arbitrary text ("supersede-candidate:o-new1a; echo pwned"). That
     # text would ride verbatim into the rendered confirm-command suggestion
@@ -1222,10 +1229,9 @@ def test_withhold_candidate_malformed_new_id_never_stamped():
     # renders normally.
     cp = {"working_context": {"open_questions": [
         {"text": "is the gateway stable", "id": "o-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"o-aaa": _res_evt(
-            "o-aaa", status="supersede-candidate:o-new1a; echo pwned")})
-    assert withheld == []
+    filtered, opened, candidates = shown(cp, synthetic({"o-aaa": _res_evt(
+        "o-aaa", status="supersede-candidate:o-new1a; echo pwned")}))
+    assert (opened.suppressed, opened.withheld) == (0, ())
     assert candidates == []
     kept = filtered["working_context"]["open_questions"]
     assert len(kept) == 1
@@ -1233,28 +1239,28 @@ def test_withhold_candidate_malformed_new_id_never_stamped():
     assert "pwned" not in briefing._line(kept[0])
 
 
-def test_withhold_candidate_conforming_id_still_stamps():
+def test_candidate_conforming_id_still_stamps():
     # Regression pair for the shape gate: a real serializer-shaped id
     # (kind initial + hex slice, optional counter suffix) must still stamp.
     cp = {"working_context": {"open_questions": [
         {"text": "is the gateway stable", "id": "o-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"o-aaa": _res_evt("o-aaa", status="supersede-candidate:o-1a2b3c-2")})
-    assert withheld == []
+    filtered, opened, candidates = shown(cp, synthetic({"o-aaa": _res_evt(
+        "o-aaa", status="supersede-candidate:o-1a2b3c-2")}))
+    assert opened.withheld == ()
     assert len(candidates) == 1
     assert filtered["working_context"]["open_questions"][0][
         "_supersede_candidate"] == "o-1a2b3c-2"
 
 
-def test_withhold_hard_still_drops():
+def test_hard_supersede_still_drops():
     # Regression: a hard "superseded-by" (cli) resolution still drops the
     # item exactly as before, and candidates comes back empty.
     cp = {"working_context": {"open_questions": [
         {"text": "is the gateway stable", "id": "o-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"o-aaa": _res_evt("o-aaa", status="superseded-by:o-new")})
+    filtered, opened, candidates = shown(cp, synthetic({"o-aaa": _res_evt(
+        "o-aaa", status="superseded-by:o-new")}))
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 1
+    assert opened.suppressed == 1
     assert candidates == []
 
 
@@ -1280,15 +1286,15 @@ def test_reopen_clears_candidate_flag():
     # nor a candidate — no drop, no stamp, no annotation.
     cp = {"working_context": {"recent_decisions": [
         {"text": "use the old gateway timeout", "id": "r-old"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"r-old": _res_evt("r-old", status="reopened")})
-    assert withheld == []
+    filtered, opened, candidates = shown(
+        cp, synthetic({"r-old": _res_evt("r-old", status="reopened")}))
+    assert (opened.suppressed, opened.withheld) == (0, ())
     assert candidates == []
     kept = filtered["working_context"]["recent_decisions"]
     assert "_supersede_candidate" not in kept[0]
 
 
-# ---- #480 slice 4: withhold's fourth outcome — a pending AGENT claim ----
+# ---- #480 slice 4: a pending AGENT claim is stamped, not dropped ----
 
 
 def _agent_evt(ref, evidence, text=""):
@@ -1300,15 +1306,15 @@ def _agent_evt(ref, evidence, text=""):
     return e
 
 
-def test_withhold_stamps_pending_agent_claim():
+def test_stamps_pending_agent_claim():
     cp = {"working_context": {"open_questions": [
         {"text": "does carry hold", "id": "o-aaa"}]}}
     resolutions = {"o-aaa": _agent_evt("o-aaa", "the PR merged clean")}
-    filtered, withheld, candidates = briefing.withhold(cp, resolutions)
+    filtered, opened, candidates = shown(cp, synthetic(resolutions))
     kept = filtered["working_context"]["open_questions"]
     assert len(kept) == 1
     assert kept[0]["_agent_claim"] == "the PR merged clean"
-    assert withheld == []
+    assert (opened.suppressed, opened.withheld) == (0, ())
     # A pending agent claim is its own stamp, not a #14 supersede-candidate —
     # `candidates` (status --suppressed's subsection) must stay untouched.
     assert candidates == []
@@ -1316,26 +1322,26 @@ def test_withhold_stamps_pending_agent_claim():
     assert "_agent_claim" not in cp["working_context"]["open_questions"][0]
 
 
-def test_withhold_agent_verified_item_is_dropped_like_ordinary_resolution():
+def test_agent_verified_item_is_dropped_like_ordinary_resolution():
     # #480 slice 3's confirming status ("resolved-agent-verified") is NOT one
-    # of is_resolved's exempt prefixes — a verified claim withholds exactly
-    # like any ordinary human resolution, no special-casing needed here.
+    # of is_resolved's exempt prefixes — a verified claim closes the loop
+    # exactly like any ordinary human resolution, no special-casing needed.
     cp = {"working_context": {"open_questions": [
         {"text": "does carry hold", "id": "o-aaa"}]}}
     evt = _res_evt("o-aaa", status="resolved-agent-verified")
     evt["source"] = "serializer"
-    filtered, withheld, candidates = briefing.withhold(cp, {"o-aaa": evt})
+    filtered, opened, candidates = shown(cp, synthetic({"o-aaa": evt}))
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 1
+    assert opened.suppressed == 1
     assert candidates == []
 
 
-def test_withhold_reopen_clears_agent_claim_stamp():
+def test_reopen_clears_agent_claim_stamp():
     cp = {"working_context": {"open_questions": [
         {"text": "does carry hold", "id": "o-aaa"}]}}
-    filtered, withheld, candidates = briefing.withhold(
-        cp, {"o-aaa": _res_evt("o-aaa", status="reopened")})
-    assert withheld == []
+    filtered, opened, candidates = shown(
+        cp, synthetic({"o-aaa": _res_evt("o-aaa", status="reopened")}))
+    assert (opened.suppressed, opened.withheld) == (0, ())
     assert candidates == []
     kept = filtered["working_context"]["open_questions"]
     assert "_agent_claim" not in kept[0]
@@ -1381,13 +1387,14 @@ def test_corroboration_badge_suppressed_with_agent_claim():
     assert briefing.corroboration_badge(item) == ""
 
 
-# ---- #215: staleness budget — stale_carried() ----
+# ---- #215: staleness budget — stamp_stale_carried() ----
 #
 # Agreement between agent-written sources (a fresh checkpoint restating a
-# carried item) is not corroboration. stale_carried flags carried items whose
-# EFFECTIVE last-verified age — max of last_verified, the latest resolutions
-# event ts, first_seen (fallback, in that priority) — exceeds threshold_days.
-# Pure: now and threshold_days injected, no I/O (mirrors _status_health).
+# carried item) is not corroboration. stamp_stale_carried flags carried items
+# whose EFFECTIVE last-verified age — max of last_verified, the latest
+# resolutions event ts, first_seen (fallback, in that priority) — exceeds
+# threshold_days. Pure: now and threshold_days injected, no I/O (mirrors
+# _status_health). `_stale` is its second return value, the stale items.
 
 _NOW215 = 1_900_000_000  # whole seconds — round-trips exactly through the
                         # ISO-8601 stamp format (no sub-second precision).
@@ -1399,6 +1406,11 @@ def _ts215_secs(seconds_before_now):
 
 def _ts215(days_before_now):
     return _ts215_secs(days_before_now * 86400)
+
+
+def _stale(checkpoint, resolutions):
+    return briefing.stamp_stale_carried(
+        checkpoint, resolutions, _NOW215, threshold_days=7.0)[1]
 
 
 def _cp215(open_qs):
@@ -1416,7 +1428,7 @@ def _cp215(open_qs):
 def test_stale_carried_flags_old_carried_item_by_first_seen():
     cp = _cp215([{"text": "old carried loop", "id": "o-old1",
                   "carried_from": "S-prev", "first_seen": _ts215(10)}])
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert len(stale) == 1
     assert stale[0]["id"] == "o-old1"
 
@@ -1424,22 +1436,22 @@ def test_stale_carried_flags_old_carried_item_by_first_seen():
 def test_stale_carried_not_stale_when_within_threshold():
     cp = _cp215([{"text": "recent carried loop", "id": "o-recent",
                   "carried_from": "S-prev", "first_seen": _ts215(2)}])
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert stale == []
 
 
 def test_stale_carried_non_dict_checkpoint_returns_empty():
     # Fail-open guard: a torn/absent checkpoint (None, junk) yields [] —
     # the staleness budget must never be the thing that breaks a brief.
-    assert briefing.stale_carried(None, {}, _NOW215, threshold_days=7.0) == []
-    assert briefing.stale_carried("junk", {}, _NOW215, threshold_days=7.0) == []
+    assert _stale(None, {}) == []
+    assert _stale("junk", {}) == []
 
 
 def test_stale_carried_fresh_last_verified_overrides_old_first_seen():
     cp = _cp215([{"text": "old but re-verified", "id": "o-verif",
                   "carried_from": "S-prev", "first_seen": _ts215(30),
                   "last_verified": _ts215(1)}])
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert stale == []
 
 
@@ -1447,21 +1459,21 @@ def test_stale_carried_recent_resolution_event_overrides_old_first_seen():
     cp = _cp215([{"text": "old but recently resolved", "id": "o-res",
                   "carried_from": "S-prev", "first_seen": _ts215(30)}])
     resolutions = {"o-res": {"ts": _ts215(1), "status": "resolved"}}
-    stale = briefing.stale_carried(cp, resolutions, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, resolutions)
     assert stale == []
 
 
 def test_stale_carried_ignores_non_carried_items():
     cp = _cp215([{"text": "native old item", "id": "o-native",
                   "first_seen": _ts215(30)}])  # no carried_from
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert stale == []
 
 
 def test_stale_carried_unparseable_stamps_fail_open_not_stale():
     cp = _cp215([{"text": "torn stamp", "id": "o-torn",
                   "carried_from": "S-prev", "first_seen": "not-a-date"}])
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert stale == []
 
 
@@ -1469,7 +1481,7 @@ def test_stale_carried_threshold_boundary_exact_is_not_stale():
     # Exactly at the threshold: NOT stale — only STRICTLY over triggers.
     cp = _cp215([{"text": "exactly at threshold", "id": "o-edge",
                   "carried_from": "S-prev", "first_seen": _ts215(7.0)}])
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert stale == []
 
 
@@ -1477,7 +1489,7 @@ def test_stale_carried_threshold_boundary_just_over_is_stale():
     cp = _cp215([{"text": "just over threshold", "id": "o-over",
                   "carried_from": "S-prev",
                   "first_seen": _ts215_secs(7 * 86400 + 3600)}])
-    stale = briefing.stale_carried(cp, {}, _NOW215, threshold_days=7.0)
+    stale = _stale(cp, {})
     assert len(stale) == 1
 
 
@@ -1486,7 +1498,7 @@ def test_stale_carried_default_threshold_reads_config():
     # env knob), same "None -> config default" shape as other pure builders.
     cp = _cp215([{"text": "old carried loop", "id": "o-old2",
                   "carried_from": "S-prev", "first_seen": _ts215(10)}])
-    stale = briefing.stale_carried(cp, {}, _NOW215)
+    stale = briefing.stamp_stale_carried(cp, {}, _NOW215)[1]
     assert len(stale) == 1  # default 7.0 days < 10 days old
 
 
@@ -1557,6 +1569,25 @@ def test_reverify_event_restores_stored_tag_on_next_brief():
     assert stale == []
     line = briefing._line(stamped["working_context"]["open_questions"][0])
     assert line.startswith("- [✓ verbatim] old carried loop")
+
+
+def test_stamp_stale_carried_reads_a_snapshot_mapping():
+    # A `view.Snapshot` holds its resolutions as a MappingProxyType, not a
+    # dict. An isinstance(dict) guard read it as empty and flagged an item a
+    # recent reverify had cleared (#1132 PR 7b).
+    from types import MappingProxyType
+    cp = _cp215([{"text": "old carried loop", "id": "o-rev8",
+                  "trust": "verbatim", "carried_from": "S-prev",
+                  "first_seen": _ts215(30)}])
+    resolutions = MappingProxyType(
+        {"o-rev8": {"ts": _ts215(1), "status": "reopened"}})
+    stamped, stale = briefing.stamp_stale_carried(
+        cp, resolutions, _NOW215, threshold_days=7.0)
+    assert stale == [] and stamped is cp
+    old = MappingProxyType({})
+    _, stale = briefing.stamp_stale_carried(
+        cp, old, _NOW215, threshold_days=7.0)
+    assert len(stale) == 1
 
 
 def test_stamp_stale_carried_tolerates_torn_shapes():

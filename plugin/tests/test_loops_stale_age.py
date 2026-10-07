@@ -7,6 +7,8 @@ import time
 
 from daimon_briefing import briefing, cli, hooks, mcp_tools, store
 
+from ._prepared import in_hand
+
 PROJECT = "/repo/loops-age"
 OTHER = "/repo/somewhere-else"
 
@@ -43,8 +45,7 @@ def _write(project=PROJECT, items=None):
 def _annotated(project=PROJECT):
     body = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                   admit=store.Admit.ANY)
-    return briefing.annotate(body, briefing.AnnotateContext(route=project),
-                             time.time())
+    return in_hand(body, project, time.time())
 
 
 def _row_for(out, tag):

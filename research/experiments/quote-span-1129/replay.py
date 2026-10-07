@@ -12,7 +12,7 @@ ordering test sees it. This runner measures the size of that effect.
          `briefing.item_quote` at the stored quote
   arm B  the shipped rule: `display.quote_span`
 
-Both arms run `annotate` + `build` + `select` at the default budget over the
+Both arms run `prepare` + `build` + `select` at the default budget over the
 same checkpoint copy, at each horizon after the checkpoint's own `created`.
 Reported: checkpoints scanned, briefings whose kept set changed, items gained
 and lost by trust class (B relative to A), and the bytes the cap saves per
@@ -47,7 +47,7 @@ _HERE = Path(__file__).resolve()
 REPO = _HERE.parents[3]
 sys.path.insert(0, str(REPO / "plugin"))
 
-from daimon_briefing import briefing, schema, store  # noqa: E402
+from daimon_briefing import briefing, schema, store, view  # noqa: E402
 
 _LOCAL_RAW = os.environ.get("DAIMON_LOCAL_STORE")
 LOCAL_STORE = (Path(_LOCAL_RAW).expanduser() if _LOCAL_RAW is not None
@@ -212,8 +212,9 @@ def measure_one(cp: dict, label: str, route: str) -> list:
     rows = []
     for horizon in HORIZONS:
         now = created + horizon * DAY
-        out = briefing.annotate(json.loads(json.dumps(cp)),
-                                briefing.AnnotateContext(route=route), now)
+        held = json.loads(json.dumps(cp))
+        out = briefing.prepare(
+            route, now, opened=view._opened(held, view.snapshot(route), True))
         b = briefing.build(out.checkpoint, now=now)
         if b is None:
             rows.append({"checkpoint": label, "horizon_days": horizon,

@@ -6,7 +6,9 @@ writers — `store.write_checkpoint` (which stamps ids via
 per the fix-963 lesson (hand-shaped fixtures hid three real data-loss holes
 there).
 """
-from daimon_briefing import briefing, carry, normalize, store, trust
+from daimon_briefing import carry, normalize, store, trust
+
+from ._prepared import shown, synthetic
 
 _QVALUE = "the deploy key rotation runbook was fabricated by the agent"
 
@@ -53,12 +55,12 @@ def test_quarantine_survives_straight_carry_under_the_same_id(
     carried = merged["working_context"]["open_questions"]
     assert any(i["text"] == _QVALUE and i["id"] == stamped_id for i in carried)
 
-    # Only the render-time withhold check drops it, and it does so by VALUE —
-    # the id happens to match here too, but this call never consults it.
-    filtered, withheld, _candidates = briefing.withhold(
-        merged, {}, quarantine=quarantine)
+    # Only the view drops it, and it does so by VALUE — the id happens to
+    # match here too, but this call never consults it.
+    filtered, opened, _candidates = shown(
+        merged, synthetic(quarantine=quarantine))
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 1
+    assert len(opened.withheld) == 1
 
 
 def test_quarantine_survives_a_reworded_twin_with_a_different_id(
@@ -96,10 +98,10 @@ def test_quarantine_survives_a_reworded_twin_with_a_different_id(
                   project_dir="/repo/qr")
     quarantine = trust.active_value_keys(project_dir="/repo/qr")
 
-    filtered, withheld, _candidates = briefing.withhold(
-        stored, {}, quarantine=quarantine)
+    filtered, opened, _candidates = shown(
+        stored, synthetic(quarantine=quarantine))
     assert filtered["working_context"]["open_questions"] == []
-    assert len(withheld) == 2  # both ids withheld — neither carries an exemption
+    assert len(opened.withheld) == 2  # both ids withheld, neither is exempt
 
 
 def test_reworded_enough_to_change_canonical_text_is_not_withheld(
@@ -120,7 +122,7 @@ def test_reworded_enough_to_change_canonical_text_is_not_withheld(
                   evidence=["issue:1109"], channel="cli-tty",
                   project_dir="/repo/qp")
     quarantine = trust.active_value_keys(project_dir="/repo/qp")
-    filtered, withheld, _candidates = briefing.withhold(
-        cp, {}, quarantine=quarantine)
-    assert filtered is cp
-    assert withheld == []
+    filtered, opened, _candidates = shown(
+        cp, synthetic(quarantine=quarantine))
+    assert filtered == cp
+    assert opened.withheld == ()

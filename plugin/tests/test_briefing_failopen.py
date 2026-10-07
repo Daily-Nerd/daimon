@@ -1,4 +1,4 @@
-"""#1128: the fail-open branches of briefing.annotate, the CLI's worldcheck
+"""#1128: the fail-open branches of briefing.prepare, the CLI's worldcheck
 bookkeeping, and the paths that print a trailer or stamp a verdict."""
 
 import datetime as dt
@@ -9,6 +9,7 @@ import pytest
 from daimon_briefing import (briefing, cli, render, requests, store, trust,
                              worldcheck)
 
+from ._prepared import in_hand
 from .test_briefing_select import NOW, _fixture_checkpoint
 
 ROUTE = "/repo/failopen"
@@ -38,19 +39,18 @@ def _boom(*a, **k):
 
 
 def _annotate(cp=None):
-    return briefing.annotate(cp if cp is not None else _cp(),
-                             briefing.AnnotateContext(route=ROUTE), time.time())
+    return in_hand(cp if cp is not None else _cp(), ROUTE, time.time())
 
 
 def _item(out):
     return out.checkpoint["working_context"]["open_questions"][0]
 
 
-def test_annotate_returns_a_non_checkpoint_untouched():
+def test_prepare_over_a_non_checkpoint_has_nothing_to_stamp_or_probe():
     for bad in (None, {}, "not a checkpoint"):
-        out = briefing.annotate(bad, briefing.AnnotateContext(route=ROUTE), NOW)
-        assert out.checkpoint == bad
-        assert out.withheld == [] and out.stale_items == []
+        out = in_hand(bad, ROUTE, NOW)
+        assert not out.checkpoint
+        assert out.withheld == () and out.stale_items == []
         assert out.worldcheck is None and out.ledger_rows == []
 
 
@@ -94,9 +94,7 @@ def test_a_stamping_bug_is_not_swallowed(monkeypatch):
 def test_worldcheck_failing_costs_only_the_worldcheck(monkeypatch):
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
     monkeypatch.setattr(worldcheck, "check", _boom)
-    out = briefing.annotate(
-        _cp(), briefing.AnnotateContext(route=ROUTE, worldcheck_project=ROUTE),
-        time.time())
+    out = in_hand(_cp(), ROUTE, time.time(), worldcheck_project=ROUTE)
     assert out.worldcheck is None and out.ledger_rows == []
     assert out.stale_items
 
