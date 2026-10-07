@@ -45,10 +45,12 @@ def projects_rows(project_arg=None) -> list:
     cur_slug = store.project_slug(_cli._resolve_project(project_arg))
     rows = []
     forgotten = None  # the machine-wide set, read once and only if needed
+    # #899: enumeration is the other half of the exfiltration primitive;
+    # `view.buckets` is the one place that names the buckets a caller may
+    # list, and a tenant-scoped home gets its own and no other.
+    allowed = set(view.buckets(cur_slug))
     for b in store.list_buckets():
-        # #899: enumeration is the other half of the exfiltration primitive;
-        # a tenant-scoped home lists the caller's own bucket and no other.
-        if config.tenant_scoped() and b["slug"] != cur_slug:
+        if b["slug"] not in allowed:
             continue
         cp = b["checkpoint"] or {}
         created = cp.get("created")

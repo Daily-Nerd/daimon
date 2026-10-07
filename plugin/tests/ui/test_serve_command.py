@@ -10,7 +10,7 @@ from daimon_ui.__main__ import build_config
 
 
 def test_default_port_is_the_viewer_port():
-    cfg = build_config([], {}, cwd=Path("/Users/x/proj"))
+    cfg = build_config([], cwd=Path("/Users/x/proj"))
     assert cfg["port"] == 7717
 
 

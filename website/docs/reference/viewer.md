@@ -1,5 +1,5 @@
 ---
-description: "daimon serve opens a local read-only view of one project's memory in your browser. Every surface renders existing engine output, and nothing writes."
+description: "daimon serve opens a local read-only view of one project's memory in your browser. Every surface renders existing engine output, and no route changes your memory."
 ---
 
 # Viewer (read-only)
@@ -13,9 +13,11 @@ daimon serve                      # binds 127.0.0.1:7717, opens a browser tab
 daimon serve --port 7800 --no-browser
 ```
 
-Flags: `--data-dir` (checkpoint dir, default `DAIMON_CHECKPOINT_DIR` then
-`~/.daimon/checkpoints`), `--project-dir` (project to scope to, default the
-working directory), `--port` (default 7717), `--no-browser`.
+Flags: `--data-dir` (checkpoint dir, and the store for every route; default
+is the directory the CLI uses: `DAIMON_CHECKPOINT_DIR` from the environment or
+from `~/.daimon/env`, then `~/.daimon/checkpoints`), `--project-dir` (project to
+scope to, default the working directory, resolved to the project root the way
+the CLI resolves `--project`), `--port` (default 7717), `--no-browser`.
 
 ## What you see
 
@@ -33,10 +35,20 @@ working directory), `--port` (default 7717), `--no-browser`.
 
 ## Read-only as a commitment
 
-Read-only is structural, not a promise: the server answers GET requests only —
-there is no code path that writes. Confirming a relation, resolving a loop, or
+The server answers GET requests only, and no route writes to your checkpoints,
+ledgers or trust records. Confirming a relation, resolving a loop, or
 forgetting an item all stay in the CLI, where the terminal enforces who is
 speaking.
+
+One derived cache is the exception: `/api/recall` may rebuild the recall index
+(`recall.db`) when it no longer matches the store, and it logs an index error
+beside it. The index is rebuilt from your ledgers and holds nothing the store
+does not.
+
+On a tenant-scoped home (`DAIMON_TENANT_SCOPED`) the viewer lists and opens only
+the current project, the same rule `daimon projects` and the MCP projects tool
+follow. If a request fails inside the viewer it answers HTTP 500 with a generic
+JSON error that names only the exception type.
 
 ## Localhost-only posture
 

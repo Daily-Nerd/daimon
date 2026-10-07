@@ -31,12 +31,11 @@ from typing import Callable
 import pytest
 
 import daimon_briefing
-import daimon_ui
 from daimon_briefing import cli, mcp_tools, schema, store
+from daimon_ui import server
 from tests import _leaves, _sentinel_drive as drive, _sentinel_world as sw
 from tests._sentinel_dests import DESTS
 
-SERVER = Path(daimon_ui.__file__).parent / "server.py"
 PYTHON_PLAIN = "DAIMON_PLAIN"
 
 
@@ -90,24 +89,9 @@ def mcp_surfaces():
 
 
 def viewer_routes():
-    """Every route `do_GET` branches on, by AST: a string compared with
-    `path ==` or passed to `path.startswith(...)`."""
-    tree = ast.parse(SERVER.read_text(encoding="utf-8"))
-    do_get = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == "do_GET")
-    routes = []
-    for node in ast.walk(do_get):
-        if (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
-                and node.left.id == "path" and isinstance(node.ops[0], ast.Eq)
-                and isinstance(node.comparators[0], ast.Constant)):
-            routes.append(node.comparators[0].value)
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "startswith"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "path" and node.args
-                and isinstance(node.args[0], ast.Constant)):
-            routes.append(node.args[0].value)
-    return routes
+    """Every route the viewer serves: the keys of `server.ROUTES`, the one
+    dispatch table (#1132 PR 8a)."""
+    return list(server.ROUTES)
 
 
 def http_surfaces():
@@ -426,6 +410,8 @@ no_items("writes or migrates; reads names of buckets, never item text",
 no_items("prints only usage counters", "cli:log")
 no_items("blocking server loop, skipped like the write guard skips it",
          "cli:serve", "cli:mcp serve")
+no_items("serves the fixed page or an allowlisted static asset; no store read",
+         "http:/", "http:/static/")
 
 # ---- MCP -------------------------------------------------------------------
 case("mcp:daimon_recall", "query", lambda w: {"query": "sentinel"})
@@ -440,7 +426,6 @@ case("mcp:daimon_status", "default", lambda w: {"project": w.project})
 case("mcp:requests_inbox", "default", lambda w: {"project": w.project})
 
 # ---- viewer routes ---------------------------------------------------------
-case("http:/", "page", lambda w: "/")
 case("http:/api/projects", "default", lambda w: "/api/projects")
 case("http:/api/checkpoints", "default", lambda w: "/api/checkpoints")
 case("http:/api/checkpoint/", "latest", lambda w: "/api/checkpoint/latest")
@@ -455,10 +440,11 @@ case("http:/api/why", "item", lambda w: f"/api/why?id={w.ids['question']}&source
 case("http:/api/grid", "default", lambda w: "/api/grid")
 case("http:/api/refutations", "default", lambda w: "/api/refutations")
 case("http:/api/relations", "default", lambda w: "/api/relations")
+case("http:/api/relations", "item",
+     lambda w: f"/api/relations?id={w.ids['question']}")
 case("http:/api/ledger", "item", lambda w: f"/api/ledger?id={w.ids['question']}")
 case("http:/api/session", "sid", lambda w: "/api/session?sid=S-2")
 case("http:/api/activity", "default", lambda w: "/api/activity")
-case("http:/static/", "asset", lambda w: "/static/app.js")
 
 # ---- hooks -----------------------------------------------------------------
 case("hook:pre_llm_call", "first", lambda w: {
@@ -577,6 +563,7 @@ KNOWN_LEAKS: set = {
     *{("http:/api/projects", k) for k in ("topic",)},
     *{("http:/api/recall", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
+    *{("http:/api/relations", k) for k in ("question",)},
     *{("http:/api/session", k) for k in ("topic",)},
     *{("http:/api/why", k) for k in ("question",)},
     *{("mcp:daimon_recall", k) for k in ("contradiction", "question", "topic",)},
@@ -607,8 +594,10 @@ def test_surfaces_are_all_classified():
     assert not ({s for s, _ in CASES} & set(NO_ITEMS))
 
 
-def test_viewer_routes_are_the_sixteen():
+def test_viewer_routes_are_the_table_and_the_owner_less_ones_show_no_items():
     assert len(viewer_routes()) == 16 == len(set(viewer_routes()))
+    assert {"http:" + k for k, r in server.ROUTES.items()
+            if r.owner is None} == {s for s in NO_ITEMS if s.startswith("http:")}
 
 
 def test_dests_match_the_parser_and_are_classified():
@@ -824,6 +813,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
                 assert text.strip().count("\n") == 0, (surface, tag, label)
             elif surface.startswith("mcp:"):
                 assert res.rc == "raised", (surface, tag, label)
+            elif surface.startswith("http:"):
+                assert res.rc == 500, (surface, tag, label, res.rc)
             else:
                 assert res.chunks == ["None"], (surface, tag, label)
 
