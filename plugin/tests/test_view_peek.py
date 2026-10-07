@@ -1,11 +1,12 @@
-"""`view.visible_topic` and `view.forgotten_keys` (#1132 PR 7b).
+"""`view.peek`, `view.projects` and `view.forgotten_keys` (#1132 PRs 7b, 8b).
 
-The cheap topic read behind `daimon projects`: one bucket's active topic
-judged by the SAME `classify` the full view uses, over a light snapshot, so a
-machine-wide listing does not pay for a whole `snapshot` per bucket. The twin
-property is the contract: for any store, `visible_topic` of the stored latest
-is the topic text of `view.open(slug, live=False)`, or None when that view
-hides it. Stores are built by the real writers."""
+The cheap read behind every project listing: one bucket's active topic and
+visible item count judged by the SAME `classify` the full view uses, over a
+light snapshot, so a machine-wide listing does not pay for a whole `snapshot`
+per bucket. The twin property is the contract: for any store, `peek` of the
+stored latest has the topic text of `view.open(slug, live=False)`, or None
+when that view hides it, and counts the items that view keeps. Stores are
+built by the real writers."""
 
 import json
 import random
@@ -48,10 +49,10 @@ def _plant(slug, name, data: bytes):
 
 
 def _peek(slug, *, forgotten):
-    """`visible_topic` of the bucket's stored latest checkpoint."""
+    """The `peek` topic of the bucket's stored latest checkpoint."""
     got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
                                  admit=store.Admit.ANY)
-    return view.visible_topic(got, slug, forgotten=forgotten)
+    return view.peek(got, slug, forgotten=forgotten).topic
 
 
 def _twin(project):
@@ -112,16 +113,16 @@ def test_a_trust_fold_that_raises_fails_closed(tmp_checkpoint_dir, monkeypatch):
     assert _peek(slug, forgotten=frozenset()) is None
 
 
-def test_visible_topic_classifies_the_checkpoint_it_is_handed(
+def test_peek_classifies_the_checkpoint_it_is_handed(
         tmp_checkpoint_dir):
     slug = _write("/p/peek-v", "the weekly sync cadence")
     held = {"working_context": {"active_topic": {"text": "held wording about the exporter"}}}
     # the text is the held checkpoint's, not the stored one
-    assert view.visible_topic(held, slug, forgotten=frozenset()) == (
+    assert view.peek(held, slug, forgotten=frozenset()).topic == (
         "held wording about the exporter")
-    assert view.visible_topic(None, slug, forgotten=frozenset()) is None
+    assert view.peek(None, slug, forgotten=frozenset()) == view.Peek(None, 0)
     _quarantine("/p/peek-v", "held wording about the exporter", kind="topic")
-    assert view.visible_topic(held, slug, forgotten=frozenset()) is None
+    assert view.peek(held, slug, forgotten=frozenset()).topic is None
 
 
 def test_projects_rows_reads_each_checkpoint_once(
@@ -182,7 +183,7 @@ def _seed(rng, i):
 
 
 def test_the_twin_property_peek_equals_the_full_view(tmp_checkpoint_dir):
-    """For seeded stores, `visible_topic` of the stored latest is the topic `view.open` serves.
+    """For seeded stores, `peek` of the stored latest has the topic `view.open` serves.
     Anti-vacuity: some cases withhold, some do not."""
     shown = hidden = 0
     for i in range(CASES):
@@ -244,7 +245,7 @@ def test_projects_lists_a_torn_bucket_without_peeking(
     def boom(*_a, **_k):
         raise AssertionError("a torn bucket has no topic to peek")
 
-    monkeypatch.setattr(view, "visible_topic", boom)
+    monkeypatch.setattr(view, "peek", boom)
     rc, out = _projects(capsys, "--json")
     assert rc == 0 and "-p-torn" in out.out
 
@@ -257,7 +258,7 @@ def test_projects_fails_closed_when_the_peek_raises(
     def boom(*_a, **_k):
         raise RuntimeError("peek")
 
-    monkeypatch.setattr(view, "visible_topic", boom)
+    monkeypatch.setattr(view, "peek", boom)
     rc, out = _projects(capsys)
     assert rc == 2
     assert out.out == ""
@@ -273,6 +274,129 @@ def test_the_mcp_projects_tool_raises_when_the_peek_raises(
     def boom(*_a, **_k):
         raise RuntimeError("peek")
 
-    monkeypatch.setattr(view, "visible_topic", boom)
+    monkeypatch.setattr(view, "peek", boom)
     with pytest.raises(mcp_tools.ToolError):
         mcp_tools._projects({})
+
+
+# ---- the visible item count ------------------------------------------------
+
+
+def _write_items(project, *, questions=(), decisions=(), contradictions=(),
+                 topic="a topic", sid="S-1"):
+    cp = {"session_id": sid, "created": "2026-08-01T00:00:00Z",
+          "working_context": {
+              "active_topic": {"text": topic, "trust": "inferred"},
+              "open_questions": [{"text": t, "trust": "inferred"}
+                                 for t in questions],
+              "recent_decisions": [{"text": t, "trust": "inferred"}
+                                   for t in decisions]},
+          "epistemic_snapshot": {"contradictions_flagged": list(contradictions)}}
+    store.write_checkpoint(sid, cp, project_dir=project)
+    return store.project_slug(project)
+
+
+def _count(slug, *, forgotten=frozenset()):
+    got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
+                                 admit=store.Admit.ANY)
+    return view.peek(got, slug, forgotten=forgotten).visible_items
+
+
+def test_the_count_is_the_items_a_reader_may_see(tmp_checkpoint_dir):
+    slug = _write_items("/p/peek-c", questions=["q one text", "q two text"],
+                        decisions=["d one text"],
+                        contradictions=["bare string clash"])
+    assert _count(slug) == 4
+
+
+def test_a_withheld_item_is_not_counted_and_the_count_does_not_name_it(
+        tmp_checkpoint_dir):
+    slug = _write_items("/p/peek-w", questions=["first open question text",
+                                                "second open question text"],
+                        decisions=["a settled decision text"])
+    _quarantine("/p/peek-w", "second open question text", kind="question")
+    _forget("/p/peek-w", "a settled decision text")
+    assert _count(slug, forgotten=view.forgotten_keys()) == 1
+
+
+def test_a_closed_view_counts_nothing(tmp_checkpoint_dir):
+    slug = _write_items("/p/peek-z", questions=["q one text"])
+    _plant(slug, "trust.jsonl", b"<<<<<<< HEAD\n")
+    assert _count(slug) == 0
+
+
+def test_the_count_equals_what_the_full_view_keeps(tmp_checkpoint_dir):
+    from daimon_briefing import schema
+    for i in range(20):
+        rng = random.Random(i)
+        texts = [f"item {i} {n} " + " ".join(rng.sample(
+            ["gateway", "cache", "token", "retry"], 2)) for n in range(5)]
+        project = f"/p/peek-t{i}"
+        slug = _write_items(project, questions=texts[:3],
+                            decisions=texts[3:])
+        if i % 2:
+            _quarantine(project, texts[0], kind="question")
+        if i % 3 == 0:
+            _forget(project, texts[4])
+        kept = view.open(project, live=False).checkpoint
+        want = sum(1 for f, _it in schema.iter_items(kept, dicts_only=False)
+                   if not f.singleton)
+        assert _count(slug, forgotten=view.forgotten_keys()) == want, i
+
+
+def test_a_list_field_that_is_not_a_list_counts_nothing(tmp_checkpoint_dir):
+    held = {"working_context": {"open_questions": "torn"},
+            "epistemic_snapshot": {}}
+    assert view.peek(held, "-no-bucket", forgotten=frozenset()).visible_items == 0
+    odd = {"working_context": "torn", "epistemic_snapshot": {}}
+    assert view.peek(odd, "-no-bucket", forgotten=frozenset()) == view.Peek(None, 0)
+
+
+# ---- the listing over the allowed buckets ----------------------------------
+
+
+def test_projects_lists_each_allowed_bucket_with_its_peek(tmp_checkpoint_dir):
+    _write_items("/p/peek-l1", questions=["q one text"], topic="first topic")
+    _write_items("/p/peek-l2", decisions=["d one text", "d two text"],
+                 topic="second topic")
+    rows = {r.slug: r for r in view.projects("-own")}
+    one, two = (rows[store.project_slug("/p/peek-l1")],
+                rows[store.project_slug("/p/peek-l2")])
+    assert (one.readable, one.peek) == (True, view.Peek("first topic", 1))
+    assert two.peek == view.Peek("second topic", 2)
+    assert one.created == "2026-08-01T00:00:00Z"
+    assert one.session_id == "S-1" and one.mtime > 0
+
+
+def test_projects_lists_a_torn_bucket_as_unreadable(tmp_checkpoint_dir):
+    torn = tmp_checkpoint_dir / "-p-torn"
+    torn.mkdir(parents=True)
+    (torn / "latest.json").write_text("{not json")
+    [row] = view.projects("-own")
+    assert (row.slug, row.readable, row.peek) == (
+        "-p-torn", False, view.Peek(None, 0))
+    assert row.name is None and row.created is None
+
+
+def test_projects_under_tenant_scope_never_opens_another_buckets_pointer(
+        tmp_checkpoint_dir, monkeypatch):
+    own = _write_items("/p/peek-own", questions=["q one text"])
+    other = _write_items("/p/peek-other", questions=["q two text"])
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    opened = []
+    real = type(tmp_checkpoint_dir).read_text
+
+    def spy(self, *a, **k):
+        opened.append(self.parent.name)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(tmp_checkpoint_dir), "read_text", spy)
+    rows = view.projects(own)
+    assert [r.slug for r in rows] == [own]
+    assert other not in opened
+
+
+def test_projects_without_tenant_scope_lists_every_bucket(tmp_checkpoint_dir):
+    a = _write_items("/p/peek-a1")
+    b = _write_items("/p/peek-b1")
+    assert {r.slug for r in view.projects(a)} == {a, b}

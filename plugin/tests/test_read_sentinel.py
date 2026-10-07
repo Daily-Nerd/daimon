@@ -734,11 +734,11 @@ def test_llm_briefing_is_an_exemption_not_an_axis_we_drive():
 # ===========================================================================
 # Surfaces that read through the view: the module whose code makes the call,
 # and the names that call may take. `prepare` opens the checkpoint through
-# `view.open`; `open`, `suppressed` and `visible_topic` are the view's own
-# projections. The MCP projects tool reaches `visible_topic` through
+# `view.open`; `open`, `suppressed` and `projects` (with `peek` under it) are
+# the view's own projections. The MCP projects tool reaches `projects` through
 # `cli.projects_rows`, so the module that calls it is cli/projects.py.
 PREPARE = frozenset({"prepare", "_prepared"})
-PEEK = frozenset({"visible_topic"})
+PEEK = frozenset({"projects", "peek"})
 CONVERTED = {
     "cli:brief": ("cli/brief.py", PREPARE),
     "cli:loops": ("cli/lifecycle.py", PREPARE),
@@ -791,7 +791,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         raise RuntimeError("view.open failed")
 
     monkeypatch.setattr(view, "open", boom)
-    monkeypatch.setattr(view, "visible_topic", boom)
+    monkeypatch.setattr(view, "peek", boom)
+    monkeypatch.setattr(view, "projects", boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
     # never reaches its raise point

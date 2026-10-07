@@ -1475,14 +1475,16 @@ def sibling_buckets(project_dir) -> list[dict]:
     return out
 
 
-def list_buckets() -> list[dict]:
+def list_buckets(only=None) -> list[dict]:
     """Every per-project bucket in the checkpoint dir, for `daimon projects`
     (#243): [{slug, checkpoint, mtime}], unsorted — ordering is a display
     concern. A bucket is any subdir holding a latest.json; flat per-session
     files and the global pointer are not buckets. Torn/corrupt pointers are
     listed with checkpoint=None (the bucket exists — hiding it would read as
-    "no such project"), matching the module's tolerant readers. Pure file-ops,
-    never raises."""
+    "no such project"), matching the module's tolerant readers. `only`, when
+    given, names the buckets to list: any other child is skipped before its
+    pointer is touched, so a caller that may list only some buckets never
+    opens the rest. Pure file-ops, never raises."""
     d = config.checkpoint_dir()
     try:
         entries = sorted(d.iterdir())
@@ -1490,6 +1492,8 @@ def list_buckets() -> list[dict]:
         return []
     out: list[dict] = []
     for child in entries:
+        if only is not None and child.name not in only:
+            continue
         latest = child / _LATEST
         try:
             mtime = latest.stat().st_mtime

@@ -2935,10 +2935,10 @@ def test_cli_open_short_name_skips_buckets_without_a_name(
     """A pre-#672 bucket has no project_name; it can only be a slug."""
     real = store.list_buckets
 
-    def nameless():
+    def nameless(only=None):
         return [dict(b, checkpoint={k: v for k, v in b["checkpoint"].items()
                                     if k != "project_name"})
-                for b in real()]
+                for b in real(only)]
 
     monkeypatch.setattr(store, "list_buckets", nameless)
     assert _cli_open_to(project, "recipient") == 1

@@ -40,40 +40,27 @@ def projects_rows(project_arg=None) -> list:
     assembler for `daimon projects --json` AND the MCP projects tool (#261) —
     two consumers, one shape. Torn buckets show with unknown fields rather
     than vanish: hiding one would read as "no such project". The topic is the
-    view's call (`view.visible_topic`): a forgotten, quarantined or unverifiable
-    one is None, the same as no topic at all."""
+    view's call (`view.peek`): a forgotten, quarantined or unverifiable one is
+    None, the same as no topic at all. `view.projects` reads a checkpoint only
+    for a bucket the caller may list (#899), so a tenant-scoped home gets its
+    own and never opens another."""
     cur_slug = store.project_slug(_cli._resolve_project(project_arg))
     rows = []
-    forgotten = None  # the machine-wide set, read once and only if needed
-    # #899: enumeration is the other half of the exfiltration primitive;
-    # `view.buckets` is the one place that names the buckets a caller may
-    # list, and a tenant-scoped home gets its own and no other.
-    allowed = set(view.buckets(cur_slug))
-    for b in store.list_buckets():
-        if b["slug"] not in allowed:
-            continue
-        cp = b["checkpoint"] or {}
-        created = cp.get("created")
-        topic = None
-        if b["checkpoint"] is not None:
-            if forgotten is None:
-                forgotten = view.forgotten_keys()
-            topic = view.visible_topic(b["checkpoint"], b["slug"],
-                                       forgotten=forgotten)
-        name = cp.get("project_name")
+    for b in view.projects(cur_slug):
+        created = b.created
         rows.append({
-            "slug": b["slug"],
+            "slug": b.slug,
             # #672 write-time stamp; None when the bucket predates it — never
             # a slug-derived guess, the flattening is not invertible.
-            "name": name if isinstance(name, str) and name else None,
-            "session_id": cp.get("session_id"),
+            "name": b.name if isinstance(b.name, str) and b.name else None,
+            "session_id": b.session_id,
             "created": created if isinstance(created, str) else None,
-            "git_branch": cp.get("git_branch"),
-            "topic": topic,
-            "current": b["slug"] == cur_slug,
+            "git_branch": b.git_branch,
+            "topic": b.peek.topic,
+            "current": b.slug == cur_slug,
             # display sort key only, never emitted: created stamp when the
             # pointer has one, pointer mtime for torn/stampless buckets
-            "_epoch": store._created_epoch(created) or b["mtime"],
+            "_epoch": store._created_epoch(created) or b.mtime,
         })
     rows.sort(key=lambda r: r["_epoch"], reverse=True)
     for r in rows:
