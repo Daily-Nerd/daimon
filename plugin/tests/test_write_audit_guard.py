@@ -58,7 +58,6 @@ Documented limitations (honest absences, not covered by this audit)
   tests bound the risk; a frame-exact taint system is not worth its weight.
 """
 
-import argparse
 import inspect  # noqa: F401  (documented API of the recorded stacks)
 import io
 import json
@@ -77,6 +76,7 @@ from daimon_briefing import (amendments, buckets, cli, config, policy,
                              refutations, relations, requests, schema, store,
                              teamsync, trust)
 
+from tests import _leaves
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
 
@@ -297,16 +297,7 @@ def write_audit(monkeypatch):
 # Command enumeration + drive recipes
 # ---------------------------------------------------------------------------
 
-def _iter_commands(parser, prefix=()):
-    """Every leaf command tuple the parser tree registers."""
-    subs = [a for a in parser._actions
-            if isinstance(a, argparse._SubParsersAction)]
-    if not subs:
-        yield prefix
-        return
-    for action in subs:
-        for name, sub in action.choices.items():
-            yield from _iter_commands(sub, prefix + (name,))
+_iter_commands = _leaves.iter_commands   # shared with the read census
 
 
 def _assert_ratchet(observed: set):
