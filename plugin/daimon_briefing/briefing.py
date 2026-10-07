@@ -1449,9 +1449,23 @@ def _truncate_request_ask(ask: str) -> str:
     return requests.short_ask(ask)
 
 
+class Card(NamedTuple):
+    """One request card a panel printed: the id, whether showing it owes a
+    `surfaced` / `verdict_surfaced` stamp row (decided on the row the panel
+    itself rendered), and for a verdict card the late reply it showed."""
+    request_id: str
+    stamp: bool
+    reply_event_id: str | None = None
+
+
 def request_panel_lines(project_dir=None, *, mask=None) -> list[str]:
-    """The recipient-side panel's rendered lines ([] when nothing is
-    addressed to this project, or `project_dir` is None — the section is
+    """The lines of `request_panel`; see it."""
+    return request_panel(project_dir, mask=mask)[0]
+
+
+def request_panel(project_dir=None, *, mask=None):
+    """The recipient-side panel as `(lines, cards)`: its rendered lines ([]
+    when nothing is addressed to this project, or `project_dir` is None — the section is
     skeleton furniture, but empty furniture is noise).
 
     Fail-open like `ruling_lines`: ANY error from the composer yields []
@@ -1468,25 +1482,27 @@ def request_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     cap, so a `work` ask never goes missing behind a newer `info` one; see
     its docstring for why. `inbox_renderable` itself has no production
     caller left as of review round 1: `request inbox` reads
-    `requests.inbox_listing`, and the CLI's own `surfaced`-stamping loop
-    reads `decision_renderable` too, for the identical reason this panel
-    does (stamping `surfaced` for a card that was never actually shown
-    would give `is_stale` a phantom anchor). `inbox_renderable` is kept as
+    `requests.inbox_listing`, and the cards this returns are exactly the
+    rows it printed, so the brief stamps `surfaced` for those and no other
+    (stamping a card that was never actually shown would give `is_stale` a
+    phantom anchor). `inbox_renderable` is kept as
     the unfiltered, every-kind composer several tests still exercise
     directly, and for a future consumer that wants every kind capped
     without the decision-only narrowing."""
     if project_dir is None:
-        return []
+        return [], ()
     try:
         entry = requests.decision_renderable(project_dir=project_dir)
     except Exception:
-        return []
+        return [], ()
     rows = entry.get("rows") or []
     if not rows:
-        return []
+        return [], ()
     mask = mask or (lambda text: text)
     lines = [_REQUEST_PANEL_HEADER]
+    cards = []
     for row in rows:
+        cards.append(Card(row["request_id"], requests.needs_surfaced_stamp(row)))
         # #961 slice 3: no `[info]` marker here any more — `decision_
         # renderable` already excludes `kind == "info"`, so every row this
         # loop sees is `work` by construction; the marker lives on
@@ -1505,7 +1521,7 @@ def request_panel_lines(project_dir=None, *, mask=None) -> list[str]:
         plural = "s" if overflow != 1 else ""
         lines.append(f"  (+{overflow} more waiting{plural} — "
                      "daimon request inbox)")
-    return lines
+    return lines, tuple(cards)
 
 
 # ---- #885: the recipient-side owed panel ------------------------------------
@@ -1576,8 +1592,13 @@ def _mask_reply(row: dict, mask) -> dict:
 
 
 def verdict_panel_lines(project_dir=None, *, mask=None) -> list[str]:
-    """The sender-side panel's rendered lines ([] when nothing this project
-    sent has been decided yet, or `project_dir` is None). Same posture as
+    """The lines of `verdict_panel`; see it."""
+    return verdict_panel(project_dir, mask=mask)[0]
+
+
+def verdict_panel(project_dir=None, *, mask=None):
+    """The sender-side panel as `(lines, cards)`: its rendered lines ([] when
+    nothing this project sent has been decided yet, or `project_dir` is None). Same posture as
     `request_panel_lines`: fail-open, skeleton furniture, never silently
     truncated over RENDER_CAP. `project_dir` is the CLI's
     `worldcheck_project` — same D2 CLI-only gate, same caller contract.
@@ -1588,17 +1609,24 @@ def verdict_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     deciding how much scrutiny an ask deserves. Mirrors the same call made
     for `cli/request.py`'s `_verdict_inject_lines`."""
     if project_dir is None:
-        return []
+        return [], ()
     try:
         entry = requests.verdict_renderable(project_dir=project_dir)
     except Exception:
-        return []
+        return [], ()
     rows = entry.get("rows") or []
     if not rows:
-        return []
+        return [], ()
     mask = mask or (lambda text: text)
     lines = [_VERDICT_PANEL_HEADER]
+    cards = []
     for row in rows:
+        # #1117: one stamp row carries whichever of the epoch and the late
+        # reply the brief shows.
+        reply_id = requests.unseen_reply_id(row)
+        cards.append(Card(row["request_id"],
+                          bool(requests.needs_verdict_surfaced_stamp(row)
+                               or reply_id), reply_id))
         state = str(row.get("state") or "")
         mark = _VERDICT_MARKS.get(state, "?")
         # #961 slice 3: an agent-landed accept reads distinctly from a human
@@ -1629,7 +1657,7 @@ def verdict_panel_lines(project_dir=None, *, mask=None) -> list[str]:
         plural = "s" if overflow != 1 else ""
         lines.append(f"  (+{overflow} more decided{plural} — "
                      "daimon request list)")
-    return lines
+    return lines, tuple(cards)
 
 
 def render_plain(b: dict, degraded: bool = False, rulings=(),
@@ -1862,7 +1890,7 @@ class Selection:
                  overage, now, panel_names=(), reserved=0,
                  teammate_blocks=(), teammate_header="", kept_teammates=(),
                  collapsed=False, loops_pointer=True, full_quotes=False,
-                 notes=()):
+                 notes=(), cards=None):
         self.kept = kept
         self.notes = tuple(notes)
         self.dropped = dropped
@@ -1896,7 +1924,17 @@ class Selection:
         # The opt-in LLM path must reproduce verbatim quotes whole, so its
         # sizing charges them whole; the deterministic render shows a span.
         self.full_quotes = full_quotes
+        # #1132 PR 7b-2: the request and verdict cards captured by the one
+        # read that built the panel lines, {"request": (Card, ...), "verdict":
+        # (Card, ...)}. What the brief stamps as surfaced follows from here.
+        self.cards = {"request": (), "verdict": (), **(cards or {})}
         self._lines: dict = {}
+
+    def printed_cards(self) -> dict:
+        """The cards of the panels printed whole: a panel collapsed to a
+        count line showed no card, so none of its cards is owed a stamp."""
+        return {name: (cards if name in self.panel_names_whole else ())
+                for name, cards in self.cards.items()}
 
     def dropped_for(self, section, reason=None):
         return [i for i, r in zip(self.dropped.get(section, []),
@@ -1952,7 +1990,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
            decision_count: str | None = None, reserved: int = 0,
            teammate_blocks=(), teammate_header: str = "",
            loops_pointer: bool = True, full_quotes: bool = False,
-           notes=()) -> Selection:
+           notes=(), cards=None) -> Selection:
     """#1128: decide what the briefing shows. Pure: a function of the
     annotated items in `b`, the byte `budget` (None = unbounded: the decision
     cap still applies, nothing else is dropped) and `now`.
@@ -2089,7 +2127,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                         teammate_header=teammate_header,
                         kept_teammates=kept_team, collapsed=collapse,
                         loops_pointer=loops_pointer, full_quotes=full_quotes,
-                        notes=notes)
+                        notes=notes, cards=cards)
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 
@@ -2294,7 +2332,7 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
 
 def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
            loops_pointer: bool = True, snap=None,
-           notes=()) -> str | None:
+           notes=(), cards_out: dict | None = None) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
     quote integrity, and falls back to deterministic on any doubt.
@@ -2309,7 +2347,10 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     never reused, because both panels' gate is narrower than the rulings
     section's: rulings render on every route (including `--slug`), the
     panels only on the CLI same-project path (`cli._render_briefing_body`'s
-    own `worldcheck_project`, D2)."""
+    own `worldcheck_project`, D2).
+
+    `cards_out`, when given, receives the request and verdict cards the same
+    read printed (both panels print whole here), for the caller's stamps."""
     b = build(checkpoint)
     # #1132 PR 7a: `snap` is the view's snapshot (the rulings are read once
     # out of it and every panel masks a withheld whole value); `notes` are its
@@ -2324,12 +2365,13 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     decision_count = (decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
     decision_count_block = [decision_count] if decision_count else []
-    request_lines = (request_panel_lines(worldcheck_project, mask=mask)
-                     if worldcheck_project is not None else [])
-    verdict_lines = (verdict_panel_lines(worldcheck_project, mask=mask)
-                     if worldcheck_project is not None else [])
+    request_lines, request_cards = request_panel(worldcheck_project, mask=mask)
+    verdict_lines, verdict_cards = verdict_panel(worldcheck_project, mask=mask)
     owed_lines = (owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
+    if cards_out is not None:
+        # Both panels print whole on this path: the caller stamps from these.
+        cards_out.update(request=request_cards, verdict=verdict_cards)
     closed = snap is not None and snap.closed
     head = [GREETING] if closed else []
     skeleton_blocks = [blk for blk in (head, list(notes), rulings,

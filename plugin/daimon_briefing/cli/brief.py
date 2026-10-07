@@ -227,55 +227,43 @@ def _render_briefing_body(annotated, route, *, drift_project, teammates,
                                   snap=annotated.snapshot if annotated else None,
                                   notes=annotated.notes if annotated else ())
 
-    def _shown(panel, row) -> bool:
-        # #1128: `printed` is the manifest of card ids render_brief printed in
-        # full. A row the budget cut (its panel collapsed to a count line)
-        # never reached the reader, so it is not stamped as surfaced; no
-        # manifest means nothing is known to have been shown.
-        return row["request_id"] in ((printed or {}).get(panel) or ())
     # #694 PR 2 (D1): the surfaced stamp, AFTER the render+print pipeline
     # above completes — the card has already reached the terminal, so a
     # crash between here and the write below just re-renders it next brief
-    # (the safe direction) rather than a false "surfaced". Gated on the same
-    # `worldcheck_project` parameter as the panel itself (D2) — never on
-    # `route`, which is set on every path including --slug. Fail-open, same
-    # posture as every other best-effort block in this function: a broken
-    # composer must never take the briefing down.
+    # (the safe direction) rather than a false "surfaced". `printed` is the
+    # manifest of cards `render_brief` printed in full, taken from the one
+    # read that built the panels: a row the budget cut (its panel collapsed
+    # to a count line) never reached the reader, so it is not stamped, and
+    # no manifest means nothing is known to have been shown. Gated on the
+    # same `worldcheck_project` parameter as the panel itself (D2) — never
+    # on `route`, which is set on every path including --slug. Fail-open,
+    # same posture as every other best-effort block in this function: a
+    # broken composer must never take the briefing down.
     if worldcheck_project is not None:
-        try:
-            # #961 slice 3 review item 1: `decision_renderable`, not
-            # `inbox_renderable` — the panel this stamp records as "shown"
-            # is the one `request_panel_lines` actually reads
-            # (briefing.py), and that one excludes `kind == "info"`. An
-            # `info` ask stamped `surfaced` here would give `is_stale` an
-            # anchor for a card that was never printed, decaying the ask
-            # before anyone saw it (`is_stale`'s own `kind == "info"`
-            # branch anchors on `delivered` instead, precisely because this
-            # loop no longer stamps `surfaced` for one).
-            for row in requests.decision_renderable(
-                    project_dir=worldcheck_project).get("rows") or []:
-                if requests.needs_surfaced_stamp(row) and _shown("request", row):
-                    requests.stamp_surfaced(row["request_id"],
-                                            project_dir=worldcheck_project)
-        except Exception:
-            pass
+        # #961 slice 3 review item 1: the request cards are the panel's own
+        # (`decision_renderable`, which excludes `kind == "info"`), so an
+        # `info` ask is never stamped `surfaced` for a card that was never
+        # printed.
+        for card in (printed or {}).get("request") or ():
+            if not card.stamp:
+                continue
+            try:
+                requests.stamp_surfaced(card.request_id,
+                                        project_dir=worldcheck_project)
+            except Exception:
+                pass
         # #694 PR 3 (D1, sender side): same posture, same gate, same
-        # post-print timing — a crash before this line just re-renders the
-        # verdict card next brief instead of a false "verdict_surfaced".
-        try:
-            for row in requests.verdict_renderable(
-                    project_dir=worldcheck_project).get("rows") or []:
-                # #1117: one stamp row carries whichever of the epoch and the
-                # late reply the brief just showed.
-                if not _shown("verdict", row):
-                    continue
-                reply_id = requests.unseen_reply_id(row)
-                if requests.needs_verdict_surfaced_stamp(row) or reply_id:
-                    requests.stamp_verdict_surfaced(
-                        row["request_id"], project_dir=worldcheck_project,
-                        reply_event_id=reply_id)
-        except Exception:
-            pass
+        # post-print timing. #1117: one stamp row carries whichever of the
+        # epoch and the late reply the brief just showed.
+        for card in (printed or {}).get("verdict") or ():
+            if not card.stamp:
+                continue
+            try:
+                requests.stamp_verdict_surfaced(
+                    card.request_id, project_dir=worldcheck_project,
+                    reply_event_id=card.reply_event_id)
+            except Exception:
+                pass
     # #1128: the standing ">N days unverified" footer is gone. The stale
     # items carry [? unverified] marks in the body, and a section that hid
     # stale carried items says so in its own note, so the footer repeated
