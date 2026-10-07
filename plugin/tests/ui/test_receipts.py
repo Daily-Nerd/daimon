@@ -199,4 +199,3 @@ def test_gate_survives_a_non_dict_pointer_list(tmp_path):
 
 def test_the_check_is_the_views_and_its_hash_is_the_receipts():
     assert api.receipt_state is view.receipt_state
-    assert view._multibase_sha256(b"abc") == receipts._multibase_sha256(b"abc")

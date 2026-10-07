@@ -88,6 +88,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/host_mcp_caps.py": "write",  # host MCP capability table
     "daimon_briefing/kimi_hooks.py": "write",  # edits Kimi hook config
     "daimon_briefing/llm.py": "write",  # LLM client for extraction
+    "daimon_briefing/multihash.py": "write",  # the vitni outputs_hash encoding, shared by receipts (mint) and the view (read)
     "daimon_briefing/normalize.py": "write",  # canonical content keys used by write gates and the view
     "daimon_briefing/policy.py": "write",  # admission gate for every write and inbound row
     "daimon_briefing/privacy.py": "write",  # residue audit: it must see raw bytes to prove a forget reached them
