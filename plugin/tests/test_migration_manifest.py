@@ -60,6 +60,11 @@ MANIFEST = {
     ("receipts.py", "status_line", "read_latest_body",
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.OWN_OR_UNROUTED"),
     ("store.py", "write_checkpoint", "read_own_stream_latest", None, None),
+    # #1132 PR 6a: the read view reads the project's own latest only.
+    ("view.py", "open", "read_latest_body",
+     "store.Route.OWN", "store.Admit.ANY"),
+    ("view.py", "match", "read_latest_body",
+     "store.Route.OWN", "store.Admit.ANY"),
 }
 
 # Wrapper-internal calls in store.py that are not migration sites. The two
@@ -68,7 +73,8 @@ WRAPPER_SITES = {
     ("store.py", "read_own_stream_latest", "read_latest_body"),
 }
 
-OWN_ONLY_MODULES = ["capture.py", "cli/lifecycle.py", "cli/amend.py", "mcp_tools.py"]
+OWN_ONLY_MODULES = ["capture.py", "cli/lifecycle.py", "cli/amend.py", "mcp_tools.py",
+                    "view.py"]
 
 
 def _callee(node):
