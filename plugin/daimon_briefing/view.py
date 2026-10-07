@@ -214,6 +214,41 @@ def _bucket(project):
     return config.checkpoint_dir() / slug if slug else None
 
 
+def _is_bucket(name: str) -> bool:
+    try:
+        (config.checkpoint_dir() / name / store._LATEST).stat()
+    except OSError:
+        return False
+    return True
+
+
+def buckets(own: str | None) -> tuple[str, ...]:
+    """The bucket names a caller may enumerate, sorted: every subdirectory of
+    the checkpoint dir that holds a `latest.json` (a torn pointer still counts,
+    as in `store.list_buckets`). The one enumeration and the one tenant rule
+    (#899): under `config.tenant_scoped()` it is the caller's own bucket `own`
+    when that exists, and nothing else, so a listing cannot name another
+    tenant. Names only; no checkpoint body is read."""
+    if config.tenant_scoped():
+        return (own,) if own and bucket_exists(own, own) else ()
+    try:
+        names = sorted(p.name for p in config.checkpoint_dir().iterdir())
+    except OSError:
+        return ()
+    return tuple(n for n in names if _is_bucket(n))
+
+
+def bucket_exists(slug: str, own: str | None) -> bool:
+    """Whether `slug` names a bucket the caller may open: one path segment
+    holding a `latest.json`, and under tenant scope only `own`. A stat, not a
+    scan: a request that already knows the name does not list the others."""
+    if not slug or slug in (".", "..") or "/" in slug or "\\" in slug:
+        return False
+    if config.tenant_scoped() and slug != own:
+        return False
+    return _is_bucket(slug)
+
+
 def forgotten_keys() -> frozenset:
     """The machine-wide forgotten set, the one `snapshot` reads: every local
     project's tombstones plus what teammates published. Memoized in `store`,
