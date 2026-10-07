@@ -349,8 +349,15 @@ def renderable(project_dir=None) -> dict[str, dict]:
     without the cap this would be the briefing's only unbounded agent-
     writable surface.
     """
+    return render_groups(records(project_dir=project_dir))
+
+
+def render_groups(folded: dict[str, dict]) -> dict[str, dict]:
+    """The pure half of `renderable`: folded records -> `{item_id: {"rows":
+    [...], "overflow": N}}`, render-worthy states only, newest `RENDER_CAP`
+    rows oldest-first."""
     by_item: dict[str, list[dict]] = {}
-    for record in records(project_dir=project_dir).values():
+    for record in folded.values():
         if record["state"] not in RENDER_STATES:
             continue
         by_item.setdefault(record["item_id"], []).append(record)

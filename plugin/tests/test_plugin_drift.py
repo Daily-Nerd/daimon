@@ -186,3 +186,21 @@ def test_unreadable_plugin_state_is_not_drift(tmp_path):
     state.parent.mkdir(parents=True)
     state.write_text("{not json", encoding="utf-8")
     assert cli._plugin_drift(tmp_path, "0.25.0") is None
+
+
+def test_another_plugin_beside_daimon_in_the_host_record_is_skipped(tmp_path):
+    # The host record lists every installed plugin: only the daimon key (and
+    # a non-list entry under it) may be read, whatever sits beside it.
+    _install_plugin(tmp_path, "0.17.0")
+    state = tmp_path / ".claude" / "plugins" / "installed_plugins.json"
+    record = json.loads(state.read_text(encoding="utf-8"))
+    record["plugins"] = {
+        "other-plugin@somewhere": [{"scope": "user", "version": "9.9.9",
+                                    "installPath": str(tmp_path / "nope")}],
+        "daimon-extras@somewhere": "not a list",
+        **record["plugins"],
+    }
+    state.write_text(json.dumps(record), encoding="utf-8")
+    assert cli._plugin_drift(tmp_path, "0.25.0") == {
+        "installed": "0.17.0", "cli": "0.25.0", "behind": True,
+    }

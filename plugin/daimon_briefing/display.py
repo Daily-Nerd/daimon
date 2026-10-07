@@ -76,3 +76,36 @@ def quote_span(quote, text, limit: int = QUOTE_CHARS) -> str:
     if re.search(head + re.escape(flat) + tail, one_line(text)):
         return ""
     return shorten(flat, limit)
+
+
+# ---- #1132: how a withheld item is shown ----------------------------------
+
+_WITHHELD_REASONS = ("forgotten", "quarantine", "closed")
+
+
+def _check_reason(withheld) -> str:
+    reason = withheld.reason
+    if reason not in _WITHHELD_REASONS:
+        raise ValueError(f"unknown withheld reason: {reason!r}")
+    return reason
+
+
+def withheld_marker(withheld) -> str:
+    """The one-line marker for a `view.Withheld`: the reason, and for a
+    quarantine its record id. Never the value, its key or the item id."""
+    reason = _check_reason(withheld)
+    if reason == "quarantine":
+        suffix = f" {withheld.quarantine_id}" if withheld.quarantine_id else ""
+        return f"[withheld: quarantine{suffix}]"
+    if reason == "closed":
+        return "[withheld: trust ledger unreadable]"
+    return "[withheld: forgotten]"
+
+
+def withheld_json(withheld) -> dict:
+    """The JSON form: `{"state": "withheld"}` (the encoding `why` has always
+    used) plus the reason, and a quarantine's record id."""
+    out = {"state": "withheld", "reason": _check_reason(withheld)}
+    if out["reason"] == "quarantine" and withheld.quarantine_id:
+        out["quarantine_id"] = withheld.quarantine_id
+    return out
