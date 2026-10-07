@@ -1,227 +1,43 @@
-"""The viewer's reads. Checkpoints, pointers, sessions and project listings come
-through `daimon_briefing.view`, so a value a reader may not see never leaves it;
-the activity, ledger, grid, session and biography folds still read files here
-(#1132 PR 8b-2 moves them)."""
-import base64
-import hashlib
-import json
+"""The viewer's reads. Every function answers for a project slug through
+`daimon_briefing.view`, so a value a reader may not see never leaves it: the
+files, the folds and the withhold decisions are the view's. The store a read
+answers for is the one the server's runner set for the request
+(`config.checkpoint_dir_override`); nothing here names a directory.
+"""
 import re
-import unicodedata
-from pathlib import Path
 
-from daimon_briefing import api, config, view
+from daimon_briefing import api, schema, view
 
 POINTER_RE = re.compile(r"^(latest|prev-[1-9][0-9]?)$")
 ITEM_ID_RE = re.compile(r"^[a-z]-[0-9a-f]{6,40}(-\d+)?$")
-SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
 
-# vitni/0.2 outputs_hash: multibase base64url-nopad ("u") over multihash
-# sha2-256 (multicodec 0x12 + 32-byte length 0x20). Re-derived here rather
-# than imported: the receipt check is a stdlib-only tamper test.
-_MULTIHASH_SHA256 = bytes([0x12, 0x20])
+def _receipts_gate(slug: str) -> bool:
+    """Has this project opted into receipts? Any pointer of its window says so,
+    so a project that never enabled them shows nothing at all rather than being
+    nagged about a feature it declined."""
+    return any(p.meta is not None and p.meta.receipts is True
+               for p in view.pointers(slug))
 
-def _multihash_b64(raw: bytes) -> str:
-    digest = _MULTIHASH_SHA256 + hashlib.sha256(raw).digest()
-    return "u" + base64.urlsafe_b64encode(digest).decode().rstrip("=")
-
-def receipt_state(data_dir: Path, data: dict) -> dict:
-    """Cheap tamper check only: sidecar present and outputs_hash covers the ROOT
-    session file's bytes (<data_dir>/<session_id>.json) — a receipt is a statement
-    about a SESSION, keyed by session_id, not about whichever pointer snapshot the
-    caller happened to open. daimon writes several pointer copies during one
-    session but only binds the receipt to the final root bytes, so this is resolved
-    from session_id regardless of what path the checkpoint view is showing.
-    NOT signature verification — that is `daimon verify-receipt` and needs the vitni
-    CLI. Absence of a claim is quiet; a broken claim is loud. Never raises: a receipt
-    problem must not break the checkpoint view.
-    """
-    if not isinstance(data, dict):
-        return {"state": "unsigned", "detail": None}
-    if data.get("receipts") is not True:
-        return {"state": "unsigned", "detail": None}
-
-    sid = data.get("session_id")
-    # sid arrives from file content and is about to be joined to a path — twice.
-    if not isinstance(sid, str) or not SESSION_ID_RE.fullmatch(sid):
-        return {"state": "missing", "detail": None}
-
-    sidecar = data_dir / f"{sid}.receipt"
-    try:
-        want = json.loads(sidecar.read_text(encoding="utf-8"))["receipt"]["outputs_hash"]
-        if not isinstance(want, str):
-            raise KeyError("outputs_hash")
-    except FileNotFoundError:
-        return {"state": "missing", "detail": None}
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"state": "missing", "detail": f"{sidecar.name} is not a readable receipt"}
-    except (KeyError, TypeError):
-        # Sidecar parsed fine as JSON — it just doesn't carry outputs_hash. That is
-        # not an unreadable file, so it gets no detail claiming otherwise.
-        return {"state": "missing", "detail": None}
-
-    root = data_dir / f"{sid}.json"
-    try:
-        got = _multihash_b64(root.read_bytes())
-    except OSError:
-        return {"state": "missing", "detail": None}
-
-    return {"state": "match" if got == want else "mismatch", "detail": None}
-
-def receipts_enabled(bucket: Path) -> bool:
-    """Has this project opted into receipts? Answered from the pointer files the
-    sidebar already reads, so a project that never enabled them shows nothing at
-    all rather than being nagged about a feature it declined."""
-    for _ref, path in _pointer_files(bucket):
-        try:
-            parsed = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if isinstance(parsed, dict) and parsed.get("receipts") is True:
-            return True
-    return False
-
-# #1109 PR 2: `_content_key` below is behaviorally locked to
-# daimon_briefing.normalize.content_key by
-# test_reader_content_key_stays_in_sync_with_normalize (no daimon import
-# here, file docstring). Copied verbatim rather than approximated: a drifted subset would either leak a
-# quarantined value (a narrower fold than the ledger's own) or over-suppress
-# an unrelated one, and there is no way to tell which from this file alone.
-_INVISIBLE = (
-    "­"                  # SOFT HYPHEN
-    "͏"                  # COMBINING GRAPHEME JOINER
-    "᠋-᠍"           # MONGOLIAN FREE VARIATION SELECTOR ONE..THREE
-    "​-‏"           # ZERO WIDTH SPACE .. RIGHT-TO-LEFT MARK
-    "⁠-⁤"           # WORD JOINER .. INVISIBLE PLUS
-    "⁦-⁩"           # bidi isolates (LRI/RLI/FSI/PDI)
-    "︀-️"           # VARIATION SELECTOR-1..16
-    "﻿"                  # ZERO WIDTH NO-BREAK SPACE / BOM
-    "￼�"            # OBJECT REPLACEMENT / REPLACEMENT CHARACTER
-    "\U000e0000-\U000e007f"   # TAG block (language tag + tag chars + cancel)
-)
-_INVISIBLE_RE = re.compile("[" + _INVISIBLE + "]+")
-_WS_RE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
-_CONFUSABLES = {
-    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
-    "і": "i", "ј": "j", "һ": "h", "ԁ": "d", "ѕ": "s", "т": "t", "м": "m",
-    "ο": "o", "α": "a", "ι": "i", "ν": "v", "ρ": "p", "χ": "x", "υ": "u",
-    "κ": "k",
-}
-_CONFUSABLE_TABLE = {ord(k): v for k, v in _CONFUSABLES.items()}
-_MAX_KEY_INPUT = 4096
-_KEY_HEX_LEN = 16
-
-def _content_key(text) -> str:
-    """Bounded canonical hash key — see the module comment above; the
-    algorithm is `daimon_briefing.normalize.content_key`'s, unchanged."""
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
-    text = unicodedata.normalize("NFKC", text)
-    text = _INVISIBLE_RE.sub("", text)
-    text = _WS_RE.sub(" ", text).strip()
-    text = text.casefold()
-    text = text.translate(_CONFUSABLE_TABLE)
-    canon = text[:_MAX_KEY_INPUT]
-    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:_KEY_HEX_LEN]
-
-# Only the two tiers `trust.py`'s own CHANNEL_AUTHORITY ever assigns
-# (channels.py's shared BASE_CHANNEL_AUTHORITY, which trust.py imports
-# unchanged — trust.py adds no channel of its own): `cli-agent` is the only
-# agent-tier channel, everything else here is human. Locked to that fact by
-# test_reader_content_key_stays_in_sync_with_normalize's sibling assertion.
-_TRUST_HUMAN_CHANNELS = frozenset({"cli-tty", "ui", "signed"})
-
-def _active_quarantine_keys(bucket: Path) -> set:
-    """`(kind, value_key)` pairs under an ACTIVE human quarantine for this
-    project, folded from `trust.jsonl` directly — this module carries no
-    daimon import (file docstring), so `trust.fold`'s state machine is
-    duplicated here rather than shared, the same posture as `resolutions()`
-    above (a simplified re-fold of `events.jsonl`, not a call into
-    `store.resolutions`). Missing/unreadable trust.jsonl, or a file with no
-    active rows, is the empty set — not an error, matching `resolutions()`'s
-    own fail-open posture: a broken ledger withholds nothing here rather
-    than blanking the viewer."""
-    # Own reader on purpose: this module imports nothing from daimon_briefing.
-    try:
-        text = (bucket / "trust.jsonl").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return set()
-    records: dict = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(row, dict):
-            continue
-        tid = row.get("quarantine_id")
-        event = row.get("event")
-        if not isinstance(tid, str) or not tid:
-            continue
-        human = row.get("channel") in _TRUST_HUMAN_CHANNELS
-        if event == "quarantined":
-            current = records.get(tid)
-            # A dismissed/released record may be reopened by a fresh
-            # proposal (trust.fold's own doctrine); anything else already
-            # candidate/active is a duplicate first-writer-wins row.
-            if current is not None and current["state"] not in (
-                    "dismissed", "released"):
-                continue
-            state = "active" if (row.get("ratified") is True and human) \
-                else "candidate"
-            records[tid] = {"state": state, "kind": row.get("kind"),
-                            "value_key": row.get("value_key")}
-            continue
-        current = records.get(tid)
-        if current is None or not human:
-            continue  # orphan event, or no agent channel moves state
-        if event == "confirmed" and current["state"] == "candidate":
-            current["state"] = "active"
-        elif event == "dismissed" and current["state"] == "candidate":
-            current["state"] = "dismissed"
-        elif event == "released" and current["state"] == "active":
-            current["state"] = "released"
-    return {(rec["kind"], rec["value_key"]) for rec in records.values()
-            if rec["state"] == "active" and rec.get("kind") and rec.get("value_key")}
-
-def _pointer_files(bucket: Path):
-    if not bucket.is_dir():
-        return []
-    out = []
-    for p in bucket.iterdir():
-        ref = p.name.removesuffix(".json")
-        if p.suffix == ".json" and p.name.endswith(".json") and POINTER_RE.fullmatch(ref):
-            out.append((ref, p))
-    def order(item):
-        ref, _ = item
-        return 0 if ref == "latest" else int(ref.split("-")[1])
-    return sorted(out, key=order)
-
-def list_buckets(data_dir: Path, own: str | None) -> list[dict]:
+def list_buckets(own: str | None) -> list[dict]:
     """The sidebar: every project bucket the caller may list (`view.projects`,
     the tenant rule included), newest first, a torn pointer last with its
     fields None. `active_topic` and `item_count` are what a reader may see: a
     withheld topic is None and withheld items are not counted."""
-    with config.checkpoint_dir_override(data_dir):
-        listed = view.projects(own)
     out = [{"slug": b.slug,
             "project_name": b.name if isinstance(b.name, str) and b.name else None,
             "created": b.created if isinstance(b.created, str) else None,
             "active_topic": b.peek.topic,
             "item_count": b.peek.visible_items if b.readable else None}
-           for b in listed]
+           for b in view.projects(own)]
     out.sort(key=lambda b: b["created"] or "", reverse=True)  # "" sorts lowest, so None lands last
     return out
 
-def list_recent(data_dir: Path, slug: str) -> dict:
+def list_recent(slug: str) -> dict:
     """The sidebar window of one project: its pointers (ref, created, visible
     topic; a torn pointer keeps its entry with None fields), the number of
     session files behind them and the ledger-health notes."""
-    with config.checkpoint_dir_override(data_dir):
-        window = view.pointers(slug)
-        listing = view.sessions(slug)
+    window = view.pointers(slug)
+    listing = view.sessions(slug)
     checkpoints = []
     for p in window:
         cp = p.opened.checkpoint or {}
@@ -233,15 +49,6 @@ def list_recent(data_dir: Path, slug: str) -> dict:
             "notes": list(listing.notes)}
 
 KNOWN_FORMAT = "D-019"
-
-_SECTIONS = [  # (ui key, label, checkpoint container, checkpoint key)
-    ("decisions", "Decisions", "working_context", "recent_decisions"),
-    # container/key unused: open_loops is derived from open_questions minus external_state items (see loop below)
-    ("open_loops", "Open loops", "working_context", "open_questions"),
-    ("beliefs", "Beliefs", "epistemic_snapshot", "strong_beliefs"),
-    ("uncertainties", "Uncertainties", "epistemic_snapshot", "uncertainties"),
-    ("contradictions", "Contradictions", "epistemic_snapshot", "contradictions_flagged"),
-]
 
 def _norm_str(v):
     return v if isinstance(v, str) and v else None
@@ -322,65 +129,57 @@ def _norm_item(raw):
         "quote_provenance": _norm_provenance(raw.get("quote_provenance")),
     }
 
-def _normalize(data, quarantine: set | None = None):
-    """Turn raw checkpoint JSON into (meta, sections, partial). Shared by load_checkpoint
-    (pointer-based) and diff_checkpoints (arbitrary session files) — the seam that lets
-    diff reuse checkpoint normalization without going through the pointer chain.
 
-    #1109 PR 2: `quarantine` is `_active_quarantine_keys(bucket)`'s shape
-    (`{(kind, value_key), ...}`) — this is the ONE choke point every read
-    surface in this file goes through (load_checkpoint, diff_checkpoints,
-    item_biography via _index_items, and _walk_transitions -> project_ledger/
-    session_events/project_grid), so filtering here withholds a quarantined
-    item's text everywhere at once rather than needing a change per surface.
-    A quarantined item is dropped from its section entirely: it reads exactly
-    like an item that was never in the checkpoint, which is the withhold
-    contract this viewer can offer without a resolutions-shaped drop list of
-    its own. `text` and `quote` are both checked, matching daimon_briefing's
-    own fail-safe posture (recall.py's forgotten-value scrub checks both)."""
+# The checkpoint fields the page sections draw from. The sections themselves
+# (their keys, labels and order) are the page's; the field and its kind word
+# are `schema.ITEM_FIELDS`'s.
+_FIELD = {f.key: f for f in schema.ITEM_FIELDS}
+
+def _section(key, label, field, items):
+    return {"key": key, "label": label, "kind": field.kind, "items": items}
+
+def _items(data, field, partial):
+    block = data.get(field.section)
+    raw = block.get(field.key) if isinstance(block, dict) else None
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        partial.append(f"Section '{field.key}' has an unexpected shape and was skipped.")
+        return []
+    return [i for i in (_norm_item(r) for r in raw) if i is not None]
+
+def _normalize(data):
+    """Turn a checkpoint the view returned into (meta, sections, partial).
+    Shared by load_checkpoint (pointer-based), diff_checkpoints and the walk
+    (session files). The body is already judged: a withheld item is not in it,
+    so nothing here decides what a reader may see."""
     partial = []
     fv = data.get("format_version")
     if fv != KNOWN_FORMAT:
         partial.append(f"Checkpoint uses schema {fv or 'unknown'}; this inspector understands {KNOWN_FORMAT}. Showing what's readable.")
 
-    wc = data.get("working_context") or {}
-    es = data.get("epistemic_snapshot") or {}
-    containers = {"working_context": wc, "epistemic_snapshot": es}
-    topic = (wc.get("active_topic") or {}) if isinstance(wc.get("active_topic"), dict) else {}
+    topic_field = _FIELD["active_topic"]
+    block = data.get(topic_field.section)
+    topic = block.get(topic_field.key) if isinstance(block, dict) else None
+    topic = topic if isinstance(topic, dict) else {}
 
-    def items_for(container, key):
-        raw = containers[container].get(key)
-        if raw is None:
-            return []
-        if not isinstance(raw, list):
-            partial.append(f"Section '{key}' has an unexpected shape and was skipped.")
-            return []
-        return [i for i in (_norm_item(r) for r in raw) if i is not None]
-
-    all_questions = items_for("working_context", "open_questions")
+    asks = _FIELD["open_questions"]
+    questions = _items(data, asks, partial)
     sections = [
-        {"key": "verify_first", "label": "Verify before trusting",
-         "items": [i for i in all_questions if i["external_state"]]},
+        _section("verify_first", "Verify before trusting", asks,
+                 [i for i in questions if i["external_state"]]),
+        _section("decisions", "Decisions", _FIELD["recent_decisions"],
+                 _items(data, _FIELD["recent_decisions"], partial)),
+        _section("open_loops", "Open loops", asks,
+                 [i for i in questions if not i["external_state"]]),
+        _section("beliefs", "Beliefs", _FIELD["strong_beliefs"],
+                 _items(data, _FIELD["strong_beliefs"], partial)),
+        _section("uncertainties", "Uncertainties", _FIELD["uncertainties"],
+                 _items(data, _FIELD["uncertainties"], partial)),
+        _section("contradictions", "Contradictions",
+                 _FIELD["contradictions_flagged"],
+                 _items(data, _FIELD["contradictions_flagged"], partial)),
     ]
-    for ui_key, label, container, cp_key in _SECTIONS:
-        if ui_key == "open_loops":
-            items = [i for i in all_questions if not i["external_state"]]
-        else:
-            items = items_for(container, cp_key)
-        sections.append({"key": ui_key, "label": label, "items": items})
-
-    if quarantine:
-        for sec in sections:
-            kind = _SECTION_KIND.get(str(sec["key"]))
-            keys = {v for k, v in quarantine if k == kind} if kind else set()
-            if not keys:
-                continue
-            sec["items"] = [
-                i for i in sec["items"]
-                if _content_key(i.get("text") or "") not in keys
-                and (not i.get("quote")
-                     or _content_key(i["quote"]) not in keys)]
-
     meta = {
         "created": data.get("created"),
         "author": data.get("author"),
@@ -390,15 +189,14 @@ def _normalize(data, quarantine: set | None = None):
     }
     return meta, sections, partial
 
-def load_checkpoint(data_dir: Path, slug: str, ref: str):
+def load_checkpoint(slug: str, ref: str):
     if not POINTER_RE.fullmatch(ref or ""):
         return {"ok": False, "error": {
             "what": f"Checkpoint reference {ref!r} isn't one this inspector serves.",
             "why": "Only 'latest' and 'prev-N' pointers are served.",
             "fix": "Pick a checkpoint from the sidebar.",
         }}
-    with config.checkpoint_dir_override(data_dir):
-        window = view.pointers(slug)
+    window = view.pointers(slug)
     mine = next((p for p in window if p.ref == ref), None)
     if mine is None:
         return {"ok": False, "error": {
@@ -417,163 +215,84 @@ def load_checkpoint(data_dir: Path, slug: str, ref: str):
     meta, sections, partial = _normalize(body)
     # Has this project opted into receipts? Any pointer of the window says so.
     if any(p.meta is not None and p.meta.receipts is True for p in window):
-        meta["receipt"] = receipt_state(data_dir, body)
+        meta["receipt"] = api.receipt_state(body)
     return {"ok": True, "partial": partial, "sections": sections, "meta": meta,
             "notes": list(mine.opened.snapshot.notes())}
 
-def history(data_dir: Path, slug: str) -> dict:
+def history(slug: str) -> dict:
     """The session list of one project through the view: the file stem as the
     session id, `created`, the topic a reader may see, the count of session
     files that could not be read and the ledger-health notes."""
-    with config.checkpoint_dir_override(data_dir):
-        listing = view.sessions(slug)
+    listing = view.sessions(slug)
     return {"sessions": [{"session_id": r.session_id, "created": r.created,
                           "active_topic": r.topic} for r in listing.rows],
             "unreadable": listing.unreadable, "notes": list(listing.notes)}
 
-def project_history(data_dir: Path, slug: str):
-    sessions, unreadable = [], 0
-    if data_dir.is_dir():
-        for p in data_dir.iterdir():
-            if not p.is_file() or p.suffix != ".json":
-                continue
-            if POINTER_RE.fullmatch(p.name.removesuffix(".json")):
-                continue
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                unreadable += 1
-                continue
-            if not isinstance(data, dict) or data.get("project_slug") != slug:
-                continue
-            wc = data.get("working_context") or {}
-            topic = wc.get("active_topic") if isinstance(wc.get("active_topic"), dict) else {}
-            sessions.append({
-                "session_id": p.name.removesuffix(".json"),
-                "created": data.get("created"),
-                "active_topic": (topic or {}).get("text"),
-            })
-    sessions.sort(key=lambda s: s["created"] or "", reverse=True)
-    return {"sessions": sessions, "unreadable": unreadable}
+def _resolution_note(event, snap):
+    """The note of a resolution event as a reader may see it: a quarantined
+    value reads as its marker, as on every host, a forgotten one as absent.
+    Notes are human prose, so an unreadable trust ledger does not mask them."""
+    note = event.get("note")
+    verdict = view.prose_verdict(note, snap, closed_masks=False)
+    if verdict is None:
+        return note
+    return None if verdict.reason == "forgotten" else api.withheld_marker(verdict)
 
-def resolutions(bucket: Path) -> dict:
-    """Fold events.jsonl into last-event-per-item_ref, keeping only resolved ones.
-    Missing bucket/events.jsonl, or a file with no readable resolution events, is {} —
-    not an error. Malformed lines are skipped silently (append-log, may be torn mid-write)."""
-    # Own reader on purpose: this module imports nothing from daimon_briefing.
-    try:
-        text = (bucket / "events.jsonl").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return {}
-    folded = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(ev, dict) or ev.get("kind") != "resolution":
-            continue
-        ref = ev.get("item_ref")
-        if not ref:
-            continue
-        folded[ref] = ev
-    return {
-        ref: {"ts": ev.get("ts"), "note": ev.get("note")}
-        for ref, ev in folded.items()
-        if ev.get("status") == "resolved"
-    }
+def _activity_event_row(ev):
+    kind = ev.kind or "unknown"
+    if kind == "corroboration":
+        detail = ev.item_text or ev.note or ev.status
+    elif kind == "handoff":
+        detail = ev.note
+    else:
+        detail = ev.note or ev.item_text
+    return {"ts": ev.ts, "kind": kind, "session_id": None,
+            "item_ref": ev.item_ref, "detail": detail,
+            "extra": {"status": ev.status, "source": ev.source,
+                       "item_text": ev.item_text}}
 
-def _activity_events(bucket: Path):
-    rows = []
-    for ev in _jsonl_rows(bucket / "events.jsonl"):
-        kind = _norm_str(ev.get("kind")) or "unknown"
-        note = _norm_str(ev.get("note"))
-        item_text = _norm_str(ev.get("item_text"))
-        status = _norm_str(ev.get("status"))
-        if kind == "corroboration":
-            detail = item_text or note or status
-        elif kind == "handoff":
-            detail = note
-        else:
-            detail = note or item_text
-        rows.append({
-            "ts": _norm_str(ev.get("ts")), "kind": kind, "session_id": None,
-            "item_ref": _norm_str(ev.get("item_ref")), "detail": detail,
-            "extra": {"status": status, "source": _norm_str(ev.get("source")),
-                       "item_text": item_text},
-        })
-    return rows
+def _activity_check_row(row):
+    detail = (f"{row.check}: {row.reason}" if row.check and row.reason
+              else (row.reason or row.check))
+    return {"ts": row.ts, "kind": "quote_check", "session_id": None,
+            "item_ref": row.item_ref, "detail": detail,
+            "extra": {"check": row.check, "reason": row.reason}}
 
-def _activity_quote_checks(bucket: Path):
-    rows = []
-    for ev in _jsonl_rows(bucket / "verification.jsonl"):
-        check = _norm_str(ev.get("check"))
-        reason = _norm_str(ev.get("reason"))
-        detail = f"{check}: {reason}" if check and reason else (reason or check)
-        rows.append({
-            "ts": _norm_str(ev.get("ts")), "kind": "quote_check", "session_id": None,
-            "item_ref": _norm_str(ev.get("item_ref")), "detail": detail,
-            "extra": {"check": check, "reason": reason},
-        })
-    return rows
-
-def project_activity(data_dir: Path, slug: str) -> dict:
+def project_activity(slug: str) -> dict:
     """One chronological feed per project: session markers + events.jsonl +
-    verification.jsonl, newest -> oldest. Every row is literally on disk."""
-    hist = project_history(data_dir, slug)
-    rows = []
-    for s in hist["sessions"]:
-        topic = _norm_str(s.get("active_topic"))
-        rows.append({"ts": _norm_str(s.get("created")), "kind": "session",
-                      "session_id": s["session_id"], "item_ref": None,
-                      "detail": topic, "extra": {"topic": topic}})
-    bucket = data_dir / slug
-    rows.extend(_activity_events(bucket))
-    rows.extend(_activity_quote_checks(bucket))
+    verification.jsonl, newest -> oldest. Every row is read through the view:
+    a session's topic and an event's note, item text and status are what a
+    reader may see, and a forgotten value or the key that names it is in no
+    row."""
+    listing = view.sessions(slug)
+    rows = [{"ts": _norm_str(s.created), "kind": "session",
+             "session_id": s.session_id, "item_ref": None,
+             "detail": _norm_str(s.topic),
+             "extra": {"topic": _norm_str(s.topic)}} for s in listing.rows]
+    rows.extend(_activity_event_row(ev) for ev in view.events(slug))
+    rows.extend(_activity_check_row(v) for v in view.verifications(slug))
     rows.sort(key=lambda r: r["ts"] or "", reverse=True)
     partial = []
-    unreadable = hist.get("unreadable") or 0
-    if unreadable:
-        partial.append(f"{unreadable} session file(s) couldn't be read and are missing from the feed.")
-    return {"ok": True, "rows": rows, "partial": partial}
+    if listing.unreadable:
+        partial.append(f"{listing.unreadable} session file(s) couldn't be read and are missing from the feed.")
+    return {"ok": True, "rows": rows, "partial": partial,
+            "notes": list(listing.notes)}
 
-def _load_session(data_dir: Path, sid: str):
-    path = data_dir / f"{sid}.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None, {
-            "what": f"Session {sid} doesn't exist.",
-            "why": "No checkpoint file was found for that session.",
-            "fix": "Pick a session from the project's history.",
-        }
-    except (OSError, json.JSONDecodeError):
-        return None, {
-            "what": f"Couldn't read session {sid}.",
-            "why": "The file isn't complete JSON — possibly a partial write.",
-            "fix": "Re-run `daimon heal`, or pick another session from the history.",
-        }
-    return data, None
-
-def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
+def diff_checkpoints(slug: str, sid_a: str, sid_b: str) -> dict:
     """A=older, B=newer. sid_a/sid_b must exact-match a session id from the
     project's session list, checked before any session is opened. Both bodies
     come through the view, so a withheld item is in neither; an item that left
     and was closed by a resolution (any resolving status: `snapshot.resolved_refs`)
     is `resolved`, else `gone`."""
-    with config.checkpoint_dir_override(data_dir):
-        valid_ids = {r.session_id for r in view.sessions(slug).rows}
-        for sid in (sid_a, sid_b):
-            if sid not in valid_ids:
-                return {"ok": False, "error": {
-                    "what": f"Session {sid!r} isn't part of {slug}'s history.",
-                    "why": "The session id doesn't match any recorded checkpoint.",
-                    "fix": "Pick a session from the project's history list.",
-                }}
-        opened = view.open_sessions(slug, (sid_a, sid_b), live=False)
+    valid_ids = {r.session_id for r in view.sessions(slug).rows}
+    for sid in (sid_a, sid_b):
+        if sid not in valid_ids:
+            return {"ok": False, "error": {
+                "what": f"Session {sid!r} isn't part of {slug}'s history.",
+                "why": "The session id doesn't match any recorded checkpoint.",
+                "fix": "Pick a session from the project's history list.",
+            }}
+    opened = view.open_sessions(slug, (sid_a, sid_b), live=False)
     for sid in (sid_a, sid_b):
         if sid not in opened:
             return {"ok": False, "error": {
@@ -606,14 +325,8 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         item = map_a[iid]
         if iid in snap.resolved_refs:
             ev = snap.resolutions[iid]
-            note = ev.get("note")
-            verdict = view.prose_verdict(note, snap, closed_masks=False)
-            if verdict is not None:
-                # a quarantined value reads as its marker, as on every host;
-                # a forgotten one reads as absent
-                note = (None if verdict.reason == "forgotten"
-                        else api.withheld_marker(verdict))
-            resolved.append({"item": item, "note": note, "ts": ev.get("ts")})
+            resolved.append({"item": item, "note": _resolution_note(ev, snap),
+                             "ts": ev.get("ts")})
         else:
             gone.append(item)
 
@@ -644,7 +357,18 @@ def diff_checkpoints(data_dir: Path, slug: str, sid_a: str, sid_b: str) -> dict:
         "partial": partial, "notes": list(snap.notes()),
     }
 
-def _walk_transitions(data_dir: Path, slug: str):
+def _open_all(slug: str):
+    """`(listing, opened, snap)`: the project's session listing, every listed
+    session through the view (`{session_id: Opened}`, one snapshot) and that
+    snapshot. A listed session that vanished before it was opened is absent."""
+    listing = view.sessions(slug)
+    opened = view.open_sessions(
+        slug, [r.session_id for r in listing.rows], live=False)
+    snap = (next(iter(opened.values())).snapshot if opened
+            else view.snapshot(slug))
+    return listing, opened, snap
+
+def _walk_transitions(slug: str):
     """Pairwise walk over every session, oldest -> newest, emitting one event per
     recorded transition: first_seen (item appears), changed (a tracked field
     differs from the previous sighting), last_seen (item present before, absent
@@ -655,28 +379,29 @@ def _walk_transitions(data_dir: Path, slug: str):
     session — the strip draws marks with the class of the time, not today's.
     Shared by project_ledger, session_events and project_grid so the
     surfaces can never disagree about what happened."""
-    hist = project_history(data_dir, slug)
-    quarantine = _active_quarantine_keys(data_dir / slug)
-    events, latest_item, last_sight = [], {}, {}
+    listing, opened, snap = _open_all(slug)
+    events: list[dict] = []
+    latest_item: dict[str, dict] = {}
+    last_sight: dict[str, object] = {}
     prev_ids, gone = None, set()
-    for s in reversed(hist["sessions"]):  # oldest -> newest
-        data, err = _load_session(data_dir, s["session_id"])
-        if err:
-            continue  # torn/missing session file: skip, don't abort the whole walk
-        _, sections, _ = _normalize(data, quarantine)
+    for s in reversed(listing.rows):  # oldest -> newest
+        op = opened.get(s.session_id)
+        if op is None:
+            continue  # vanished between listing and opening: skip, don't abort the walk
+        _, sections, _ = _normalize(op.checkpoint)
         cur = _index_items(sections)
         for iid, item in cur.items():
             if iid not in latest_item or iid in gone:
                 gone.discard(iid)
-                events.append({"item_id": iid, "kind": "first_seen", "ts": s["created"],
-                               "session_id": s["session_id"], "detail": None,
+                events.append({"item_id": iid, "kind": "first_seen", "ts": s.created,
+                               "session_id": s.session_id, "detail": None,
                                "trust": item.get("trust")})
             else:
                 changed = [f for f in _BIO_TRACKED_FIELDS
                            if item.get(f) != latest_item[iid].get(f)]
                 if changed:
-                    events.append({"item_id": iid, "kind": "changed", "ts": s["created"],
-                                   "session_id": s["session_id"],
+                    events.append({"item_id": iid, "kind": "changed", "ts": s.created,
+                                   "session_id": s.session_id,
                                    "detail": ", ".join(changed),
                                    "trust": item.get("trust")})
             latest_item[iid] = item
@@ -685,106 +410,109 @@ def _walk_transitions(data_dir: Path, slug: str):
                 gone.add(iid)
                 events.append({"item_id": iid, "kind": "last_seen",
                                "ts": last_sight.get(iid),
-                               "session_id": s["session_id"], "detail": None,
+                               "session_id": s.session_id, "detail": None,
                                "trust": latest_item[iid].get("trust")})
         for iid in cur:
-            last_sight[iid] = s["created"]
+            last_sight[iid] = s.created
         prev_ids = set(cur)
-    return {"events": events, "items": latest_item, "unreadable": hist["unreadable"]}
+    return {"events": events, "items": latest_item,
+            "unreadable": listing.unreadable, "sessions": listing.rows,
+            "opened": opened, "snap": snap, "notes": list(snap.notes())}
 
 # Row order inside a ledger group and a session page: births, then changes,
 # then departures — the order the header counts read in — id-tiebroken so the
 # output never depends on dict insertion.
 _TRANSITION_ORDER = {"first_seen": 0, "changed": 1, "last_seen": 2}
 
-# Viewer section key -> the kind word recall already prints (schema.ITEM_FIELDS
-# vocabulary: question/decision/belief/uncertainty/contradiction). The ledger's
-# chip must say exactly what a recall row for the same item says — two surfaces,
-# one vocabulary. verify_first and open_loops are both slices of open_questions.
-_SECTION_KIND = {"verify_first": "question", "open_loops": "question",
-                 "decisions": "decision", "beliefs": "belief",
-                 "uncertainties": "uncertainty", "contradictions": "contradiction"}
-
 def _ledger_partial(unreadable):
     if not unreadable:
         return []
     return [f"{unreadable} session file(s) couldn't be read and are missing from the ledger."]
 
-def project_ledger(data_dir: Path, slug: str) -> dict:
+def project_ledger(slug: str) -> dict:
     """The ledger screen: one row per object, grouped under the session of its
     latest recorded transition. A later resolution or quote check (own ts, no
     session attribution in their ledgers) can overtake the LAST EVENT field,
     but never moves the row to another group — the viewer must not invent the
-    attribution the stored rows don't carry."""
-    walk = _walk_transitions(data_dir, slug)
-    hist_sessions = project_history(data_dir, slug)["sessions"]  # newest -> oldest
+    attribution the stored rows don't carry. Resolutions are the kernel fold
+    (`snapshot.resolved_refs`), the same rule `daimon diff` applies."""
+    walk = _walk_transitions(slug)
+    snap = walk["snap"]
+    hist_sessions = walk["sessions"]  # newest -> oldest
     head = None
     if hist_sessions:
-        head = {"session_id": hist_sessions[0]["session_id"],
-                "created": hist_sessions[0]["created"]}
+        head = {"session_id": hist_sessions[0].session_id,
+                "created": hist_sessions[0].created}
 
-    bucket = data_dir / slug
-    res_fold = resolutions(bucket)
-    ver_rows = _jsonl_rows(bucket / "verification.jsonl")
+    ver_rows = view.verifications(slug)
+    latest_check: dict[str, str] = {}
+    for row in ver_rows:
+        if row.item_ref and (row.ts or "") > latest_check.get(row.item_ref, ""):
+            latest_check[row.item_ref] = row.ts or ""
 
     latest_tr = {}
     for ev in walk["events"]:  # emitted oldest -> newest, so last write wins
         latest_tr[ev["item_id"]] = ev
 
-    by_sid = {}
+    by_sid: dict[str, dict] = {}
     for iid, tr in latest_tr.items():
         last_event = {"kind": tr["kind"], "ts": tr["ts"]}
-        res = res_fold.get(iid)
-        if res and (res.get("ts") or "") > (last_event["ts"] or ""):
-            last_event = {"kind": "resolved", "ts": res.get("ts")}
-        for row in ver_rows:
-            if row.get("item_ref") == iid and (row.get("ts") or "") > (last_event["ts"] or ""):
-                last_event = {"kind": "quote_check", "ts": row.get("ts")}
+        if iid in snap.resolved_refs:
+            res_ts = snap.resolutions[iid].get("ts")
+            if (res_ts or "") > (last_event["ts"] or ""):
+                last_event = {"kind": "resolved", "ts": res_ts}
+        if latest_check.get(iid, "") > (last_event["ts"] or ""):
+            last_event = {"kind": "quote_check", "ts": latest_check[iid]}
         item = walk["items"][iid]
         entry = by_sid.setdefault(tr["session_id"], {
             "counts": {"first_seen": 0, "changed": 0, "last_seen": 0}, "rows": []})
         entry["counts"][tr["kind"]] += 1
         entry["rows"].append({"id": iid, "text": item.get("text"),
                               "trust": item.get("trust"),
-                              "kind": _SECTION_KIND.get(item.get("section")),
+                              "kind": item.get("kind"),
                               "transition": tr["kind"], "last_event": last_event})
 
     groups = []
     for s in hist_sessions:  # newest first, only sessions that kept rows
-        entry = by_sid.get(s["session_id"])
-        if entry is None:
+        kept = by_sid.get(s.session_id)
+        if kept is None:
             continue
-        entry["rows"].sort(key=lambda r: (_TRANSITION_ORDER[r["transition"]], r["id"]))
-        groups.append({"session_id": s["session_id"], "created": s["created"],
-                       "active_topic": s.get("active_topic"),
-                       "counts": entry["counts"], "rows": entry["rows"]})
+        kept["rows"].sort(key=lambda r: (_TRANSITION_ORDER[r["transition"]], r["id"]))
+        groups.append({"session_id": s.session_id, "created": s.created,
+                       "active_topic": s.topic,
+                       "counts": kept["counts"], "rows": kept["rows"]})
 
     return {"ok": True, "groups": groups, "head": head,
             "totals": {"objects": len(walk["items"]),
-                       "events": len(walk["events"]) + len(res_fold) + len(ver_rows)},
-            "partial": _ledger_partial(walk["unreadable"])}
+                       "events": (len(walk["events"]) + len(snap.resolved_refs)
+                                  + len(ver_rows))},
+            "partial": _ledger_partial(walk["unreadable"]),
+            "notes": walk["notes"]}
 
-def session_events(data_dir: Path, slug: str, sid: str) -> dict:
+def session_events(slug: str, sid: str) -> dict:
     """The session page: every transition the named session wrote, grouped by
-    object. sid must exact-match a session_id from project_history before any
-    path is built, same discipline as diff_checkpoints. Resolutions and quote
-    checks are deliberately absent: their ledgers record no session, and this
-    page must not claim them for one."""
-    valid_ids = {s["session_id"] for s in project_history(data_dir, slug)["sessions"]}
-    if sid not in valid_ids:
+    object. sid must exact-match a session_id from the session listing before
+    anything is opened, same discipline as diff_checkpoints. Resolutions and
+    quote checks are deliberately absent: their ledgers record no session, and
+    this page must not claim them for one."""
+    walk = _walk_transitions(slug)
+    if sid not in {s.session_id for s in walk["sessions"]}:
         return {"ok": False, "error": {
             "what": f"Session {sid!r} isn't part of {slug}'s history.",
             "why": "The session id doesn't match any recorded checkpoint.",
             "fix": "Pick a session from the ledger's session list.",
         }}
-    data, err = _load_session(data_dir, sid)
-    if err:
-        return {"ok": False, "error": err}
-
-    walk = _walk_transitions(data_dir, slug)
+    opened = walk["opened"].get(sid)
+    if opened is None:
+        return {"ok": False, "error": {
+            "what": f"Session {sid} doesn't exist.",
+            "why": "No checkpoint file was found for that session.",
+            "fix": "Pick a session from the project's history.",
+        }}
+    data = opened.checkpoint
     mine = [ev for ev in walk["events"] if ev["session_id"] == sid]
 
-    by_item = {}
+    by_item: dict[str, dict] = {}
     counts = {"first_seen": 0, "changed": 0, "last_seen": 0}
     for ev in mine:
         counts[ev["kind"]] += 1
@@ -792,7 +520,7 @@ def session_events(data_dir: Path, slug: str, sid: str) -> dict:
         obj = by_item.setdefault(ev["item_id"], {
             "id": ev["item_id"], "text": item.get("text"),
             "trust": item.get("trust"),
-            "kind": _SECTION_KIND.get(item.get("section")), "events": [],
+            "kind": item.get("kind"), "events": [],
             # The print view's provenance line: the stored quote's PRESENCE
             # and origin, never the quote text — this payload leaves the
             # machine for a render layer, and presence answers the question.
@@ -803,16 +531,15 @@ def session_events(data_dir: Path, slug: str, sid: str) -> dict:
     objects = sorted(by_item.values(), key=lambda o: (
         _TRANSITION_ORDER[o["events"][0]["kind"]], o["id"]))
 
-    wc = data.get("working_context") or {}
-    topic = wc.get("active_topic") if isinstance(wc.get("active_topic"), dict) else {}
-    session = {"session_id": sid, "created": data.get("created"),
-               "author": data.get("author"),
-               "active_topic": (topic or {}).get("text")}
-    if receipts_enabled(data_dir / slug):
-        session["receipt"] = receipt_state(data_dir, data)
+    meta, _sections, _partial = _normalize(data)
+    session = {"session_id": sid, "created": meta["created"],
+               "author": meta["author"], "active_topic": meta["active_topic"]}
+    if _receipts_gate(slug):
+        session["receipt"] = api.receipt_state(data)
 
     return {"ok": True, "session": session, "objects": objects, "counts": counts,
-            "partial": _ledger_partial(walk["unreadable"])}
+            "partial": _ledger_partial(walk["unreadable"]),
+            "notes": walk["notes"]}
 
 def _bad_item_id_error(item_id):
     return {"ok": False, "error": {
@@ -821,77 +548,54 @@ def _bad_item_id_error(item_id):
         "fix": "Open the History diff to find current item ids.",
     }}
 
-def _unknown_item_id_error(item_id):
+def _unknown_item_id_error(item_id, notes):
+    why = "The id doesn't match any item across the scanned sessions."
     return {"ok": False, "error": {
         "what": f"No item with id {item_id!r} was found in this project's history.",
-        "why": "The id doesn't match any item across the scanned sessions.",
+        "why": " ".join([why, *notes]),
         "fix": "Open the History diff to find current item ids.",
     }}
 
 def _index_items(sections):
-    """id -> normalized item + section, same shape as diff_checkpoints' index()."""
+    """id -> normalized item + section and kind, same shape as
+    diff_checkpoints' index()."""
     by_id = {}
     for sec in sections:
         for item in sec["items"]:
             iid = item.get("id")
             if iid:
-                by_id[iid] = dict(item, section=sec["key"])
+                by_id[iid] = dict(item, section=sec["key"], kind=sec["kind"])
     return by_id
 
 _BIO_TRACKED_FIELDS = ("trust", "quote_verified", "text")
 
-def _jsonl_rows(path: Path):
-    """Defensive line-by-line jsonl parse: torn/non-dict lines skipped,
-    missing/unreadable file -> []. Shared by verification + activity readers."""
-    # Own reader on purpose: this module imports nothing from daimon_briefing.
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-    rows = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(ev, dict):
-            rows.append(ev)
-    return rows
-
-def _verification_rows(bucket: Path, item_id: str):
-    return [ev for ev in _jsonl_rows(bucket / "verification.jsonl")
-            if ev.get("item_ref") == item_id]
-
-def _verification_events(bucket: Path, item_id: str):
+def _verification_events(rows):
     out = []
-    for ev in _verification_rows(bucket, item_id):
-        check, reason = ev.get("check"), ev.get("reason")
-        detail = f"{check}: {reason}" if check and reason else (reason or check)
+    for row in rows:
+        detail = (f"{row.check}: {row.reason}" if row.check and row.reason
+                  else (row.reason or row.check))
         out.append({"kind": "verified", "session_id": None,
-                    "ts_or_created": ev.get("ts"), "detail": detail})
+                    "ts_or_created": row.ts, "detail": detail})
     return out
 
-def item_biography(data_dir: Path, slug: str, item_id: str) -> dict:
+def item_biography(slug: str, item_id: str) -> dict:
     """Walk a single item's life across a project's session history, oldest -> newest,
-    merging in verification.jsonl and events.jsonl (resolution) rows from the bucket."""
+    merging in verification.jsonl and events.jsonl (resolution) rows through the view."""
     if not ITEM_ID_RE.fullmatch(item_id or ""):
         return _bad_item_id_error(item_id)
 
-    sessions = list(reversed(project_history(data_dir, slug)["sessions"]))  # oldest -> newest
-    quarantine = _active_quarantine_keys(data_dir / slug)
+    listing, opened, snap = _open_all(slug)
+    notes = list(snap.notes())
 
     events, chain, last_item, prev_sighting = [], [], None, None
     scanned_count = 0
     oldest_has_item = False
 
-    for s in sessions:
-        data, err = _load_session(data_dir, s["session_id"])
-        if err:
-            continue  # torn/missing session file: skip, don't abort the whole walk
-        _, sections, _ = _normalize(data, quarantine)
+    for s in reversed(listing.rows):  # oldest -> newest
+        op = opened.get(s.session_id)
+        if op is None:
+            continue  # vanished between listing and opening: skip, don't abort the walk
+        _, sections, _ = _normalize(op.checkpoint)
         is_first_scanned = scanned_count == 0
         scanned_count += 1
 
@@ -899,71 +603,67 @@ def item_biography(data_dir: Path, slug: str, item_id: str) -> dict:
         if item is None:
             continue
 
-        created = s["created"]
+        created = s.created
         if prev_sighting is None:
             if is_first_scanned:
                 oldest_has_item = True
-            events.append({"kind": "born", "session_id": s["session_id"],
+            events.append({"kind": "born", "session_id": s.session_id,
                             "ts_or_created": created, "detail": item.get("quote")})
-            chain.append({"session_id": s["session_id"], "created": created, "changed": []})
+            chain.append({"session_id": s.session_id, "created": created, "changed": []})
         else:
             changed_fields = [f for f in _BIO_TRACKED_FIELDS if item.get(f) != prev_sighting.get(f)]
             if changed_fields:
-                events.append({"kind": "changed", "session_id": s["session_id"],
+                events.append({"kind": "changed", "session_id": s.session_id,
                                 "ts_or_created": created, "detail": ", ".join(changed_fields)})
             else:
-                events.append({"kind": "seen", "session_id": s["session_id"],
+                events.append({"kind": "seen", "session_id": s.session_id,
                                 "ts_or_created": created, "detail": None})
-            chain.append({"session_id": s["session_id"], "created": created,
+            chain.append({"session_id": s.session_id, "created": created,
                            "changed": changed_fields})
         prev_sighting = item
         last_item = item
 
     if last_item is None:
-        return _unknown_item_id_error(item_id)
+        return _unknown_item_id_error(item_id, notes)
 
-    bucket = data_dir / slug
-    events.extend(_verification_events(bucket, item_id))
+    rows = [v for v in view.verifications(slug) if v.item_ref == item_id]
+    events.extend(_verification_events(rows))
 
-    res = resolutions(bucket).get(item_id)
-    if res:
+    if item_id in snap.resolved_refs:
+        res = snap.resolutions[item_id]
         events.append({"kind": "resolved", "session_id": None,
-                        "ts_or_created": res.get("ts"), "detail": res.get("note")})
+                        "ts_or_created": res.get("ts"),
+                        "detail": _resolution_note(res, snap)})
 
     events.sort(key=lambda e: e["ts_or_created"] or "")
 
-    rows = _verification_rows(bucket, item_id)
-    failures = [r for r in rows if r.get("reason")]
-    # origin_session is untrusted checkpoint content -- a value like "../../x" would turn
-    # origin_on_disk into an existence oracle over arbitrary .json paths, so it must match
-    # a conservative session-id shape before it's used in path construction. chain[0]'s
-    # session_id comes from actual scanned filenames and is already safe, but it's run
-    # through the same guard for uniformity.
+    failures = [r for r in rows if r.reason]
+    # origin_session is untrusted checkpoint content; it only ever answers "is
+    # that one of this project's listed sessions", never a path.
     origin_sid = last_item.get("origin_session") or chain[0]["session_id"]
-    origin_sid_safe = origin_sid if SESSION_ID_RE.fullmatch(origin_sid or "") else None
     anatomy = {
         "stored": {k: last_item.get(k) for k in
                    ("trust", "quote", "quote_verified", "last_verified", "origin_session")},
         "receipt": last_item.get("quote_provenance"),
         "chain": chain,
         "checks": {
-            "origin_on_disk": bool(
-                origin_sid_safe and (data_dir / f"{origin_sid_safe}.json").exists()),
+            "origin_on_disk": origin_sid in {r.session_id for r in listing.rows},
             "quote_check_failures": len(failures),
-            "last_check_ts": max((r.get("ts") for r in failures if r.get("ts")), default=None),
+            "last_check_ts": max((r.ts for r in failures if r.ts), default=None),
         },
     }
 
     window_note = "history starts here — earlier sessions may have been cleaned up" if oldest_has_item else None
     return {"ok": True, "item": last_item, "events": events,
-            "window_note": window_note, "trust_anatomy": anatomy}
+            "window_note": window_note, "trust_anatomy": anatomy,
+            "notes": notes}
 
 # The strip renders a window, never a silent cap: what lies beyond each edge
 # is named in partial. Six columns is the frozen reference's width.
 GRID_COLUMNS = 6
 GRID_ROWS = 30
 
-def project_grid(data_dir: Path, slug: str) -> dict:
+def project_grid(slug: str) -> dict:
     """The check strip: object × checkpoint lanes over the shared walk.
     Sightings land in the column of the session that wrote them, with the
     trust class of that time. A departure marks the transition session —
@@ -972,16 +672,17 @@ def project_grid(data_dir: Path, slug: str) -> dict:
     by ts into the earliest window column whose created stamp is >= its ts
     (later than head folds into head), and the row keeps the exact ts so
     the hover states when, not who."""
-    walk = _walk_transitions(data_dir, slug)
-    hist = project_history(data_dir, slug)["sessions"]  # newest -> oldest
+    walk = _walk_transitions(slug)
+    hist = walk["sessions"]                             # newest -> oldest
     window = list(reversed(hist[:GRID_COLUMNS]))        # oldest -> newest
     older_columns = max(0, len(hist) - len(window))
-    columns = [{"session_id": s["session_id"], "created": s["created"],
+    columns = [{"session_id": s.session_id, "created": s.created,
                 "is_head": i == len(window) - 1}
                for i, s in enumerate(window)]
     window_ids = {c["session_id"] for c in columns}
 
-    by_item, latest_ts = {}, {}
+    by_item: dict[str, dict] = {}
+    latest_ts: dict[str, str] = {}
     for ev in walk["events"]:  # oldest -> newest
         iid = ev["item_id"]
         latest_ts[iid] = ev["ts"] or latest_ts.get(iid) or ""
@@ -996,12 +697,12 @@ def project_grid(data_dir: Path, slug: str) -> dict:
     checks_before_window = 0
     # No columns means no sessions, so nothing can anchor a check row —
     # walk["items"] is empty too and the guard below would skip every row.
-    ver_rows = _jsonl_rows(data_dir / slug / "verification.jsonl") if columns else []
+    ver_rows = view.verifications(slug) if columns else ()
     for row in ver_rows:
-        iid = row.get("item_ref")
-        if iid not in walk["items"]:
+        iid = row.item_ref
+        if iid is None or iid not in walk["items"]:
             continue
-        ts = _norm_str(row.get("ts")) or ""
+        ts = row.ts or ""
         if ts and ts <= (columns[0]["created"] or "") and older_columns:
             checks_before_window += 1
             continue
@@ -1011,9 +712,9 @@ def project_grid(data_dir: Path, slug: str) -> dict:
                 column = c["session_id"]
                 break
         entry = by_item.setdefault(iid, {"cells": {}, "checks": [], "gone_after": None})
-        check, reason = _norm_str(row.get("check")), _norm_str(row.get("reason"))
-        detail = f"{check}: {reason}" if check and reason else (reason or check)
-        entry["checks"].append({"column": column, "ts": row.get("ts"), "detail": detail})
+        detail = (f"{row.check}: {row.reason}" if row.check and row.reason
+                  else (row.reason or row.check))
+        entry["checks"].append({"column": column, "ts": row.ts, "detail": detail})
         latest_ts[iid] = max(latest_ts.get(iid) or "", ts)
 
     ordered = sorted(by_item, key=lambda iid: (latest_ts.get(iid) or "", iid), reverse=True)
@@ -1023,7 +724,7 @@ def project_grid(data_dir: Path, slug: str) -> dict:
         item = walk["items"].get(iid) or {}
         entry = by_item[iid]
         rows.append({"id": iid, "text": item.get("text"), "trust": item.get("trust"),
-                     "kind": _SECTION_KIND.get(item.get("section")),
+                     "kind": item.get("kind"),
                      "cells": entry["cells"], "checks": entry["checks"],
                      "gone_after": entry["gone_after"]})
 
@@ -1036,4 +737,5 @@ def project_grid(data_dir: Path, slug: str) -> dict:
         partial.append(f"{checks_before_window} quote check(s) predate this window.")
 
     return {"ok": True, "columns": columns, "rows": rows,
-            "older_columns": older_columns, "partial": partial}
+            "older_columns": older_columns, "partial": partial,
+            "notes": walk["notes"]}

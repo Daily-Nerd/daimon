@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from daimon_ui import reader
+from tests.ui.scope import scoped
 from tests.ui.conftest import make_checkpoint
 
 BENCH_ID = "o-beeecc0beeecc0"
@@ -39,7 +39,7 @@ def test_flat_scan_cost_60_sessions_with_cross_project_noise(tmp_path):
         (d / f"noise-{i:04d}.json").write_text(json.dumps(cp))
 
     t0 = time.perf_counter()
-    got = reader.item_biography(d, slug, BENCH_ID)
+    got = scoped(d).item_biography(slug, BENCH_ID)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     assert got["ok"] is True

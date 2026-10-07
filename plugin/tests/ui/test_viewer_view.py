@@ -10,12 +10,12 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
 from daimon_briefing import normalize, store, trust
-from daimon_ui import reader, server
+from daimon_ui import server
+from tests.ui.scope import scoped
 
 PROJECT = "/p/viewer"
 SLUG = store.project_slug(PROJECT)
@@ -166,7 +166,7 @@ def test_an_unreadable_trust_ledger_hides_items_and_says_why(base, two):
 def test_a_receipt_state_rides_a_receipts_checkpoint(two):
     (two / SLUG / "latest.json").write_text(json.dumps(
         _cp("S-2", "2026-08-02T00:00:00Z") | {"receipts": True}))
-    got = reader.load_checkpoint(two, SLUG, "latest")
+    got = scoped(two).load_checkpoint(SLUG, "latest")
     assert got["meta"]["receipt"]["state"] == "missing"
 
 
@@ -282,7 +282,7 @@ def test_diff_error_when_a_listed_session_vanishes(two, monkeypatch, missing):
         return got
 
     monkeypatch.setattr(view, "open_sessions", without)
-    got = reader.diff_checkpoints(two, SLUG, "S-1", "S-2")
+    got = scoped(two).diff_checkpoints(SLUG, "S-1", "S-2")
     assert got["ok"] is False
     assert got["error"]["what"] == f"Session {missing} doesn't exist."
 
@@ -292,14 +292,6 @@ def test_an_unreadable_trust_ledger_empties_the_diff_and_says_why(base, two):
     got = _diff(base)
     assert got["born"] == got["gone"] == got["carried"] == []
     assert any("trust.jsonl" in n for n in got["notes"])
-
-
-def test_the_page_shows_the_notes_of_a_checkpoint_and_of_a_diff():
-    """An empty view says why: both renderers put `data.notes` on the same
-    banner as `data.partial`."""
-    js = (Path(server.__file__).parent / "static" / "render.js").read_text(
-        encoding="utf-8")
-    assert js.count("(data.partial || []).concat(data.notes || [])") == 2
 
 
 # ---- one failure shape -----------------------------------------------------

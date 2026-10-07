@@ -135,7 +135,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/cli/trust.py": "read",  # trust verbs
     "daimon_ui/__init__.py": "entry",  # package marker
     "daimon_ui/__main__.py": "entry",  # viewer entry point
-    "daimon_ui/reader.py": "read",  # viewer reads; the pointer, session and project routes go through the view, the activity, ledger, grid, session and biography folds still read files (PR 8b-2)
+    "daimon_ui/reader.py": "entry",  # viewer reads: every route answers through the view, no bucket reads
     "daimon_ui/server.py": "entry",  # viewer HTTP server: routes, no bucket reads
 }
 
@@ -205,14 +205,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "probe bookkeeping reads a stored checkpoint",
     ("daimon_briefing/worldcheck.py", "_verify_probe", "json.loads"):
         "output of the verifier subprocess, not a bucket path",
-    ("daimon_ui/reader.py", "_load_session", "json.loads"):
-        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
-    ("daimon_ui/reader.py", "project_history", "json.loads"):
-        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
-    ("daimon_ui/reader.py", "receipt_state", "json.loads"):
-        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
-    ("daimon_ui/reader.py", "receipts_enabled", "json.loads"):
-        "viewer file seam of the activity, ledger, grid, session and biography folds; converted in PR 8b-2",
 }
 
 
@@ -389,6 +381,13 @@ def test_the_viewer_reader_imports_only_the_view_side():
     assert imported, "the scan found no daimon_briefing import: it is vacuous"
     assert imported <= VIEWER_READER_MAY_IMPORT, sorted(
         imported - VIEWER_READER_MAY_IMPORT)
+
+
+def test_the_viewer_reader_has_no_raw_read_site():
+    """Every viewer read goes through the view: the reader is an `entry`
+    module with no allowlisted raw read."""
+    assert LAYER["daimon_ui/reader.py"] == "entry"
+    assert [k for k in RAW_READ_SITES if k[0] == "daimon_ui/reader.py"] == []
 
 
 def test_the_import_scan_sees_every_spelling():

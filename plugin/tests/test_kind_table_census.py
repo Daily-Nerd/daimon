@@ -42,10 +42,6 @@ ALLOWLIST = {
         "rebuilds a checkpoint shape from a Selection (inverse of build)",
     ("render.py", "_SECTIONS"): "titles and colours per section (labels)",
     ("scoring.py", "TYPE_RULES"): "decay parameters keyed by scoring type",
-    ("reader.py", "_SECTIONS"):
-        "viewer labels and the open_loops split; pinned by the drift test",
-    ("reader.py", "_SECTION_KIND"):
-        "viewer section -> kind word; pinned by the drift test",
 }
 
 
