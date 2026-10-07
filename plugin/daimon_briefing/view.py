@@ -97,22 +97,28 @@ class Snapshot:
                          if store.is_resolved(evt))
 
     @cached_property
-    def fuzzy_pool(self) -> tuple[str, ...]:
-        """Item texts of resolved refs that are NOT id-shaped (legacy, before
-        id stamping). An id-bearing resolution is fully handled by the exact
-        id branch, so its text stays out of the fuzzy pool (#145): otherwise
-        a live id-less item that merely resembles a closed loop would be
-        silently suppressed."""
+    def fuzzy_events(self) -> tuple:
+        """`(item text, event)` of resolved refs that are NOT id-shaped
+        (legacy, before id stamping). An id-bearing resolution is fully
+        handled by the exact id branch, so its text stays out of the fuzzy
+        pool (#145): otherwise a live id-less item that merely resembles a
+        closed loop would be silently suppressed."""
         from . import briefing
         shape = briefing._CANDIDATE_ID_SHAPE
-        texts = []
+        out = []
         for ref in self.resolved_refs:
             if shape.fullmatch(str(ref)):
                 continue
-            text = str(self.resolutions[ref].get("item_text") or "").strip()
+            evt = self.resolutions[ref]
+            text = str(evt.get("item_text") or "").strip()
             if text:
-                texts.append(text)
-        return tuple(texts)
+                out.append((text, evt))
+        return tuple(out)
+
+    @cached_property
+    def fuzzy_pool(self) -> tuple[str, ...]:
+        """The texts of `fuzzy_events`."""
+        return tuple(text for text, _evt in self.fuzzy_events)
 
 
 @dataclass(frozen=True)
@@ -290,35 +296,62 @@ def classify(field: schema.ItemField, item, snap: Snapshot) -> Visible | Withhel
     return Visible(item)
 
 
-def live(item, snap: Snapshot) -> bool:
-    """Is this loop still open? An id-bearing item binds to a resolution by
-    its own id or not at all (it never takes the fuzzy path, even on an exact
-    text coincidence). An id-less (legacy) item is closed when its text is
-    the same item as a resolved, non-id-shaped ref's recorded text."""
+def closing_event(item, snap: Snapshot):
+    """The resolution event that closes this loop, or None when it is open.
+    An id-bearing item binds to a resolution by its own id or not at all (it
+    never takes the fuzzy path, even on an exact text coincidence). An
+    id-less (legacy) item is closed when its text is the same item as a
+    resolved, non-id-shaped ref's recorded text."""
     if not isinstance(item, dict):
-        return True
+        return None
     if item.get("id"):
-        return item["id"] not in snap.resolved_refs
+        if item["id"] in snap.resolved_refs:
+            return snap.resolutions[item["id"]]
+        return None
     text = str(item.get("text") or "").strip()
-    pool = snap.fuzzy_pool
+    pool = snap.fuzzy_events
     if not text or not pool:
-        return True
-    generic = carry._generic_terms(list(pool) + [text])
-    return not any(carry._same_item(text, cand, generic) for cand in pool)
+        return None
+    generic = carry._generic_terms([t for t, _e in pool] + [text])
+    for cand_text, evt in pool:
+        if carry._same_item(text, cand_text, generic):
+            return evt
+    return None
+
+
+def live(item, snap: Snapshot) -> bool:
+    """Is this loop still open? See `closing_event`."""
+    return closing_event(item, snap) is None
+
+
+def prose_verdict(text, snap: Snapshot, *,
+                  closed_masks: bool = True) -> Withheld | None:
+    """The `Withheld` for free text taken whole, or None when it may be shown.
+    The canonical value of the whole string is matched against the forgotten
+    set and any quarantine, whatever its kind. A closed snapshot withholds all
+    prose unless `closed_masks` is False: a caller whose prose is
+    human-ratified policy (the standing rulings) keeps showing it when the
+    trust ledger is unreadable, and still masks what is provably forgotten or
+    quarantined. The result names a reason and a record, never the value."""
+    stripped = str(text or "").strip()
+    if snap.closed and closed_masks:
+        return Withheld(None, "prose", "closed", None, "")
+    if not stripped:
+        return None
+    key = normalize.content_key(stripped)
+    if key in snap.forgotten:
+        return Withheld(None, "prose", "forgotten", None, key)
+    for kind, value_key in snap.quarantined:
+        if key == value_key:
+            return Withheld(None, "prose", "quarantine",
+                            snap.quarantine_ids.get((kind, value_key)), key)
+    return None
 
 
 def prose_withheld(text, snap: Snapshot) -> bool:
-    """Would this free text, taken whole, be a withheld value? Matches the
-    canonical value of the whole string against the forgotten set and any
-    quarantine, whatever its kind; a closed snapshot withholds all prose."""
-    if snap.closed:
-        return True
-    stripped = str(text or "").strip()
-    if not stripped:
-        return False
-    key = normalize.content_key(stripped)
-    return (key in snap.forgotten
-            or any(key == value_key for _kind, value_key in snap.quarantined))
+    """Would this free text, taken whole, be a withheld value? A closed
+    snapshot withholds all prose."""
+    return prose_verdict(text, snap) is not None
 
 
 # ---- projections ----------------------------------------------------------

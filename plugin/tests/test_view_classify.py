@@ -288,3 +288,52 @@ def test_live_agrees_with_the_frozen_oracle():
     assert set(golden) == set(cases)
     for key, (item, events) in cases.items():
         assert view.live(item, _res(**events)) is golden[key], key
+
+
+# ---- closing_event and prose_verdict (PR 7a) -------------------------------
+
+
+def test_closing_event_names_the_event_that_closed_an_id_bearing_item():
+    evt = _evt("o-aaa")
+    snap = _res(**{"o-aaa": evt})
+    assert view.closing_event({"id": "o-aaa", "text": "x"}, snap) is evt
+    assert view.closing_event({"id": "o-bbb", "text": "x"}, snap) is None
+
+
+def test_closing_event_names_the_event_behind_a_fuzzy_close():
+    evt = _evt("pipeline gate loop", text="release pipeline approval step "
+                                          "awaiting manual gate")
+    snap = _res(**{"pipeline gate loop": evt})
+    item = {"text": "release pipeline approval step awaiting manual gate"}
+    assert view.closing_event(item, snap) is evt
+    assert view.live(item, snap) is False
+
+
+def test_closing_event_of_a_non_item_is_none():
+    assert view.closing_event("a string", view.Snapshot.empty()) is None
+
+
+def test_prose_verdict_names_the_reason_and_the_record():
+    forgotten = _snap(forgotten=frozenset({KEY}))
+    got = view.prose_verdict(SENTINEL, forgotten)
+    assert got.reason == "forgotten" and got.quarantine_id is None
+    quarantined = _snap(quarantined=frozenset({("belief", KEY)}),
+                        quarantine_ids={("belief", KEY): "tr-abc"})
+    got = view.prose_verdict(SENTINEL, quarantined)
+    assert (got.reason, got.quarantine_id) == ("quarantine", "tr-abc")
+    assert view.prose_verdict("something else", quarantined) is None
+    assert view.prose_verdict("", quarantined) is None
+
+
+def test_prose_verdict_can_leave_a_closed_snapshot_unmasked():
+    closed = _snap(closed=True)
+    assert view.prose_verdict("hello", closed).reason == "closed"
+    assert view.prose_verdict("hello", closed, closed_masks=False) is None
+    forgotten = _snap(closed=True, forgotten=frozenset({KEY}))
+    got = view.prose_verdict(SENTINEL, forgotten, closed_masks=False)
+    assert got.reason == "forgotten"
+
+
+def test_prose_withheld_is_prose_verdict_as_a_bool():
+    assert view.prose_withheld("hello", _snap(closed=True)) is True
+    assert view.prose_withheld("hello", view.Snapshot.empty()) is False
