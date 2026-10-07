@@ -6,6 +6,8 @@
 
 import dataclasses
 import itertools
+import json
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -257,11 +259,11 @@ def test_candidate_and_claim_statuses_are_not_resolutions():
     assert view.live({"text": "x", "id": "o-aaa"}, snap) is True
 
 
-def test_live_agrees_with_briefing_withhold_over_generated_cases():
-    """The twin of the oracle over a small cross product: the same
-    checkpoint through `briefing.withhold` and `view.live` drops the same
-    items."""
-    from daimon_briefing import briefing
+GOLDEN = Path(__file__).parent / "golden" / "live_oracle.json"
+
+
+def _oracle_cases():
+    """The cross product the frozen oracle covers: (key, item, events)."""
     texts = ["release pipeline approval step awaiting manual gate",
              "gateway retry budget confirmed stable",
              "unrelated question about caching"]
@@ -274,7 +276,15 @@ def test_live_agrees_with_briefing_withhold_over_generated_cases():
         if item_id:
             item["id"] = item_id
         events = {ref: _evt(ref, status=status, text=texts[0])}
-        cp = {"working_context": {"open_questions": [item]}}
-        _out, withheld, _cand = briefing.withhold(cp, events)
-        assert view.live(item, _res(**events)) is (not withheld), (
-            text, item_id, ref, status)
+        yield f"{text}|{item_id}|{ref}|{status}", item, events
+
+
+def test_live_agrees_with_the_frozen_oracle():
+    """`tests/golden/live_oracle.json` holds what `briefing.withhold`'s
+    resolution branch answered for every case below, recorded before that
+    branch was deleted (#1132 PR 7a). `view.live` is compared against it."""
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    cases = {key: (item, events) for key, item, events in _oracle_cases()}
+    assert set(golden) == set(cases)
+    for key, (item, events) in cases.items():
+        assert view.live(item, _res(**events)) is golden[key], key
