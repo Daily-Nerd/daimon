@@ -388,29 +388,43 @@ class Judge:
 _judge_memo: dict[tuple, tuple] = {}
 
 
+def _is_bare_slug(slug) -> bool:
+    """A bucket name: one path segment. A row stamp such as `/a/b` (a literal
+    path from an older writer, or a hostile foreign file) would resolve against
+    the working directory and judge the wrong bucket, so it is judged by the
+    forgotten set alone."""
+    return (isinstance(slug, str) and bool(slug) and slug not in (".", "..")
+            and "/" not in slug and "\\" not in slug)
+
+
 def _read_judge(slug) -> tuple[Judge, bool]:
-    """`(judge, memoizable)` for a bucket slug, read fresh."""
+    """`(judge, memoizable)` for a bucket slug, read fresh. A fold that raises
+    (the machine forgotten set, this bucket's forgotten ids) cannot prove that
+    nothing is forgotten, so the judge is closed and not memoized."""
     bucket = _bucket(slug) if slug else None
-    forgotten = forgotten_keys()
+    proven = True
+    try:
+        forgotten = forgotten_keys()
+    except Exception:  # noqa: BLE001 — a fold's raise is a health state
+        forgotten, proven = frozenset(), False
     if bucket is None:
-        return Judge(dataclasses.replace(Snapshot.empty(),
-                                         forgotten=forgotten)), True
+        return (Judge(dataclasses.replace(Snapshot.empty(),
+                                          forgotten=forgotten,
+                                          closed=not proven)), proven)
     trust_read = jsonl.read(bucket / "trust.jsonl")
     events_read = jsonl.read(bucket / "events.jsonl")
     ids, health, _detail = _trust_index(slug, trust_read)
     try:
         folded = forgotten_ids(store.fold_resolutions(events_read.rows))
     except Exception:  # noqa: BLE001 — a fold's raise is a health state
-        folded = frozenset()
-        events_health = Health.UNREADABLE
-    else:
-        events_health = events_read.health
+        folded, proven = frozenset(), False
     snap = dataclasses.replace(
         Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
         quarantine_ids=_frozen(ids), forgotten_ids=folded,
-        closed=health is Health.UNREADABLE)
+        closed=health is Health.UNREADABLE or not proven)
     steady = (Health.OK, Health.ABSENT)
-    return Judge(snap), health in steady and events_health in steady
+    return Judge(snap), (proven and health in steady
+                         and events_read.health in steady)
 
 
 def judge(slug, *, stamp=None) -> Judge:
@@ -421,6 +435,8 @@ def judge(slug, *, stamp=None) -> Judge:
     UNREADABLE or transient result is never memoized. `stamp` is
     `store.forgotten_stamp()` taken by a caller that judges many buckets in
     one pass (a build, a query), so it is computed once for the pass."""
+    if not _is_bare_slug(slug):
+        slug = None   # a stamp that is not a bucket name routes nowhere
     bucket = _bucket(slug) if slug else None
     if bucket is None:
         return _read_judge(slug)[0]

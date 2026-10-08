@@ -36,3 +36,11 @@ def test_salient_terms_behaves_as_before():
     assert terms.salient_terms("please fix the auth_token refresh") == [
         "auth_token", "refresh"]
     assert terms.salient_terms("hi") == []
+
+
+def test_salient_terms_stop_at_the_cap():
+    prompt = " ".join(f"token{chr(97 + i // 26)}{chr(97 + i % 26)}x"
+                      for i in range(40))
+    got = terms.salient_terms(prompt)
+    assert len(got) == terms._TERM_CAP == 24
+    assert got[0] == "tokenaax"

@@ -1269,7 +1269,6 @@ def _closed_still(scopes, path: Path) -> bool:
     still = [slug for slug in closed if view.judge(slug, stamp=stamp).closed]
     if len(still) < len(closed):
         _rebuild_forced(path, [])
-        closed = still
     return bool(still)
 
 

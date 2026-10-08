@@ -228,13 +228,15 @@ def test_a_query_touching_a_closed_bucket_says_so(tmp_checkpoint_dir):
     assert "closed" not in elsewhere.notes
 
 
-def test_a_reopened_bucket_forces_a_rebuild_on_query(tmp_checkpoint_dir):
+def test_a_reopened_bucket_forces_a_rebuild_on_query(tmp_checkpoint_dir,
+                                                     monkeypatch):
     project = _two_sessions()
     ledger, saved = _break_trust(project)
     assert recall.query(HOT, project_dir=project).rows == []
     ledger.write_bytes(saved)
     # the ledger change is a fingerprint input, so the index also refreshes
     # on its own; pin the forced path by hiding the fingerprint refresh
+    monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)
     recall._forced_at.clear()
     got = recall.query(HOT, project_dir=project)
     assert [r["text"] for r in got.rows][:1] == [VISIBLE]
@@ -601,3 +603,79 @@ def test_recall_note_is_one_line_with_no_counts():
         assert not any(ch.isdigit() for ch in line)
     assert stale != closed
     assert "index" in stale and "trust" in closed
+
+
+# ---- paths the happy tests do not reach ----------------------------------
+
+
+def test_a_kind_the_table_does_not_know_is_judged_by_value(tmp_checkpoint_dir):
+    field = recall._field_for("not-a-kind")
+    assert field.kind == "not-a-kind" and field.section == ""
+
+
+def test_a_corrupt_read_rebuilds_once_and_retries(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    project = _two_sessions()
+    recall.rebuild()
+    real = recall._select
+    calls = []
+
+    def flaky(sql, params):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.DatabaseError("malformed")
+        return real(sql, params)
+
+    monkeypatch.setattr(recall, "_select", flaky)
+    got = recall.query(HOT, project_dir=project)
+    assert [r["text"] for r in got.rows][:1] == [VISIBLE]
+
+
+def test_a_corrupt_read_that_stays_corrupt_gives_up_empty(tmp_checkpoint_dir,
+                                                          monkeypatch):
+    project = _two_sessions()
+    recall.rebuild()
+
+    def broken(sql, params):
+        raise sqlite3.DatabaseError("malformed")
+
+    monkeypatch.setattr(recall, "_select", broken)
+    got = recall.query(HOT, project_dir=project)
+    assert got.rows == []
+
+
+def test_suggest_rebuilds_once_when_the_judge_drops_a_row(tmp_checkpoint_dir,
+                                                          monkeypatch):
+    project = "/repo/sg"
+    store.write_checkpoint("S1", _cp("S1", [
+        _decision("kestrelmarker rollout notes for the team"),
+        _decision("falconmarker rollout notes for the team")]),
+        project_dir=project)
+    prompt = "check kestrelmarker and falconmarker status"
+    recall.rebuild()
+    monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)
+    _quarantine(project, "falconmarker rollout notes for the team")
+    builds = []
+    real = recall.rebuild
+    monkeypatch.setattr(recall, "rebuild", lambda: builds.append(1) or real())
+    assert recall.suggest(prompt, project_dir=project) == []
+    assert builds == [1]
+    assert "falconmarker rollout notes for the team" not in _texts()
+
+
+def test_a_fold_that_raises_closes_the_judge_and_is_not_memoized(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import view
+    slug = store.project_slug(_two_sessions())
+
+    def boom(*_a, **_k):
+        raise RuntimeError("fold failed")
+
+    monkeypatch.setattr(view, "forgotten_ids", boom)
+    first = view.judge(slug)
+    assert first.closed and not first.empty
+    assert view.judge(slug) is not first
+    monkeypatch.undo()
+    monkeypatch.setattr(view, "forgotten_keys", boom)
+    assert view.judge(slug).closed
+    assert view.judge(None).closed

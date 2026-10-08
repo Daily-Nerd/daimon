@@ -4,6 +4,7 @@ with, and the id rule in `view.classify` (#1132 PR 9a, D9.1 and D9.2).
 Stores are built by the real writers. Reads are counted by wrapping
 `jsonl.read`, the one reader a ledger's health comes from."""
 
+import json
 import time
 
 from daimon_briefing import config, jsonl, normalize, schema, store, trust, view
@@ -208,3 +209,29 @@ def test_a_warm_judge_of_three_buckets_is_fast(tmp_checkpoint_dir):
             view.judge(slug)
     per_round = (time.perf_counter() - start) / 20
     assert per_round < 0.005, per_round
+
+
+def test_the_forgotten_stamp_follows_a_foreign_tombstone(tmp_checkpoint_dir,
+                                                        monkeypatch):
+    ledger = config.team_dir() / "remote" / "authors" / "other" / "tombstones.jsonl"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text("")
+    before = store.forgotten_stamp()
+    ledger.write_text(json.dumps({"key": "k" * 16}) + "\n")
+    assert store.forgotten_stamp() != before
+    monkeypatch.setattr(store, "_foreign_tombstone_paths",
+                        lambda: [config.team_dir() / "gone.jsonl"])
+    assert store.forgotten_stamp()[2][0][1:] == (None, None)
+
+
+def test_a_stamp_that_is_not_a_bucket_name_never_reaches_a_bucket(
+        tmp_checkpoint_dir, monkeypatch):
+    project = "/p/j-path"
+    slug = _write(project, [{"text": "a claim that was fabricated",
+                             "id": "d-aaaaaa"}])
+    _quarantine(project, "a claim that was fabricated")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    for stamp in (project, "../x", "a\\b", "..", ""):
+        judge = view.judge(stamp)
+        assert judge.snap.quarantined == frozenset(), stamp
+    assert view.judge(slug).snap.quarantined
