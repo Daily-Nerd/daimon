@@ -44,6 +44,9 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "backup file suffix on a host config edit, a real-machine filename",
     ("daimon_briefing/kimi_hooks.py", "remove_mcp", "time.time"):
         "backup file suffix on a host config edit, a real-machine filename",
+    ("daimon_briefing/config.py", "_note_ledger_skip", "datetime.now"):
+        "second-resolution ts on a local usage line, no order or event_id, "
+        "never folded",
     ("daimon_briefing/ledger.py", "_append_retry_log", "datetime.now"):
         "second-resolution ts on a diagnostic or stats log line, no order "
         "or event_id, never folded",

@@ -31,7 +31,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import NamedTuple, Union
 
-from . import display, surfaces
+from . import surfaces
 from .surfaces import WritePosture, Writer
 
 # Annotated before the import (#842): the try branch alone infers a Module, so
@@ -506,7 +506,7 @@ class Posture(NamedTuple):
     admission: bool = False
 
     def refusal(self) -> "Refused":
-        hint = display.ledger_hint(self.name, self.health.value, self.detail,
+        hint = surfaces.ledger_hint(self.name, self.health.value, self.detail,
                                    self.unscannable)
         return Refused(self.name, self.health.value, self.detail, hint,
                        self.admission)
@@ -587,21 +587,24 @@ def require_writable(path: Path, writer: Writer, *,
     raise error(str(exc))
 
 
+# Where a skipped row is accounted. jsonl is a leaf (it imports the registry and
+# nothing else), so the local usage log is registered from above by `config`,
+# which owns the log directory.
+_SKIP_SINK: Callable[[str, str], None] | None = None
+
+
+def set_skip_sink(sink: Callable[[str, str], None] | None) -> None:
+    global _SKIP_SINK
+    _SKIP_SINK = sink
+
+
 def _note_skip(name: str, state: str) -> None:
     """One local usage line for a machine row that was skipped because its
-    ledger is not proven: `<ledger>:skipped-<state>`. Best-effort, and never
-    a write to the ledger being skipped."""
-    from . import config  # deferred: config imports this module's callers
-    try:
-        if config.is_disabled():
-            return
-        log_dir = config.log_dir()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        with (log_dir / "usage.log").open("a", encoding="utf-8") as f:
-            f.write(f"{stamp} {name}:skipped-{state}\n")
-    except OSError:
-        pass
+    ledger is not proven: `<ledger>:skipped-<state>`, written by the sink
+    `config` registers. Best-effort, and never a write to the ledger being
+    skipped."""
+    if _SKIP_SINK is not None:
+        _SKIP_SINK(name, state)
 
 
 class Partition(NamedTuple):

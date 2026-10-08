@@ -698,6 +698,26 @@ def write_posture(row: Surface, writer: Writer, state: str) -> WritePosture:
     raise LookupError(f"{row.shape} declares no {writer.value} write posture")
 
 
+def ledger_hint(name: str, state: str, detail: str = "",
+                unscannable: str = "", *, on_status: bool = False) -> str:
+    """What to do about a ledger in `state`: retry a transient failure, check
+    permissions after an OS error (the errno is in `unscannable`), repair a
+    degraded or garbage ledger. `state` is a `jsonl.Health` value. On the
+    `status` verb itself ("run: daimon status" would send the reader in a
+    circle) the pointer back to it is dropped and the path is printed
+    instead."""
+    if state == "transient":
+        return "retry"
+    if str(detail).startswith("fold raised"):
+        return "check the ledger file" if on_status else "run: daimon status"
+    if state == "unreadable" and unscannable and unscannable != "undecodable":
+        hint = f"check permissions ({unscannable})"
+        return hint if on_status else hint + "; run: daimon status"
+    if name == "trust.jsonl":
+        return "run: daimon trust repair"
+    return f"run: daimon ledger repair {name.removesuffix('.jsonl')}"
+
+
 def write_row(name: str) -> Surface:
     """The registry row that declares a write column for the ledger file
     `name` ("events.jsonl", "events.quarantined-lines", "tombstones.jsonl").

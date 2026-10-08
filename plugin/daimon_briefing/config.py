@@ -16,9 +16,12 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import overload
+
+from . import jsonl
 
 log = logging.getLogger(__name__)
 
@@ -1378,3 +1381,23 @@ def llm_command_fallback_input() -> str:
     same #58 reasoning, its own variable for the same reason as the output
     axis above."""
     return _command_input_spec("DAIMON_LLM_COMMAND_FALLBACK_INPUT")
+
+
+def _note_ledger_skip(name: str, state: str) -> None:
+    """One local usage line for a machine row skipped because its ledger is
+    not proven: `<ledger>:skipped-<state>` (#1132 PR 10b). `jsonl` is a leaf
+    and cannot find the log directory, so this is registered into it. Silent
+    under the kill switch and best-effort, like every usage line."""
+    try:
+        if is_disabled():
+            return
+        d = log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (d / "usage.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {name}:skipped-{state}\n")
+    except OSError:
+        pass
+
+
+jsonl.set_skip_sink(_note_ledger_skip)
