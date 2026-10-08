@@ -4689,7 +4689,7 @@ def test_cli_recall_fts5_unavailable_clear_error(tmp_checkpoint_dir, capsys, mon
     def _boom(*args, **kwargs):
         raise recall.RecallError("sqlite3 has no FTS5 module — details here")
 
-    monkeypatch.setattr(recall, "search", _boom)
+    monkeypatch.setattr(recall, "query", _boom)
     rc = cli.main(["recall", "anything", "--project", proj])
     assert rc == 1
     err = capsys.readouterr().err
@@ -10454,15 +10454,15 @@ def test_recall_zero_match_teaser_fails_open_on_recall_error(tmp_checkpoint_dir,
     # FTS5 vanished between calls), the plain no-matches line still prints
     from daimon_briefing import recall as recall_mod
 
-    real_search = recall_mod.search
+    real_query = recall_mod.query
 
-    def flaky(query, project_dir=None, all_projects=False, limit=20, slug=None):
+    def flaky(text, project_dir=None, all_projects=False, limit=20, slug=None):
         if all_projects:
             raise recall_mod.RecallError("no FTS5")
-        return real_search(query, project_dir=project_dir,
-                           all_projects=all_projects, limit=limit, slug=slug)
+        return real_query(text, project_dir=project_dir,
+                          all_projects=all_projects, limit=limit, slug=slug)
 
-    monkeypatch.setattr(cli.recall, "search", flaky)
+    monkeypatch.setattr(cli.recall, "query", flaky)
     proj = str((tmp_path / "proj").resolve())
     rc = cli.main(["recall", "nonexistentword", "--project", proj])
     assert rc == 0
