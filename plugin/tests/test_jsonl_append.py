@@ -11,6 +11,7 @@ from pathlib import Path
 
 from daimon_briefing import jsonl
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import WritePosture
 
 
 def _row(**kw):
@@ -20,34 +21,34 @@ def _row(**kw):
 def test_append_lines_writes_each_line_terminated_and_returns_the_count(
         tmp_path):
     path = tmp_path / "l.jsonl"
-    assert jsonl.append_lines(path, ['{"a": 1}', '{"a": 2}']) == 2
+    assert jsonl.append_lines(path, ['{"a": 1}', '{"a": 2}'], posture=WritePosture.PROCEED) == 2
     assert path.read_bytes() == b'{"a": 1}\n{"a": 2}\n'
 
 
 def test_append_lines_adds_to_the_end_of_an_existing_file(tmp_path):
     path = tmp_path / "l.jsonl"
     path.write_bytes(b'{"a": 1}\n')
-    jsonl.append_lines(path, ['{"a": 2}'])
+    jsonl.append_lines(path, ['{"a": 2}'], posture=WritePosture.PROCEED)
     assert path.read_bytes() == b'{"a": 1}\n{"a": 2}\n'
 
 
 def test_append_lines_into_an_empty_file_writes_no_leading_newline(tmp_path):
     path = tmp_path / "l.jsonl"
     path.write_bytes(b"")
-    jsonl.append_lines(path, ['{"a": 1}'])
+    jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED)
     assert path.read_bytes() == b'{"a": 1}\n'
 
 
 def test_append_lines_of_nothing_writes_nothing_and_returns_zero(tmp_path):
     path = tmp_path / "l.jsonl"
-    assert jsonl.append_lines(path, []) == 0
+    assert jsonl.append_lines(path, [], posture=WritePosture.PROCEED) == 0
     assert not path.exists()
 
 
 def test_a_torn_tail_becomes_its_own_line_and_the_new_row_is_intact(tmp_path):
     path = tmp_path / "l.jsonl"
     path.write_bytes(b'{"a": 1}\n{"cut": "hal')
-    jsonl.append_lines(path, ['{"a": 2}'])
+    jsonl.append_lines(path, ['{"a": 2}'], posture=WritePosture.PROCEED)
     assert path.read_bytes() == b'{"a": 1}\n{"cut": "hal\n{"a": 2}\n'
     result = jsonl.read(path)
     assert result.rows == [{"a": 1}, {"a": 2}]
@@ -58,20 +59,20 @@ def test_a_torn_tail_becomes_its_own_line_and_the_new_row_is_intact(tmp_path):
 def test_a_terminated_tail_is_not_healed_with_a_blank_line(tmp_path):
     path = tmp_path / "l.jsonl"
     path.write_bytes(b'{"a": 1}\n')
-    jsonl.append_lines(path, ['{"a": 2}'])
+    jsonl.append_lines(path, ['{"a": 2}'], posture=WritePosture.PROCEED)
     assert b"\n\n" not in path.read_bytes()
 
 
 def test_undecodable_bytes_in_a_line_are_written_back_byte_for_byte(tmp_path):
     path = tmp_path / "l.jsonl"
     line = b'{"a": "\xff\xfe"}'.decode("utf-8", errors="surrogateescape")
-    jsonl.append_lines(path, [line])
+    jsonl.append_lines(path, [line], posture=WritePosture.PROCEED)
     assert path.read_bytes() == b'{"a": "\xff\xfe"}\n'
 
 
 def test_append_dumps_with_ensure_ascii_false(tmp_path):
     path = tmp_path / "l.jsonl"
-    assert jsonl.append(path, {"note": "café   x"}) == 1
+    assert jsonl.append(path, {"note": "café   x"}, posture=WritePosture.PROCEED) == 1
     assert path.read_bytes() == (
         json.dumps({"note": "café   x"}, ensure_ascii=False)
         + "\n").encode("utf-8")
@@ -97,7 +98,7 @@ def test_a_row_over_8_kib_is_written_in_one_call(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "open", counting_open)
     big = _row(blob="x" * 20000)
-    jsonl.append_lines(path, [big])
+    jsonl.append_lines(path, [big], posture=WritePosture.PROCEED)
     assert len(calls) == 1
     assert calls[0] == len(b"\n" + big.encode() + b"\n")
 
@@ -119,14 +120,14 @@ class _Proxy:
 
 def test_append_lines_takes_the_dir_lock_sidecar_beside_the_ledger(tmp_path):
     path = tmp_path / "l.jsonl"
-    jsonl.append_lines(path, ['{"a": 1}'])
+    jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED)
     assert (tmp_path / ".pointer.lock").exists()
     assert (tmp_path / ".pointer.lock").read_bytes() == b""
 
 
 def test_lock_false_leaves_no_sidecar(tmp_path):
     path = tmp_path / "l.jsonl"
-    jsonl.append_lines(path, ['{"a": 1}'], lock=False)
+    jsonl.append_lines(path, ['{"a": 1}'], lock=False, posture=WritePosture.PROCEED)
     assert not (tmp_path / ".pointer.lock").exists()
     assert path.read_bytes() == b'{"a": 1}\n'
 
@@ -140,7 +141,7 @@ def test_a_contended_lock_fails_open_after_the_retry_budget(
     holder = open(tmp_path / ".pointer.lock", "a+")
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
     try:
-        assert jsonl.append_lines(path, ['{"a": 1}']) == 1
+        assert jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED) == 1
     finally:
         holder.close()
     assert path.read_bytes() == b'{"a": 1}\n'
@@ -240,7 +241,7 @@ def test_an_unstattable_ledger_is_not_reported_as_torn(tmp_path, monkeypatch):
 def test_append_to_an_unwritable_path_propagates_the_oserror(tmp_path):
     import pytest
     with pytest.raises(OSError):
-        jsonl.append_lines(tmp_path / "no-such-dir" / "l.jsonl", ["{}"])
+        jsonl.append_lines(tmp_path / "no-such-dir" / "l.jsonl", ["{}"], posture=WritePosture.PROCEED)
 
 
 def test_replace_and_rewrite_with_lock_false_leave_no_sidecar(tmp_path):
@@ -257,7 +258,7 @@ def test_without_fcntl_the_lock_yields_not_held_and_append_still_lands(
     with jsonl.dir_lock(tmp_path) as held:
         assert held is False
     path = tmp_path / "l.jsonl"
-    assert jsonl.append_lines(path, ['{"a": 1}']) == 1
+    assert jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED) == 1
     assert path.read_bytes() == b'{"a": 1}\n'
     assert not (tmp_path / ".pointer.lock").exists()
 
@@ -276,5 +277,5 @@ def test_a_failed_unlock_exits_cleanly_and_the_append_landed(
         LOCK_EX=real.LOCK_EX, LOCK_NB=real.LOCK_NB, LOCK_UN=real.LOCK_UN,
         flock=flock))
     path = tmp_path / "l.jsonl"
-    assert jsonl.append_lines(path, ['{"a": 1}']) == 1
+    assert jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED) == 1
     assert path.read_bytes() == b'{"a": 1}\n'

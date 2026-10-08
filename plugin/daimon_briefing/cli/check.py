@@ -14,6 +14,7 @@ import json
 import daimon_briefing.cli as _cli
 
 from .. import checks, config, render
+from ..surfaces import Writer
 
 
 def audit_lines(audit, scope: str = "") -> list:
@@ -92,12 +93,12 @@ def _cmd_check_sync(args) -> int:
     if getattr(args, "check", False):
         return _cmd_check_audit(args)
     project = _cli._resolve_project(args.project)
-    report = checks.sync(project)
+    report = checks.sync(project, writer=Writer.HUMAN)
     # #1095: every ruling layer above this project is re-armed the same
     # way, so an inherited enforce or warn check does not depend on a human
     # having run `check sync`/`hooks install` from inside the layer's own
     # project on THIS machine.
-    layer_reports = checks.sync_layers(project)
+    layer_reports = checks.sync_layers(project, writer=Writer.HUMAN)
     ok = report.ok and all(lr.ok for _, lr in layer_reports)
     if getattr(args, "json", False):
         payload = report._asdict()

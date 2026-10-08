@@ -11,6 +11,7 @@ import json
 import pytest
 
 from daimon_briefing import config, normalize, store, trust, view
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/ptr"
 SLUG = store.project_slug(PROJECT)
@@ -28,7 +29,7 @@ def _cp(sid, created, *, topic="a topic", questions=(), project=PROJECT):
 
 
 def _write(sid, created, project=PROJECT, **kw):
-    store.write_checkpoint(sid, _cp(sid, created, **kw), project_dir=project)
+    store.write_checkpoint(sid, _cp(sid, created, **kw), project_dir=project, writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind="question"):
@@ -39,7 +40,7 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _bucket():
@@ -139,7 +140,7 @@ def test_the_listing_is_this_projects_sessions_newest_first(three):
 
 def test_a_session_with_no_created_stamp_sorts_last_without_failing(three):
     cp = _cp("S-0", None)
-    store.write_checkpoint("S-0", cp, project_dir=PROJECT)
+    store.write_checkpoint("S-0", cp, project_dir=PROJECT, writer=Writer.HUMAN)
     root = config.checkpoint_dir()
     raw = json.loads((root / "S-0.json").read_text())
     raw["created"] = 7
@@ -236,8 +237,8 @@ def test_open_sessions_skips_what_it_may_not_open(three):
 def test_open_sessions_live_drops_a_closed_loop(tmp_checkpoint_dir):
     cp = _cp("S-1", "2026-08-01T00:00:00Z", questions=[KEEP])
     cp["working_context"]["open_questions"][0]["id"] = "o-aaaaaaaaaaaa"
-    store.write_checkpoint("S-1", cp, project_dir=PROJECT)
-    store.append_event("o-aaaaaaaaaaaa", "resolved", project_dir=PROJECT)
+    store.write_checkpoint("S-1", cp, project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaaaaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     kept = view.open_sessions(PROJECT, ["S-1"], live=False)["S-1"]
     dropped = view.open_sessions(PROJECT, ["S-1"], live=True)["S-1"]
     assert (len(kept.checkpoint["working_context"]["open_questions"]),

@@ -24,6 +24,7 @@ blind spot.
 import json
 
 from daimon_briefing import cli, config, normalize, privacy, store
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/team-mirror-forget"
 CANARY = "zqxteamcanary5527 the payroll export token lives in vault七"
@@ -54,8 +55,8 @@ def _seed_mirrored_sessions(monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     store.write_checkpoint("S1", _cp("S1", [CANARY, KEEPER]),
-                           project_dir=PROJECT)
-    store.write_checkpoint("S2", _cp("S2", [KEEPER]), project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
+    store.write_checkpoint("S2", _cp("S2", [KEEPER]), project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def test_forget_scrubs_every_own_mirror_copy(tmp_checkpoint_dir, monkeypatch):

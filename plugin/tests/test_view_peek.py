@@ -15,6 +15,7 @@ import pytest
 
 from daimon_briefing import config, normalize, store, trust, view
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import Writer
 
 CASES = 80
 
@@ -28,13 +29,13 @@ def _write(project, topic, sid="S-1"):
           "working_context": {"active_topic": {"text": topic,
                                                "trust": "inferred"}},
           "epistemic_snapshot": {}}
-    store.write_checkpoint(sid, cp, project_dir=project)
+    store.write_checkpoint(sid, cp, project_dir=project, writer=Writer.HUMAN)
     return store.project_slug(project)
 
 
 def _forget(project, text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=project)
+                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
 
 
 def _quarantine(project, text, kind="topic"):
@@ -153,7 +154,7 @@ def test_a_non_dict_topic_is_none(tmp_checkpoint_dir):
     cp = {"session_id": "S-1", "created": "2026-08-01T00:00:00Z",
           "working_context": {"active_topic": "bare string"},
           "epistemic_snapshot": {}}
-    store.write_checkpoint("S-1", cp, project_dir="/p/peek-n")
+    store.write_checkpoint("S-1", cp, project_dir="/p/peek-n", writer=Writer.HUMAN)
     assert _peek(store.project_slug("/p/peek-n"),
                            forgotten=frozenset()) is None
 
@@ -204,7 +205,7 @@ def test_the_twin_holds_for_a_checkpoint_with_no_topic(tmp_checkpoint_dir, seed)
     project = _project(seed)
     cp = {"session_id": "S-1", "created": "2026-08-01T00:00:00Z",
           "working_context": {}, "epistemic_snapshot": {}}
-    store.write_checkpoint("S-1", cp, project_dir=project)
+    store.write_checkpoint("S-1", cp, project_dir=project, writer=Writer.HUMAN)
     slug = store.project_slug(project)
     assert _peek(slug, forgotten=frozenset()) is None
     assert _twin(project) is None
@@ -292,7 +293,7 @@ def _write_items(project, *, questions=(), decisions=(), contradictions=(),
               "recent_decisions": [{"text": t, "trust": "inferred"}
                                    for t in decisions]},
           "epistemic_snapshot": {"contradictions_flagged": list(contradictions)}}
-    store.write_checkpoint(sid, cp, project_dir=project)
+    store.write_checkpoint(sid, cp, project_dir=project, writer=Writer.HUMAN)
     return store.project_slug(project)
 
 

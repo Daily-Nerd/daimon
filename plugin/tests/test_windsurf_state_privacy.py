@@ -24,6 +24,7 @@ import os
 import time
 
 from daimon_briefing import cli, config, normalize, privacy, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/windsurf-state"
 CANARY = "zqxwindsurfcanary8841 the staging token rotates on fridays"
@@ -79,7 +80,7 @@ def _write_checkpoint():
         "working_context": {"recent_decisions": [
             {"text": CANARY, "trust": "inferred"},
             {"text": KEEPER, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 # ---- the writer and the deleter must agree on WHERE ----------------------

@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import briefing, cli, config, receipts, render, store
+from daimon_briefing.surfaces import Writer
 
 _SEED = bytes(range(32))
 _SEED_B64 = base64.b64encode(_SEED).decode("ascii")
@@ -222,7 +223,7 @@ def _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
               {"text": "d1", "trust": "verbatim", "quote": "q1"}]}}
     if extra:
         cp.update(extra)
-    path = store.write_checkpoint(session, cp)
+    path = store.write_checkpoint(session, cp, writer=Writer.HUMAN)
     return path
 
 
@@ -269,7 +270,7 @@ def test_gate_off_no_side_effects(tmp_checkpoint_dir, keys_ready, fake_cli):
     # DAIMON_RECEIPTS unset — no marker, no sidecar, no CLI call
     cp = {"session_id": "S-off", "transcript_hash": _TSCRIPT_HEX,
           "created": "2026-07-09T00:00:00Z"}
-    path = store.write_checkpoint("S-off", cp)
+    path = store.write_checkpoint("S-off", cp, writer=Writer.HUMAN)
     assert "receipts" not in json.loads(path.read_text())
     assert not path.with_suffix(".receipt").exists()
     assert not fake_cli.exists()  # capture file never created -> CLI never ran
@@ -279,7 +280,7 @@ def test_absent_transcript_hash_skips_mint(tmp_checkpoint_dir, monkeypatch,
                                            keys_ready, fake_cli):
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     cp = {"session_id": "S-noh", "created": "2026-07-09T00:00:00Z"}
-    path = store.write_checkpoint("S-noh", cp)
+    path = store.write_checkpoint("S-noh", cp, writer=Writer.HUMAN)
     assert "receipts" not in json.loads(path.read_text())
     assert not path.with_suffix(".receipt").exists()
 
@@ -290,7 +291,7 @@ def test_cli_garbage_is_fail_open(tmp_checkpoint_dir, monkeypatch, keys_ready,
     monkeypatch.setenv("FAKE_VITNI_MODE", "garbage")
     cp = {"session_id": "S-g", "transcript_hash": _TSCRIPT_HEX,
           "created": "2026-07-09T00:00:00Z"}
-    path = store.write_checkpoint("S-g", cp)  # must NOT raise
+    path = store.write_checkpoint("S-g", cp, writer=Writer.HUMAN)  # must NOT raise
     assert path.exists()  # serialize/write still succeeded
     assert not path.with_suffix(".receipt").exists()  # no sidecar minted
 
@@ -300,7 +301,7 @@ def test_cli_rc1_is_fail_open(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_
     monkeypatch.setenv("FAKE_VITNI_MODE", "rc1")
     cp = {"session_id": "S-e", "transcript_hash": _TSCRIPT_HEX,
           "created": "2026-07-09T00:00:00Z"}
-    path = store.write_checkpoint("S-e", cp)
+    path = store.write_checkpoint("S-e", cp, writer=Writer.HUMAN)
     assert path.exists()
     assert not path.with_suffix(".receipt").exists()
 
@@ -314,7 +315,7 @@ def test_openssl_absent_no_mint_write_succeeds(tmp_checkpoint_dir, monkeypatch,
                         lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
     cp = {"session_id": "S-noss", "transcript_hash": _TSCRIPT_HEX,
           "created": "2026-07-09T00:00:00Z"}
-    path = store.write_checkpoint("S-noss", cp)
+    path = store.write_checkpoint("S-noss", cp, writer=Writer.HUMAN)
     assert path.exists()
     assert "receipts" not in json.loads(path.read_text())
     assert not path.with_suffix(".receipt").exists()
@@ -333,7 +334,7 @@ def test_gc_never_eats_receipts_and_they_dont_count(tmp_checkpoint_dir,
     for i, sid in enumerate(("S-a", "S-b")):
         cp = {"session_id": sid, "transcript_hash": _TSCRIPT_HEX,
               "created": f"2026-07-0{i + 1}T00:00:00Z"}
-        store.write_checkpoint(sid, cp)
+        store.write_checkpoint(sid, cp, writer=Writer.HUMAN)
     d = config.checkpoint_dir()
     # _session_files must exclude .receipt entirely
     names = {p.name for p in store._session_files(d)}
@@ -377,7 +378,7 @@ def test_verify_receipt_tampered_file(tmp_checkpoint_dir, monkeypatch, keys_read
 
 def test_verify_receipt_missing_sidecar_pre_receipt(tmp_checkpoint_dir):
     # ordinary checkpoint, no marker, no sidecar -> unable, calm (rc 2)
-    store.write_checkpoint("S-pre", {"session_id": "S-pre"})
+    store.write_checkpoint("S-pre", {"session_id": "S-pre"}, writer=Writer.HUMAN)
     rc, lines = receipts.verify_receipt("S-pre")
     assert rc == 2
     assert any("pre-receipt" in x for x in lines)
@@ -415,7 +416,7 @@ def test_verify_receipt_signature_rejected(tmp_checkpoint_dir, monkeypatch,
 # ---- brief-time degrade ----------------------------------------------------
 
 def test_verbatim_degraded_false_pre_receipt(tmp_checkpoint_dir):
-    store.write_checkpoint("S-p", {"session_id": "S-p"})
+    store.write_checkpoint("S-p", {"session_id": "S-p"}, writer=Writer.HUMAN)
     cp = store.read_checkpoint("S-p")
     assert receipts.verbatim_degraded(cp) is False
 
@@ -503,7 +504,7 @@ def test_briefing_degrades_when_receipt_gone(tmp_checkpoint_dir, monkeypatch,
 def test_briefing_pre_receipt_never_degrades(tmp_checkpoint_dir):
     cp = {"session_id": "S-bp", "working_context": {"recent_decisions": [
         {"text": "d", "trust": "verbatim", "quote": "q"}]}}
-    store.write_checkpoint("S-bp", cp)
+    store.write_checkpoint("S-bp", cp, writer=Writer.HUMAN)
     loaded = store.read_checkpoint("S-bp")
     text = briefing.render(loaded)
     assert briefing.DEGRADE_NOTE not in text
@@ -690,7 +691,7 @@ def test_verify_receipt_corrupt_checkpoint_json(tmp_checkpoint_dir):
 
 
 def test_verify_receipt_corrupt_sidecar(tmp_checkpoint_dir):
-    store.write_checkpoint("S-badsc", {"session_id": "S-badsc"})
+    store.write_checkpoint("S-badsc", {"session_id": "S-badsc"}, writer=Writer.HUMAN)
     d = config.checkpoint_dir()
     (d / "S-badsc.receipt").write_text("garbage{")
     rc, lines = receipts.verify_receipt("S-badsc")
@@ -781,7 +782,7 @@ def test_status_line_never_reports_another_projects_session(
     other = (tmp_path / "other").resolve()
     other.mkdir()
     store.write_checkpoint("S-FOREIGN", {"session_id": "S-FOREIGN"},
-                           project_dir=str(other))
+                           project_dir=str(other), writer=Writer.HUMAN)
     mine = (tmp_path / "mine").resolve()
     mine.mkdir()
     line = receipts.status_line(project_dir=str(mine))
@@ -794,7 +795,7 @@ def test_status_line_unknown_project_still_reads_the_global_pointer(
     # #791 must not cost the pre-routing case its line: with no project identity
     # there is no per-project pointer to prefer and nothing is foreign (#784).
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
-    store.write_checkpoint("S-global", {"session_id": "S-global"})
+    store.write_checkpoint("S-global", {"session_id": "S-global"}, writer=Writer.HUMAN)
     assert "S-global" in receipts.status_line()
 
 
@@ -806,7 +807,7 @@ def test_cli_verify_receipt_never_targets_another_projects_session(
     other = (tmp_path / "vr-other").resolve()
     other.mkdir()
     store.write_checkpoint("S-FOREIGN", {"session_id": "S-FOREIGN"},
-                           project_dir=str(other))
+                           project_dir=str(other), writer=Writer.HUMAN)
     mine = (tmp_path / "vr-mine").resolve()
     mine.mkdir()
     capsys.readouterr()
@@ -820,7 +821,7 @@ def test_cli_verify_receipt_never_targets_another_projects_session(
 def test_status_line_marked_but_missing(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     # A receipt-era marker but no sidecar (mint failed) -> MISSING line.
-    store.write_checkpoint("S-sm", {"session_id": "S-sm", "receipts": True})
+    store.write_checkpoint("S-sm", {"session_id": "S-sm", "receipts": True}, writer=Writer.HUMAN)
     line = receipts.status_line()
     assert "MISSING" in line
 
@@ -833,7 +834,7 @@ def test_status_line_predates_receipts(tmp_checkpoint_dir, monkeypatch):
     # one, and the age wording would be a false cause.
     monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
     store.write_checkpoint("S-pre2", {"session_id": "S-pre2",
-                                      "transcript_hash": "ab" * 32})
+                                      "transcript_hash": "ab" * 32}, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     line = receipts.status_line()
     assert "predates receipts" in line
@@ -847,7 +848,7 @@ def test_status_line_unsigned_without_transcript_does_not_blame_age(
     # state with a false cause — it said the checkpoint PREDATES receipts, for a
     # checkpoint written seconds earlier. Say which of the two it actually is.
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
-    store.write_checkpoint("S-insession", {"session_id": "S-insession"})
+    store.write_checkpoint("S-insession", {"session_id": "S-insession"}, writer=Writer.HUMAN)
     line = receipts.status_line()
     assert "predates receipts" not in line
     assert "no transcript to bind" in line
@@ -1008,7 +1009,7 @@ def test_plan_mint_uses_keygen_end_to_end(tmp_checkpoint_dir, keys_seed_only,
                         lambda seed: pytest.fail("openssl must not be used when keygen works"))
     cp = {"session_id": "S-kg", "transcript_hash": _TSCRIPT_HEX,
           "created": "2026-07-10T00:00:00Z"}
-    path = store.write_checkpoint("S-kg", cp)
+    path = store.write_checkpoint("S-kg", cp, writer=Writer.HUMAN)
     assert path.with_suffix(".receipt").exists()  # minted via keygen-derived key
     assert json.loads(path.read_text())["receipts"] is True
 

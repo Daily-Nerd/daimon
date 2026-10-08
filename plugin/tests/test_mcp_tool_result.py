@@ -8,6 +8,7 @@ import json
 import pytest
 
 from daimon_briefing import mcp_server, mcp_tools, recall, store
+from daimon_briefing.surfaces import Writer
 
 HOT = "walrusharbor"
 VISIBLE = "a plain decision about the walrusharbor deployment"
@@ -20,7 +21,7 @@ def indexed(tmp_checkpoint_dir, monkeypatch):
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     recall.rebuild()
 

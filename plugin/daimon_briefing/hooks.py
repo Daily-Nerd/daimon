@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (briefing, capture, config, effects_commit, harvest, ledger,
-               llm, recall, serializer, store, transcript)
+from . import (briefing, capture, config, effects_commit, harvest, jsonl,
+               ledger, llm, recall, serializer, store, transcript)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -31,15 +31,21 @@ def _ledger_failure(session_id, exc, elapsed, transcript_path=None):
     capture leaves (cli._SPAWN_RE / cli._RESULT_ERR_RE round-trip), so the
     per-session ledger attributes the failure and heal classifies it under its
     NORMAL rules: transcript file on disk -> healable (one retry ever, #26);
-    none -> counted but not auto-repairable. The parser derives the session id
-    from the transcript token's stem, so a host-provided path is used only when
-    its stem IS the session id — otherwise the spawn and error lines would
-    split across two ledger entries. Best-effort: must never raise into the
-    hook's own never-raise contract."""
+    none -> counted but not auto-repairable.
+
+    The error line names the session in a `(session: <id>)` group before the
+    transcript group (D10.4), which keys the failure to the session whatever
+    the transcript file is called, so a host path is kept whenever the file
+    EXISTS (before, only when its stem was the session id, and the bare id
+    stood in otherwise, which lost the transcript heal needs). With no
+    existing path the transcript token is the session id as it always was,
+    and the failure is counted but not healable. Best-effort: must never raise
+    into the hook's own never-raise contract."""
     try:
         path = str(transcript_path or "").strip()
-        if not path or Path(path).stem != session_id:
+        if not path or not Path(path).is_file():
             path = session_id
+        group = f" (session: {session_id})"
         try:
             project = config.resolve_project_root(config.project_dir())
         except Exception:
@@ -54,7 +60,8 @@ def _ledger_failure(session_id, exc, elapsed, transcript_path=None):
                 f"(reason: in-process capture, project: {project or '?'}) "
                 f"(transcript: {path})\n"
             )
-            f.write(f"error: {reason} (transcript: {path}) after {max(0, int(elapsed))}s\n")
+            f.write(f"error: {reason}{group} (transcript: {path}) "
+                    f"after {max(0, int(elapsed))}s\n")
     except Exception:
         log.exception("daimon: could not ledger capture failure for session %s", session_id)
 
@@ -153,6 +160,19 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 transcript_sha=transcript_sha, capture_host=platform,
                 coverage=coverage,
             )
+        except jsonl.Refused as exc:
+            # D10.4: an admission refused before the model was called. Ledgered
+            # as the same ordinary failed serialize the CLI door leaves, so
+            # `status` counts it, the project's next briefing names it, and
+            # `heal` retries it when the host handed us a transcript file that
+            # still exists (supported only then; without one it is counted and
+            # unrecoverable). Caught BEFORE the generic handler below, which
+            # would write the same body without the session group.
+            log.warning("daimon: admission refused for session %s: %s",
+                        session_id, exc)
+            _ledger_failure(session_id, exc, time.monotonic() - start,
+                            transcript_path)
+            return
         except serializer.TooShortError:
             # Unreachable while both doors share conversation_message_count
             # (#750); kept defensive. No ledger append here — a drift could

@@ -15,6 +15,7 @@ import pytest
 
 from daimon_briefing import (config, display, jsonl, normalize, recall, store,
                              trust)
+from daimon_briefing.surfaces import Writer
 
 QUARANTINED = "the quokkasentinel claim was fabricated by the model"
 FORGOTTEN = "the pangolinsentinel decision must be erased entirely"
@@ -41,7 +42,7 @@ def _quarantine(project, text, kind="decision"):
 
 def _forget_value(project, text, item_id="d-gone00"):
     store.append_event(item_id, f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=project)
+                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
 
 
 def _ids(project):
@@ -83,7 +84,7 @@ def _two_sessions(project="/repo/j"):
     store.write_checkpoint("S1", _cp("S1", [_decision(VISIBLE),
                                             _decision(QUARANTINED),
                                             _decision(FORGOTTEN)]),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     return project
 
 
@@ -211,7 +212,7 @@ def test_a_closed_bucket_has_no_rows_and_is_recorded(tmp_checkpoint_dir):
     other = "/repo/other"
     store.write_checkpoint("S2", _cp("S2", [_decision("an unrelated "
                                                       "walrusharbor note")]),
-                           project_dir=other)
+                           project_dir=other, writer=Writer.HUMAN)
     _break_trust(project)
     recall.rebuild()
     assert _texts() == {"an unrelated walrusharbor note"}
@@ -308,7 +309,7 @@ def test_a_withheld_row_never_fills_a_slot(tmp_checkpoint_dir, monkeypatch):
     project = "/repo/slots"
     store.write_checkpoint("S1", _cp("S1", [
         _decision(QUARANTINED + " walrusharbor"),
-        _decision(VISIBLE)]), project_dir=project)
+        _decision(VISIBLE)]), project_dir=project, writer=Writer.HUMAN)
     recall.rebuild()
     monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)
     _quarantine(project, QUARANTINED + " walrusharbor")
@@ -388,7 +389,7 @@ def test_withheld_terms_do_not_count_toward_the_overlap(tmp_checkpoint_dir,
     store.write_checkpoint("S1", _cp("S1", [
         _decision("kestrelmarker rollout notes for the team"),
         _decision("falconmarker rollout notes for the quarantine")]),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
     prompt = "check kestrelmarker and falconmarker status"
     assert recall.suggest(prompt, project_dir=project)
     _quarantine(project, "falconmarker rollout notes for the quarantine")
@@ -428,14 +429,14 @@ def test_suggest_keeps_its_public_shape(tmp_checkpoint_dir):
 def _supersession_world(project, *, owner_text, owner_trust="inferred"):
     store.write_checkpoint("S-old", _cp("S-old", [
         _decision("migrate the walrus ledger storage from postgres to sqlite")
-    ], created="2026-07-01T00:00:00Z"), project_dir=project)
+    ], created="2026-07-01T00:00:00Z"), project_dir=project, writer=Writer.HUMAN)
     cp = _cp("S-new", [{
         "text": owner_text, "trust": owner_trust,
         "links": [{"type": "supersedes",
                    "target": "migrate the walrus ledger storage"
                              " from postgres to sqlite"}]}],
         created="2026-08-01T00:00:00Z")
-    store.write_checkpoint("S-new", cp, project_dir=project)
+    store.write_checkpoint("S-new", cp, project_dir=project, writer=Writer.HUMAN)
 
 
 OWNER = "we moved the walrus ledger storage to the dolphin cluster instead"
@@ -468,16 +469,16 @@ def test_a_withheld_candidate_keeps_a_free_text_target_ambiguous(
     project = "/repo/amb"
     store.write_checkpoint("S-a", _cp("S-a", [
         _decision("migrate the walrus ledger storage from postgres to sqlite")
-    ], created="2026-06-01T00:00:00Z"), project_dir=project)
+    ], created="2026-06-01T00:00:00Z"), project_dir=project, writer=Writer.HUMAN)
     twin = "walrus ledger storage migration from postgres to sqlite planned"
     store.write_checkpoint("S-b", _cp("S-b", [_decision(twin)],
                                       created="2026-07-01T00:00:00Z"),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     cp = _cp("S-new", [{"text": OWNER, "trust": "inferred", "links": [
         {"type": "supersedes",
          "target": "migrate walrus ledger storage postgres sqlite"}]}],
         created="2026-08-01T00:00:00Z")
-    store.write_checkpoint("S-new", cp, project_dir=project)
+    store.write_checkpoint("S-new", cp, project_dir=project, writer=Writer.HUMAN)
     _quarantine(project, twin)
     recall.rebuild()
     rows = {r[0]: r[2:] for r in _rows()}
@@ -490,10 +491,10 @@ def test_a_resolution_naming_a_withheld_id_is_generic(tmp_checkpoint_dir):
     project = "/repo/res"
     store.write_checkpoint("S1", _cp("S1", [_decision(VISIBLE),
                                             _decision(QUARANTINED)]),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     ids = _ids(project)
     store.append_event(ids[VISIBLE], f"superseded-by:{ids[QUARANTINED]}",
-                       project_dir=project)
+                       project_dir=project, writer=Writer.HUMAN)
     recall.rebuild()
     assert {r[0]: r[2:] for r in _rows()}[VISIBLE] == (
         ids[QUARANTINED], "resolution")
@@ -650,7 +651,7 @@ def test_suggest_rebuilds_once_when_the_judge_drops_a_row(tmp_checkpoint_dir,
     store.write_checkpoint("S1", _cp("S1", [
         _decision("kestrelmarker rollout notes for the team"),
         _decision("falconmarker rollout notes for the team")]),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
     prompt = "check kestrelmarker and falconmarker status"
     recall.rebuild()
     monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)

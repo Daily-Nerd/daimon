@@ -28,6 +28,7 @@ import logging
 
 from daimon_briefing import (cli, config, normalize, privacy, serializer,
                              store, surfaces)
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/616-logs"
 CANARY = "zqxlogcanary6161 the rollout gate is held by the blue worker"
@@ -50,7 +51,7 @@ def _write_checkpoint():
         "working_context": {"recent_decisions": [
             {"text": CANARY, "trust": "inferred"},
             {"text": KEEPER, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _seed_backend_log() -> object:

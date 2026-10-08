@@ -16,6 +16,7 @@ import json
 import pytest
 
 from daimon_briefing import cli, normalize, render, store
+from daimon_briefing.surfaces import Writer
 
 _A = "/repo/forget-hits-A"
 _S = "adopt sqlite for the recall index cache"
@@ -35,7 +36,7 @@ def _cp(sid, created, decisions):
 def _forget_S(monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
@@ -54,7 +55,7 @@ def test_capture_suppression_records_a_hit(tmp_checkpoint_dir, monkeypatch):
     _forget_S(monkeypatch)
     # a later session re-extracts S (suppressed) + T (kept)
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stats = store.forget_hit_stats(project_dir=_A)
     assert stats["count"] == 1
     assert stats["last_hit_at"]  # a timestamp was stamped
@@ -69,7 +70,7 @@ def test_ledger_holds_no_forgotten_text(tmp_checkpoint_dir, monkeypatch):
     not even a prefix. Only the hash key + timestamp may reach disk."""
     _forget_S(monkeypatch)
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     raw = store._forget_hits_path(_A).read_text(encoding="utf-8")
     assert _S not in raw                    # forgotten value absent
     for token in _S.split():                # and no word of it, either
@@ -79,16 +80,16 @@ def test_ledger_holds_no_forgotten_text(tmp_checkpoint_dir, monkeypatch):
 def test_hits_accumulate_across_sessions(tmp_checkpoint_dir, monkeypatch):
     _forget_S(monkeypatch)
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     store.write_checkpoint("S3", _cp("S3", "2026-07-04T00:00:00Z", [_S]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     assert store.forget_hit_stats(project_dir=_A)["count"] == 2
 
 
 def test_status_surfaces_forget_hits_when_nonzero(tmp_checkpoint_dir, capsys, monkeypatch):
     _forget_S(monkeypatch)
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     capsys.readouterr()
     assert cli.main(["status"]) == 0
     out = capsys.readouterr().out
@@ -107,7 +108,7 @@ def test_status_rich_path_surfaces_forget_hits(tmp_checkpoint_dir, capsys, monke
     pytest.importorskip("rich")
     _forget_S(monkeypatch)
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     monkeypatch.delenv("DAIMON_PLAIN", raising=False)
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     capsys.readouterr()
@@ -170,7 +171,7 @@ def test_unknown_project_is_a_quiet_noop(tmp_checkpoint_dir):
 def test_forgotten_key_lifted_by_reopen(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     x_id = stored["working_context"]["recent_decisions"][0]["id"]
@@ -178,5 +179,5 @@ def test_forgotten_key_lifted_by_reopen(tmp_checkpoint_dir, monkeypatch):
     key = normalize.content_key(_S)
     assert key in store.forgotten_content_keys(_A)
     # a later reopen is the latest event -> the tombstone (and its key) lifts
-    store.append_event(x_id, "reopen", project_dir=_A)
+    store.append_event(x_id, "reopen", project_dir=_A, writer=Writer.HUMAN)
     assert key not in store.forgotten_content_keys(_A)

@@ -16,6 +16,7 @@ import pytest
 import daimon_briefing
 from daimon_briefing import (api, briefing, cli, hooks, ledger, marks,
                              mcp_tools, refutations, store, trust)
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/contract"
 OTHER = "/p/contract-other"
@@ -38,7 +39,7 @@ def _cp(*decisions):
 
 def _seed(*decisions, project=PROJECT):
     store.write_checkpoint("S-1", _cp(*(decisions or (KEPT,))),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
 
 
 def _ruling(verdict=RULING):

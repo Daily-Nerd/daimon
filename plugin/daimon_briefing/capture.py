@@ -34,6 +34,7 @@ from pathlib import Path
 
 from . import (amendments, carry, config, normalize, provenance, requests,
                serializer, store, transcript)
+from .surfaces import Writer
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +49,13 @@ def run(session_id: str, messages, *, project, chat, deadline,
     Returns store.write_checkpoint's result: the checkpoint path, or None
     when the write boundary refused (kill switch, #421) — each caller renders
     its own skip/success line. Serializer failures propagate."""
+    # D10.4: a session that is too short is a skip, whatever the ledger says;
+    # then ONE read of this project's events ledger. An unproven one refuses
+    # the admission HERE, before the model is called: the run would cost
+    # tokens and then be refused at the write anyway, and a refusal must
+    # cost nothing. `store.write_checkpoint` stays the enforcing point.
+    serializer.require_enough_messages(messages)
+    store.admission_preflight(project)
     source_ref = provenance.capture_source_ref(
         session_id, transcript_path, author=config.author(),
         host_hint=capture_host or config.capture_host(),
@@ -85,7 +93,7 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # admit=True (#693): capture is one of the two admission paths — new
     # cognitive content passes the ruling echo filter here.
     out = store.write_checkpoint(session_id, checkpoint, project_dir=project,
-                                 admit=True)
+                                 admit=True, writer=Writer.ADMISSION)
     if out is None:
         # #421: the write boundary refused (kill switch) — nothing landed, so
         # there is nothing to ledger rejections against either.
@@ -166,9 +174,11 @@ def _emit_supersede_candidates(pairs, events: dict, project,
     would land as plaintext `item_text` in append-only events.jsonl, forever.
     A pair whose old_text canonicalizes into the forgotten set (the same
     normalize.content_key keying store._drop_forgotten uses) is skipped
-    entirely. Fail-safe direction: if the forgotten-keys read raises, emit
-    NOTHING — a missed suggestion costs a candidate event; a leaked value
-    costs the deletion guarantee.
+    entirely. Fail-safe direction: an events ledger that is not proven
+    (TRANSIENT or any UNREADABLE) SKIPS every EMITTER write (#1132 PR 10b,
+    the registry's write column), so nothing lands where the tombstones
+    cannot be read: a missed suggestion costs a candidate event; a leaked
+    value costs the deletion guarantee.
 
     `forgotten` (#268): the caller may INJECT that key set, so the pipeline
     reads the ledger once and both emitters gate on the identical answer.
@@ -178,10 +188,7 @@ def _emit_supersede_candidates(pairs, events: dict, project,
     Returns the number of events actually appended."""
     appended = 0
     if forgotten is None:
-        try:
-            forgotten = store.forgotten_content_keys(project_dir=project)
-        except Exception:
-            return 0  # can't prove a value isn't forgotten -> emit nothing
+        forgotten = store.forgotten_content_keys(project_dir=project)
     for old_id, new_id, old_text in pairs:
         if not new_id:
             continue  # defense-in-depth: never write a candidate with no
@@ -198,7 +205,7 @@ def _emit_supersede_candidates(pairs, events: dict, project,
             continue  # idempotent — same candidate already latest
         if store.append_event(old_id, f"supersede-candidate:{new_id}",
                               source="serializer", item_text=old_text,
-                              project_dir=project):
+                              project_dir=project, writer=Writer.EMITTER):
             appended += 1
     return appended
 
@@ -304,8 +311,9 @@ def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
         _forgotten_item_ids) nor an id whose own latest lifecycle event is a
         tombstone may be written about at all.
       - G7 `_origin_on_disk`.
-    A fold that cannot be read means duplicates cannot be ruled out, so the
-    whole call writes nothing.
+    An events ledger that is not proven means duplicates cannot be ruled
+    out, so every row is SKIPPED at the write (the registry's EMITTER
+    posture) and the call writes nothing.
 
     `events` is the SAME `store.resolutions` fold the serialize block already
     fetched, reused exactly as _emit_supersede_candidates reuses it.
@@ -313,10 +321,7 @@ def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
     Returns the number of events actually appended."""
     if not observed or not observer:
         return 0
-    try:
-        recorded = store.corroborations(project_dir=project)
-    except Exception:
-        return 0  # can't prove this isn't a re-run -> write nothing
+    recorded = store.corroborations(project_dir=project)
     appended = 0
     written: set = set()
     for item_id, origin, _origin_author in observed:
@@ -334,7 +339,7 @@ def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
         if store.append_event(store.corroboration_ref(item_id),
                               f"corroborated-by:{observer}",
                               kind="corroboration", source="serializer",
-                              project_dir=project):
+                              project_dir=project, writer=Writer.EMITTER):
             appended += 1
     return appended
 
@@ -412,7 +417,8 @@ def _verify_agent_resolutions(project, messages) -> int:
         if store.append_event(
                 ref, AGENT_VERIFIED_STATUS,
                 note=f"verified agent evidence (role: {role})",
-                source="serializer", project_dir=project):
+                source="serializer", project_dir=project,
+                writer=Writer.EMITTER):
             confirmed += 1
     return confirmed
 

@@ -10,6 +10,7 @@ import pytest
 from daimon_briefing import (amendments, config, normalize, refutations,
                              requests, schema, store, surfaces, trust, view)
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/view-snapshot"
 OTHER = "/p/view-other"
@@ -32,7 +33,7 @@ def _plant(name, data: bytes):
 def _forget(text, project=PROJECT):
     key = normalize.content_key(text)
     assert store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                              tombstone=True, project_dir=project)
+                              tombstone=True, project_dir=project, writer=Writer.HUMAN)
     return key
 
 
@@ -63,7 +64,7 @@ def test_a_project_with_no_ledgers_is_absent_not_unreadable(tmp_checkpoint_dir):
 
 
 def test_each_ledger_folds_into_its_field(tmp_checkpoint_dir):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     key = _forget(SECRET)
     q_id = _quarantine("adopt the plan nobody reviewed")
     a_id = amendments.propose(item_id=ITEM, change="progressed",
@@ -99,7 +100,7 @@ def test_forgotten_is_the_union_of_every_local_project(tmp_checkpoint_dir):
 
 
 def test_a_torn_tail_is_degraded_and_noted_without_content(tmp_checkpoint_dir):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     _plant("events.jsonl", b'{"kind": "resolution", "item_ref": "o-bb')
     snap = view.snapshot(PROJECT)
     assert snap.health["events.jsonl"] is Health.DEGRADED
@@ -111,7 +112,7 @@ def test_a_torn_tail_is_degraded_and_noted_without_content(tmp_checkpoint_dir):
 
 def test_an_undecodable_line_is_unreadable_but_the_good_rows_stay(
         tmp_checkpoint_dir):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     _plant("events.jsonl", b"\xff\xfe not utf-8\n")
     snap = view.snapshot(PROJECT)
     assert snap.health["events.jsonl"] is Health.UNREADABLE
@@ -137,7 +138,7 @@ def test_a_degraded_trust_ledger_does_not_close_it(tmp_checkpoint_dir):
 
 
 def test_a_directory_in_a_ledgers_place_is_unreadable(tmp_checkpoint_dir):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     (_bucket() / "amendments.jsonl").mkdir()
     snap = view.snapshot(PROJECT)
     assert snap.health["amendments.jsonl"] is Health.UNREADABLE
@@ -157,7 +158,7 @@ def _boom(*args, **kwargs):
 ])
 def test_a_fold_that_raises_is_unreadable_for_that_ledger_only(
         tmp_checkpoint_dir, monkeypatch, target, attr, ledger):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     _quarantine("adopt the plan nobody reviewed")
     monkeypatch.setattr(target, attr, _boom)
     snap = view.snapshot(PROJECT)

@@ -12,6 +12,7 @@ import time
 import pytest
 
 from daimon_briefing import mcp_server
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture
@@ -136,7 +137,7 @@ def _result(out):
 def test_recall_tool_returns_provenance_rows(tmp_checkpoint_dir,
                                              sample_checkpoint, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
     text, is_err = _result(out)
@@ -167,7 +168,7 @@ def test_recall_tool_missing_query_is_tool_error(tmp_checkpoint_dir):
 def test_recall_tool_writes_a_recall_search_row_with_via_mcp(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
     text, is_err = _result(out)
@@ -217,7 +218,7 @@ def test_recall_tool_writes_the_empty_pull_row_when_nothing_matches(
 def test_recall_tool_session_argument_lands_as_injected_into(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call(
         "daimon_recall", {"query": "merge", "session": "S-live-42"}))
@@ -239,7 +240,7 @@ def test_recall_tool_accepts_a_kimi_shaped_session_id(
     # would have silently dropped its session and read as permanent zero
     # follow-through for that host.
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     kimi_session = "session_8a1593d9-376b-43d3-abc9-5796eb848fa3"
     _, out = rpc(_init(), _call(
@@ -260,7 +261,7 @@ def test_recall_tool_drops_an_untrusted_session_argument_silently(
     # an out-of-charset value, and a non-string all drop the field, not the
     # row, and the tool still answers normally.
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     for bad_session in ("x" * 129, "S with spaces", "S;rm -rf /", 12345, [],
                         None, "S-with-a-\nnewline", 'S-with-a-"quote'):
@@ -283,7 +284,7 @@ def test_recall_tool_survives_a_telemetry_recorder_that_raises(
     # Best-effort contract (#1053): a measurement failure must never take
     # down the tool call — the agent still gets its rows back.
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
 
     def _boom(*a, **kw):
@@ -323,8 +324,8 @@ def test_recall_tool_marks_a_resolved_row(tmp_checkpoint_dir, monkeypatch):
     cp = _cp("S-res", questions=[
         {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
          "id": "o-mee111"}])
-    store.write_checkpoint("S-res", cp, project_dir="/p/A")
-    store.append_event("o-mee111", "resolved", project_dir="/p/A")
+    store.write_checkpoint("S-res", cp, project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-mee111", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, is_err = _result(out)
@@ -342,7 +343,7 @@ def test_recall_tool_withholds_a_quarantined_value(tmp_checkpoint_dir, monkeypat
     value = "meerkat burrow mapping plan colony was fabricated by the agent"
     store.write_checkpoint(
         "S-q", _cp("S-q", questions=[{"text": value, "trust": "inferred"}]),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
     trust.propose(text=value, kind="question", reason="fabricated finding",
                   evidence=["issue:1109"], channel="cli-tty",
                   project_dir="/p/A")
@@ -365,7 +366,7 @@ def test_recall_tool_marks_a_superseded_row(tmp_checkpoint_dir, monkeypatch):
             {"text": "meerkat burrow mapping plan colony",
              "trust": "inferred"}],
             created="2025-01-01T00:00:00Z"),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
     newer = _cp(
         "S-new", decisions=[{
             "text": "abandoned meerkat burrow mapping plan colony too unstable",
@@ -373,7 +374,7 @@ def test_recall_tool_marks_a_superseded_row(tmp_checkpoint_dir, monkeypatch):
             "links": [{"type": "supersedes",
                        "target": "meerkat burrow mapping plan colony"}]}],
         created="2025-06-01T00:00:00Z")
-    store.write_checkpoint("S-new", newer, project_dir="/p/A")
+    store.write_checkpoint("S-new", newer, project_dir="/p/A", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, is_err = _result(out)
@@ -398,7 +399,7 @@ def test_recall_tool_marks_an_invalidated_row(tmp_checkpoint_dir, monkeypatch):
             {"text": "the axolotl exporter claim was verified",
              "trust": "inferred", "id": "o-bad111"}],
             created="2026-08-01T00:00:00Z"),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/p/A"), [_receipt_row("o-bad111")])
 
     _, out = rpc(_init(), _call("daimon_recall",
@@ -424,7 +425,7 @@ def test_recall_tool_marks_a_cured_row(tmp_checkpoint_dir, monkeypatch):
             {"text": "the axolotl exporter claim was verified",
              "trust": "inferred", "id": "o-111aaa"}],
             created="2026-08-01T00:00:00Z"),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/p/A"), [
         _receipt_row("o-111aaa"), _cure_row("o-111aaa")])
 
@@ -441,7 +442,7 @@ def test_recall_tool_marks_a_cured_row(tmp_checkpoint_dir, monkeypatch):
 def test_recall_tool_live_row_carries_a_null_status(
         tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_recall", {"query": "merge"}))
     text, is_err = _result(out)
@@ -464,8 +465,8 @@ def test_recall_tool_status_matches_the_cli_text_mode_wording(
     cp = _cp("S-res", questions=[
         {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
          "id": "o-mee111"}])
-    store.write_checkpoint("S-res", cp, project_dir="/p/A")
-    store.append_event("o-mee111", "resolved", project_dir="/p/A")
+    store.write_checkpoint("S-res", cp, project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-mee111", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, _ = _result(out)
@@ -491,8 +492,8 @@ def test_recall_tool_status_field_is_not_persisted_to_telemetry(
     cp = _cp("S-res", questions=[
         {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
          "id": "o-mee111"}])
-    store.write_checkpoint("S-res", cp, project_dir="/p/A")
-    store.append_event("o-mee111", "resolved", project_dir="/p/A")
+    store.write_checkpoint("S-res", cp, project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-mee111", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, is_err = _result(out)
@@ -509,7 +510,7 @@ def test_recall_tool_status_field_is_not_persisted_to_telemetry(
 def test_brief_tool_renders_checkpoint_text(tmp_checkpoint_dir,
                                             sample_checkpoint, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_brief", {}))
     text, is_err = _result(out)
@@ -520,7 +521,7 @@ def test_brief_tool_renders_checkpoint_text(tmp_checkpoint_dir,
 def test_brief_tool_withholds_a_quarantined_value(tmp_checkpoint_dir,
                                                    sample_checkpoint, monkeypatch):
     from daimon_briefing import store, trust
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     trust.propose(text="Chunk threshold for the serializer", kind="question",
                   reason="planted, not a real open question",
@@ -540,7 +541,7 @@ def test_brief_tool_no_checkpoint_gives_orientation_never_foreign_content(
     # #94/#96 lesson, machine edition: a fresh project must NEVER receive
     # another project's briefing inside a tool result. Orientation only.
     from daimon_briefing import store
-    store.write_checkpoint("S-other", sample_checkpoint, project_dir="/p/OTHER")
+    store.write_checkpoint("S-other", sample_checkpoint, project_dir="/p/OTHER", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/FRESH")
     _, out = rpc(_init(), _call("daimon_brief", {}))
     text, is_err = _result(out)
@@ -557,12 +558,12 @@ def test_brief_tool_never_carries_the_request_panel(tmp_checkpoint_dir,
     # the CLI same-project brief path. Without a gate, every MCP client
     # would auto-receive foreign ask/why/from_label prose (#94/#96).
     from daimon_briefing import requests, store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("S-mcp-sender", {
         "session_id": "S-mcp-sender", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/mcp-brief-sender")
+    }, project_dir="/p/mcp-brief-sender", writer=Writer.HUMAN)
     requests.open_request(to=store.project_slug("/p/A"),
                           ask="publish the schema", why="because",
                           channel="cli-agent",
@@ -587,12 +588,12 @@ def test_brief_tool_never_carries_the_decision_count_line(tmp_checkpoint_dir,
     # actually waiting here, so this is a meaningful negative, not a vacuous
     # one: the line would render on the CLI same-project path.
     from daimon_briefing import pending, requests, store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("S-mcp-sender-2", {
         "session_id": "S-mcp-sender-2", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/mcp-brief-sender-2")
+    }, project_dir="/p/mcp-brief-sender-2", writer=Writer.HUMAN)
     requests.open_request(to=store.project_slug("/p/A"),
                           ask="publish the schema", why="because",
                           channel="cli-agent",
@@ -619,8 +620,8 @@ def test_brief_tool_slug_and_project_conflict_is_tool_error(tmp_checkpoint_dir):
 def test_projects_tool_matches_cli_rows(tmp_checkpoint_dir, sample_checkpoint,
                                         monkeypatch):
     from daimon_briefing import cli, store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
-    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_projects", {}))
     text, is_err = _result(out)
@@ -637,7 +638,7 @@ def test_status_tool_matches_cli_payload(tmp_checkpoint_dir, sample_checkpoint,
     # diverged, not that a second ticked over between them.
     frozen = time.time()
     monkeypatch.setattr(time, "time", lambda: frozen)
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_status", {}))
     text, is_err = _result(out)
@@ -683,7 +684,7 @@ def test_brief_tool_empty_briefing_states_it(tmp_checkpoint_dir,
     # build() returning None means "nothing worth surfacing" — the tool says
     # so instead of returning empty bytes.
     from daimon_briefing import briefing, store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     monkeypatch.setattr(briefing, "build", lambda cp: None)
     _, out = rpc(_init(), _call("daimon_brief", {}))
@@ -702,7 +703,7 @@ def test_requests_inbox_tool_returns_addressed_rows(tmp_checkpoint_dir,
         "session_id": "S-sender", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "the sender shipped something", "trust": "inferred"}]},
-    }, project_dir="/p/mcp-sender")
+    }, project_dir="/p/mcp-sender", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/mcp-recipient")
     to = store.project_slug("/p/mcp-recipient")
     q_id = requests.open_request(to=to, ask="publish the schema",
@@ -723,7 +724,7 @@ def test_requests_inbox_tool_takes_an_explicit_project(tmp_checkpoint_dir,
         "session_id": "S-sender", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/mcp-sender-b")
+    }, project_dir="/p/mcp-sender-b", writer=Writer.HUMAN)
     to = store.project_slug("/p/mcp-recipient-b")
     q_id = requests.open_request(to=to, ask="review this", why="because",
                                  channel="cli-agent",
@@ -762,7 +763,7 @@ def test_mcp_tools_expose_no_request_write_verb():
 def test_tools_call_logs_mcp_usage(tmp_checkpoint_dir, tmp_log_dir,
                                    sample_checkpoint, monkeypatch):
     from daimon_briefing import config, store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rpc(_init(), _call("daimon_projects", {}), _call("daimon_recall",
                                                      {"query": "x"}),
@@ -787,8 +788,8 @@ def test_serve_disabled_exits_clean_without_reading(monkeypatch):
 
 def _tenant_two_buckets(sample_checkpoint, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
-    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
 

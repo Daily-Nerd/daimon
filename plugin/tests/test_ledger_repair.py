@@ -7,6 +7,7 @@ repair is judged against shapes the writers cannot make.
 import json
 
 from daimon_briefing import jsonl
+from daimon_briefing.surfaces import WritePosture, Writer
 
 ROW_A = json.dumps({"id": "a", "note": "first"}, ensure_ascii=False)
 ROW_B = json.dumps({"id": "b", "note": "second"}, ensure_ascii=False)
@@ -101,7 +102,7 @@ def test_forget_reaches_every_ledger_deleter_through_the_shared_entry(
         "S1", {"session_id": "S1", "created": "2026-08-01T00:00:00Z",
                "working_context": {"recent_decisions": [
                    {"text": "forget me please", "trust": "inferred"}]}},
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
     assert cli.main(["forget", "forget me please", "--project", project]) == 0
     labels = [c[0] for c in calls]
     first_seen = [label for i, label in enumerate(labels)
@@ -220,7 +221,7 @@ def test_an_append_racing_the_repair_is_not_lost(monkeypatch):
 
     def racing(*args, **kwargs):
         worker = threading.Thread(
-            target=lambda: appended.append(jsonl.append(path, late)))
+            target=lambda: appended.append(jsonl.append(path, late, posture=WritePosture.PROCEED)))
         worker.start()
         worker.join(0.2)        # the appender had its chance to land first
         try:

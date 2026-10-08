@@ -8,6 +8,7 @@ import time
 from daimon_briefing import briefing, cli, hooks, mcp_tools, store
 
 from ._prepared import in_hand
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/repo/loops-age"
 OTHER = "/repo/somewhere-else"
@@ -39,7 +40,7 @@ def _write(project=PROJECT, items=None):
           "working_context": {"open_questions": items or _items(),
                               "recent_decisions": []},
           "epistemic_snapshot": {}}
-    store.write_checkpoint("S-loops", cp, project_dir=project)
+    store.write_checkpoint("S-loops", cp, project_dir=project, writer=Writer.HUMAN)
 
 
 def _annotated(project=PROJECT):

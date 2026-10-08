@@ -35,6 +35,7 @@ import types
 from pathlib import Path
 
 from daimon_briefing import cli, config, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/crash-log"
 CANARY = "zqxcrashcanary4417 the migration lock is held by the old worker"
@@ -99,7 +100,7 @@ def _write_checkpoint():
         "working_context": {"recent_decisions": [
             {"text": CANARY, "trust": "inferred"},
             {"text": KEEPER, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 # ---- the writer and the deleter must agree on WHERE ----------------------

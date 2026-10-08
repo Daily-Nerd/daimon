@@ -9,6 +9,7 @@ rewrite) never opt in: they must not strip previously-admitted items.
 """
 
 from daimon_briefing import refutations, store
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/p/ruling-echo"
@@ -55,7 +56,7 @@ def _beliefs(path):
 def test_admission_drops_exact_echo_of_active_ruling(tmp_checkpoint_dir):
     _active_ruling()
     out = store.write_checkpoint("S-echo", _checkpoint(),
-                                 project_dir=PROJECT, admit=True)
+                                 project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     beliefs = _beliefs(out)
     assert VERDICT not in beliefs
     assert "an unrelated belief survives" in beliefs
@@ -65,7 +66,7 @@ def test_rewrite_without_admit_keeps_previously_admitted_items(
         tmp_checkpoint_dir):
     _active_ruling()
     out = store.write_checkpoint("S-echo", _checkpoint(),
-                                 project_dir=PROJECT)
+                                 project_dir=PROJECT, writer=Writer.HUMAN)
     assert VERDICT in _beliefs(out)
 
 
@@ -75,14 +76,14 @@ def test_candidate_ruling_never_drops_anything(tmp_checkpoint_dir):
         scope="payments service", evidence=["issue:693"],
         channel="cli-agent", ratified=False, project_dir=PROJECT)
     out = store.write_checkpoint("S-echo", _checkpoint(),
-                                 project_dir=PROJECT, admit=True)
+                                 project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     assert VERDICT in _beliefs(out)
 
 
 def test_echo_drop_is_counted_under_its_own_reason(tmp_checkpoint_dir):
     _active_ruling()
     store.write_checkpoint("S-echo", _checkpoint(),
-                           project_dir=PROJECT, admit=True)
+                           project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     stats = store.forget_hit_stats(project_dir=PROJECT)
     # The echo rate is its OWN measurement — it must not inflate the forget
     # suppression count the project already publishes.
@@ -95,7 +96,7 @@ def test_echo_drop_logs_content_hash_never_text(tmp_checkpoint_dir, caplog):
     _active_ruling()
     with caplog.at_level(logging.INFO):
         store.write_checkpoint("S-echo", _checkpoint(),
-                               project_dir=PROJECT, admit=True)
+                               project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     echo = [r for r in caplog.records if "ruling echo" in r.getMessage()]
     assert echo
     # INFO, not WARNING: a stable ruling being re-minted every session is an
@@ -119,7 +120,7 @@ def test_rendered_line_forms_are_dropped_too(tmp_checkpoint_dir):
     cp["epistemic_snapshot"]["strong_beliefs"].append(
         {"text": f"§ {VERDICT}", "trust": "inferred"})
     out = store.write_checkpoint("S-echo", cp, project_dir=PROJECT,
-                                 admit=True)
+                                 admit=True, writer=Writer.HUMAN)
     beliefs = _beliefs(out)
     assert f"§ {VERDICT}  [agent-written]" not in beliefs
     assert f"§ {VERDICT}" not in beliefs
@@ -137,7 +138,7 @@ def test_active_refutation_never_drops_anything(tmp_checkpoint_dir):
         channel="cli-tty", ratified=True, project_dir=PROJECT)
     assert refutations.get(ref, project_dir=PROJECT)["state"] == "active"
     out = store.write_checkpoint("S-echo", _checkpoint(),
-                                 project_dir=PROJECT, admit=True)
+                                 project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     assert VERDICT in _beliefs(out)
     stats = store.forget_hit_stats(project_dir=PROJECT)
     assert stats["ruling_echo_count"] == 0
@@ -169,10 +170,10 @@ def test_hand_edited_empty_verdict_ruling_never_breaks_the_filter(
     row.update({"subject": "empty verdict", "verdict": "", "scope": "tests",
                 "anchors": [], "revisit_when": "", "evidence": [],
                 "ratified": True})
-    assert refutations.append(row, project_dir=PROJECT)
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
     _active_ruling()
     out = store.write_checkpoint("S-echo", _checkpoint(),
-                                 project_dir=PROJECT, admit=True)
+                                 project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     assert VERDICT not in _beliefs(out)
     assert store.forget_hit_stats(project_dir=PROJECT)[
         "ruling_echo_count"] == 1
@@ -185,7 +186,7 @@ def test_status_rich_path_surfaces_echo_drops(tmp_checkpoint_dir,
     from daimon_briefing import cli, render
     _active_ruling()
     store.write_checkpoint("S-echo", _checkpoint(),
-                           project_dir=PROJECT, admit=True)
+                           project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     monkeypatch.delenv("DAIMON_PLAIN", raising=False)
     monkeypatch.setattr(render, "supports_rich", lambda: True)
@@ -199,7 +200,7 @@ def test_status_surfaces_echo_drops_when_nonzero(tmp_checkpoint_dir,
     from daimon_briefing import cli
     _active_ruling()
     store.write_checkpoint("S-echo", _checkpoint(),
-                           project_dir=PROJECT, admit=True)
+                           project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     capsys.readouterr()
     assert cli.main(["status"]) == 0
@@ -226,7 +227,7 @@ def test_filter_fails_open_on_ledger_read_error(tmp_checkpoint_dir,
 
     monkeypatch.setattr(refutations, "read_events", boom)
     out = store.write_checkpoint("S-echo", _checkpoint(),
-                                 project_dir=PROJECT, admit=True)
+                                 project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     assert out is not None
     assert VERDICT in _beliefs(out)  # fail-open: the write goes through whole
     assert calls, "the failure simulation never fired"
@@ -282,7 +283,7 @@ def test_item_quoting_a_ruling_keeps_quote_and_trust(tmp_checkpoint_dir):
     cp["epistemic_snapshot"]["strong_beliefs"][0].update(
         {"quote": VERDICT, "trust": "verbatim"})
     out = store.write_checkpoint("S-echo", cp, project_dir=PROJECT,
-                                 admit=True)
+                                 admit=True, writer=Writer.HUMAN)
     import json
     stored = json.loads(out.read_text(encoding="utf-8"))
     item = stored["epistemic_snapshot"]["strong_beliefs"][0]
@@ -298,7 +299,7 @@ def test_active_topic_survives_echo_filter(tmp_checkpoint_dir):
     cp["working_context"]["active_topic"] = {"text": VERDICT,
                                              "trust": "inferred"}
     out = store.write_checkpoint("S-echo", cp, project_dir=PROJECT,
-                                 admit=True)
+                                 admit=True, writer=Writer.HUMAN)
     import json
     stored = json.loads(out.read_text(encoding="utf-8"))
     assert stored["working_context"]["active_topic"]["text"] == VERDICT
@@ -313,7 +314,7 @@ def test_stats_last_hit_at_excludes_echo_rows(tmp_checkpoint_dir):
         {"ts": "2020-01-01T00:00:00Z", "key": "k-forget"}) + "\n",
         encoding="utf-8")
     store.write_checkpoint("S-echo", _checkpoint(),
-                           project_dir=PROJECT, admit=True)
+                           project_dir=PROJECT, admit=True, writer=Writer.HUMAN)
     stats = store.forget_hit_stats(project_dir=PROJECT)
     assert stats["count"] == 1
     assert stats["ruling_echo_count"] == 1
@@ -331,7 +332,7 @@ def test_anchor_attach_rewrite_never_echo_drops(tmp_checkpoint_dir, tmp_path,
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "mod.py").write_text("def fn():\n    pass\n", encoding="utf-8")
-    store.write_checkpoint("S-echo", _checkpoint(), project_dir=proj)
+    store.write_checkpoint("S-echo", _checkpoint(), project_dir=proj, writer=Writer.HUMAN)
     refs.assert_ruling(
         subject="friday payment deploys", verdict=VERDICT,
         scope="payments service", evidence=["issue:693"],
@@ -351,7 +352,7 @@ def test_forget_rewrite_never_echo_drops(tmp_checkpoint_dir, monkeypatch,
     # The forget rewrite deletes exactly what the user named — an active
     # ruling matching a DIFFERENT stored item must not widen the deletion.
     from daimon_briefing import cli
-    store.write_checkpoint("S-echo", _checkpoint(), project_dir=PROJECT)
+    store.write_checkpoint("S-echo", _checkpoint(), project_dir=PROJECT, writer=Writer.HUMAN)
     _active_ruling()
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     stored = store.read_latest_body(project_dir=PROJECT,

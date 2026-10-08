@@ -678,7 +678,15 @@ def main(argv=None) -> int:
         argv.insert(1, "propose")
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    # D10.3: the CLI is the human channel, so a refused write is surfaced
+    # here (one handler for every verb) instead of being swallowed into the
+    # appender's "not written". A library caller never goes through here.
+    try:
+        with jsonl.surface_refusals():
+            return args.func(args)
+    except jsonl.Refused as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

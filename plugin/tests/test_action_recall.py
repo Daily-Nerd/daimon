@@ -23,6 +23,7 @@ import json
 import pytest
 
 from daimon_briefing import cli, store
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture
@@ -65,12 +66,12 @@ def _seed(text=BELIEF, project=PROJECT, session="S-old",
     excluded from its own test.
     """
     store.write_checkpoint(session, _checkpoint(session, text, created),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-latest",
         _checkpoint("S-latest", "unrelated newer bookkeeping",
                     "2026-06-28T00:00:00Z"),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
 
 
 def _run(monkeypatch, capsys, command, session="S-now", project=PROJECT,
@@ -340,14 +341,14 @@ def test_gated_candidate_records_best_refused_on_the_placeholder(
         "S-stale",
         _checkpoint("S-stale", "ocelot pipeline rollback stalls staging",
                     stamp),
-        project_dir=PROJECT)
+        project_dir=PROJECT, writer=Writer.HUMAN)
     # Written with the NEWEST stamp so the briefing-already-covered exclusion
     # lands on it, not on S-stale — the fixture must not depend on wall-clock
     # dates baked in as string literals.
     store.write_checkpoint(
         "S-latest",
         _checkpoint("S-latest", "unrelated newer bookkeeping", latest_stamp),
-        project_dir=PROJECT)
+        project_dir=PROJECT, writer=Writer.HUMAN)
     rc, out = _run(monkeypatch, capsys,
                    "kubectl get ocelot pipeline cache deploy")
     assert rc == 0 and out == ""

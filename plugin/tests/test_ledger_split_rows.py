@@ -14,6 +14,7 @@ import pytest
 
 from daimon_briefing import (amendments, buckets, cli, normalize, privacy,
                              refutations, relations, requests, store, trust)
+from daimon_briefing.surfaces import Writer
 
 SEPS = [" ", " ", "\u0085"]
 sep_param = pytest.mark.parametrize("sep", SEPS, ids=["u2028", "u2029", "u0085"])
@@ -112,7 +113,7 @@ def test_refutations_forget_keeps_a_row_with_a_separator(tmp_checkpoint_dir,
 @sep_param
 def test_events_scrub_keeps_a_row_with_a_separator(tmp_checkpoint_dir, sep):
     store.append_event("i-y", "resolved", item_text=CANARY,
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     path = store._events_path(PROJECT)
     survivor = json.dumps({"item_ref": "i-z", "status": "resolved",
                            "note": f"left{sep}right"}, ensure_ascii=False)
@@ -170,7 +171,7 @@ def test_privacy_audit_finds_a_value_inside_a_separator_row(tmp_checkpoint_dir,
                                                             sep):
     # Tombstone only: no scrub has run, so the residue is real.
     assert store.append_event("i-t", f"forgotten:{KEY}", project_dir=PROJECT,
-                              allow_disabled=True, tombstone=True)
+                              allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
     path = store._events_path(PROJECT)
     row = {"item_ref": "i-y", "status": "resolved", "item_text": CANARY,
            "note": f"left{sep}right"}
@@ -251,13 +252,13 @@ def test_log_refuses_a_forgotten_status(tmp_checkpoint_dir, capsys):
 
 def test_append_event_refuses_a_forgotten_status_without_the_tombstone_flag(
         tmp_checkpoint_dir):
-    assert store.append_event("i-y", "forgotten:abc", project_dir=PROJECT) \
+    assert store.append_event("i-y", "forgotten:abc", project_dir=PROJECT, writer=Writer.HUMAN) \
         is False
-    assert store.append_event("i-y", " Forgotten:abc", project_dir=PROJECT) \
+    assert store.append_event("i-y", " Forgotten:abc", project_dir=PROJECT, writer=Writer.HUMAN) \
         is False
     assert not store._events_path(PROJECT).exists()
     assert store.append_event("i-y", "forgotten:abc", project_dir=PROJECT,
-                              tombstone=True) is True
+                              tombstone=True, writer=Writer.HUMAN) is True
 
 
 # ---- a rewrite that changes nothing reports nothing removed ----------------

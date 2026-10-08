@@ -19,6 +19,7 @@ from daimon_briefing import (clock, config, normalize, pending, redact,
                              refutations, requests, store)
 
 from ._prepared import FrozenClock
+from daimon_briefing.surfaces import Writer
 
 
 def _iso(offset_seconds=0):
@@ -31,7 +32,7 @@ def _serialize(project_dir, session_id, created):
         "session_id": session_id, "created": created,
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
 
 
 @pytest.fixture
@@ -207,7 +208,7 @@ def test_to_human_true_with_kind_info_forged_on_disk_still_reads_as_work(
     row = requests._stamp("opened", "q-0123456789ab", "cli-tty")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY,
                 "to_human": True, "kind": "info"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get("q-0123456789ab", project_dir=project)
     assert record["kind"] == "work"
 
@@ -255,7 +256,7 @@ def test_requests_append_cannot_mint_kind_info_by_bypassing_open_request(
     because the write boundary would refuse exactly this."""
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "kind": "info"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get("q-0123456789ab", project_dir=project)
     assert record["kind"] == "work"
     assert record["opened_by"] == "agent"  # the row is otherwise honored
@@ -280,7 +281,7 @@ def test_a_backdated_duplicate_opened_row_cannot_reclassify_a_human_ask(
                              now_ns=genuine["order"] - 1_000_000_000)
     forged.update({"to": genuine["to"], "ask": genuine["ask"],
                    "why": genuine["why"], "kind": "info"})
-    assert requests.append(forged, project_dir=project)
+    assert requests.append(forged, project_dir=project, writer=Writer.HUMAN)
     assert requests.get(q_id, project_dir=project)["kind"] == "work"
 
 
@@ -303,7 +304,7 @@ def test_a_backdated_duplicate_claiming_a_human_channel_still_forced_to_work(
                              now_ns=genuine["order"] - 1_000_000_000)
     forged.update({"to": genuine["to"], "ask": genuine["ask"],
                    "why": genuine["why"], "kind": "info"})
-    assert requests.append(forged, project_dir=project)
+    assert requests.append(forged, project_dir=project, writer=Writer.HUMAN)
     assert requests.get(q_id, project_dir=project)["kind"] == "work"
 
 
@@ -334,7 +335,7 @@ def test_a_non_human_duplicate_opened_row_cannot_downgrade_an_info_ask(
     q_id = _open(project, channel="cli-tty", kind="info")
     dup = requests._stamp("opened", q_id, channel)
     dup.update({"to": RECIPIENT, "ask": ASK, "why": WHY, **extra})
-    assert requests.append(dup, project_dir=project)
+    assert requests.append(dup, project_dir=project, writer=Writer.HUMAN)
     assert requests.get(q_id, project_dir=project)["kind"] == "info"
 
 
@@ -512,7 +513,7 @@ def test_a_legacy_row_with_no_act_author_folds_to_none(project):
     row = requests._stamp("opened", "q-0123456789ab", "ui")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY})
     assert "act_author" not in row
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get("q-0123456789ab", project_dir=project)
     assert record["opened_act_author"] is None
     assert record["verdict_act_author"] is None
@@ -526,7 +527,7 @@ def test_the_per_act_author_is_redacted_on_the_way_to_disk(project):
     row = requests._stamp("opened", "q-0123456789ab", "ui")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY,
                 "act_author": "token=abcdefghijkl"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     assert "abcdefghijkl" not in json.dumps(_rows(project))
 
 
@@ -575,15 +576,15 @@ def test_a_later_duplicate_opened_row_cannot_revoke_the_kind_an_earlier_agent_ac
     forged_founder = requests._stamp("opened", q_id, "ui", now_ns=base)
     forged_founder.update({"to": RECIPIENT, "ask": "a forged info ask",
                           "why": "forged", "kind": "info"})
-    assert requests.append(forged_founder, project_dir=project)
+    assert requests.append(forged_founder, project_dir=project, writer=Writer.HUMAN)
     agent_accept = requests._stamp("accepted", q_id, "cli-agent",
                                    now_ns=base + 1_000_000_000)
-    assert requests.append(agent_accept, project_dir=project)
+    assert requests.append(agent_accept, project_dir=project, writer=Writer.HUMAN)
     genuine_open = requests._stamp("opened", q_id, "cli-tty",
                                    now_ns=base + 2_000_000_000)
     genuine_open.update({"to": RECIPIENT, "ask": "the real ask",
                         "why": "the real why"})  # no `kind` -> DEFAULT_KIND
-    assert requests.append(genuine_open, project_dir=project)
+    assert requests.append(genuine_open, project_dir=project, writer=Writer.HUMAN)
 
     record = requests.get(q_id, project_dir=project)
 
@@ -621,12 +622,12 @@ def test_founder_kind_pre_pass_skips_a_shape_invalid_row_the_same_way_the_main_p
                                             now_ns=base)
     shape_invalid_founder.update({"to": "", "ask": "a forged claim",
                                   "why": "forged", "kind": "info"})
-    assert requests.append(shape_invalid_founder, project_dir=project)
+    assert requests.append(shape_invalid_founder, project_dir=project, writer=Writer.HUMAN)
     valid_open = requests._stamp("opened", q_id, "cli-agent",
                                  now_ns=base + 1_000_000_000)
     valid_open.update({"to": RECIPIENT, "ask": "the real ask",
                        "why": "the real why"})
-    assert requests.append(valid_open, project_dir=project)
+    assert requests.append(valid_open, project_dir=project, writer=Writer.HUMAN)
 
     record = requests.get(q_id, project_dir=project)
 
@@ -649,7 +650,7 @@ def test_an_unreadable_kind_value_never_crashes_a_read_surface(project,
     appended directly: the writer never puts a non-string here."""
     row = requests._stamp("opened", "q-0123456789ab", "cli-tty")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "kind": bad_kind})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.records(project_dir=project)["q-0123456789ab"]
     assert record["kind"] == "work"
     assert requests.listing(project_dir=project)
@@ -679,7 +680,7 @@ def test_kind_round_trips_through_the_ledger(project):
 
 def test_unresolvable_project_writes_nothing(project):
     assert requests._path(None) is None
-    assert requests.append({"event": "opened"}, project_dir=None) is False
+    assert requests.append({"event": "opened"}, project_dir=None, writer=Writer.HUMAN) is False
 
 
 def test_unknown_event_refused_at_the_write_boundary(project):
@@ -708,7 +709,7 @@ def test_fold_rechecks_authority_on_a_forged_row(project, event):
     q_id = _open(project)
     row = requests._stamp(event, q_id, "cli-agent")
     row["note"] = "landing my own verdict"
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
     assert record["suppressed"] is False
@@ -805,7 +806,7 @@ def test_forged_agent_accepted_row_on_a_work_ask_is_inert_in_the_fold(
     skipping `accept()` must land in the same place the wrapper does."""
     q_id = _open(project)  # kind defaults to work
     row = requests._stamp("accepted", q_id, "cli-agent")
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -817,7 +818,7 @@ def test_forged_agent_accepted_row_on_an_info_ask_lands_accepted_in_the_fold(
     with no call to `accept()` at all."""
     q_id = _open(project, channel="cli-tty", kind="info")
     row = requests._stamp("accepted", q_id, "cli-agent")
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "agent"
@@ -831,7 +832,7 @@ def test_forged_mechanical_accepted_row_on_an_info_ask_is_inert_in_the_fold(
     to accept) must stay inert even on an `info` ask still open."""
     q_id = _open(project, channel="cli-tty", kind="info")
     row = requests._stamp("accepted", q_id, "mechanical")
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -850,7 +851,7 @@ def test_forged_unknown_channel_accepted_row_on_an_info_ask_is_inert_in_the_fold
     q_id = _open(project, channel="cli-tty", kind="info")
     row = requests._stamp("accepted", q_id, "cli-agent")
     row["channel"] = "totally-unrecognized"
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -879,7 +880,7 @@ def test_forged_agent_accepted_row_cannot_reclaim_an_already_human_accepted_info
     q_id = _open(project, channel="cli-tty", kind="info")
     requests.accept(q_id, channel="cli-tty", project_dir=project)
     row = requests._stamp("accepted", q_id, "cli-agent")
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "human"
@@ -900,7 +901,7 @@ def test_forged_agent_accepted_row_cannot_reverse_a_done_info_ask(project):
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "done"  # sanity: info done lands directly
     row = requests._stamp("accepted", q_id, "cli-agent")
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "done"
 
@@ -909,9 +910,9 @@ def test_forged_agent_accepted_row_on_a_to_human_ask_is_inert_in_the_fold(
         project):
     row = requests._stamp("opened", "q-0123456789ab", "cli-tty")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "to_human": True})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
-    assert requests.append(accepted, project_dir=project)
+    assert requests.append(accepted, project_dir=project, writer=Writer.HUMAN)
     record = requests.get("q-0123456789ab", project_dir=project)
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -1122,7 +1123,7 @@ def test_agent_accept_refuses_a_work_ask_whose_founder_a_planted_duplicate_stole
     # since `open_request` would refuse an empty ask at the write boundary.
     planted = requests._stamp("opened", q_id, "cli-tty", now_ns=before - 1)
     planted.update({"to": store.project_slug(project), "ask": "", "why": ""})
-    assert requests.append(planted, project_dir="p-planted-partner")
+    assert requests.append(planted, project_dir="p-planted-partner", writer=Writer.HUMAN)
     with pytest.raises(requests.RequestError):
         requests.accept(q_id, channel="cli-agent", project_dir=project)
     record = requests.recipient_join(project_dir=project)[q_id]
@@ -1507,11 +1508,11 @@ def test_a_planted_origin_slug_on_a_local_opened_row_is_inert_on_recipient_join(
     opened = requests._stamp("opened", q_id, "cli-tty")
     opened.update({"to": my_slug, "ask": ASK, "why": WHY})
     opened["_origin_slug"] = donor  # planted: this row never left this bucket
-    assert requests.append(opened, project_dir=project)
+    assert requests.append(opened, project_dir=project, writer=Writer.HUMAN)
     accepted = requests._stamp("accepted", q_id, "cli-agent")
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
-    assert requests.append(accepted, project_dir=project)
+    assert requests.append(accepted, project_dir=project, writer=Writer.HUMAN)
     record = requests.recipient_join(project_dir=project)[q_id]
     assert record["from_slug"] == ""
     assert record["state"] == "open"
@@ -1591,7 +1592,7 @@ def test_a_ratified_policy_in_one_recipients_ledger_never_covers_an_ask_addresse
     forged = requests._stamp("accepted", uncovered_id, "cli-agent")
     forged["under_ruling"] = ruling_id
     forged["policy_sha256"] = sha
-    assert requests.append(forged, project_dir=other_recipient)
+    assert requests.append(forged, project_dir=other_recipient, writer=Writer.HUMAN)
     listed = {r["request_id"]: r
              for r in requests.listing(project_dir=sender_slug)}
     joined = requests.sender_join(project_dir=sender_slug)
@@ -1628,7 +1629,7 @@ def test_a_candidate_ruling_in_the_recipients_ledger_is_inert_on_the_sender_side
     forged = requests._stamp("accepted", q_id, "cli-agent")
     forged["under_ruling"] = ruling_id
     forged["policy_sha256"] = sha
-    assert requests.append(forged, project_dir=project)
+    assert requests.append(forged, project_dir=project, writer=Writer.HUMAN)
     listed = {r["request_id"]: r
              for r in requests.listing(project_dir=sender_slug)}[q_id]
     assert listed["state"] == "open"
@@ -1709,7 +1710,7 @@ def test_a_ruling_naming_an_alias_of_the_sending_project_still_covers_an_accept_
     forged = requests._stamp("accepted", q_id, "cli-agent")
     forged["under_ruling"] = ruling_id
     forged["policy_sha256"] = sha
-    assert requests.append(forged, project_dir=recipient_slug)
+    assert requests.append(forged, project_dir=recipient_slug, writer=Writer.HUMAN)
     monkeypatch.setattr(requests.buckets, "aliases_for", _fake_aliases_for)
     listed = {r["request_id"]: r
              for r in requests.listing(project_dir=project)}[q_id]
@@ -1842,7 +1843,7 @@ def test_a_self_ratified_policy_never_covers_a_self_addressed_accept_anywhere(
     forged = requests._stamp("accepted", q_id, "cli-agent")
     forged["under_ruling"] = ruling_id
     forged["policy_sha256"] = sha
-    assert requests.append(forged, project_dir=project)
+    assert requests.append(forged, project_dir=project, writer=Writer.HUMAN)
     listed = {r["request_id"]: r
              for r in requests.listing(project_dir=project)}[q_id]
     joined = requests.sender_join(project_dir=project)[q_id]
@@ -1885,7 +1886,7 @@ def test_an_info_record_can_never_reach_a_pending_agent_claim(project):
     q_id = _open(project, channel="cli-tty", kind="info")
     row = requests._stamp("done", q_id, "cli-agent")
     row["evidence"] = "a forged completion claim on an info ask"
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "done"
     assert record["done_pending"] is False
@@ -1923,7 +1924,7 @@ def test_rejection_is_sticky(project):
         row = requests._stamp(event, q_id, "cli-tty")
         row["evidence"] = "it is finished"
         row["ask"] = "softer ask"
-        requests.append(row, project_dir=project)
+        requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "rejected"
     assert record["ask"] == ASK
@@ -1967,7 +1968,7 @@ def test_revise_is_capped_and_the_fourth_is_inert_in_the_fold(project):
     # Off-path row: the CAP is the fold's, not the CLI's.
     row = requests._stamp("revised", q_id, "cli-agent")
     row["ask"] = "revision 3"
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["revision"] == requests.MAX_REVISIONS
     assert record["ask"] == "revision 2"
@@ -2017,7 +2018,7 @@ def test_human_done_is_not_a_claim(project):
 def test_done_without_evidence_is_inert_in_the_fold(project):
     q_id = _open(project)
     assert requests.append(requests._stamp("done", q_id, "cli-tty"),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     assert requests.get(q_id, project_dir=project)["state"] == "open"
 
 
@@ -2147,7 +2148,7 @@ def test_a_forged_done_row_via_append_lands_pending_too(project):
     q_id = _open(project)
     row = requests._stamp("done", q_id, "cli-agent")
     row["evidence"] = "a forged completion claim"
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
     assert record["done_pending"] is True
@@ -2430,7 +2431,7 @@ def test_a_forged_revised_row_after_needs_info_leaves_a_human_done_intact(
                         project_dir=project)
     row = requests._stamp("revised", q_id, "cli-agent", now_ns=9 * 10**18)
     row["why"] = "forged revise, large order"
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
     assert record["done_pending"] is False
@@ -2582,7 +2583,7 @@ def test_capture_run_survives_a_broken_request_done_pass(
         raise RuntimeError("pass broke")
 
     monkeypatch.setattr(capture, "_verify_agent_request_done", boom)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project, writer=Writer.HUMAN)
     chat = fake_chat_factory(json.dumps({
         "session_id": "S-new",
         "working_context": {
@@ -2609,7 +2610,7 @@ def test_capture_run_wires_the_request_done_pass(
         return 0
 
     monkeypatch.setattr(capture, "_verify_agent_request_done", spy)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=project, writer=Writer.HUMAN)
     chat = fake_chat_factory(json.dumps({
         "session_id": "S-new",
         "working_context": {
@@ -2683,7 +2684,7 @@ def test_orphan_lifecycle_rows_are_inert_but_kept(project):
     inert in the fold and visible in the raw audit."""
     orphan = "q-0123456789ab"
     assert requests.append(requests._stamp("accepted", orphan, "cli-tty"),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     assert requests.records(project_dir=project) == {}
     assert len(_rows(project)) == 1
 
@@ -2722,7 +2723,7 @@ def test_attention_rows_never_move_the_records_age(project):
     for event in ("surfaced", "verdict_surfaced"):
         requests.append(requests._stamp(event, q_id, "mechanical",
                                         now_ns=9 * 10**18),
-                        project_dir=project)
+                        project_dir=project, writer=Writer.HUMAN)
     after = requests.get(q_id, project_dir=project)
     assert after["updated_at"] == before
     assert after["verdict_surfaced"][after["revision"]]
@@ -2829,7 +2830,7 @@ def recipient(project):
         "session_id": "S-r", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "the recipient shipped something", "trust": "inferred"}]},
-    }, project_dir=OTHER)
+    }, project_dir=OTHER, writer=Writer.HUMAN)
     return store.project_slug(OTHER)
 
 
@@ -2894,7 +2895,7 @@ def _cli_open_to(project, to, *extra):
 def _bucket_named(path, session):
     store.write_checkpoint(session, {
         "session_id": session, "created": "2026-08-16T00:00:00Z",
-    }, project_dir=path)
+    }, project_dir=path, writer=Writer.HUMAN)
     return store.project_slug(path)
 
 
@@ -3076,7 +3077,7 @@ def test_cli_request_list_never_reads_kind_off_a_raw_row(project, capsys):
     from daimon_briefing import cli
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "kind": "info"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     assert cli.main(["request", "list", "--project", project]) == 0
     out = capsys.readouterr().out
     assert "Kind: work" in out
@@ -3096,7 +3097,7 @@ def test_cli_request_list_json_reads_kind_from_the_fold_not_the_raw_row(
     from daimon_briefing import cli
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, "kind": "info"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     assert cli.main(["request", "list", "--project", project,
                      "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3159,7 +3160,7 @@ def test_cli_request_inbox_never_reads_kind_off_a_raw_row(
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": store.project_slug(recipient_dir), "ask": ASK,
                "why": WHY, "kind": "info"})
-    assert requests.append(row, project_dir=sender_dir)
+    assert requests.append(row, project_dir=sender_dir, writer=Writer.HUMAN)
     assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
     out = capsys.readouterr().out
     assert "Kind: work" in out
@@ -3179,7 +3180,7 @@ def test_cli_request_inbox_json_reads_kind_from_the_fold_not_the_raw_row(
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": store.project_slug(recipient_dir), "ask": ASK,
                "why": WHY, "kind": "info"})
-    assert requests.append(row, project_dir=sender_dir)
+    assert requests.append(row, project_dir=sender_dir, writer=Writer.HUMAN)
     assert cli.main(["request", "inbox", "--project", recipient_dir,
                      "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -3736,7 +3737,7 @@ def test_cli_forget_reaches_the_request_ledger_by_value(project, capsys):
         "session_id": "S-1", "created": "2026-08-16T00:00:00Z",
         "working_context": {"open_questions": [
             {"text": "does the recipient own this", "trust": "inferred"}]},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
     q_id = _open(project)
     rc = cli.main(["forget", ASK, "--project", project])
     assert rc == 0
@@ -3750,7 +3751,7 @@ def test_audit_privacy_scans_the_request_ledger(project):
         "session_id": "S-1", "created": "2026-08-16T00:00:00Z",
         "working_context": {"open_questions": [
             {"text": "does the recipient own this", "trust": "inferred"}]},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
     q_id = _open(project)
     assert cli.main(["forget", ASK, "--project", project]) == 0
     assert requests.get(q_id, project_dir=project) is None
@@ -3758,7 +3759,7 @@ def test_audit_privacy_scans_the_request_ledger(project):
     # must see it (this is what proves the scanner works).
     row = requests._stamp("opened", "q-abcabcabcabc", "cli-agent")
     row.update({"to": "-p-recipient", "ask": ASK, "why": "residue"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     path = requests._path(project)
     with path.open("a", encoding="utf-8") as handle:
         handle.write("junk line\n[1, 2]\n")
@@ -3947,7 +3948,7 @@ def test_the_kill_switch_stops_the_ledger(project, monkeypatch):
     before = len(_rows(project))
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     assert requests.append(requests._stamp("suppressed", q_id, "cli-tty"),
-                           project_dir=project) is False
+                           project_dir=project, writer=Writer.HUMAN) is False
     for call in (
             lambda: _open(project, ask="an ask written while disabled"),
             lambda: requests.revise(q_id, channel="cli-agent", ask="nope",
@@ -3972,7 +3973,7 @@ def test_an_unwritable_bucket_degrades_instead_of_raising(project):
     bucket.write_text("not a directory", encoding="utf-8")
     assert requests.append(requests._stamp("opened", "q-0123456789ab",
                                            "cli-tty"),
-                           project_dir=project) is False
+                           project_dir=project, writer=Writer.HUMAN) is False
     with pytest.raises(requests.RequestError):
         _open(project)
 
@@ -4008,7 +4009,7 @@ def test_a_second_opened_row_never_rewrites_the_first(project):
     replay = requests._stamp("opened", q_id, "cli-tty")
     replay.update({"to": RECIPIENT, "ask": "something else entirely",
                    "why": WHY})
-    assert requests.append(replay, project_dir=project)
+    assert requests.append(replay, project_dir=project, writer=Writer.HUMAN)
     assert requests.get(q_id, project_dir=project)["ask"] == ASK
 
 
@@ -4020,7 +4021,7 @@ def test_an_opened_row_missing_its_addressing_never_founds_a_record(
     unaddressable is inert, not a record addressed to nobody."""
     row = requests._stamp("opened", "q-0123456789ab", "cli-tty")
     row.update({"to": RECIPIENT, "ask": ASK, "why": WHY, field: value})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     assert requests.records(project_dir=project) == {}
 
 
@@ -4172,7 +4173,7 @@ def _seed_bucket(project_dir, session="S-bucket"):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "something happened here", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
     return store.project_slug(project_dir)
 
 
@@ -4607,7 +4608,7 @@ def test_is_stale_info_ask_resets_after_a_revise_to_the_new_revisions_own_delive
         row = requests._stamp(event, q_id, channel,
                               now_ns=base + seconds * 10 ** 9)
         row.update(extra)
-        assert requests.append(row, project_dir=bucket)
+        assert requests.append(row, project_dir=bucket, writer=Writer.HUMAN)
 
     # `delivered` is a RECIPIENT-side stamp (live delivery writes it into
     # its own bucket); `revised` is a SENDER-side event (the same bucket
@@ -5376,7 +5377,7 @@ def _sender_session(project, sid, created):
         "session_id": sid, "created": created,
         "working_context": {"recent_decisions": [
             {"text": "something happened", "trust": "inferred"}]},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
 
 
 def _fut(minutes):
@@ -5922,7 +5923,7 @@ def test_a_third_bucket_verdict_on_an_agent_channel_stays_inert(project):
                                  why=WHY, channel="cli-agent",
                                  project_dir=sender_slug)
     requests.append(requests._stamp("accepted", q_id, "cli-agent"),
-                    project_dir=elsewhere)
+                    project_dir=elsewhere, writer=Writer.HUMAN)
     assert requests.recipient_join(project_dir=project)[q_id]["state"] == "open"
 
 
@@ -6407,8 +6408,8 @@ def test_a_replied_row_lands_on_an_accepted_record(project):
     q_id, rdir = _in_state(project, "accepted")
     before = _joined(rdir, q_id)
     requests.append(_reply_row(q_id, "cli-agent", evidence="PR 12",
-                               revision=0), project_dir=rdir)
-    requests.append(_reply_row(q_id, now_ns=FAR + 1), project_dir=rdir)
+                               revision=0), project_dir=rdir, writer=Writer.HUMAN)
+    requests.append(_reply_row(q_id, now_ns=FAR + 1), project_dir=rdir, writer=Writer.HUMAN)
     after = _joined(rdir, q_id)
     first, second = after["replies"]
     assert first["note"] == REPLY_NOTE and first["evidence"] == "PR 12"
@@ -6427,7 +6428,7 @@ def test_a_replied_row_is_dropped_unless_the_record_is_accepted(project, state):
     q_id, rdir = _in_state(project, state)
     before = _joined(rdir, q_id)
     assert before["state"] == state
-    requests.append(_reply_row(q_id), project_dir=rdir)
+    requests.append(_reply_row(q_id), project_dir=rdir, writer=Writer.HUMAN)
     after = _joined(rdir, q_id)
     assert after["replies"] == []
     assert after["updated_at"] == before["updated_at"]
@@ -6444,7 +6445,7 @@ def test_a_malformed_replied_row_is_dropped(project, flaw):
         row = _reply_row(q_id, note="" if flaw == "empty" else REPLY_NOTE)
         if flaw == "unknown":
             row["channel"] = "bogus"
-    requests.append(row, project_dir=rdir)
+    requests.append(row, project_dir=rdir, writer=Writer.HUMAN)
     after = _joined(rdir, q_id)
     assert after["replies"] == []
     assert (after["updated_at"], after["history_count"]) == (
@@ -6463,7 +6464,7 @@ def test_a_reply_without_a_usable_revision_lands_on_the_current_epoch(
     row = _reply_row(q_id)
     if bad is not None:
         row["revision"] = bad
-    requests.append(row, project_dir=rdir)
+    requests.append(row, project_dir=rdir, writer=Writer.HUMAN)
     assert _joined(rdir, q_id)["replies"][0]["revision"] == 1
 
 
@@ -6484,7 +6485,7 @@ def test_replied_ranks_above_accepted_and_folds_after_a_same_order_accept():
 
 def test_replies_survive_a_later_done(project):
     q_id, rdir = _in_state(project, "accepted")
-    requests.append(_reply_row(q_id, now_ns=time.time_ns()), project_dir=rdir)
+    requests.append(_reply_row(q_id, now_ns=time.time_ns()), project_dir=rdir, writer=Writer.HUMAN)
     requests.done(q_id, channel="cli-agent", evidence="shipped in abc123",
                   project_dir=rdir)
     record = _joined(rdir, q_id)
@@ -6493,7 +6494,7 @@ def test_replies_survive_a_later_done(project):
 
 def test_forget_redacts_reply_text_in_the_recipient_bucket(project):
     q_id, rdir = _in_state(project, "accepted")
-    requests.append(_reply_row(q_id), project_dir=rdir)
+    requests.append(_reply_row(q_id), project_dir=rdir, writer=Writer.HUMAN)
     path = requests._path(rdir)
     assert REPLY_NOTE in path.read_text(encoding="utf-8")
     requests.forget_content_key(normalize.content_key(REPLY_NOTE),
@@ -6505,11 +6506,11 @@ def test_a_reply_forged_in_the_senders_own_bucket_is_dropped(project):
     """Both joins read the sender's bucket too: it could forge a reply."""
     q_id, rdir = _in_state(project, "accepted")
     requests.append(_reply_row(q_id, "cli-agent", note="forged"),
-                    project_dir=project)
+                    project_dir=project, writer=Writer.HUMAN)
     assert requests.sender_join(project_dir=project)[q_id]["replies"] == []
     assert _joined(rdir, q_id)["replies"] == []
     requests.append(_reply_row(q_id, "cli-agent", note="genuine",
-                               now_ns=FAR + 1), project_dir=rdir)
+                               now_ns=FAR + 1), project_dir=rdir, writer=Writer.HUMAN)
     assert [r["note"] for r in requests.sender_join(
         project_dir=project)[q_id]["replies"]] == ["genuine"]
     assert [r["note"] for r in _joined(rdir, q_id)["replies"]] == ["genuine"]
@@ -6520,7 +6521,7 @@ def test_a_self_addressed_ask_may_be_replied_to_from_its_own_bucket(project):
                                  why=WHY, channel="cli-agent",
                                  project_dir=project)
     requests.accept(q_id, channel="cli-tty", project_dir=project)
-    requests.append(_reply_row(q_id), project_dir=project)
+    requests.append(_reply_row(q_id), project_dir=project, writer=Writer.HUMAN)
     # Passes before the guard too: it pins the self-addressed exception.
     assert [r["note"] for r in requests.sender_join(
         project_dir=project)[q_id]["replies"]] == [REPLY_NOTE]
@@ -6645,7 +6646,7 @@ def test_reply_line_labels_caps_counts_and_marks_stale(project, monkeypatch):
     for tag in ("b", "a"):
         requests.append(_reply_row(q_id, note=f"note {tag}", now_ns=FAR,
                                    event_id=tag * 32, revision=0),
-                        project_dir=rdir)
+                        project_dir=rdir, writer=Writer.HUMAN)
     assert line() == "Reply: note b (+4 earlier)"
     # A sharpened ask makes the old reply stale.
     requests.needs_info(q_id, channel="cli-tty", note="which?",

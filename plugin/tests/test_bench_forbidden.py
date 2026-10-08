@@ -22,6 +22,7 @@ lexical retrieval it does in production.
 from daimon_briefing import normalize, recall, store
 
 from tests.bench import adapter, metrics
+from daimon_briefing.surfaces import Writer
 
 
 def _cp(active_topic: str, decisions=None, trust: str = "inferred") -> dict:
@@ -53,11 +54,11 @@ def test_case_a_forgotten_item_never_reaches_the_brief(tmp_path):
     with adapter._env(env):
         # tombstone the value BEFORE capture (value-keyed forget, #402)
         store.append_event("x-000000", f"forgotten:{normalize.content_key(secret)}",
-                           project_dir=proj, tombstone=True)
+                           project_dir=proj, tombstone=True, writer=Writer.HUMAN)
         # one benign item that DOES match the query + the forbidden one alongside it
         store.write_checkpoint(
             "a1", _cp("migration rollback runbook overview", decisions=[secret]),
-            project_dir=proj)
+            project_dir=proj, writer=Writer.HUMAN)
         results = recall.search(query, project_dir=proj, limit=50)
 
     # capture worked (the benign item indexed) but the forgotten value is gone
@@ -74,11 +75,11 @@ def test_case_b_out_of_scope_project_item_never_reaches_the_brief(tmp_path):
     with adapter._env(env):
         store.write_checkpoint(
             "a1", _cp("we chose the database for reporting dashboards"),
-            project_dir=proj_a)
+            project_dir=proj_a, writer=Writer.HUMAN)
         # a DIFFERENT project holds the forbidden secret, also query-matching
         store.write_checkpoint(
             "b1", _cp("clientsecret_zeta database choice for reporting"),
-            project_dir=proj_b)
+            project_dir=proj_b, writer=Writer.HUMAN)
         scoped = recall.search(query, project_dir=proj_a, limit=50)
         cross = recall.search(query, all_projects=True, limit=50)
 
@@ -99,12 +100,12 @@ def test_case_c_trust_downgraded_item_is_withheld_from_the_brief(tmp_path):
         # stamped id; active_topic does not), alongside a live benign topic
         store.write_checkpoint(
             "c1", _cp("deployment notes overview", decisions=[stale]),
-            project_dir=proj)
+            project_dir=proj, writer=Writer.HUMAN)
         # recover the stamped item id, then downgrade its standing (superseded)
         cp = store.read_latest_body(proj, route=store.Route.OWN_ELSE_GLOBAL,
                                     admit=store.Admit.ANY)
         item_id = cp["working_context"]["recent_decisions"][0]["id"]
-        store.append_event(item_id, "superseded-by:d-newid1", project_dir=proj)
+        store.append_event(item_id, "superseded-by:d-newid1", project_dir=proj, writer=Writer.HUMAN)
         results = recall.search(query, project_dir=proj, limit=50)
 
     # recall STILL returns the row (ranked down, flagged) — the raw retriever leaks

@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 from daimon_briefing import config, refutations, store
+from daimon_briefing.surfaces import Writer
 
 
 def _init_git_repo(path: Path) -> None:
@@ -48,7 +49,7 @@ def _legacy_bucket_with_active_ruling(directory: Path) -> None:
 
 
 def _legacy_bucket_without_ruling(directory: Path) -> None:
-    store.append_event("item-1", "resolved", project_dir=str(directory))
+    store.append_event("item-1", "resolved", project_dir=str(directory), writer=Writer.HUMAN)
     slug = store.project_slug(str(directory))
     (config.checkpoint_dir() / slug / "root").unlink()
 

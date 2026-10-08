@@ -44,6 +44,7 @@ from . import clock, config, jsonl, normalize, policy, redact, store, surfaces
 # full argument). Importing the table keeps a future channel tier ("ui",
 # "signed") consistent across ledgers instead of forking per module.
 from .refutations import CHANNEL_AUTHORITY, CHANNEL_LABEL
+from .surfaces import Writer
 
 VERSION = 1
 EVENTS = frozenset({"proposed", "verified", "ratified", "rejected"})
@@ -172,7 +173,7 @@ def _stamp(event: str, amendment_id: str, channel: str,
     }
 
 
-def append(row: dict, project_dir=None) -> bool:
+def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row. Never mutates another ledger."""
     if config.is_disabled():
         return False
@@ -182,8 +183,9 @@ def append(row: dict, project_dir=None) -> bool:
     admitted = policy.admit_row(row, redact_fields=("evidence", "note", "author"))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        jsonl.append(path, admitted)
-        return True
+        return jsonl.append_as(path, admitted, writer)
+    except jsonl.Refused:
+        raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
 
@@ -414,7 +416,8 @@ def propose(*, item_id: str, change: str, evidence: str, channel: str,
         row["note"] = note
     if human:
         row["ratified"] = True
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise AmendmentError(
             "amendment not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
@@ -437,7 +440,8 @@ def verify(amendment_id: str, *, role: str, project_dir=None) -> None:
         raise AmendmentError(f"unknown amendment: {amendment_id}")
     row = _stamp("verified", amendment_id, "mechanical")
     row["evidence_role"] = _text("role", role)[:_ROLE_MAX]
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER):
         raise AmendmentError("verification not written")
 
 
@@ -454,7 +458,8 @@ def ratify(amendment_id: str, *, channel: str, project_dir=None) -> None:
             f"{amendment_id} is {current['state']}; only a candidate or "
             "verified amendment can be ratified")
     row = _stamp("ratified", amendment_id, channel)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise AmendmentError("ratification not written")
 
 
@@ -469,7 +474,8 @@ def reject(amendment_id: str, *, channel: str, note: str = "",
         raise AmendmentError(f"unknown amendment: {amendment_id}")
     row = _stamp("rejected", amendment_id, channel)
     row["note"] = _text("note", note, required=False)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise AmendmentError("rejection not written")
 
 
@@ -514,7 +520,8 @@ def ratify_many(amendment_ids: list[str], *, channel: str,
     _validate_batch(ids, records(project_dir=project_dir), verb="ratify")
     for aid in ids:
         row = _stamp("ratified", aid, channel)
-        if not append(row, project_dir=project_dir):
+        if not append(row, project_dir=project_dir,
+                      writer=Writer.HUMAN):
             raise AmendmentError(f"ratification not written for {aid}")
 
 
@@ -531,7 +538,8 @@ def reject_many(amendment_ids: list[str], *, channel: str, note: str = "",
     for aid in ids:
         row = _stamp("rejected", aid, channel)
         row["note"] = note_text
-        if not append(row, project_dir=project_dir):
+        if not append(row, project_dir=project_dir,
+                      writer=Writer.HUMAN):
             raise AmendmentError(f"rejection not written for {aid}")
 
 

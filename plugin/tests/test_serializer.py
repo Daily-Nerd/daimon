@@ -6,6 +6,7 @@ import pytest
 
 from daimon_briefing import config, serializer
 from tests.conftest import make_messages
+from daimon_briefing.surfaces import Writer
 
 _REPO = Path(__file__).resolve().parents[2]
 _DOC_01B = _REPO / "research/experiments/track-a/prompts/01b-serialize-d007.md"
@@ -1929,7 +1930,7 @@ def test_regression_model_supplied_format_version_does_not_stamp_checkpoint(
     ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
     assert ckpt is not None
     assert "format_version" not in ckpt
-    path = store.write_checkpoint("S1", ckpt)
+    path = store.write_checkpoint("S1", ckpt, writer=Writer.HUMAN)
     on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert on_disk["format_version"] == serializer.PROMPT_VERSION
     assert on_disk["format_version"] != spoofed_version

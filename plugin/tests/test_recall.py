@@ -13,6 +13,7 @@ import time
 import pytest
 
 from daimon_briefing import config, recall, store, terms, trust
+from daimon_briefing.surfaces import Writer
 
 
 def _cp(sid, topic="working on something", decisions=None, questions=None,
@@ -58,7 +59,7 @@ def test_rebuild_indexes_local_items(tmp_checkpoint_dir, monkeypatch):
         "S1",
         _cp("S1", decisions=[{"text": "Adopt sqlite for the recall index",
                               "trust": "inferred"}]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     n = recall.rebuild()
     assert n > 0
@@ -123,7 +124,7 @@ def test_search_matches_quote_text(tmp_checkpoint_dir, monkeypatch):
             "trust": "verbatim",
             "quote": "do we chunk below the kumquat line or single-pass?",
         }]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     hits = recall.search("kumquat", all_projects=True)
     assert len(hits) == 1
@@ -141,7 +142,7 @@ def test_search_indexes_every_cognitive_section(tmp_checkpoint_dir, monkeypatch)
         {"text": "albatross uncertainty", "trust": "inferred"}]
     cp["epistemic_snapshot"]["contradictions_flagged"] = [
         {"text": "albatross contradiction", "trust": "inferred"}]
-    store.write_checkpoint("S1", cp, project_dir="/repo/x")
+    store.write_checkpoint("S1", cp, project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("albatross", all_projects=True)
     kinds = {h["kind"] for h in hits}
     assert kinds == {"topic", "decision", "question", "belief",
@@ -189,7 +190,7 @@ def test_local_attribution_survives_pointer_rotation(tmp_checkpoint_dir, monkeyp
     import shutil
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "ocelot decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "ocelot decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     shutil.rmtree(config.checkpoint_dir() / store.project_slug("/repo/x"))
     hits = recall.search("ocelot", project_dir="/repo/x")
     assert len(hits) == 1
@@ -202,7 +203,7 @@ def test_local_and_team_copies_not_double_indexed(tmp_checkpoint_dir, monkeypatc
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "wombat decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "wombat decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("wombat", all_projects=True)
     assert len(hits) == 1
 
@@ -264,10 +265,10 @@ def test_recency_alone_never_sets_the_superseded_flag(tmp_checkpoint_dir, monkey
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-old", _cp(
         "S-old", decisions=[{"text": "narwhal decision v1", "trust": "inferred"}],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _cp(
         "S-new", decisions=[{"text": "narwhal decision v2", "trust": "inferred"}],
-        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("narwhal", all_projects=True)
     by_sid = {h["session_id"]: h for h in hits}
     assert by_sid["S-old"]["superseded_by"] is None
@@ -291,7 +292,7 @@ def test_typed_link_text_target_sets_superseded_flag(tmp_checkpoint_dir, monkeyp
              "trust": "inferred"},
             {"text": "unrelated walrus formatting choice", "trust": "inferred"},
         ],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _cp(
         "S-new",
         decisions=[{
@@ -300,7 +301,7 @@ def test_typed_link_text_target_sets_superseded_flag(tmp_checkpoint_dir, monkeyp
             "links": [{"type": "supersedes",
                        "target": "pelican cache eviction strategy briefings"}],
         }],
-        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("pelican OR walrus", all_projects=True, limit=10)
     by_text = {h["text"]: h for h in hits}
     assert by_text["adopt the pelican cache eviction strategy for briefings"][
@@ -322,7 +323,7 @@ def test_typed_link_ambiguous_text_target_never_guesses(tmp_checkpoint_dir, monk
             {"text": "toucan retry budget applies to serializer calls",
              "trust": "inferred"},
         ],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _cp(
         "S-new",
         decisions=[{
@@ -331,7 +332,7 @@ def test_typed_link_ambiguous_text_target_never_guesses(tmp_checkpoint_dir, monk
             "links": [{"type": "supersedes",
                        "target": "toucan retry budget applies"}],
         }],
-        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("toucan", all_projects=True, limit=10)
     assert all(h["superseded_by"] is None for h in hits)
 
@@ -342,7 +343,7 @@ def test_typed_link_id_target_sets_superseded_flag(tmp_checkpoint_dir, monkeypat
     old = _cp("S-old", decisions=[{"text": "ibis pagination decision",
                                    "trust": "inferred", "id": "r-abc123"}],
               created="2021-01-01T00:00:00Z")
-    store.write_checkpoint("S-old", old, project_dir="/repo/x")
+    store.write_checkpoint("S-old", old, project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _cp(
         "S-new",
         decisions=[{
@@ -350,7 +351,7 @@ def test_typed_link_id_target_sets_superseded_flag(tmp_checkpoint_dir, monkeypat
             "trust": "inferred",
             "links": [{"type": "supersedes", "target": "r-abc123"}],
         }],
-        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("ibis", all_projects=True, limit=10)
     by_text = {h["text"]: h for h in hits}
     assert by_text["ibis pagination decision"]["superseded_by"] == "S-new"
@@ -368,7 +369,7 @@ def test_event_resolution_sets_superseded_flag(tmp_checkpoint_dir, monkeypatch):
             {"text": "does the gannet importer need locks",
              "trust": "inferred", "id": "o-222bbb"},
         ],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     ev = config.checkpoint_dir() / slug / "events.jsonl"
     ev.parent.mkdir(parents=True, exist_ok=True)
@@ -396,12 +397,12 @@ def test_search_notices_an_event_resolved_after_the_index_was_built(
         "S-old", questions=[
             {"text": "should the gannet exporter batch writes",
              "trust": "inferred", "id": "o-111aaa"}],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/fp-ev")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/fp-ev", writer=Writer.HUMAN)
     recall.warm()
     hits = recall.search("gannet", project_dir="/repo/fp-ev")
     assert hits and hits[0]["superseded_by"] is None
 
-    store.append_event("o-111aaa", "resolved", project_dir="/repo/fp-ev")
+    store.append_event("o-111aaa", "resolved", project_dir="/repo/fp-ev", writer=Writer.HUMAN)
 
     hits = recall.search("gannet", project_dir="/repo/fp-ev")
     assert hits and hits[0]["superseded_by"] == "resolved"
@@ -416,7 +417,7 @@ def test_fingerprint_reads_the_registry_not_a_hand_kept_tuple(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/fp-reg")
+        project_dir="/repo/fp-reg", writer=Writer.HUMAN)
     before = recall._fingerprint()
     trust.propose(text=_QVALUE, kind="decision", reason="fabricated finding",
                   evidence=["issue:1109"], channel="cli-tty",
@@ -442,7 +443,7 @@ def test_supersede_candidate_status_never_marks(tmp_checkpoint_dir, monkeypatch)
     store.write_checkpoint("S-old", _cp(
         "S-old", questions=[{"text": "heron cache warmup open question",
                              "trust": "inferred", "id": "o-333ccc"}],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     ev = config.checkpoint_dir() / slug / "events.jsonl"
     ev.parent.mkdir(parents=True, exist_ok=True)
@@ -472,11 +473,11 @@ def test_supersession_is_per_author(tmp_checkpoint_dir, monkeypatch):
 def test_search_auto_refreshes_when_new_checkpoint_lands(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "first axolotl decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "first axolotl decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     assert recall.search("axolotl", all_projects=True)  # builds the index
     store.write_checkpoint("S2", _cp("S2", decisions=[
         {"text": "second axolotl decision", "trust": "inferred"}],
-        created="2030-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2030-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("axolotl", all_projects=True)  # must auto-refresh
     assert {h["session_id"] for h in hits} == {"S1", "S2"}
 
@@ -484,7 +485,7 @@ def test_search_auto_refreshes_when_new_checkpoint_lands(tmp_checkpoint_dir, mon
 def test_corrupt_db_auto_rebuilds(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "ibis decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "ibis decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     db = config.recall_db()
     db.parent.mkdir(parents=True, exist_ok=True)
     db.write_text("this is not a sqlite database", encoding="utf-8")
@@ -497,7 +498,7 @@ def test_stale_meta_db_auto_rebuilds(tmp_checkpoint_dir, monkeypatch):
     # or foreign db) must also be treated as corrupt and rebuilt.
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "heron decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "heron decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     db = config.recall_db()
     db.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db))
@@ -511,7 +512,7 @@ def test_stale_meta_db_auto_rebuilds(tmp_checkpoint_dir, monkeypatch):
 def test_rebuild_skips_torn_and_pointer_files(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "tapir decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "tapir decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     (tmp_checkpoint_dir / "torn.json").write_text("{not json", encoding="utf-8")
     recall.rebuild()
     hits = recall.search("tapir", all_projects=True)
@@ -527,7 +528,7 @@ def test_rebuild_skips_torn_and_pointer_files(tmp_checkpoint_dir, monkeypatch):
 ])
 def test_hostile_queries_never_raise(tmp_checkpoint_dir, monkeypatch, query):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x")
+    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search(query, all_projects=True)
     assert isinstance(hits, list)
 
@@ -537,7 +538,7 @@ def test_plain_operator_words_still_match_as_terms(tmp_checkpoint_dir, monkeypat
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "auth AND caching rework", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("auth AND caching", all_projects=True)
     assert len(hits) == 1
 
@@ -550,7 +551,7 @@ def test_search_names_and_normalizes_match_score(tmp_checkpoint_dir, monkeypatch
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "osprey harrier combined rework", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("osprey harrier", all_projects=True)
     assert hits
     assert "rank" not in hits[0]
@@ -566,7 +567,7 @@ def test_search_rows_carry_rank_score_equal_to_match_score(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "osprey harrier combined rework", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("osprey harrier", all_projects=True)
     assert hits
     assert hits[0]["rank_score"] == hits[0]["match_score"]
@@ -584,10 +585,10 @@ def test_multi_term_query_falls_back_to_or_when_and_matches_nothing(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "vulture research arc closed", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S2", _cp("S2", decisions=[
         {"text": "condor migration shipped", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("vulture condor", all_projects=True)
     texts = " ".join(h["text"] for h in hits)
     assert "vulture" in texts and "condor" in texts
@@ -600,10 +601,10 @@ def test_and_semantics_stay_primary_when_terms_cooccur(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "osprey harrier combined rework", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S2", _cp("S2", decisions=[
         {"text": "osprey solo note", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("osprey harrier", all_projects=True)
     assert [h["text"] for h in hits] == ["osprey harrier combined rework"]
 
@@ -626,7 +627,7 @@ def test_single_term_miss_stays_empty(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "vulture research arc closed", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     assert recall.search("homework", all_projects=True) == []
 
 
@@ -640,8 +641,8 @@ def test_fingerprint_detects_same_second_delete_plus_add(tmp_checkpoint_dir, mon
     # fingerprint serves stale rows. The fingerprint must see the name change.
     import os
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-A", _cp("S-A", topic="alpha topic"), project_dir="/repo/x")
-    store.write_checkpoint("S-B", _cp("S-B", topic="beta topic"), project_dir="/repo/x")
+    store.write_checkpoint("S-A", _cp("S-A", topic="alpha topic"), project_dir="/repo/x", writer=Writer.HUMAN)
+    store.write_checkpoint("S-B", _cp("S-B", topic="beta topic"), project_dir="/repo/x", writer=Writer.HUMAN)
     assert len(recall.search("alpha", all_projects=True)) >= 1  # index built
 
     d = tmp_checkpoint_dir
@@ -662,7 +663,7 @@ def test_search_survives_rebuild_oserror(tmp_checkpoint_dir, monkeypatch):
     # Disk-full (or any OSError) during the derived rebuild must degrade to [],
     # never propagate out of search().
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x")
+    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x", writer=Writer.HUMAN)
     def boom():
         raise OSError("disk full")
     monkeypatch.setattr(recall, "rebuild", boom)
@@ -717,7 +718,7 @@ def test_recall_own_local_history_not_windowed(tmp_checkpoint_dir, monkeypatch):
         "S-mine",
         {**_cp("S-mine", topic="paleolithic basilisk migration"),
          "created": "2019-06-01T00:00:00Z"},
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     recall.rebuild()
     assert len(recall.search("basilisk", all_projects=True)) == 1
@@ -755,7 +756,7 @@ def test_rebuild_indexes_importance_and_first_seen(tmp_checkpoint_dir, monkeypat
             "trust": "inferred", "importance": 8,
             "first_seen": "2026-06-01T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     recall.rebuild()
     hits = recall.search("gateway cache", all_projects=True)
@@ -767,7 +768,7 @@ def test_schema_v1_db_forces_rebuild(tmp_checkpoint_dir, monkeypatch):
     store.write_checkpoint(
         "S1", _cp125("S1", decisions=[{"text": "flamingo pipeline adopted",
                                        "trust": "inferred"}]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     recall.rebuild()
     # Regress the schema stamp to v1 — next search must rebuild, not error on
@@ -847,7 +848,7 @@ def _seed_history(project="/repo/x"):
             "trust": "verbatim", "quote": "cache answers instantly",
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir=project,
+        project_dir=project, writer=Writer.HUMAN
     )
 
 
@@ -914,7 +915,7 @@ def test_suggest_multi_topic_prompt_matches_across_items(tmp_checkpoint_dir, mon
                            "trust": "inferred", "importance": 6,
                            "first_seen": "2026-06-20T00:00:00Z"}],
                created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("what did we obtain from the flamingo work and the kumquat work",
                          project_dir="/repo/x", current_session="S-now")
@@ -932,7 +933,7 @@ def test_suggest_one_term_across_many_items_still_silent(tmp_checkpoint_dir, mon
                           {"text": "gateway retries added", "trust": "inferred"}],
                questions=[{"text": "gateway logs unclear", "trust": "inferred"}],
                created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("configuring nginx gateway websockets",
                          project_dir="/repo/x", current_session="S-now")
@@ -962,7 +963,7 @@ def test_suggest_surfaces_older_work_unflagged_without_evidence(
         "S-newer", _cp125("S-newer", decisions=[{"text": "moved on to other work",
                                                  "trust": "inferred"}],
                           created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now")
@@ -985,12 +986,12 @@ def test_suggest_ranks_verbatim_over_equal_inferred(
     store.write_checkpoint(
         "S-inferred", _cp125("S-inferred", decisions=[
             {**common, "trust": "inferred"}], created=stamp),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-verbatim", _cp125("S-verbatim", decisions=[
             {**common, "trust": "verbatim", "quote": "cache answers instantly"}],
             created=stamp),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
                          limit=5, now=now)
@@ -1010,7 +1011,7 @@ def test_suggest_flags_and_demotes_typed_superseded_item(
             "trust": "verbatim", "quote": "pin it",
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
@@ -1019,7 +1020,7 @@ def test_suggest_flags_and_demotes_typed_superseded_item(
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now")
@@ -1040,7 +1041,7 @@ def test_suggest_matches_accented_spanish_content(tmp_checkpoint_dir, monkeypatc
             "trust": "verbatim", "importance": 8,
             "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("quiero revisar la sesión de autenticación otra vez",
                          project_dir="/repo/x", current_session="S-now")
@@ -1056,7 +1057,7 @@ def test_suggest_ascii_prompt_matches_accented_item(tmp_checkpoint_dir, monkeypa
             "trust": "verbatim", "importance": 8,
             "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("revisar la sesion de autenticacion otra vez",
                          project_dir="/repo/x", current_session="S-now")
@@ -1073,7 +1074,7 @@ def test_suggest_accented_prompt_matches_ascii_item(tmp_checkpoint_dir, monkeypa
             "trust": "verbatim", "importance": 8,
             "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("quiero revisar la sesión de autenticación otra vez",
                          project_dir="/repo/x", current_session="S-now")
@@ -1117,7 +1118,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_superseded_row(
             "trust": "inferred", "importance": 1,
             "first_seen": "2000-01-01T00:00:00Z",
         }], created="2000-01-01T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-old", _cp125("S-old", decisions=[{
@@ -1125,7 +1126,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_superseded_row(
             "trust": "verbatim", "quote": "pin it",
             "importance": 9, "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
@@ -1134,7 +1135,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_superseded_row(
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
@@ -1158,7 +1159,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_resolution(
             "trust": "inferred", "importance": 1,
             "first_seen": "2000-01-01T00:00:00Z",
         }], created="2000-01-01T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-resolved", _cp125("S-resolved", questions=[{
@@ -1166,9 +1167,9 @@ def test_suggest_promotes_live_row_over_higher_weighted_resolution(
             "trust": "verbatim", "importance": 9, "first_seen": stamp,
             "id": "o-res00001",
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
-    store.append_event("o-res00001", "resolved", project_dir="/repo/x")
+    store.append_event("o-res00001", "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
                          limit=5, now=now)
@@ -1189,7 +1190,7 @@ def test_suggest_only_superseded_matches_still_delivers(
             "trust": "verbatim", "quote": "pin it",
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
@@ -1198,7 +1199,7 @@ def test_suggest_only_superseded_matches_still_delivers(
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now")
@@ -1225,7 +1226,7 @@ def test_suggest_live_row_rank_score_is_relevance_times_effective_weight(
             "trust": "verbatim", "quote": "pin it",
             "importance": 9, "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
@@ -1250,7 +1251,7 @@ def test_suggest_superseded_row_rank_score_is_lower_than_its_match_score(
             "trust": "verbatim", "quote": "pin it",
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
@@ -1259,7 +1260,7 @@ def test_suggest_superseded_row_rank_score_is_lower_than_its_match_score(
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now")
@@ -1292,16 +1293,16 @@ def test_suggest_candidate_limit_tiers_before_truncating(
                 "trust": "inferred", "importance": 5,
                 "first_seen": stamp, "id": item_id,
             }], created=stamp),
-            project_dir="/repo/x",
+            project_dir="/repo/x", writer=Writer.HUMAN
         )
-        store.append_event(item_id, "resolved", project_dir="/repo/x")
+        store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-live", _cp125("S-live", decisions=[{
             "text": "gateway cache mentioned briefly",
             "trust": "inferred", "importance": 1,
             "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
@@ -1322,12 +1323,12 @@ def test_suggest_tier_preserves_live_order(tmp_checkpoint_dir, monkeypatch):
     store.write_checkpoint(
         "S-inferred", _cp125("S-inferred", decisions=[
             {**common, "trust": "inferred"}], created=stamp),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-verbatim", _cp125("S-verbatim", decisions=[
             {**common, "trust": "verbatim", "quote": "cache answers instantly"}],
             created=stamp),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
                          limit=5, now=now)
@@ -1347,7 +1348,7 @@ def test_suggest_tier_preserves_superseded_order(tmp_checkpoint_dir, monkeypatch
             "text": "pin the litellm gateway cache for bad responses",
             "trust": "verbatim", "importance": 9, "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-link-new", _cp125("S-link-new", decisions=[{
@@ -1356,7 +1357,7 @@ def test_suggest_tier_preserves_superseded_order(tmp_checkpoint_dir, monkeypatch
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-resolved", _cp125("S-resolved", questions=[{
@@ -1364,9 +1365,9 @@ def test_suggest_tier_preserves_superseded_order(tmp_checkpoint_dir, monkeypatch
             "trust": "verbatim", "importance": 9, "first_seen": stamp,
             "id": "o-res00002",
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
-    store.append_event("o-res00002", "resolved", project_dir="/repo/x")
+    store.append_event("o-res00002", "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
                          limit=5, now=now)
@@ -1384,7 +1385,7 @@ def test_search_index_error_writes_breadcrumb(tmp_checkpoint_dir, monkeypatch):
     # leave a trace status can surface (#28).
     from daimon_briefing import config, store
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x")
+    store.write_checkpoint("S1", _cp("S1"), project_dir="/repo/x", writer=Writer.HUMAN)
 
     def boom():
         raise OSError("disk full")
@@ -1403,7 +1404,7 @@ def test_suggest_db_error_writes_breadcrumb(tmp_checkpoint_dir, monkeypatch):
         "S-old",
         _cp("S-old", decisions=[{"text": "litellm gateway cache pinning",
                                  "trust": "inferred"}]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     def bad_connect(*a, **k):
         raise sq.OperationalError("database is locked")
@@ -1420,7 +1421,7 @@ def test_search_happy_path_writes_no_breadcrumb(tmp_checkpoint_dir, monkeypatch)
     from daimon_briefing import config, store
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": "pelican decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "pelican decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     assert recall.search("pelican", all_projects=True)
     assert not (config.log_dir() / "recall-error.log").exists()
 
@@ -1446,7 +1447,7 @@ def test_lookup_item_query_error_returns_none_and_writes_breadcrumb(
     from daimon_briefing import config, store
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"id": "d-aaaaaa111111", "text": "pelican decision",
-         "trust": "inferred"}]), project_dir="/repo/x")
+         "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
 
     def bad_connect(*a, **k):
         raise sq.OperationalError("database is locked")
@@ -1461,7 +1462,7 @@ def test_lookup_item_happy_path_writes_no_breadcrumb(tmp_checkpoint_dir, monkeyp
     from daimon_briefing import config, store
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"id": "d-aaaaaa111111", "text": "pelican decision",
-         "trust": "inferred"}]), project_dir="/repo/x")
+         "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     assert recall.lookup_item("d-aaaaaa111111", project_dir="/repo/x")
     assert not (config.log_dir() / "recall-error.log").exists()
 
@@ -1485,7 +1486,7 @@ def test_suggest_survives_busy_project_candidate_overflow(tmp_checkpoint_dir, mo
     store.write_checkpoint(
         "S-busy", _cp125("S-busy", questions=filler + strong,
                          created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     recall.rebuild()
     out = recall.suggest("quorint zephyr reconciliation status",
                          project_dir="/repo/x", current_session="S-now")
@@ -1503,7 +1504,7 @@ def test_suggest_rich_prompt_terms_beyond_twelve_still_match(tmp_checkpoint_dir,
             "trust": "inferred", "importance": 7,
             "first_seen": "2026-06-20T00:00:00Z"}],
             created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     recall.rebuild()
     junk = ("alpine bravado charlemagne dolomite ellipse foxglove gargoyle "
             "hyacinth ignition jamboree kaleidoscope labyrinth")  # 12 salient
@@ -1541,7 +1542,7 @@ def test_rebuild_indexes_pinned_flag_and_suggest_returns_it(
                         "trust": "inferred", "importance": 5,
                         "first_seen": "2026-06-20T00:00:00Z"}],
             created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     recall.rebuild()
     conn = sqlite3.connect(str(config.recall_db()))
     try:
@@ -1582,11 +1583,11 @@ def test_unattributed_sessions_never_supersede_each_other(tmp_checkpoint_dir, mo
     store.write_checkpoint(
         "S-un-old", _cp125("S-un-old", questions=[{
             "text": "gargantuan refactor of the flotilla parser pending",
-            "trust": "inferred"}], created="2026-06-01T00:00:00Z"))
+            "trust": "inferred"}], created="2026-06-01T00:00:00Z"), writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-un-new", _cp125("S-un-new", questions=[{
             "text": "totally unrelated kraken deployment question open",
-            "trust": "inferred"}], created="2026-06-20T00:00:00Z"))
+            "trust": "inferred"}], created="2026-06-20T00:00:00Z"), writer=Writer.HUMAN)
     recall.rebuild()
     conn = sqlite3.connect(str(config.recall_db()))
     try:
@@ -1609,11 +1610,11 @@ def test_frontier_same_second_tie_breaks_deterministically(tmp_checkpoint_dir, m
     store.write_checkpoint(
         "S-aaa", _cp125("S-aaa", questions=[{
             "text": "aardvark index rebuild question", "trust": "inferred"}],
-            created=same), project_dir="/repo/x")
+            created=same), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-zzz", _cp125("S-zzz", questions=[{
             "text": "zeppelin cache warmup question", "trust": "inferred"}],
-            created=same), project_dir="/repo/x")
+            created=same), project_dir="/repo/x", writer=Writer.HUMAN)
     for _ in range(2):  # stable across rebuilds
         recall.rebuild()
         conn = sqlite3.connect(str(config.recall_db()))
@@ -1634,7 +1635,7 @@ def test_frontier_same_second_tie_breaks_deterministically(tmp_checkpoint_dir, m
 def test_index_attribution_counts_unattributed_items(tmp_checkpoint_dir):
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": "keep sqlite", "trust": "inferred"}]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     # A stampless, pointerless flat file — exactly the legacy shape that
     # indexes with project_slug NULL (rotated-out pre-stamp session).
@@ -1679,7 +1680,7 @@ def test_stamped_checkpoint_outranks_stampless_legacy_in_newest_map(
         _cp("S-new", decisions=[{"text": "the real latest decision",
                                  "trust": "inferred"}],
             created="2026-06-19T20:52:44Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     # Legacy pre-stamp file: attributed via embedded slug, no `created` —
     # recency falls back to file mtime, which is NOW (newer than S-new's stamp).
@@ -1709,14 +1710,14 @@ def test_typed_link_stopword_target_never_matches(tmp_checkpoint_dir, monkeypatc
     store.write_checkpoint("S-old", _cp(
         "S-old", decisions=[{"text": "keep the flamingo exporter synchronous",
                              "trust": "inferred"}],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _cp(
         "S-new", decisions=[{
             "text": "made the flamingo exporter async after all",
             "trust": "inferred",
             "links": [{"type": "supersedes", "target": "the one about it"}],
         }],
-        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("flamingo", all_projects=True, limit=10)
     assert all(h["superseded_by"] is None for h in hits)
 
@@ -1736,10 +1737,10 @@ def test_typed_link_never_matches_own_carried_copy(tmp_checkpoint_dir, monkeypat
     # nothing else matching — so a match here could only be the self-twin.
     store.write_checkpoint("S-old", _cp(
         "S-old", decisions=[dict(reversal)],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _cp(
         "S-new", decisions=[dict(reversal)],
-        created="2025-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2025-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("condor", all_projects=True, limit=10)
     assert all(h["superseded_by"] is None for h in hits)
 
@@ -1753,7 +1754,7 @@ def test_event_fold_tolerates_hostile_lines(tmp_checkpoint_dir, monkeypatch):
     store.write_checkpoint("S-old", _cp(
         "S-old", questions=[{"text": "does the skua poller need jitter",
                              "trust": "inferred", "id": "o-444ddd"}],
-        created="2021-01-01T00:00:00Z"), project_dir="/repo/x")
+        created="2021-01-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     ev = config.checkpoint_dir() / slug / "events.jsonl"
     ev.parent.mkdir(parents=True, exist_ok=True)
@@ -1801,14 +1802,14 @@ def test_search_slug_wins_over_project_dir(tmp_checkpoint_dir, monkeypatch):
 def test_resolve_event_invalidates_index_without_manual_rebuild(tmp_checkpoint_dir, monkeypatch):
     cp = {"working_context": {"open_questions": [
         {"text": "walrus question pending", "trust": "inferred"}]}}
-    store.write_checkpoint("S-fp", cp, project_dir="/repo/x")
+    store.write_checkpoint("S-fp", cp, project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("walrus", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None  # indexed live
 
     iid = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
                                  admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/repo/x")
+    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
 
     # NO manual rebuild: the event append alone must stale the fingerprint
     hits = recall.search("walrus", project_dir="/repo/x")
@@ -1818,15 +1819,15 @@ def test_resolve_event_invalidates_index_without_manual_rebuild(tmp_checkpoint_d
 def test_reopen_event_revives_item_without_manual_rebuild(tmp_checkpoint_dir, monkeypatch):
     cp = {"working_context": {"open_questions": [
         {"text": "narwhal question pending", "trust": "inferred"}]}}
-    store.write_checkpoint("S-fp2", cp, project_dir="/repo/x")
+    store.write_checkpoint("S-fp2", cp, project_dir="/repo/x", writer=Writer.HUMAN)
     iid = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
                                  admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/repo/x")
+    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("narwhal", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "resolved"
 
-    store.append_event(iid, "reopened", project_dir="/repo/x")
+    store.append_event(iid, "reopened", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("narwhal", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
@@ -1836,7 +1837,7 @@ def test_reopen_event_revives_item_without_manual_rebuild(tmp_checkpoint_dir, mo
 
 def test_warm_rebuilds_stale_index_so_search_pays_nothing(tmp_checkpoint_dir, monkeypatch):
     store.write_checkpoint("S-warm", _cp("S-warm", decisions=[
-        {"text": "quokka decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "quokka decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     calls = []
     real = recall.rebuild
     monkeypatch.setattr(recall, "rebuild", lambda: (calls.append(1), real())[1])
@@ -1849,7 +1850,7 @@ def test_warm_rebuilds_stale_index_so_search_pays_nothing(tmp_checkpoint_dir, mo
 
 def test_warm_is_noop_when_already_fresh(tmp_checkpoint_dir, monkeypatch):
     store.write_checkpoint("S-warm2", _cp("S-warm2", decisions=[
-        {"text": "axolotl decision", "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": "axolotl decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     recall.warm()
     calls = []
     monkeypatch.setattr(recall, "rebuild", lambda: calls.append(1))
@@ -1877,7 +1878,7 @@ def test_warm_swallows_fts5_missing(tmp_checkpoint_dir, monkeypatch):
 def _one_question_bucket(text, sid, project="/repo/x"):
     cp = {"working_context": {"open_questions": [
         {"text": text, "trust": "inferred"}]}}
-    store.write_checkpoint(sid, cp, project_dir=project)
+    store.write_checkpoint(sid, cp, project_dir=project, writer=Writer.HUMAN)
     return store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                   admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
@@ -1888,7 +1889,7 @@ def test_free_form_resolving_status_marks_resolved(tmp_checkpoint_dir):
     # record a lifecycle fact") — the --status help's own example must not
     # diverge between brief and recall
     iid = _one_question_bucket("wombat question pending", "S-lv1")
-    store.append_event(iid, "shipped in 0.9", project_dir="/repo/x")
+    store.append_event(iid, "shipped in 0.9", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("wombat", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "resolved"
 
@@ -1896,23 +1897,23 @@ def test_free_form_resolving_status_marks_resolved(tmp_checkpoint_dir):
 def test_reopen_prefix_status_revives(tmp_checkpoint_dir):
     # help text: "a status starting with 'reopen' revives the item"
     iid = _one_question_bucket("gecko question pending", "S-lv2")
-    store.append_event(iid, "resolved", project_dir="/repo/x")
-    store.append_event(iid, "reopen-was-wrong", project_dir="/repo/x")
+    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "reopen-was-wrong", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("gecko", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
 
 def test_reopen_status_is_case_insensitive(tmp_checkpoint_dir):
     iid = _one_question_bucket("heron question pending", "S-lv3")
-    store.append_event(iid, "resolved", project_dir="/repo/x")
-    store.append_event(iid, "Reopened", project_dir="/repo/x")
+    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "Reopened", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("heron", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
 
 def test_superseded_by_status_still_carries_target_id(tmp_checkpoint_dir):
     iid = _one_question_bucket("osprey question pending", "S-lv4")
-    store.append_event(iid, "superseded-by:o-9f3a2b", project_dir="/repo/x")
+    store.append_event(iid, "superseded-by:o-9f3a2b", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("osprey", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "o-9f3a2b"
 
@@ -1921,7 +1922,7 @@ def test_supersede_candidate_never_marks(tmp_checkpoint_dir):
     # unconfirmed tier by design — a machine guess must never suppress
     iid = _one_question_bucket("bittern question pending", "S-lv5")
     store.append_event(iid, "supersede-candidate:o-9f3a2b",
-                       source="serializer", project_dir="/repo/x")
+                       source="serializer", project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("bittern", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
@@ -1937,9 +1938,9 @@ def test_search_dedupes_same_item_across_checkpoints(tmp_checkpoint_dir, monkeyp
     item = {"text": "Quokka panel unregister fix shipped", "trust": "verbatim",
             "quote": "the quokka panel fix is in"}
     store.write_checkpoint("S1", _cp("S1", decisions=[dict(item)]),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S2", _cp("S2", decisions=[dict(item)]),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("quokka", all_projects=True)
     assert len(hits) == 1
     assert hits[0]["session_id"] == "S2"  # newest occurrence wins
@@ -1950,7 +1951,7 @@ def test_search_dedupe_keeps_distinct_items_sharing_words(tmp_checkpoint_dir, mo
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "Wombat cache invalidation uses hashes", "trust": "inferred"},
         {"text": "Wombat cache warming happens at write", "trust": "inferred"},
-    ]), project_dir="/repo/x")
+    ]), project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("wombat cache", all_projects=True)
     assert len(hits) == 2  # different content, no merge
 
@@ -1960,7 +1961,7 @@ def test_search_dedupe_preserves_distinct_authors(tmp_checkpoint_dir, monkeypatc
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     text = "Axolotl deploys are frozen on Fridays"
     store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"text": text, "trust": "inferred"}]), project_dir="/repo/x")
+        {"text": text, "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_team_file("grace", "S-g", _cp("S-g", decisions=[
         {"text": text, "trust": "inferred"}]))
     hits = recall.search("axolotl", all_projects=True)
@@ -1976,9 +1977,9 @@ def test_search_dedupe_backfills_to_limit(tmp_checkpoint_dir, monkeypatch):
     store.write_checkpoint("S1", _cp("S1", decisions=[
         dict(dup),
         {"text": "Numbat retries cap at five attempts", "trust": "inferred"},
-    ]), project_dir="/repo/x")
+    ]), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S2", _cp("S2", decisions=[dict(dup)]),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     hits = recall.search("numbat retries", all_projects=True, limit=2)
     assert len(hits) == 2
     assert len({h["text"] for h in hits}) == 2
@@ -2026,7 +2027,7 @@ def test_rebuild_indexes_scene_text(tmp_checkpoint_dir, monkeypatch):
         _cp("S1", decisions=[{"text": "Adopt sqlite for the recall index",
                               "trust": "inferred",
                               "scene": "chosen after the flatfile scan grew quadratic"}]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     recall.rebuild()
     # "quadratic" appears ONLY in the scene — a hit proves scene is FTS-indexed
@@ -2048,13 +2049,13 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
         "S1",
         _cp("S1", decisions=[{"text": "Adopt sqlite for the recall index",
                               "trust": "inferred"}]),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     cp = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
                                 admit=store.Admit.ANY)
     iid = cp["working_context"]["recent_decisions"][0]["id"]
     store.append_event(iid, "forgotten:deadbeef1234", kind="tombstone",
-                       project_dir="/repo/x", tombstone=True)
+                       project_dir="/repo/x", tombstone=True, writer=Writer.HUMAN)
     recall.rebuild()
     hits = recall.search("sqlite", all_projects=True)
     assert not any("recall index" in h["text"] for h in hits)
@@ -2070,7 +2071,7 @@ def test_rebuild_drops_quarantined_items_from_index(tmp_checkpoint_dir, monkeypa
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/q")
+        project_dir="/repo/q", writer=Writer.HUMAN)
     trust.propose(text=_QVALUE, kind="decision", reason="fabricated, no PR",
                   evidence=["issue:1109"], channel="cli-tty",
                   project_dir="/repo/q")
@@ -2085,7 +2086,7 @@ def test_rebuild_keeps_unconfirmed_candidate_quarantine(tmp_checkpoint_dir, monk
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/q")
+        project_dir="/repo/q", writer=Writer.HUMAN)
     trust.propose(text=_QVALUE, kind="decision", reason="looks fabricated",
                   evidence=["issue:1109"], channel="cli-agent",
                   project_dir="/repo/q")
@@ -2098,7 +2099,7 @@ def test_rebuild_keeps_dismissed_and_released_quarantine(tmp_checkpoint_dir, mon
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/q")
+        project_dir="/repo/q", writer=Writer.HUMAN)
     tid = trust.propose(text=_QVALUE, kind="decision", reason="checking",
                         evidence=["issue:1109"], channel="cli-agent",
                         project_dir="/repo/q")
@@ -2125,7 +2126,7 @@ def test_rebuild_quarantine_scoped_by_kind(tmp_checkpoint_dir, monkeypatch):
         "S1",
         _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}],
            beliefs=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/q")
+        project_dir="/repo/q", writer=Writer.HUMAN)
     trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
                   evidence=["issue:1109"], channel="cli-tty",
                   project_dir="/repo/q")
@@ -2146,7 +2147,7 @@ def test_rebuild_quarantine_spares_a_sibling_of_the_same_kind(tmp_checkpoint_dir
         "S1",
         _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"},
                              {"text": other_text, "trust": "inferred"}]),
-        project_dir="/repo/qs")
+        project_dir="/repo/qs", writer=Writer.HUMAN)
     trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
                   evidence=["issue:1109"], channel="cli-tty",
                   project_dir="/repo/qs")
@@ -2184,7 +2185,7 @@ def test_search_notices_a_quarantine_confirmed_after_the_index_was_built(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/fp")
+        project_dir="/repo/fp", writer=Writer.HUMAN)
     # Build the index through the NORMAL read path while nothing is
     # quarantined yet.
     recall.warm()
@@ -2223,7 +2224,7 @@ def test_search_notices_a_release_without_manual_rebuild(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
         "S1", _cp("S1", decisions=[{"text": _QVALUE, "trust": "inferred"}]),
-        project_dir="/repo/fp2")
+        project_dir="/repo/fp2", writer=Writer.HUMAN)
     tid = trust.propose(text=_QVALUE, kind="decision", reason="fabricated",
                         evidence=["issue:1109"], channel="cli-tty",
                         project_dir="/repo/fp2")
@@ -2308,7 +2309,7 @@ def test_rebuild_drops_locally_forgotten_value_from_foreign(tmp_checkpoint_dir, 
     forgotten_text = "Adopt the flamingo cache for ingest"
     store.append_event(
         "d-dead02", f"forgotten:{normalize.content_key(forgotten_text)}",
-        kind="tombstone", project_dir="/repo/x", tombstone=True)
+        kind="tombstone", project_dir="/repo/x", tombstone=True, writer=Writer.HUMAN)
     remote = _clone_remote(toml_text=_GRANT_X)
     _write_clone_team_file(
         remote, "grace", "S-g",
@@ -2327,7 +2328,7 @@ def test_rebuild_clamps_foreign_verbatim_to_inferred(tmp_checkpoint_dir, monkeyp
         "S1",
         _cp("S1", decisions=[{"text": "Adopt pelican caching locally",
                               "trust": "verbatim", "quote": "adopt it"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     remote = _clone_remote(toml_text=_GRANT_X)
     _write_clone_team_file(
         remote, "grace", "S-g",
@@ -2362,12 +2363,12 @@ def test_rebuild_scrubs_forgotten_value_sibling_id_in_older_session(
         _cp("S1", decisions=[{"text": s, "trust": "inferred"},
                              {"text": t, "trust": "inferred"}],
             created="2026-07-30T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S2",
         _cp("S2", questions=[{"text": s, "trust": "inferred"}],
             created="2026-07-31T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     latest = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     q_id = next(i["id"] for i in latest["working_context"]["open_questions"]
@@ -2514,7 +2515,7 @@ def test_suggest_does_not_credit_a_mid_word_substring(tmp_checkpoint_dir,
             "trust": "inferred", "importance": 7,
             "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("which gateway port should the proxy bind",
                          project_dir="/repo/x", current_session="S-now")
@@ -2533,7 +2534,7 @@ def test_suggest_still_credits_a_compound_identifier(tmp_checkpoint_dir,
             "trust": "inferred", "importance": 7,
             "first_seen": "2026-06-20T00:00:00Z",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("the token refresh during session start",
                          project_dir="/repo/x", current_session="S-now")
@@ -2563,14 +2564,14 @@ def test_a_model_authored_link_records_its_mechanism(tmp_checkpoint_dir,
         "S-old", _cp125("S-old", decisions=[{
             "text": "pin the litellm gateway cache for bad responses",
             "trust": "verbatim", "quote": "pin it",
-        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
             "text": "unpinned the litellm gateway cache, old diagnosis wrong",
             "trust": "inferred",
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
-        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
     old = [h for h in hits if h["session_id"] == "S-old"]
@@ -2585,9 +2586,9 @@ def test_a_human_resolution_records_its_mechanism(tmp_checkpoint_dir,
         "S-old", _cp125("S-old", decisions=[{
             "text": "pin the litellm gateway cache for bad responses",
             "trust": "verbatim", "quote": "pin it", "id": "o-pin111",
-        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.append_event("o-pin111", "superseded-by:o-new222", source="cli",
-                       project_dir="/repo/x")
+                       project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "o-new222"
@@ -2604,16 +2605,16 @@ def test_a_human_resolution_outranks_a_model_link_and_says_so(
         "S-old", _cp125("S-old", decisions=[{
             "text": "pin the litellm gateway cache for bad responses",
             "trust": "verbatim", "quote": "pin it", "id": "o-pin111",
-        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
             "text": "unpinned the litellm gateway cache, old diagnosis wrong",
             "trust": "inferred",
             "links": [{"type": "supersedes",
                        "target": "pin litellm gateway cache bad responses"}],
-        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.append_event("o-pin111", "superseded-by:o-human333", source="cli",
-                       project_dir="/repo/x")
+                       project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
     old = [h for h in hits if h["session_id"] == "S-old"]
@@ -2630,7 +2631,7 @@ def test_an_unsuperseded_item_has_no_mechanism(tmp_checkpoint_dir,
         "S-live", _cp125("S-live", decisions=[{
             "text": "pin the litellm gateway cache for bad responses",
             "trust": "verbatim", "quote": "pin it",
-        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("pin litellm gateway cache", project_dir="/repo/x")
     assert hits
@@ -2704,22 +2705,22 @@ def test_suggest_ranks_a_resolved_item_below_a_linked_one_end_to_end(
                     "until the retry path is measured",
             "trust": "verbatim", "quote": "pin it", "id": "o-55ee66ff",
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
-        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-resolved", _cp125("S-resolved", decisions=[{
             "text": "pin the litellm gateway cache for bad answers "
                     "until the retry path is measured",
             "trust": "verbatim", "quote": "pin it", "id": "o-77aa88bb",
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
-        }], created="2026-06-21T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-21T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
             "text": "unpinned the gateway cache, old diagnosis wrong",
             "trust": "inferred",
             "links": [{"type": "supersedes", "target": "o-55ee66ff"}],
-        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.append_event("o-77aa88bb", "superseded-by:o-h999", source="cli",
-                       project_dir="/repo/x")
+                       project_dir="/repo/x", writer=Writer.HUMAN)
 
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
@@ -2742,20 +2743,20 @@ def test_search_sorts_a_resolved_item_below_a_linked_one(tmp_checkpoint_dir,
             "text": "pin the litellm gateway cache for bad responses "
                     "until the retry path is measured",
             "trust": "verbatim", "quote": "pin it", "id": "o-11aa22bb",
-        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-20T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-resolved", _cp125("S-resolved", decisions=[{
             "text": "litellm gateway cache pinned",
             "trust": "verbatim", "quote": "pinned", "id": "o-33cc44dd",
-        }], created="2026-06-21T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-21T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-newer", _cp125("S-newer", decisions=[{
             "text": "unpinned the gateway cache, old diagnosis wrong",
             "trust": "inferred",
             "links": [{"type": "supersedes", "target": "o-11aa22bb"}],
-        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x")
+        }], created="2026-06-25T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.append_event("o-33cc44dd", "superseded-by:o-h333", source="cli",
-                       project_dir="/repo/x")
+                       project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("litellm gateway cache", project_dir="/repo/x")
     order = [h["session_id"] for h in hits if h["superseded_by"]]

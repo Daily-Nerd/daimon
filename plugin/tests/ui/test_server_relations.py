@@ -13,6 +13,7 @@ import pytest
 
 from daimon_briefing import relations, store
 from daimon_ui import server
+from daimon_briefing.surfaces import Writer
 
 PROJECT_NAME = "relations-lane-arc"
 
@@ -35,7 +36,7 @@ def rel_proj(tmp_checkpoint_dir, tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     proj = tmp_path / PROJECT_NAME
     proj.mkdir()
-    store.write_checkpoint("S1", _cp("S1"), project_dir=proj)
+    store.write_checkpoint("S1", _cp("S1"), project_dir=proj, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=proj, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     ids = [i["id"] for i in stored["working_context"]["recent_decisions"]]
@@ -98,7 +99,7 @@ def test_candidates_never_reach_the_wire(rel_proj, rel_srv):
 
 def test_erased_chains_are_withheld_with_a_safe_count(rel_proj, rel_srv):
     store.append_event(rel_proj["ids"][1], "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=rel_proj["proj"], tombstone=True)
+                       kind="tombstone", project_dir=rel_proj["proj"], tombstone=True, writer=Writer.HUMAN)
     out = _get(rel_srv, f"/api/relations?id={rel_proj['ids'][0]}")
     assert out["rows"] == []
     assert out["withheld"] == 1

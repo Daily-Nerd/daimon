@@ -27,6 +27,7 @@ from .. import (
 )
 from ..effects import Effects
 from ..ledger import _format_age
+from ..surfaces import Writer
 
 
 def _cmd_anchor(args) -> int:
@@ -78,7 +79,8 @@ def _cmd_anchor(args) -> int:
         return 1
     item = matches[0]
     item["anchored_to"] = a
-    if store.write_checkpoint(session_id, checkpoint, project_dir=project) is None:
+    if store.write_checkpoint(session_id, checkpoint, project_dir=project,
+                              writer=Writer.HUMAN) is None:
         # #421: write boundary refused (kill switch) — nothing was attached
         print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
               file=sys.stderr)

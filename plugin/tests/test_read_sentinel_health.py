@@ -18,6 +18,7 @@ from daimon_briefing import config, jsonl, requests, store
 from daimon_briefing.jsonl import Health
 from tests import _sentinel_drive as drive, _sentinel_world as sw
 from tests import test_read_sentinel as rs
+from daimon_briefing.surfaces import Writer
 
 OTHER = "other-census-project"
 
@@ -39,8 +40,8 @@ def health_runs(tmp_path_factory):
                 "text": "the other project ships on friday",
                 "trust": "inferred"}, "recent_decisions": [],
                 "open_questions": []},
-            "epistemic_snapshot": {}}, project_dir=other)
-        store.append_event("o-other-1", "resolved", project_dir=other)
+            "epistemic_snapshot": {}}, project_dir=other, writer=Writer.HUMAN)
+        store.append_event("o-other-1", "resolved", project_dir=other, writer=Writer.HUMAN)
         requests.open_request(
             to=store.project_slug(world.project), ask="please review this",
             why="it blocks us", channel="cli-agent", project_dir=other)

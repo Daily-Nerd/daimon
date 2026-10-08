@@ -8,6 +8,7 @@ import sys
 import daimon_briefing.cli as _cli
 
 from .. import render, store
+from ..surfaces import Writer
 
 
 # #523: a baton is small on purpose — "do X first, beware Y", not a second
@@ -28,7 +29,7 @@ def _cmd_handoff(args) -> int:
             print("error: --clear takes no text", file=sys.stderr)
             return 1
         if not store.append_event("", "cleared", note="", kind="handoff",
-                                  project_dir=project):
+                                  project_dir=project, writer=Writer.HUMAN):
             print("error: handoff not recorded (daimon disabled or project "
                   "unknown)", file=sys.stderr)
             return 1
@@ -64,7 +65,7 @@ def _cmd_handoff(args) -> int:
               "never surfaces again; fold anything still relevant into the "
               f"new baton:\n  {prior['note']}", file=sys.stderr)
     if not store.append_event("", "active", note=text, kind="handoff",
-                              project_dir=project):
+                              project_dir=project, writer=Writer.HUMAN):
         print("error: handoff not recorded (daimon disabled or project "
               "unknown)", file=sys.stderr)
         return 1
@@ -84,7 +85,8 @@ def _cmd_log(args) -> int:
         return 1
     project = _cli._resolve_project(args.project)
     ok = store.append_event("", args.status, note=args.text,
-                            kind=args.kind, project_dir=project)
+                            kind=args.kind, project_dir=project,
+                            writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1

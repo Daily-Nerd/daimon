@@ -10,6 +10,7 @@ from tests.test_recall_invalidated_by import _receipt_row, _write_ledger
 from tests.test_worldcheck import _cp as _carried_cp
 from tests.test_worldcheck import _enable_probes, _git_repo
 from tests.test_worldcheck import fake_gh  # noqa: F401 - pytest fixture
+from daimon_briefing.surfaces import Writer
 
 
 def test_file_evidence_lifecycle(tmp_path, monkeypatch):
@@ -20,7 +21,7 @@ def test_file_evidence_lifecycle(tmp_path, monkeypatch):
     cp = _carried_cp([text])
     item = cp["working_context"]["open_questions"][0]
     store.write_checkpoint("S-1", _cp("S-1", questions=[item]),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     assert recall.search("axolotl", project_dir=project)[0]["invalidated_by"] is None
 
     stats = worldcheck.check(cp, project)
@@ -60,7 +61,7 @@ def test_receipt_cure_cannot_clear_world_contradiction(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         {"text": "axolotl exporter", "id": "o-111aaa", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     rows = [_world_row(cls), _receipt_row("o-111aaa"),
             {**_receipt_row("o-111aaa", ts="2026-08-29T11:00:00Z",
@@ -85,7 +86,7 @@ def test_world_cure_cannot_clear_receipt_contradiction(tmp_checkpoint_dir, monke
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         {"text": "axolotl exporter", "id": "o-111aaa", "trust": "inferred"}]),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-111aaa"), _world_row("file-exists"),
         _world_row("file-exists-ok", ts="2026-08-29T12:00:00Z")])
@@ -131,9 +132,9 @@ def test_cli_brief_demotes_search_and_suggest_then_recovers(
     cp = _carried_cp([text])
     store.write_checkpoint("S-live", _cp("S-live", questions=[
         {"text": "axolotl exporter reference", "trust": "inferred", "id": "o-clean"}]),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
     store.write_checkpoint("S-bad", _cp("S-bad", questions=
-        cp["working_context"]["open_questions"]), project_dir=project)
+        cp["working_context"]["open_questions"]), project_dir=project, writer=Writer.HUMAN)
     recall.search("axolotl exporter", project_dir=project)  # warm the index
     assert cli.main(["brief"]) == 0
     assert "state changed since capture" in capsys.readouterr().out

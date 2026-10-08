@@ -9,6 +9,7 @@ itself holds no text) and withholds edges touching erased endpoints.
 import pytest
 
 from daimon_briefing import cli, relations, store
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/repo/relations-cli-arc"
 
@@ -25,7 +26,7 @@ def seeded(tmp_checkpoint_dir, monkeypatch):
                  "trust": "inferred"},
                 {"text": "adjudicate candidates through the tty path",
                  "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     ids = [i["id"] for i in stored["working_context"]["recent_decisions"]]
@@ -171,7 +172,7 @@ def test_rich_list_marks_contradictions(seeded, monkeypatch, capsys):
 def test_list_withholds_edges_touching_erased_endpoints(seeded, capsys):
     doomed = seeded["item_ids"][0]
     store.append_event(doomed, "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=PROJECT, tombstone=True)
+                       kind="tombstone", project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     assert cli.main(["relations", "list"]) == 0
     out = capsys.readouterr().out
     assert seeded["rel_id"] not in out
@@ -182,7 +183,7 @@ def test_list_json_says_how_many_edges_were_withheld(seeded, capsys):
     """An edge touching a forgotten item is withheld from the listing and the
     JSON output still reports that it was."""
     store.append_event(seeded["item_ids"][0], "forgotten:deadbeef",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
     capsys.readouterr()
     assert cli.main(["relations", "list", "--json"]) == 0
     out = capsys.readouterr().out

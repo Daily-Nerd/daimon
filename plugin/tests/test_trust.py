@@ -12,6 +12,7 @@ under a different item id stays quarantined.
 import pytest
 
 from daimon_briefing import trust
+from daimon_briefing.surfaces import Writer
 
 VALUE = "the deploy key rotation runbook was fabricated by the agent"
 ITEM = "o-1234567890ab"
@@ -372,7 +373,7 @@ def test_stamp_rejects_unknown_channel():
 def test_append_returns_false_for_an_unresolvable_project(monkeypatch):
     from daimon_briefing import store
     monkeypatch.setattr(store, "project_slug", lambda p: None)
-    assert trust.append({"event": "quarantined"}, project_dir="/p/x") is False
+    assert trust.append({"event": "quarantined"}, project_dir="/p/x", writer=Writer.HUMAN) is False
 
 
 def test_append_returns_false_on_an_oserror(project, monkeypatch):
@@ -382,7 +383,7 @@ def test_append_returns_false_on_an_oserror(project, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(Path, "mkdir", boom)
-    assert trust.append({"event": "quarantined"}, project_dir=project) is False
+    assert trust.append({"event": "quarantined"}, project_dir=project, writer=Writer.HUMAN) is False
 
 
 def test_events_skips_a_json_parse_failure(project, tmp_checkpoint_dir):
@@ -628,7 +629,7 @@ def test_render_privacy_audit_prints_the_trust_ledger_line(project, capsys):
     # A live checkpoint, so the audit does not report zero_surfaces (rc 3):
     # what is under test here is the trust-ledger render line, not the
     # zero-surfaces posture.
-    store.write_checkpoint("S-1", {"session_id": "S-1"}, project_dir=project)
+    store.write_checkpoint("S-1", {"session_id": "S-1"}, project_dir=project, writer=Writer.HUMAN)
     _propose(project)
     rc = cli.main(["audit", "privacy", "--project", project])
     out = capsys.readouterr().out
@@ -662,7 +663,7 @@ def test_privacy_audit_finds_forgotten_trust_reason(project):
     _propose(project, reason=reason_text)
     key = normalize.content_key(reason_text)
     store.append_event("x-irrelevant", f"forgotten:{key}",
-                       project_dir=project, tombstone=True)
+                       project_dir=project, tombstone=True, writer=Writer.HUMAN)
 
     result = privacy.audit_project(project_dir=project)
     hits = [f for f in result["findings"] if f["surface"] == "trust-ledger"]

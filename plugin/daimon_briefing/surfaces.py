@@ -686,13 +686,27 @@ def write_posture(row: Surface, writer: Writer, state: str) -> WritePosture:
     value, as a word). OK and ABSENT always PROCEED, and so does CURE on any
     row: a repair must be able to write the ledger it is repairing. A writer
     class the row never declared is a bug in the caller, not a PROCEED, so
-    it raises LookupError."""
-    if state in ("ok", "absent") or writer is Writer.CURE:
+    it raises LookupError whatever the ledger's state (a bug must not wait
+    for the day the ledger breaks to show itself)."""
+    if writer is Writer.CURE:
         return WritePosture.PROCEED
     for declared, column in row.write:
         if declared is writer:
+            if state in ("ok", "absent"):
+                return WritePosture.PROCEED
             return column[WRITE_STATES.index(state)]
     raise LookupError(f"{row.shape} declares no {writer.value} write posture")
+
+
+def write_row(name: str) -> Surface:
+    """The registry row that declares a write column for the ledger file
+    `name` ("events.jsonl", "events.quarantined-lines", "tombstones.jsonl").
+    Raises LookupError for a name no row declares a write column for: a
+    writer asking about a ledger the registry never governed is a bug."""
+    for s in SURFACES:
+        if s.write and _part_matches(s.shape.split("/")[-1], name):
+            return s
+    raise LookupError(f"no declared write column for ledger {name!r}")
 
 
 def match(pattern: str) -> Surface | None:

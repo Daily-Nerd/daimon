@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import cli, refutations, store
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/p/refutations"
@@ -404,13 +405,13 @@ def test_validation_limits_and_stamp_contracts(tmp_checkpoint_dir):
 def test_append_and_read_fail_soft_on_missing_scope_and_io_errors(
         tmp_checkpoint_dir, monkeypatch):
     row = {"anchors": [], "evidence": []}
-    assert refutations.append(row, project_dir=None) is False
+    assert refutations.append(row, project_dir=None, writer=Writer.HUMAN) is False
 
     def fail_open(*_args, **_kwargs):
         raise OSError("disk unavailable")
 
     monkeypatch.setattr(Path, "open", fail_open)
-    assert refutations.append(row, project_dir=PROJECT) is False
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN) is False
 
 
 def test_events_fail_soft_on_unreadable_ledger(tmp_checkpoint_dir):

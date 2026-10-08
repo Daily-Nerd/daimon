@@ -8,6 +8,7 @@ surface prints may not.
 
 from daimon_briefing import cli, config, jsonl, store, trust
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/status-postures"
 
@@ -21,7 +22,7 @@ def _seed():
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "a decision", "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _status(capsys):

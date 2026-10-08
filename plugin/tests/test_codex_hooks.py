@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from daimon_briefing import refutations, store
+from daimon_briefing.surfaces import Writer
 
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 START_HOOK = HOOK_DIR / "daimon-codex-session-start.py"
@@ -71,7 +72,7 @@ def test_codex_session_start_emits_additional_context(
     cwd = "/Users/x/projA"
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-codex"
-    store.write_checkpoint("S-codex", mine, project_dir=cwd)
+    store.write_checkpoint("S-codex", mine, project_dir=cwd, writer=Writer.HUMAN)
 
     proc = _run(START_HOOK, {"cwd": cwd, "session_id": "S-new"}, tmp_path)
 
@@ -91,7 +92,7 @@ def test_codex_session_start_forwards_its_own_host_so_an_enforce_ruling_renders_
     subprocess must carry the identical tag."""
     cwd = "/Users/x/projA"
     store.write_checkpoint("S-codex", {**sample_checkpoint, "session_id": "S-codex"},
-                          project_dir=cwd)
+                          project_dir=cwd, writer=Writer.HUMAN)
     ruling_id = refutations.assert_ruling(
         subject="a public post rule", verdict="the rule for a public post rule",
         scope="publishing", evidence=["issue:1089"], channel="cli-tty",
@@ -110,7 +111,7 @@ def test_codex_session_start_forwards_its_own_host_so_an_enforce_ruling_renders_
 def test_codex_session_start_labels_global_fallback(
     tmp_checkpoint_dir, sample_checkpoint, tmp_path
 ):
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
 
     proc = _run(START_HOOK, {"cwd": "/p/never-seen"}, tmp_path)
 
@@ -328,7 +329,7 @@ def test_codex_session_start_sweep_never_breaks_briefing_output(
 ):
     # No transcript_path in the payload at all -> sweep can't act, briefing is
     # unaffected (matches every pre-#188 session-start test's payload shape).
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(START_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
     ctx = _additional_context(proc.stdout)

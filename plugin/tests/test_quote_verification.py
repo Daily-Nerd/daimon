@@ -9,6 +9,7 @@ import pytest
 from daimon_briefing import (cli, normalize, provenance, serializer, store,
                              transcript)
 from tests.conftest import FIXTURES, make_messages
+from daimon_briefing.surfaces import Writer
 
 
 # ---- Unit A: quote_matches (tier-f normalization) ----
@@ -547,7 +548,7 @@ def test_absent_transcript_hash_tolerated_by_readers(tmp_checkpoint_dir):
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }
-    store.write_checkpoint("legacy", cp)
+    store.write_checkpoint("legacy", cp, writer=Writer.HUMAN)
     got = store.read_checkpoint("legacy")
     assert "transcript_hash" not in got
 
@@ -571,7 +572,7 @@ def test_receipt_hash_preserved_through_write_and_redaction(tmp_checkpoint_dir):
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }
-    store.write_checkpoint("R1", cp, project_dir="/p/R")
+    store.write_checkpoint("R1", cp, project_dir="/p/R", writer=Writer.HUMAN)
     got = store.read_checkpoint("R1")
     dec = got["working_context"]["recent_decisions"][0]
     assert dec["receipt_hash"] == "deadbeefcafe"
@@ -697,7 +698,7 @@ def test_audit_quotes_reports_verified_and_failed(
         {"text": "fabricated decision", "trust": "verbatim",
          "quote": "this sentence is nowhere in the source transcript", "id": "d-bbb"},
     ])
-    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    store.write_checkpoint("SA", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -719,7 +720,7 @@ def test_audit_quotes_is_read_only(
         {"text": "fabricated decision", "trust": "verbatim",
          "quote": "this sentence is nowhere in the source transcript", "id": "d-bbb"},
     ])
-    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    store.write_checkpoint("SA", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     cli.main(["audit-quotes", "--project", "/p/A"])
     # trust tag on disk is UNCHANGED — audit reports, never rewrites.
@@ -735,7 +736,7 @@ def test_audit_quotes_counts_unpaired_when_transcript_missing(
     cp = _stored_checkpoint("SNO", slug, [
         {"text": "d", "trust": "verbatim", "quote": "some quoted text here", "id": "d-c"},
     ])
-    store.write_checkpoint("SNO", cp, project_dir="/p/A")
+    store.write_checkpoint("SNO", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out.lower()
@@ -761,7 +762,7 @@ def test_audit_quotes_records_usage(
         {"text": "d", "trust": "verbatim",
          "quote": "alpha decision text that is quoted exactly", "id": "d-a"},
     ])
-    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    store.write_checkpoint("SA", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     usage = (_log_dir / "usage.log").read_text(encoding="utf-8")
@@ -781,7 +782,7 @@ def test_audit_quotes_records_unpaired_variant_when_nothing_pairs(
     cp = _stored_checkpoint("SNO", slug, [
         {"text": "d", "trust": "verbatim", "quote": "some quoted text here", "id": "d-c"},
     ])
-    store.write_checkpoint("SNO", cp, project_dir="/p/A")
+    store.write_checkpoint("SNO", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     # #944: nothing pairs, so nothing is checkable — the usage event is
     # recorded on the way out regardless of which of the three codes it is.
@@ -801,7 +802,7 @@ def test_audit_quotes_usage_respects_kill_switch(
         {"text": "d", "trust": "verbatim",
          "quote": "alpha decision text that is quoted exactly", "id": "d-a"},
     ])
-    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    store.write_checkpoint("SA", cp, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
 
     cli.main(["audit-quotes", "--project", "/p/A"])
@@ -820,11 +821,11 @@ def test_audit_quotes_all_flag_spans_projects(
     store.write_checkpoint("SA", _stored_checkpoint("SA", slug_a, [
         {"text": "a", "trust": "verbatim",
          "quote": "alpha decision text that is quoted exactly", "id": "d-a"}]),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("SB", _stored_checkpoint("SB", slug_b, [
         {"text": "b", "trust": "verbatim",
          "quote": "beta decision text that is quoted exactly", "id": "d-b"}]),
-        project_dir="/p/B")
+        project_dir="/p/B", writer=Writer.HUMAN)
 
     # Default scope (project A) sees only 1 checkpoint; --all sees both.
     cli.main(["audit-quotes", "--project", "/p/A"])
@@ -862,7 +863,7 @@ def test_audit_quotes_resolves_bound_ids(
          "quote": "adopt the D-007 prompt for the serializer",
          "source_message_ids": ["u-111"], "id": "d-aaa"},
     ])
-    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    store.write_checkpoint("SA", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -886,7 +887,7 @@ def test_audit_quotes_stale_id_falls_back_to_whole_scan(
          "quote": "adopt the D-007 prompt for the serializer",
          "source_message_ids": ["gone-999"], "id": "d-bbb"},
     ])
-    store.write_checkpoint("SA", cp, project_dir="/p/A")
+    store.write_checkpoint("SA", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -917,7 +918,7 @@ def test_audit_quotes_uses_receipt_binding_not_flat_compatibility_field(
         "source_message_ids": ["u-wrong"],  # stale compatibility mirror
         "quote_provenance": receipt, "id": "d-receipt",
     }])
-    store.write_checkpoint("SB", cp, project_dir="/p/A")
+    store.write_checkpoint("SB", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -950,7 +951,7 @@ def test_audit_quotes_resolves_codex_receipt_source(
         "quote": "codex source supports this quote",
         "quote_provenance": receipt, "id": "d-codex",
     }])
-    store.write_checkpoint("S-containing", cp, project_dir="/p/A")
+    store.write_checkpoint("S-containing", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -995,7 +996,7 @@ def test_audit_quotes_resolves_kimi_receipt_source(
         "quote_provenance": receipt, "id": "d-kimi",
     }])
     assert receipt is not None  # sanity: host "kimi" must be an accepted host
-    store.write_checkpoint("S-containing", cp, project_dir="/p/A")
+    store.write_checkpoint("S-containing", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -1048,7 +1049,7 @@ def test_audit_quotes_carried_item_verifies_against_origin_transcript(
          "quote": "the origin sentence lives only in this session",
          "origin_session": "SA", "id": "d-carried"},
     ])
-    store.write_checkpoint("SB", cp, project_dir="/p/A")
+    store.write_checkpoint("SB", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -1071,7 +1072,7 @@ def test_audit_quotes_item_without_origin_falls_back_to_containing_checkpoint(
         {"text": "native decision", "trust": "verbatim",
          "quote": "native sentence said in this very session", "id": "d-native"},
     ])
-    store.write_checkpoint("SC", cp, project_dir="/p/A")
+    store.write_checkpoint("SC", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -1094,7 +1095,7 @@ def test_audit_quotes_missing_origin_transcript_never_falls_back(
          "quote": "this quote is only in the containing session after all",
          "origin_session": "S-GHOST", "id": "d-ghost"},
     ])
-    store.write_checkpoint("SB", cp, project_dir="/p/A")
+    store.write_checkpoint("SB", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -1123,7 +1124,7 @@ def test_audit_quotes_source_ids_resolve_against_origin_transcript(
          "source_message_ids": ["u-111"], "origin_session": "SA",
          "id": "d-bound-carried"},
     ])
-    store.write_checkpoint("SB", cp, project_dir="/p/A")
+    store.write_checkpoint("SB", cp, project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -1148,7 +1149,7 @@ def test_audit_quotes_skips_verbatim_items_with_no_usable_quote(
         {"text": "blank quote", "trust": "verbatim", "quote": "   ", "id": "d-2"},
         {"text": "real", "trust": "verbatim",
          "quote": "a real sentence that one item genuinely quotes", "id": "d-3"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -1175,7 +1176,7 @@ def test_audit_quotes_cannot_prove_when_every_item_is_exempt(
         {"text": "inferred", "trust": "inferred", "id": "d-1"},
         {"text": "no quote", "trust": "verbatim", "id": "d-2"},
         {"text": "blank quote", "trust": "verbatim", "quote": "  ", "id": "d-3"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 3
     out = capsys.readouterr().out
@@ -1209,7 +1210,7 @@ def test_audit_quotes_counts_an_unresolvable_source_as_exempt(
     # nothing can be checked against it.
     store.write_checkpoint("SNO", _stored_checkpoint("SNO", slug, [
         {"text": "d", "trust": "verbatim", "quote": "some quoted text", "id": "d-c"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 3
     assert "1 not verbatim, 0 blank, 1 source unresolvable" in \
@@ -1230,7 +1231,7 @@ def test_audit_quotes_reports_the_exemptions_even_when_it_checked_something(
         {"text": "blank", "trust": "verbatim", "quote": "", "id": "d-2"},
         {"text": "real", "trust": "verbatim",
          "quote": "a real sentence that one item quotes", "id": "d-3"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -1248,7 +1249,7 @@ def test_audit_quotes_exits_one_on_a_mismatch(
     store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
         {"text": "fabricated", "trust": "verbatim",
          "quote": "this sentence is nowhere in the source", "id": "d-b"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit", "quotes", "--project", "/p/A"]) == 1
 
@@ -1260,7 +1261,7 @@ def test_audit_quotes_json_carries_the_exemptions_and_a_null_rate(
     _write_transcript(_projects_dir, slug, "SA", [("user", "anything at all")])
     store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
         {"text": "no quote", "trust": "verbatim", "id": "d-2"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit", "quotes", "--project", "/p/A", "--json"]) == 3
     data = json.loads(capsys.readouterr().out)
@@ -1280,7 +1281,7 @@ def test_audit_quotes_json_carries_a_real_rate_when_it_checked_something(
     store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
         {"text": "real", "trust": "verbatim",
          "quote": "a real sentence that one item quotes", "id": "d-3"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit", "quotes", "--project", "/p/A", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -1300,7 +1301,7 @@ def test_audit_quotes_json_lists_every_failure_while_the_lines_truncate(
         {"text": f"fabricated {n}", "trust": "verbatim",
          "quote": f"absent sentence number {n}", "id": f"d-{n}"}
         for n in range(3)
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(
         ["audit", "quotes", "--project", "/p/A", "--top", "1"]) == 1
@@ -1327,13 +1328,13 @@ def test_audit_quotes_reads_origin_slug_from_the_origin_checkpoint(
         {"text": "native", "trust": "verbatim",
          "quote": "the origin sentence recorded in the other project",
          "id": "d-native"},
-    ]), project_dir="/p/B")
+    ]), project_dir="/p/B", writer=Writer.HUMAN)
     # The carried twin now lives in project A with no transcript of its own.
     store.write_checkpoint("SB", _stored_checkpoint("SB", slug_a, [
         {"text": "carried", "trust": "verbatim",
          "quote": "the origin sentence recorded in the other project",
          "origin_session": "SA", "id": "d-carried"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -1355,7 +1356,7 @@ def test_audit_quotes_unreadable_origin_transcript_never_falls_back(
         {"text": "carried", "trust": "verbatim",
          "quote": "the containing session also holds this quoted sentence",
          "origin_session": "SA", "id": "d-1"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     real_from_file = transcript.from_file
 
@@ -1389,7 +1390,7 @@ def test_audit_quotes_usage_is_not_unpaired_when_only_origins_resolve(
         {"text": "carried", "trust": "verbatim",
          "quote": "the shared origin sentence quoted by everyone",
          "origin_session": "SA", "id": "d-1"},
-    ]), project_dir="/p/A")
+    ]), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert cli.main(["audit-quotes", "--project", "/p/A"]) == 0
     out = capsys.readouterr().out
@@ -1426,10 +1427,10 @@ def test_audit_quotes_caches_transcripts_by_session(
 
     store.write_checkpoint("SB1", _stored_checkpoint(
         "SB1", slug, [carried_item("d-1"), carried_item("d-2")]),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("SB2", _stored_checkpoint(
         "SB2", slug, [carried_item("d-3"), carried_item("d-4")]),
-        project_dir="/p/A")
+        project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out
@@ -1748,7 +1749,7 @@ def test_audit_quotes_does_not_verify_an_echoed_quote(
     ])
     store.write_checkpoint("SA", _stored_checkpoint("SA", slug, [
         {"text": "freeze the pin", "trust": "verbatim", "quote": _ECHOED,
-         "id": "d-echo"}]), project_dir="/p/A")
+         "id": "d-echo"}]), project_dir="/p/A", writer=Writer.HUMAN)
 
     rc = cli.main(["audit-quotes", "--project", "/p/A"])
     out = capsys.readouterr().out

@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from daimon_briefing import (briefing, carry, cli, config, normalize, policy,
                              recall, store)
 from tests.conftest import FakeChat
+from daimon_briefing.surfaces import Writer
 
 _P = "/repo/carry-forget-adversarial-420"
 
@@ -94,7 +95,7 @@ def _arm_adversarial_state():
     """Write the prev (still clean — no tombstone exists yet), THEN record the
     value-keyed tombstone against the never-present sibling id. Returns the
     prev item id under which the forgotten value survives on disk."""
-    store.write_checkpoint(_PREV_SID, _prev_checkpoint(), project_dir=_P)
+    store.write_checkpoint(_PREV_SID, _prev_checkpoint(), project_dir=_P, writer=Writer.HUMAN)
     prev = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
                                   admit=store.Admit.ANY)
     x_id = next(d["id"] for d in prev["working_context"]["recent_decisions"]
@@ -103,7 +104,7 @@ def _arm_adversarial_state():
     ref = _sibling_ref()
     assert ref != x_id
     assert store.append_event(ref, f"forgotten:{normalize.content_key(_S)}",
-                              kind="tombstone", project_dir=_P, tombstone=True)
+                              kind="tombstone", project_dir=_P, tombstone=True, writer=Writer.HUMAN)
 
     # Preconditions that make this ADVERSARIAL, not a re-run of #400/#407:
     # the ledger holds the value key, but the id the prev stores S under was

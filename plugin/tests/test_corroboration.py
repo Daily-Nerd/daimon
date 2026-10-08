@@ -40,6 +40,7 @@ from daimon_briefing import (briefing, capture, carry, cli, config, hooks,
                              serializer, store, transcript)
 
 from ._prepared import shown, synthetic
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/corroborate"
 ITEM = "o-a1d001"
@@ -233,7 +234,7 @@ def _seed_origin(project=PROJECT, session=ORIGIN, text=_TEXT):
             "recent_decisions": [],
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     return stored["working_context"]["open_questions"][0]["id"]
@@ -302,7 +303,7 @@ def test_a_demotion_does_not_let_the_same_session_re_emit(tmp_checkpoint_dir):
     # vote — re-earning corroboration with no new evidence.
     item_id = _seed_origin()
     assert _emit([(item_id, ORIGIN, "ada")]) == 1
-    store.append_event(item_id, "resolved", project_dir=PROJECT)
+    store.append_event(item_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     assert store.corroborations(project_dir=PROJECT)[item_id]["origins"] == set()
     assert _emit([(item_id, ORIGIN, "ada")]) == 0
 
@@ -386,7 +387,7 @@ def _seed_provisional_origin(project=PROJECT, session=ORIGIN, text=_TEXT):
             "recent_decisions": [],
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     return stored["working_context"]["open_questions"][0]["id"]
@@ -442,22 +443,29 @@ def test_nothing_observed_costs_no_read(tmp_checkpoint_dir, monkeypatch):
     assert _emit([]) == 0
 
 
-def test_emits_nothing_when_the_corroboration_fold_cannot_be_read(
-        tmp_checkpoint_dir, monkeypatch):
-    # Fail-safe direction, same as the supersede emitter's forgotten-keys
-    # read: unable to prove this is not a duplicate -> write nothing. A missed
-    # boost costs a count; a double-counted witness costs the axis.
+def test_emits_nothing_when_the_events_ledger_is_unproven(tmp_checkpoint_dir):
+    # An EMITTER write to an unproven events ledger is SKIPPED (#1132 PR
+    # 10b): a missed boost costs a count, and nothing lands in a ledger whose
+    # rows cannot be read to rule out a duplicate witness.
     item_id = _seed_origin()
-    calls = []
+    path = store._events_path(PROJECT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<<<<<<< conflict\n")
+    assert _emit([(item_id, ORIGIN, "ada")]) == 0
+    assert path.read_bytes() == b"<<<<<<< conflict\n"
+
+
+def test_the_corroboration_read_has_no_guard_around_it(
+        tmp_checkpoint_dir, monkeypatch):
+    # The dead guard is gone: a read that DOES raise is a bug and surfaces.
+    item_id = _seed_origin()
 
     def _boom(*args, **kwargs):
-        calls.append(1)
-        raise RuntimeError("ledger unreadable")
+        raise RuntimeError("a bug in the fold")
 
     monkeypatch.setattr(store, "corroborations", _boom)
-    assert _emit([(item_id, ORIGIN, "ada")]) == 0
-    assert _rows(tmp_checkpoint_dir) == []
-    assert calls, "the failure simulation never fired"
+    with pytest.raises(RuntimeError):
+        _emit([(item_id, ORIGIN, "ada")])
 
 
 # ---------------------------------------------------------------------------
@@ -483,14 +491,14 @@ def _corroborated_checkpoint(session="S-old", text=_TEXT, project=PROJECT):
             "recent_decisions": [],
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     item_id = stored["working_context"]["open_questions"][0]["id"]
     assert store.append_event(store.corroboration_ref(item_id),
                               f"corroborated-by:{OBSERVER}",
                               kind="corroboration", source="serializer",
-                              project_dir=project)
+                              project_dir=project, writer=Writer.HUMAN)
     return item_id, stored
 
 
@@ -534,7 +542,7 @@ def test_a_corroboration_never_displaces_a_human_verdict(tmp_checkpoint_dir):
     # latest no matter how many corroborations arrive after it.
     item_id, _ = _corroborated_checkpoint()
     store.append_event(item_id, "superseded-by:o-b2c003", source="cli",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     assert capture._emit_corroborations(
         [(item_id, "S-old", "ada")], {}, frozenset(), PROJECT, "S-later") == 1
 
@@ -574,7 +582,7 @@ def _seed_prev(text=_PREV_TEXT, session=ORIGIN, project=E2E_PROJECT):
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
 
 
 def _extraction(session, text):
@@ -729,7 +737,7 @@ def test_a_forgotten_claim_is_never_corroborated_end_to_end(
     _seed_prev()
     store.append_event("o-sibling1",
                        f"forgotten:{normalize.content_key(_PREV_TEXT)}",
-                       project_dir=E2E_PROJECT, tombstone=True)
+                       project_dir=E2E_PROJECT, tombstone=True, writer=Writer.HUMAN)
 
     monkeypatch.setattr(cli, "_chat",
                         fake_chat_factory(_extraction(session, _PREV_TEXT)))
@@ -1632,7 +1640,7 @@ def test_ledger_rows_on_disk_do_not_reorder_a_briefing(tmp_checkpoint_dir):
             ],
             "recent_decisions": []},
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     weak = stored["working_context"]["open_questions"][0]["id"]
@@ -1648,7 +1656,7 @@ def test_ledger_rows_on_disk_do_not_reorder_a_briefing(tmp_checkpoint_dir):
         assert store.append_event(store.corroboration_ref(weak),
                                   f"corroborated-by:{witness}",
                                   kind="corroboration", source="serializer",
-                                  project_dir=PROJECT)
+                                  project_dir=PROJECT, writer=Writer.HUMAN)
     assert store.corroborations(project_dir=PROJECT)[weak]["origins"] == {
         "S-w1", "S-w2", "S-w3"}     # liveness: the rows really landed
     assert _order() == before
@@ -1681,7 +1689,7 @@ def test_recall_ranking_is_blind_to_corroboration(tmp_checkpoint_dir,
                                     "first_seen": "2026-06-20T00:00:00Z"}],
                 "recent_decisions": []},
             "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
-        }, project_dir=PROJECT)
+        }, project_dir=PROJECT, writer=Writer.HUMAN)
 
     prompt = "quorint ledger reconciliation entries"
     before = [h["session_id"] for h in
@@ -1694,7 +1702,7 @@ def test_recall_ranking_is_blind_to_corroboration(tmp_checkpoint_dir,
         assert store.append_event(store.corroboration_ref(trailing),
                                   f"corroborated-by:{witness}",
                                   kind="corroboration", source="serializer",
-                                  project_dir=PROJECT)
+                                  project_dir=PROJECT, writer=Writer.HUMAN)
     assert len(store.corroborations(project_dir=PROJECT)[trailing]["origins"]) == 4
 
     after = recall.suggest(prompt, project_dir=PROJECT, limit=2)

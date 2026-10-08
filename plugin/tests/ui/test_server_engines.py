@@ -12,6 +12,7 @@ import pytest
 
 from daimon_briefing import store
 from daimon_ui import server
+from daimon_briefing.surfaces import Writer
 
 
 def _engine_cp(sid):
@@ -38,7 +39,7 @@ def engine_srv(tmp_checkpoint_dir, tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     proj = tmp_path / "proj"
     proj.mkdir()
-    store.write_checkpoint("S1", _engine_cp("S1"), project_dir=proj)
+    store.write_checkpoint("S1", _engine_cp("S1"), project_dir=proj, writer=Writer.HUMAN)
     slug = store.project_slug(proj)
     s = server.make_server(tmp_checkpoint_dir, slug, proj.name, port=0)
     t = threading.Thread(target=s.serve_forever, daemon=True)

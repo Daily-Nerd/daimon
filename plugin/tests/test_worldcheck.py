@@ -42,6 +42,7 @@ import time
 import pytest
 
 from daimon_briefing import briefing, cli, config, receipts, store, worldcheck
+from daimon_briefing.surfaces import Writer
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -945,7 +946,7 @@ def test_worldcheck_flag_opt_in(monkeypatch):
 
 def _write_claim_checkpoint(project="/p/A"):
     cp = _cp(["PR #60 awaiting review", "issue #12 still open"])
-    store.write_checkpoint("S-now", cp, project_dir=project)
+    store.write_checkpoint("S-now", cp, project_dir=project, writer=Writer.HUMAN)
     return cp
 
 
@@ -1011,7 +1012,7 @@ def test_cli_brief_emits_per_class_counters_for_slice_2(
     project = tmp_path / "repo"
     project.mkdir()
     cp = _cp(["the fix lives in src/fix.py"])
-    store.write_checkpoint("S-now", cp, project_dir=str(project))
+    store.write_checkpoint("S-now", cp, project_dir=str(project), writer=Writer.HUMAN)
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project))
@@ -1042,7 +1043,7 @@ def test_cli_brief_global_fallback_never_probes(monkeypatch, capsys):
     # Global pointer belongs to ANOTHER project — probing this cwd's repo
     # against that checkpoint's claims would answer for the wrong repo.
     cp = _cp(["PR #60 awaiting review"])
-    store.write_checkpoint("S-other", cp)  # global pointer only
+    store.write_checkpoint("S-other", cp, writer=Writer.HUMAN)  # global pointer only
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
     monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/never-seen")
@@ -1744,7 +1745,7 @@ def test_cli_brief_receipt_failure_appends_a_verification_row(
     monkeypatch.setenv("FAKE_VITNI_VERDICT", "signature_invalid")
     _signed_origin("S-origin", proj)
     cp = _cp_origins(["S-origin"])
-    store.write_checkpoint("S-now", cp, project_dir=proj)
+    store.write_checkpoint("S-now", cp, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
     rc = cli.main(["brief"])
@@ -1768,7 +1769,7 @@ def test_cli_brief_receipt_confirmed_writes_no_verification_row(
     monkeypatch, tmp_path, capsys, receipts_on, proj
 ):
     _signed_origin("S-origin", proj)
-    store.write_checkpoint("S-now", _cp_origins(["S-origin"]), project_dir=proj)
+    store.write_checkpoint("S-now", _cp_origins(["S-origin"]), project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
     assert cli.main(["brief"]) == 0

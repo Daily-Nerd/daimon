@@ -32,6 +32,7 @@ from .. import (
     trust,
 )
 from ..effects import Effects
+from ..surfaces import Writer
 from ._ledger import _check_sync_warning
 
 
@@ -160,7 +161,8 @@ def _cmd_resolve(args) -> int:
         target["id"], effective_status,
         note=(evidence if by_agent else (args.note or "")),
         source=event_source,
-        project_dir=project, item_text=str(target.get("text") or ""))
+        project_dir=project, item_text=str(target.get("text") or ""),
+        writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
@@ -500,7 +502,7 @@ def _cmd_forget(args) -> int:
     ok = store.append_event(str(target["id"]), f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
                             project_dir=project, allow_disabled=True,
-                            tombstone=True)
+                            tombstone=True, writer=Writer.HUMAN)
     if not ok:
         print("tombstone event not written (project unknown or ledger unwritable)")
         return 1
@@ -533,7 +535,8 @@ def _cmd_forget(args) -> int:
         # made the deletion manufacture a fresh copy of the value it was asked to
         # remove, in a file that did not exist when the user ran the command.
         store.write_checkpoint(sid, checkpoint, project_dir=project,
-                               allow_disabled=True, rotate=False)
+                               allow_disabled=True, rotate=False,
+                               writer=Writer.CURE)
     # The live checkpoint is one surface of several. prev-N and superseded
     # session files hold the same plaintext and were never in the contract
     # (#419: plaintext is what puts a file inside it, not its role). Runs even
@@ -794,7 +797,8 @@ def _cmd_reverify(args) -> int:
         return 1
     ok = store.append_event(item["id"], "reopened", note=note,
                             source=human_channel,
-                            item_text=item.get("text", ""), project_dir=project)
+                            item_text=item.get("text", ""), project_dir=project,
+                            writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1

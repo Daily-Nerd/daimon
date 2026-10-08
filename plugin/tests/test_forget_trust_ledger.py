@@ -7,6 +7,7 @@ drops a record: dropping one would lift the quarantine and let the withheld
 value show again, so the hash latch (`value_key`) has to survive.
 """
 from daimon_briefing import cli, ledger_census, normalize, privacy, store, trust
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/forget-trust-ledger"
 CANARY = "zqxtrustcanary2c1 the staging db password rotates on fridays"
@@ -22,7 +23,7 @@ def _checkpoint_with(*texts):
     store.write_checkpoint(
         "S1", {"session_id": "S1", "created": "2026-08-01T00:00:00Z",
                "working_context": {"recent_decisions": items}},
-        project_dir=PROJECT)
+        project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _quarantine(text=QUARANTINED, reason="looks fabricated", evidence=None):

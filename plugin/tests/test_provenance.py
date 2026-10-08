@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from daimon_briefing import provenance, serializer, store
+from daimon_briefing.surfaces import Writer
 
 
 _HASH = "a" * 64
@@ -432,12 +433,12 @@ def test_carried_receipt_survives_source_checkpoint_gc(
     }
     store.write_checkpoint(
         "S-origin", _checkpoint("S-origin", origin_item,
-                                "2026-08-05T10:00:00Z"), project_dir="/p/A")
+                                "2026-08-05T10:00:00Z"), project_dir="/p/A", writer=Writer.HUMAN)
 
     carried = dict(origin_item, carried_from="S-origin")
     store.write_checkpoint(
         "S-current", _checkpoint("S-current", carried,
-                                 "2026-08-05T11:00:00Z"), project_dir="/p/A")
+                                 "2026-08-05T11:00:00Z"), project_dir="/p/A", writer=Writer.HUMAN)
 
     assert store.read_checkpoint("S-origin") is None
     current = store.read_checkpoint("S-current")

@@ -34,6 +34,7 @@ import pytest
 
 from daimon_briefing import cli as real_cli
 from daimon_briefing import store
+from daimon_briefing.surfaces import Writer
 
 HOOK = Path(__file__).resolve().parents[2] / "hook" / "daimon-action-recall.py"
 
@@ -245,12 +246,12 @@ def _seed_match(project):
             "S-old",
             "argocd selfHeal reverts any manual kubectl edit to the "
             "gateway deployment in prod", "2026-06-20T00:00:00Z"),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-latest", _checkpoint_body(
             "S-latest", "unrelated newer bookkeeping",
             "2026-06-28T00:00:00Z"),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
 
 
 def _ledger(tmp_log_dir):

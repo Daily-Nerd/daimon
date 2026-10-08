@@ -12,6 +12,7 @@ import time
 import pytest
 
 from daimon_briefing import cli, config, normalize, privacy, recall, store
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/recall-location"
 CANARY = "zqxlocationcanary9921 rotate the signing key before the next deploy"
@@ -282,10 +283,10 @@ def test_the_audit_scans_every_cache_of_the_audited_store(home, tmp_path,
     store.write_checkpoint("S1", {
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
-            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT)
+            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT, writer=Writer.HUMAN)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True)
+                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     recall.rebuild()
     live = config.recall_db()
     live.parent.mkdir(parents=True, exist_ok=True)
@@ -310,7 +311,7 @@ def test_forget_leaves_no_cache_of_the_store_holding_the_value(
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": CANARY, "trust": "inferred"},
-            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT)
+            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT, writer=Writer.HUMAN)
     recall.rebuild()
     live = config.recall_db()
     sibling = _plant_sibling_cache(ckpt, tmp_path / "other-team",
@@ -449,10 +450,10 @@ def _audited_store(monkeypatch, tmp_path):
     store.write_checkpoint("S1", {
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
-            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT)
+            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT, writer=Writer.HUMAN)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True)
+                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     recall.rebuild()
     return ckpt, key
 
@@ -536,7 +537,7 @@ def test_forget_under_the_pinned_override_touches_only_the_pinned_file(
     store.write_checkpoint("S1", {
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
-            {"text": CANARY, "trust": "inferred"}]}}, project_dir=PROJECT)
+            {"text": CANARY, "trust": "inferred"}]}}, project_dir=PROJECT, writer=Writer.HUMAN)
     directory = home / ".daimon" / "recall"
     directory.mkdir(parents=True)
     bystander = directory / f"{_digest(ckpt, tmp_path / 't2')}.db"

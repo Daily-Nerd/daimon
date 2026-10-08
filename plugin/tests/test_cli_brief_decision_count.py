@@ -10,6 +10,7 @@ test_cli_brief_requests.py's fixture shape.
 """
 
 from daimon_briefing import briefing, cli, pending, render, requests, store
+from daimon_briefing.surfaces import Writer
 
 
 def _seed_checkpoint(project_dir, session):
@@ -17,7 +18,7 @@ def _seed_checkpoint(project_dir, session):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
     return store.project_slug(project_dir)
 
 

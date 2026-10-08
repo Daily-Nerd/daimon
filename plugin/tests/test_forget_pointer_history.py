@@ -18,6 +18,7 @@ import json
 import pytest
 
 from daimon_briefing import cli, store
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/p/forget-pointers"
@@ -31,7 +32,7 @@ def _write(session_id, *texts, project_dir=PROJECT):
         "created": f"2026-07-0{session_id[-1]}T00:00:00Z",
         "working_context": {
             "recent_decisions": [{"text": t, "trust": "inferred"} for t in texts]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
 
 
 def _files(root):

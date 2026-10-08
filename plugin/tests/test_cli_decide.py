@@ -20,6 +20,7 @@ from daimon_briefing import (
     requests,
     store,
 )
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture
@@ -149,7 +150,7 @@ def test_decide_card_never_reads_the_approval_off_a_raw_row(
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": store.project_slug(project), "ask": "an ask",
                "why": "why", "kind": "info"})
-    assert requests.append(row, project_dir=project)
+    assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
 
     assert cli.main(["decide"]) == 0
     out = capsys.readouterr().out

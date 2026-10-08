@@ -24,6 +24,7 @@ import sqlite3
 
 from daimon_briefing import config, recall, store, worldcheck
 from tests.test_recall import _cp, _write_team_file
+from daimon_briefing.surfaces import Writer
 
 
 def _item(text, ref):
@@ -47,7 +48,7 @@ def test_receipt_contradiction_populates_invalidated_by(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-111aaa")])
 
     hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
@@ -64,7 +65,7 @@ def test_axes_are_independent_contradiction_never_touches_supersession(
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa"),
         _item("an unrelated capybara pagination question", "o-222bbb")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     ev = config.checkpoint_dir() / slug / "events.jsonl"
     ev.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +94,7 @@ def test_capture_rejection_rows_never_write_invalidated_by(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         {"ts": "2026-08-29T10:00:00Z", "check": "quote",
          "item_ref": "o-111aaa", "reason": "quote-not-in-transcript"},
@@ -118,7 +119,7 @@ def test_contradictions_flagged_never_writes_invalidated_by(
     cp["epistemic_snapshot"]["contradictions_flagged"] = [
         {"text": "the axolotl exporter claim was verified is wrong",
          "trust": "inferred"}]
-    store.write_checkpoint("S-1", cp, project_dir="/repo/x")
+    store.write_checkpoint("S-1", cp, project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
     assert hits
@@ -134,7 +135,7 @@ def test_latest_evidence_wins_by_timestamp_never_line_order(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-111aaa", ts="2026-08-28T10:00:00Z",
                      reason="receipt-tampered"),
@@ -163,7 +164,7 @@ def test_machine_local_evidence_never_brands_a_teammates_copy(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     # A FRESH dict for the team copy: write_checkpoint stamps author/created
     # into the dict it is handed, and _write_team_file's setdefault would
     # keep those stamps. No `created` either — a stamped 08-01 date would
@@ -222,7 +223,7 @@ def test_malformed_ledger_rows_are_skipped(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     path = config.checkpoint_dir() / slug / "verification.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +247,7 @@ def test_verification_ledger_is_fingerprint_input(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
     assert hits and hits[0]["invalidated_by"] is None
@@ -278,7 +279,7 @@ def test_non_utf8_ledger_never_kills_the_rebuild(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     slug = store.project_slug("/repo/x")
     path = config.checkpoint_dir() / slug / "verification.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -327,11 +328,11 @@ def test_suggest_ranks_a_contradicted_item_below_its_clean_equivalent(
     store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
         _decision("the axolotl exporter caches every regenerated limb",
                   "o-bad111", importance=9, **common)],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-clean", _cp("S-clean", decisions=[
         _decision("the axolotl exporter caches every regenerated limb",
                   "o-clean1", importance=5, **common)],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
 
     out = recall.suggest("what did the axolotl exporter do with limb caches",
@@ -350,7 +351,7 @@ def test_suggest_carries_the_evidence_out_so_the_line_can_render_it(
     store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
         _decision("the axolotl exporter caches every regenerated limb",
                   "o-bad111")], created="2026-08-01T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
 
     out = recall.suggest("what did the axolotl exporter do with limb caches",
@@ -392,11 +393,11 @@ def test_search_ranks_a_contradicted_item_below_its_clean_equivalent(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
         _decision("axolotl exporter", "o-bad111")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-clean", _cp("S-clean", decisions=[
         _decision("axolotl exporter for the regenerated limb cache pipeline",
                   "o-clean1")], created="2026-08-01T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
 
     hits = recall.search("axolotl exporter", project_dir="/repo/x")
@@ -415,15 +416,15 @@ def test_search_demotes_contradiction_at_least_as_hard_as_supersession(
     # comparison this test exists to make disappears.
     store.write_checkpoint("S-old", _cp("S-old", decisions=[
         _decision("axolotl exporter limb cache rollout", "o-old111")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-newer", _cp("S-newer", decisions=[
         {"text": "axolotl exporter limb cache rewritten", "trust": "inferred",
          "links": [{"type": "supersedes",
                     "target": "axolotl exporter limb cache rollout"}]}],
-        created="2026-08-02T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-02T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
         _decision("axolotl exporter limb cache probe", "o-bad111")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
 
     hits = recall.search("axolotl exporter limb cache", project_dir="/repo/x")
@@ -482,7 +483,7 @@ def test_a_later_confirmation_clears_the_contradiction(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
         _cure_row("o-111aaa", ts="2026-08-29T12:00:00Z"),
@@ -500,7 +501,7 @@ def test_an_earlier_confirmation_does_not_clear_a_later_contradiction(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _cure_row("o-111aaa", ts="2026-08-29T08:00:00Z"),
         _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
@@ -520,11 +521,11 @@ def test_the_cure_is_visible_on_the_read_surfaces_it_unburies(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-bad", _cp("S-bad", decisions=[
         _decision("axolotl exporter", "o-bad111")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     store.write_checkpoint("S-clean", _cp("S-clean", decisions=[
         _decision("axolotl exporter for the regenerated limb cache pipeline",
                   "o-clean1")], created="2026-08-01T00:00:00Z"),
-        project_dir="/repo/x")
+        project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-bad111", ts="2026-08-29T10:00:00Z"),
         _cure_row("o-bad111", ts="2026-08-29T12:00:00Z"),
@@ -552,7 +553,7 @@ def test_an_unknown_check_neither_marks_nor_cures(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
         {"ts": "2026-08-29T23:00:00Z", "check": "receipt-someday",
@@ -581,7 +582,7 @@ def test_a_cure_is_written_only_when_it_changes_something(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
 
     # Nothing stands contradicted: no row.
     assert store.append_receipt_cure("o-111aaa", project_dir="/repo/x") is False
@@ -607,7 +608,7 @@ def test_a_cure_is_not_a_catch_in_the_rejection_counters(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
         _cure_row("o-111aaa", ts="2026-08-29T12:00:00Z"),
@@ -635,7 +636,7 @@ def test_a_cured_item_records_what_cleared_it(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z"),
         _cure_row("o-111aaa", ts="2026-08-29T12:00:00Z"),
@@ -654,7 +655,7 @@ def test_an_unchallenged_item_is_not_marked_cured(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
 
     hits = recall.search("axolotl exporter claim", project_dir="/repo/x")
     assert hits
@@ -667,7 +668,7 @@ def test_a_standing_contradiction_is_not_also_cured(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-1", _cp("S-1", questions=[
         _item("the axolotl exporter claim was verified", "o-111aaa")],
-        created="2026-08-01T00:00:00Z"), project_dir="/repo/x")
+        created="2026-08-01T00:00:00Z"), project_dir="/repo/x", writer=Writer.HUMAN)
     _write_ledger(store.project_slug("/repo/x"),
                   [_receipt_row("o-111aaa", ts="2026-08-29T10:00:00Z")])
 
@@ -733,7 +734,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_invalidated_row(
             "trust": "inferred", "importance": 1,
             "first_seen": "2000-01-01T00:00:00Z",
         }], created="2000-01-01T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-bad", _cp("S-bad", decisions=[{
@@ -742,7 +743,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_invalidated_row(
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z",
             "id": "o-bad111",
         }], created="2026-06-20T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad111")])
     out = recall.suggest("debugging the litellm gateway cache pinning again",
@@ -773,13 +774,13 @@ def test_suggest_both_superseded_and_invalidated_lands_in_lowest_tier(
         "S-live", _cp("S-live", decisions=[
             {**common, "text": "wombat archive plan alpha"}],
             created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-super", _cp("S-super", decisions=[
             {**common, "text": "wombat beacon plan superseded"}],
             created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-super-newer", _cp("S-super-newer", decisions=[{
@@ -788,19 +789,19 @@ def test_suggest_both_superseded_and_invalidated_lands_in_lowest_tier(
             "links": [{"type": "supersedes",
                        "target": "wombat beacon plan superseded"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-bad", _cp("S-bad", decisions=[
             {**common, "text": "wombat comet plan invalidated",
              "id": "o-bad111"}], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-worst", _cp("S-worst", decisions=[
             {**common, "text": "wombat delta plan worst",
              "id": "o-worst1"}], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-worst-newer", _cp("S-worst-newer", decisions=[{
@@ -809,7 +810,7 @@ def test_suggest_both_superseded_and_invalidated_lands_in_lowest_tier(
             "links": [{"type": "supersedes",
                        "target": "wombat delta plan worst"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     _write_ledger(store.project_slug("/repo/x"), [
         _receipt_row("o-bad111"), _receipt_row("o-worst1"),
@@ -853,7 +854,7 @@ def test_suggest_invalidated_wall_never_starves_the_fetch_window(
                 "trust": "inferred", "importance": 5,
                 "first_seen": stamp, "id": item_id,
             }], created=stamp),
-            project_dir="/repo/x",
+            project_dir="/repo/x", writer=Writer.HUMAN
         )
     _write_ledger(store.project_slug("/repo/x"),
                   [_receipt_row(ref) for ref in refs])
@@ -863,7 +864,7 @@ def test_suggest_invalidated_wall_never_starves_the_fetch_window(
             "trust": "inferred", "importance": 1,
             "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
@@ -887,14 +888,14 @@ def test_suggest_and_search_agree_on_live_superseded_invalidated_order(
             "text": "quokka archive plan alpha",
             "trust": "inferred", "importance": 5, "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-super", _cp("S-super", decisions=[{
             "text": "quokka beacon plan superseded",
             "trust": "inferred", "importance": 5, "first_seen": stamp,
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-super-newer", _cp("S-super-newer", decisions=[{
@@ -903,7 +904,7 @@ def test_suggest_and_search_agree_on_live_superseded_invalidated_order(
             "links": [{"type": "supersedes",
                        "target": "quokka beacon plan superseded"}],
         }], created="2026-06-25T00:00:00Z"),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-bad", _cp("S-bad", decisions=[{
@@ -911,7 +912,7 @@ def test_suggest_and_search_agree_on_live_superseded_invalidated_order(
             "trust": "inferred", "importance": 5, "first_seen": stamp,
             "id": "o-bad222",
         }], created=stamp),
-        project_dir="/repo/x",
+        project_dir="/repo/x", writer=Writer.HUMAN
     )
     _write_ledger(store.project_slug("/repo/x"), [_receipt_row("o-bad222")])
 

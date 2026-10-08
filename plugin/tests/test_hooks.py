@@ -3,6 +3,7 @@ import json
 import daimon_briefing as plugin
 from daimon_briefing import hooks
 from tests.conftest import make_messages
+from daimon_briefing.surfaces import Writer
 
 
 def _valid_json(session_id="S1"):
@@ -43,7 +44,7 @@ def test_pre_llm_call_returns_none_when_no_checkpoint(tmp_checkpoint_dir):
 def test_pre_llm_call_injects_briefing(tmp_checkpoint_dir, sample_checkpoint):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
@@ -56,7 +57,7 @@ def test_pre_llm_call_injects_briefing(tmp_checkpoint_dir, sample_checkpoint):
 def test_pre_llm_call_disabled_returns_none(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
@@ -70,7 +71,7 @@ def test_pre_llm_call_never_raises(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setattr(hooks.briefing, "render", lambda *_: (_ for _ in ()).throw(ValueError("boom")))
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", {"session_id": "x", "working_context": {}, "epistemic_snapshot": {}})
+    store.write_checkpoint("S-prev", {"session_id": "x", "working_context": {}, "epistemic_snapshot": {}}, writer=Writer.HUMAN)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
@@ -83,7 +84,7 @@ def test_pre_llm_call_returns_none_when_briefing_is_empty(
 ):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setattr(hooks.briefing, "render", lambda *args, **kwargs: "")
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
@@ -277,7 +278,7 @@ def test_on_session_end_skips_when_transcript_hash_matches_checkpoint(
     tpath = tmp_path / "S-end.jsonl"
     tpath.write_text('{"role": "user", "content": "hi"}\n')
     sha = transcript_mod.file_sha256(tpath)
-    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": sha})
+    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": sha}, writer=Writer.HUMAN)
 
     chat = fake_chat_factory(_valid_json("S-end"))
     monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
@@ -297,7 +298,7 @@ def test_on_session_end_proceeds_when_transcript_hash_differs(
 
     tpath = tmp_path / "S-end.jsonl"
     tpath.write_text('{"role": "user", "content": "hi"}\n')
-    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": "stale"})
+    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": "stale"}, writer=Writer.HUMAN)
 
     chat = fake_chat_factory(_valid_json("S-end"))
     monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
@@ -323,7 +324,7 @@ def test_on_session_end_proceeds_when_format_version_is_stale(
     sha = transcript_mod.file_sha256(tpath)
     store.write_checkpoint(
         "S-end",
-        {**json.loads(_valid_json("S-end")), "transcript_hash": sha, "format_version": "D-000"},
+        {**json.loads(_valid_json("S-end")), "transcript_hash": sha, "format_version": "D-000"}, writer=Writer.HUMAN
     )
 
     chat = fake_chat_factory(_valid_json("S-end"))
@@ -428,7 +429,7 @@ def test_on_session_end_skip_leaves_no_ledger_entry(
     tpath = tmp_path / "S-end.jsonl"
     tpath.write_text('{"role": "user", "content": "hi"}\n')
     sha = transcript_mod.file_sha256(tpath)
-    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": sha})
+    store.write_checkpoint("S-end", {**json.loads(_valid_json("S-end")), "transcript_hash": sha}, writer=Writer.HUMAN)
 
     chat = fake_chat_factory(_valid_json("S-end"))
     monkeypatch.setattr(transcript_mod, "from_session", lambda sid: make_messages(20))
@@ -559,8 +560,9 @@ def test_on_session_end_routes_project_through_resolve_project_root(
 
     captured = {}
 
-    def _spy(session_id, checkpoint, project_dir=None, admit=False):
+    def _spy(session_id, checkpoint, project_dir=None, admit=False, **kwargs):
         captured["project_dir"] = project_dir
+        captured["writer"] = kwargs.get("writer")
         return None
 
     monkeypatch.setattr(hooks.store, "write_checkpoint", _spy)
@@ -568,6 +570,7 @@ def test_on_session_end_routes_project_through_resolve_project_root(
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
     assert captured["project_dir"] == "/git/top"
+    assert captured["writer"] is Writer.ADMISSION
 
 
 def test_pre_llm_call_routes_project_through_resolve_project_root(
@@ -666,12 +669,12 @@ def test_pre_llm_call_withholds_resolved_item(tmp_checkpoint_dir, sample_checkpo
     from daimon_briefing import store
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
@@ -690,7 +693,7 @@ def test_pre_llm_call_withholds_a_quarantined_value(
     from daimon_briefing import store, trust
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     trust.propose(text="Chunk threshold for the serializer", kind="question",
                   reason="planted, not a real open question",
                   evidence=["issue:1109"], channel="cli-tty",
@@ -713,7 +716,7 @@ def test_pre_llm_call_fails_open_when_resolutions_raises(
     from daimon_briefing import store
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/x")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def _boom(*_a, **_k):
         raise RuntimeError("boom")
@@ -1059,7 +1062,7 @@ def _foreign_checkpoint_with_project_b(tmp_path, monkeypatch, sample_checkpoint)
     project_b = tmp_path / "project-b"
     project_a.mkdir()
     project_b.mkdir()
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=str(project_a))
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=str(project_a), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project_b))
     return project_a, project_b
 
@@ -1120,7 +1123,7 @@ def test_pre_llm_call_unknown_project_still_reads_the_global_pointer(
     from daimon_briefing import store
 
     monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",

@@ -11,6 +11,7 @@ import json
 import pytest
 
 from daimon_briefing import briefing, config, refutations, store
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/p/ruling-brief"
@@ -180,7 +181,7 @@ def _hand_ruled_row(subject, verdict, project=PROJECT):
     row.update({"subject": subject, "verdict": verdict, "scope": "tests",
                 "anchors": [], "revisit_when": "", "evidence": [],
                 "ratified": True})
-    assert refutations.append(row, project_dir=project)
+    assert refutations.append(row, project_dir=project, writer=Writer.HUMAN)
     return row["refutation_id"]
 
 
@@ -292,7 +293,7 @@ def test_hook_injected_briefing_carries_rulings(tmp_checkpoint_dir,
                                                 monkeypatch):
     from daimon_briefing import hooks, store
     _rule("hook injection carries this")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=PROJECT)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[],
@@ -306,7 +307,7 @@ def test_mcp_brief_carries_rulings(tmp_checkpoint_dir, sample_checkpoint,
     from daimon_briefing import store
     from tests.test_mcp_server import rpc, _init, _call, _result
     _rule("mcp brief carries this")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=PROJECT)
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _, out = rpc(_init(), _call("daimon_brief", {}))
     text, is_err = _result(out)
@@ -318,7 +319,7 @@ def test_cli_brief_carries_rulings(tmp_checkpoint_dir, sample_checkpoint,
                                    capsys):
     from daimon_briefing import cli, store
     _rule("cli brief carries this")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=PROJECT)
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=PROJECT, writer=Writer.HUMAN)
     assert cli.main(["brief", "--project", PROJECT]) == 0
     out = capsys.readouterr().out
     assert "§ cli brief carries this" in out
@@ -328,7 +329,7 @@ def test_cli_rich_brief_carries_rulings(tmp_checkpoint_dir, sample_checkpoint,
                                         monkeypatch, capsys):
     from daimon_briefing import cli, render, store
     _rule("rich brief carries this")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=PROJECT)
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     assert cli.main(["brief", "--project", PROJECT]) == 0
     out = capsys.readouterr().out
@@ -457,7 +458,7 @@ def _hand_ruled_row_with(subject, verdict, *, extra, project=PROJECT):
                 "anchors": [], "revisit_when": "", "evidence": [],
                 "ratified": True})
     row.update(extra)
-    assert refutations.append(row, project_dir=project)
+    assert refutations.append(row, project_dir=project, writer=Writer.HUMAN)
     return row["refutation_id"]
 
 
@@ -484,7 +485,7 @@ def test_the_recipient_shows_its_short_label_not_the_raw_slug(
     slug = store.project_slug(RECIPIENT)
     store.write_checkpoint("S0", {"session_id": "S0", "working_context": {},
                                   "epistemic_snapshot": {}},
-                           project_dir=RECIPIENT)
+                           project_dir=RECIPIENT, writer=Writer.HUMAN)
     _open_policy(to=slug)
     joined = "\n".join(briefing.ruling_lines(PROJECT))
     assert "§ policy: agent may open info asks → fabcap" in joined
@@ -500,7 +501,7 @@ def test_slug_label_falls_back_when_the_bucket_has_no_stamped_name(
     slug = store.project_slug(recipient)
     store.write_checkpoint("S0", {"session_id": "S0", "working_context": {},
                                   "epistemic_snapshot": {}},
-                           project_dir=recipient)
+                           project_dir=recipient, writer=Writer.HUMAN)
     latest = config.checkpoint_dir() / slug / "latest.json"
     data = json.loads(latest.read_text(encoding="utf-8"))
     del data["project_name"]
@@ -514,10 +515,10 @@ def test_slug_label_skips_other_buckets_before_finding_a_match(
         tmp_checkpoint_dir):
     store.write_checkpoint("S0", {"session_id": "S0", "working_context": {},
                                   "epistemic_snapshot": {}},
-                           project_dir="/other/projects/anamnesis")
+                           project_dir="/other/projects/anamnesis", writer=Writer.HUMAN)
     store.write_checkpoint("S1", {"session_id": "S1", "working_context": {},
                                   "epistemic_snapshot": {}},
-                           project_dir="/other/projects/fabcap")
+                           project_dir="/other/projects/fabcap", writer=Writer.HUMAN)
     target = store.project_slug("/other/projects/fabcap")
     assert briefing._slug_label(target) == "fabcap"
 

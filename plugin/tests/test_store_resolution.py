@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import config, store
+from daimon_briefing.surfaces import Writer
 
 
 def _init_git_repo(path: Path) -> None:
@@ -81,7 +82,7 @@ def test_write_checkpoint_from_a_subdir_lands_in_the_repo_bucket(
     sub_bucket = store.project_slug(str(sub))
     assert root_bucket != sub_bucket
 
-    store.write_checkpoint("S1", dict(sample_checkpoint), project_dir=str(sub))
+    store.write_checkpoint("S1", dict(sample_checkpoint), project_dir=str(sub), writer=Writer.HUMAN)
 
     assert (tmp_checkpoint_dir / root_bucket / "latest.json").exists()
     assert not (tmp_checkpoint_dir / sub_bucket).exists()
@@ -96,7 +97,7 @@ def test_write_checkpoint_stamps_the_resolved_slug_on_the_caller_dict(
     checkpoint = dict(sample_checkpoint)
     assert "project_slug" not in checkpoint
 
-    store.write_checkpoint("S1", checkpoint, project_dir=str(sub))
+    store.write_checkpoint("S1", checkpoint, project_dir=str(sub), writer=Writer.HUMAN)
 
     assert checkpoint["project_slug"] == store.project_slug(str(repo))
     assert checkpoint["project_name"] == repo.name
@@ -109,7 +110,7 @@ def test_write_checkpoint_still_never_overwrites_a_stamped_slug(
     _repo, sub = repo_and_sub
     checkpoint = dict(sample_checkpoint, project_slug="-already-stamped")
 
-    store.write_checkpoint("S1", checkpoint, project_dir=str(sub))
+    store.write_checkpoint("S1", checkpoint, project_dir=str(sub), writer=Writer.HUMAN)
 
     assert checkpoint["project_slug"] == "-already-stamped"
 
@@ -119,9 +120,9 @@ def test_a_subdir_write_and_a_root_write_share_one_bucket(
     repo, sub = repo_and_sub
 
     store.write_checkpoint("S-sub", dict(sample_checkpoint, session_id="S-sub"),
-                           project_dir=str(sub))
+                           project_dir=str(sub), writer=Writer.HUMAN)
     store.write_checkpoint("S-root", dict(sample_checkpoint, session_id="S-root"),
-                           project_dir=str(repo))
+                           project_dir=str(repo), writer=Writer.HUMAN)
 
     buckets = [d.name for d in tmp_checkpoint_dir.iterdir() if d.is_dir()]
     assert buckets == [store.project_slug(str(repo))]
@@ -133,7 +134,7 @@ def test_a_subdir_write_is_read_back_from_the_repo_root(
     the global fallback, so this can only pass if both calls agree."""
     repo, sub = repo_and_sub
     store.write_checkpoint("S1", dict(sample_checkpoint, session_id="S1"),
-                           project_dir=str(sub))
+                           project_dir=str(sub), writer=Writer.HUMAN)
 
     got = store.read_latest_body(project_dir=str(repo), route=store.Route.OWN,
                                  admit=store.Admit.ANY)
@@ -151,7 +152,7 @@ def test_sibling_buckets_excludes_the_repo_bucket_for_a_subdir(
     """`sibling_buckets` means "every bucket that is not mine". Asked from a
     subdirectory it used to call the repository's own bucket a sibling."""
     repo, sub = repo_and_sub
-    store.write_checkpoint("S1", dict(sample_checkpoint), project_dir=str(repo))
+    store.write_checkpoint("S1", dict(sample_checkpoint), project_dir=str(repo), writer=Writer.HUMAN)
 
     names = {b["slug"] for b in store.sibling_buckets(str(sub))}
     assert store.project_slug(str(repo)) not in names
@@ -173,7 +174,7 @@ def test_verification_written_from_a_subdir_is_read_from_the_root(
 def test_event_written_from_a_subdir_is_read_from_the_root(
         tmp_checkpoint_dir, repo_and_sub):
     repo, sub = repo_and_sub
-    assert store.append_event("i-1", "resolved", project_dir=str(sub))
+    assert store.append_event("i-1", "resolved", project_dir=str(sub), writer=Writer.HUMAN)
 
     assert "i-1" in store.resolutions(project_dir=str(repo))
 
@@ -204,7 +205,7 @@ def test_record_forget_hits_refuses_an_empty_list_before_it_resolves(
 def test_project_surfaces_finds_a_subdir_write_from_the_root(
         tmp_checkpoint_dir, sample_checkpoint, repo_and_sub):
     repo, sub = repo_and_sub
-    store.write_checkpoint("S1", dict(sample_checkpoint), project_dir=str(sub))
+    store.write_checkpoint("S1", dict(sample_checkpoint), project_dir=str(sub), writer=Writer.HUMAN)
 
     assert store.project_surfaces(project_dir=str(repo))
 
@@ -213,7 +214,7 @@ def test_sessions_since_count_sees_a_subdir_write_from_the_root(
         tmp_checkpoint_dir, sample_checkpoint, repo_and_sub):
     repo, sub = repo_and_sub
     store.write_checkpoint("S1", dict(sample_checkpoint, created="2030-01-01T00:00:00Z"),
-                           project_dir=str(sub))
+                           project_dir=str(sub), writer=Writer.HUMAN)
 
     assert store.sessions_since_count("2020-01-01T00:00:00Z",
                                       project_dir=str(repo)) == 1
@@ -251,7 +252,7 @@ def test_read_latest_still_addresses_a_bucket_named_by_slug(
     monkeypatch.chdir(tmp_path)
     slug = "-Users-x-proj"
     store.write_checkpoint("S1", dict(sample_checkpoint, session_id="S1"),
-                           project_dir=slug)
+                           project_dir=slug, writer=Writer.HUMAN)
 
     assert (tmp_checkpoint_dir / slug / "latest.json").exists()
     got = store.read_latest_body(project_dir=slug, route=store.Route.OWN,
@@ -265,7 +266,7 @@ def test_a_slug_survives_every_public_entry_point(tmp_checkpoint_dir, tmp_path,
     on this path comes back as the slug itself."""
     monkeypatch.chdir(tmp_path)
     slug = "-Users-x-proj"
-    store.append_event("i-1", "resolved", project_dir=slug)
+    store.append_event("i-1", "resolved", project_dir=slug, writer=Writer.HUMAN)
     store.append_verification("i-1", "verbatim", "no match", project_dir=slug)
     store.record_forget_hits([{"text": "a value"}], project_dir=slug)
     store.resolutions(project_dir=slug)
@@ -296,7 +297,7 @@ def _public_entry_points(sub: str):
          lambda: store.apply_foreign_tombstones(project_dir=sub)),
         ("write_checkpoint",
          lambda: store.write_checkpoint("S-audit", {"session_id": "S-audit"},
-                                        project_dir=sub)),
+                                        project_dir=sub, writer=Writer.HUMAN)),
         ("project_latest_path", lambda: store.project_latest_path(sub)),
         ("sibling_buckets", lambda: store.sibling_buckets(sub)),
         ("read_latest_body",
@@ -333,7 +334,11 @@ def _public_entry_points(sub: str):
                                           project_dir=sub)),
         ("forget_hit_stats", lambda: store.forget_hit_stats(project_dir=sub)),
         ("append_event",
-         lambda: store.append_event("i-1", "resolved", project_dir=sub)),
+         lambda: store.append_event("i-1", "resolved", project_dir=sub, writer=Writer.HUMAN)),
+        ("admission_state", lambda: store.admission_state(sub)),
+        ("admission_preflight", lambda: store.admission_preflight(sub)),
+        ("admission_gate",
+         lambda: store.admission_gate(sub, Writer.ADMISSION)),
         ("scrub_event_fields",
          lambda: store.scrub_event_fields("deadbeef", project_dir=sub)),
         ("resolutions", lambda: store.resolutions(project_dir=sub)),

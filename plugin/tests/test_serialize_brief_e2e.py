@@ -13,6 +13,7 @@ test instead of shipping the drift silently."""
 import re
 
 from daimon_briefing import briefing, schema, serializer, store
+from daimon_briefing.surfaces import Writer
 
 _CREATED = "2026-07-08T00:00:00Z"
 _PROJECT = "/tmp/daimon-e2e-project"
@@ -53,7 +54,7 @@ def test_every_schema_field_survives_serialize_to_brief(tmp_checkpoint_dir):
     # The real pipeline order: sanitize (serialize step), then the store write
     # (redaction, id stamping, first_seen stamping), then read + render.
     serializer.sanitize_importance(cp)
-    store.write_checkpoint("S-e2e", cp, project_dir=_PROJECT)
+    store.write_checkpoint("S-e2e", cp, project_dir=_PROJECT, writer=Writer.HUMAN)
 
     stored = store.read_latest_body(project_dir=_PROJECT,
                                     route=store.Route.OWN_ELSE_GLOBAL,

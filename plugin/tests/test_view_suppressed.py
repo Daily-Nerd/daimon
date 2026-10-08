@@ -11,6 +11,7 @@ import pytest
 
 from daimon_briefing import config, normalize, store, trust, view
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/view-suppressed"
 NOW = 1_800_000_000.0
@@ -39,7 +40,7 @@ def _checkpoint():
 
 
 def _seed():
-    store.write_checkpoint("S-1", _checkpoint(), project_dir=PROJECT)
+    store.write_checkpoint("S-1", _checkpoint(), project_dir=PROJECT, writer=Writer.HUMAN)
     cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
     return {i["text"]: i["id"]
@@ -47,7 +48,7 @@ def _seed():
 
 
 def _resolve(item_id, status="resolved", **kw):
-    store.append_event(item_id, status, project_dir=PROJECT, **kw)
+    store.append_event(item_id, status, project_dir=PROJECT, **kw, writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind="question"):
@@ -58,7 +59,7 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def test_nothing_suppressed_is_empty(tmp_checkpoint_dir):

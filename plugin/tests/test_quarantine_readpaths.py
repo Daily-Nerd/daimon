@@ -9,6 +9,7 @@ there).
 from daimon_briefing import carry, normalize, store, trust
 
 from ._prepared import shown, synthetic
+from daimon_briefing.surfaces import Writer
 
 _QVALUE = "the deploy key rotation runbook was fabricated by the agent"
 
@@ -30,7 +31,7 @@ def test_quarantine_survives_straight_carry_under_the_same_id(
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
     }
-    store.write_checkpoint("P1", prev, project_dir="/repo/q")
+    store.write_checkpoint("P1", prev, project_dir="/repo/q", writer=Writer.HUMAN)
     stored_prev = store.read_latest_body(project_dir="/repo/q",
                                          route=store.Route.OWN,
                                          admit=store.Admit.ANY)
@@ -85,7 +86,7 @@ def test_quarantine_survives_a_reworded_twin_with_a_different_id(
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
     }
-    store.write_checkpoint("S1", cp, project_dir="/repo/qr")
+    store.write_checkpoint("S1", cp, project_dir="/repo/qr", writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir="/repo/qr", route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     items = stored["working_context"]["open_questions"]

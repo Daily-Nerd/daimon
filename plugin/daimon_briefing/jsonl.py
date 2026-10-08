@@ -24,10 +24,14 @@ import re
 import stat
 import time
 from collections.abc import Callable, Iterable, Iterator
+from contextvars import ContextVar
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import ModuleType
-from typing import NamedTuple
+from typing import NamedTuple, Union
+
+from . import display, surfaces
+from .surfaces import WritePosture, Writer
 
 # Annotated before the import (#842): the try branch alone infers a Module, so
 # the except branch's None reads as a type error rather than as the degrade it
@@ -175,9 +179,43 @@ def _unterminated(path: Path) -> bool:
         return False
 
 
-def append_lines(path: Path, lines: Iterable[str], *, lock: bool = True) -> int:
+def _judge(posture, path: Path):
+    """`posture` as the WritePosture to apply and the Posture it came from
+    (None for a bare value). A callable is called here, so a caller that
+    hands one gets its judgement made at the moment the write happens,
+    under the ledger lock when there is one."""
+    if callable(posture):
+        posture = posture()
+    if isinstance(posture, Posture):
+        return posture.write, posture
+    return posture, None
+
+
+def _apply(write: WritePosture, judged, path: Path) -> bool:
+    """True when the append should go ahead. REFUSE raises, SKIP records
+    usage and returns False, so no caller can mistake either for a write."""
+    if write is WritePosture.PROCEED:
+        return True
+    if write is WritePosture.SKIP:
+        _note_skip(path.name, judged.health.value if judged else "unproven")
+        return False
+    if judged is None:
+        raise Refused(path.name, "unproven", "", "run: daimon status")
+    raise judged.refusal()
+
+
+def append_lines(path: Path, lines: Iterable[str], *,
+                 posture: "PostureArg", lock: bool = True) -> int:
     """Append `lines` (each already serialised, no terminator) to a ledger.
     Returns how many were written.
+
+    `posture` is required and says what a write does with this ledger's
+    health (#1132 PR 10b): PROCEED appends, REFUSE raises `Refused` with
+    nothing written, SKIP writes nothing and returns 0. It is a
+    `WritePosture` (a cure, which needs no judging), a `Posture` the caller
+    already read, or a zero-argument callable (`lazy_posture`) that is called
+    HERE, under the ledger lock, so the health it judges is the health the
+    append lands on.
 
     The bytes are built once and written in ONE call on an unbuffered
     O_APPEND handle, so a crash leaves at most one torn tail and two
@@ -201,6 +239,9 @@ def append_lines(path: Path, lines: Iterable[str], *, lock: bool = True) -> int:
         return 0
     data = "".join(body).encode("utf-8", errors="surrogateescape")
     with ledger_lock(path) if lock else nullcontext():
+        write, judged = _judge(posture, path)
+        if not _apply(write, judged, path):
+            return 0
         if _unterminated(path):
             data = b"\n" + data
         with path.open("ab", buffering=0) as handle:
@@ -210,11 +251,12 @@ def append_lines(path: Path, lines: Iterable[str], *, lock: bool = True) -> int:
     return len(body)
 
 
-def append(path: Path, row: dict, *, lock: bool = True) -> int:
+def append(path: Path, row: dict, *, posture: "PostureArg",
+           lock: bool = True) -> int:
     """`append_lines` for one row, dumped with ensure_ascii=False like every
     ledger writer."""
     return append_lines(path, [json.dumps(row, ensure_ascii=False)],
-                        lock=lock)
+                        posture=posture, lock=lock)
 
 
 class Health(str, enum.Enum):
@@ -361,6 +403,144 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
     else:
         health, detail = Health.OK, ""
     return Read(health, rows, torn, split, garbage, detail, undecodable)
+
+
+# ---- #1132 PR 10b: the write exits judge the ledger first ------------------
+
+ADMISSION_PREFIX = "error: admission refused: "
+"""How a refused admission begins in serialize.log. The one place the class
+is detected: both log folds read it from here (the hook library mirrors the
+literal, and a test pins the two equal)."""
+
+
+class Refused(OSError):
+    """A write that was not made because its ledger is not proven (REFUSE).
+
+    An OSError on purpose: every module appender already turns an OSError
+    into its own "not written" answer, so a refusal can never be mistaken
+    for a write. `str(exc)` is the canonical body, the same text on every
+    channel. `admission` marks a refused admission, the one class that is an
+    ordinary failed serialize and is retried by heal."""
+
+    def __init__(self, name: str, state: str, detail: str, hint: str,
+                 admission: bool = False):
+        self.name = name
+        self.state = state
+        self.detail = detail
+        self.hint = hint
+        self.admission = admission
+        shown = f" ({detail})" if detail and not admission else ""
+        prefix = "admission refused: " if admission else ""
+        super().__init__(f"{prefix}{name} is {state}{shown}; {hint}")
+
+
+class Posture(NamedTuple):
+    """What a ledger is and what a writer of one class does about it."""
+    health: Health
+    detail: str
+    undecodable: int
+    write: WritePosture
+    name: str = ""
+    unscannable: str = ""
+    admission: bool = False
+
+    def refusal(self) -> "Refused":
+        hint = display.ledger_hint(self.name, self.health.value, self.detail,
+                                   self.unscannable)
+        return Refused(self.name, self.health.value, self.detail, hint,
+                       self.admission)
+
+
+PostureArg = Union[WritePosture, Posture, Callable[[], Union[WritePosture,
+                                                              Posture]]]
+
+
+def posture(path: Path, name: str, writer: Writer) -> Posture:
+    """Judge `path` once and resolve what a `writer` does with it. `name` is
+    the ledger's file name, the key of its registry row. A ledger is PROVEN
+    when it is OK, ABSENT or DEGRADED and UNPROVEN when it is TRANSIENT or any
+    UNREADABLE (an OS error, an undecodable byte, a garbage line): the
+    registry says what each writer class does with an unproven one."""
+    result = read(path)
+    write = surfaces.write_posture(surfaces.write_row(name), writer,
+                                   result.health.value)
+    return Posture(result.health, result.detail, result.undecodable, write,
+                   name, result.cannot_scan, writer is Writer.ADMISSION)
+
+
+def lazy_posture(path: Path, writer: Writer,
+                 name: str | None = None) -> Callable[[], Posture]:
+    """A zero-argument judgement of `path` for `append_lines`, which calls it
+    under the ledger lock right before the write."""
+    return lambda: posture(path, name or path.name, writer)
+
+
+# A person at the CLI must be told why a write was refused; a library caller
+# (anamnesis, a hook, a pod) keeps the contract every module appender has
+# always had, "not written" as False. So the refusal is swallowed into False
+# unless the run opted in, and `cli.main` is the one place that does.
+_SURFACE_REFUSALS: ContextVar[bool] = ContextVar("daimon_surface_refusals",
+                                                 default=False)
+
+
+@contextmanager
+def surface_refusals() -> Iterator[None]:
+    """Within this context a module appender RAISES `Refused` instead of
+    answering False, so the entry point can print it and exit 2."""
+    token = _SURFACE_REFUSALS.set(True)
+    try:
+        yield
+    finally:
+        _SURFACE_REFUSALS.reset(token)
+
+
+def append_as(path: Path, row: dict, writer: Writer, *,
+              lock: bool = True) -> bool:
+    """The module appenders' write exit: judge the ledger under the lock for
+    `writer`, append, and answer whether the row landed. OSError is the
+    caller's "not written" (False); a REFUSE is that same False unless the run
+    surfaces refusals (`surface_refusals`); a SKIP is False too, and leaves
+    its usage line."""
+    try:
+        return append(path, row, posture=lazy_posture(path, writer),
+                      lock=lock) > 0
+    except Refused:
+        if _SURFACE_REFUSALS.get():
+            raise
+        return False
+
+
+def require_writable(path: Path, writer: Writer, *,
+                     error: type[Exception] | None = None) -> None:
+    """Refuse BEFORE a verb reads the rows it is about to act on. A verb that
+    looks up a record in a ledger it cannot read answers "unknown id", which
+    is a lie about a ledger that is merely unreadable. Raises `Refused` when
+    the run surfaces refusals or no `error` is given, else `error(body)`, so
+    a library caller meets its own typed error and never a bare OSError."""
+    judged = posture(path, path.name, writer)
+    if judged.write is not WritePosture.REFUSE:
+        return
+    exc = judged.refusal()
+    if error is None or _SURFACE_REFUSALS.get():
+        raise exc
+    raise error(str(exc))
+
+
+def _note_skip(name: str, state: str) -> None:
+    """One local usage line for a machine row that was skipped because its
+    ledger is not proven: `<ledger>:skipped-<state>`. Best-effort, and never
+    a write to the ledger being skipped."""
+    from . import config  # deferred: config imports this module's callers
+    try:
+        if config.is_disabled():
+            return
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with (log_dir / "usage.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {name}:skipped-{state}\n")
+    except OSError:
+        pass
 
 
 class Partition(NamedTuple):

@@ -9,6 +9,7 @@ from daimon_briefing import briefing, cli, render, requests, store
 
 from ._prepared import in_hand
 from .test_briefing_select import NOW, _fixture_checkpoint
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +101,7 @@ def _open_ask():
             "session_id": sess, "created": "2026-08-16T00:00:00Z",
             "working_context": {"recent_decisions": [
                 {"text": "x", "trust": "inferred"}]},
-        }, project_dir=proj)
+        }, project_dir=proj, writer=Writer.HUMAN)
     return requests.open_request(
         to=store.project_slug(RECIPIENT), ask="publish the schema",
         why="because", channel="cli-agent",

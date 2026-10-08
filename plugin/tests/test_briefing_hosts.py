@@ -8,6 +8,7 @@ import pytest
 
 from daimon_briefing import (amendments, briefing, cli, hooks, mcp_tools,
                              normalize, refutations, requests, store, trust)
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/hosts"
 SENDER = "/p/hosts-sender"
@@ -29,7 +30,7 @@ def _cp(*decisions, topic=None):
 
 def _seed(*decisions, project=PROJECT, **kw):
     store.write_checkpoint("S-1", _cp(*(decisions or (KEPT,)), **kw),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
 
 
 def _quarantine(text=Q, kind="decision", project=PROJECT):
@@ -41,7 +42,7 @@ def _quarantine(text=Q, kind="decision", project=PROJECT):
 def _forget(text=F, project=PROJECT):
     key = normalize.content_key(text)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=project)
+                       tombstone=True, project_dir=project, writer=Writer.HUMAN)
 
 
 def _ruling(verdict, project=PROJECT):
@@ -186,7 +187,7 @@ def _closed_world(handoff=False):
     _ruling("never ship a Friday deploy")
     if handoff:
         store.append_event("", "active", note="pick up the migration",
-                           kind="handoff", project_dir=PROJECT)
+                           kind="handoff", project_dir=PROJECT, writer=Writer.HUMAN)
     _close()
 
 
@@ -268,7 +269,7 @@ def test_loops_under_a_closed_view_lists_nothing_and_says_why(
         "session_id": "S-1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"open_questions": [
             {"text": "who owns it", "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     _close()
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["loops"]) == 0
@@ -413,11 +414,11 @@ def test_the_trailer_counts_resolved_and_quarantined_apart_and_never_forgotten(
                 {"text": Q, "trust": "inferred"},
                 {"text": F, "trust": "inferred"},
                 {"text": KEPT, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
     loop = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(loop, "resolved", project_dir=PROJECT)
+    store.append_event(loop, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     _quarantine()
     _forget()
     _, out = _brief(capsys, monkeypatch)
@@ -441,9 +442,9 @@ def test_there_is_no_quarantine_line_without_a_quarantine(
 def _team_world(monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", _cp(Q, KEPT), project_dir=PROJECT)
+    store.write_checkpoint("g-1", _cp(Q, KEPT), project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-1", _cp(KEPT), project_dir=PROJECT)
+    store.write_checkpoint("a-1", _cp(KEPT), project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def test_teammate_blocks_carry_no_stamps(tmp_checkpoint_dir, monkeypatch):
@@ -479,7 +480,7 @@ def test_the_header_only_team_path_counts_teammates_withheld_items(
         tmp_checkpoint_dir, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", _cp(Q, KEPT), project_dir=PROJECT)
+    store.write_checkpoint("g-1", _cp(Q, KEPT), project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     _quarantine()
     # the reader has no checkpoint of their own, so the global pointer is

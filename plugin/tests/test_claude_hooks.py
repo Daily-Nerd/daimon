@@ -17,6 +17,7 @@ from pathlib import Path
 
 from daimon_briefing import refutations, store
 from tests.conftest import FIXTURES
+from daimon_briefing.surfaces import Writer
 
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 BRIEF_HOOK = HOOK_DIR / "daimon-session-brief.py"
@@ -84,9 +85,9 @@ def test_brief_hook_uses_project_checkpoint(tmp_checkpoint_dir, sample_checkpoin
     cwd = "/Users/x/projA"
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-mine"
-    store.write_checkpoint("S-mine", mine, project_dir=cwd)
+    store.write_checkpoint("S-mine", mine, project_dir=cwd, writer=Writer.HUMAN)
     # A later session in ANOTHER project takes over the global latest.
-    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"})
+    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"}, writer=Writer.HUMAN)
 
     proc = _run(BRIEF_HOOK, {"cwd": cwd, "session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
@@ -103,7 +104,7 @@ def test_brief_hook_forwards_its_own_host_so_an_enforce_ruling_renders_compact(
     subprocess must carry the identical host tag, not just the cwd."""
     cwd = "/Users/x/projA"
     store.write_checkpoint("S-mine", {**sample_checkpoint, "session_id": "S-mine"},
-                          project_dir=cwd)
+                          project_dir=cwd, writer=Writer.HUMAN)
     ruling_id = refutations.assert_ruling(
         subject="a public post rule", verdict="the rule for a public post rule",
         scope="publishing", evidence=["issue:1089"], channel="cli-tty",
@@ -124,7 +125,7 @@ def test_brief_hook_age_from_created_not_mtime(tmp_checkpoint_dir, sample_checkp
     # the freshly written latest.json has mtime = now.
     old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 2 * 3600))
     ck = {**sample_checkpoint, "session_id": "S-old", "created": old}
-    store.write_checkpoint("S-old", ck, project_dir="/p/A")
+    store.write_checkpoint("S-old", ck, project_dir="/p/A", writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, {"cwd": "/p/A", "session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
     assert "checkpoint: S-old" in proc.stdout
@@ -133,7 +134,7 @@ def test_brief_hook_age_from_created_not_mtime(tmp_checkpoint_dir, sample_checkp
 
 def test_brief_hook_labels_global_fallback(tmp_checkpoint_dir, sample_checkpoint, tmp_path):
     # Project is known but has no checkpoint of its own -> global, visibly labeled.
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
     assert "checkpoint: S-global" in proc.stdout
@@ -141,7 +142,7 @@ def test_brief_hook_labels_global_fallback(tmp_checkpoint_dir, sample_checkpoint
 
 
 def test_brief_hook_no_cwd_behaves_as_today(tmp_checkpoint_dir, sample_checkpoint, tmp_path):
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, {"session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
     assert "checkpoint: S-global" in proc.stdout
@@ -173,7 +174,7 @@ def test_brief_hook_hints_install_when_cli_missing(tmp_checkpoint_dir, tmp_path)
 
 
 def test_brief_hook_fail_open_on_garbage_stdin(tmp_checkpoint_dir, sample_checkpoint, tmp_path):
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, "{not json!", tmp_path)
     assert proc.returncode == 0
     assert "checkpoint: S-global" in proc.stdout  # degraded to global, not dead
@@ -300,7 +301,7 @@ def _fake_cli_argv_recording(tmp_path) -> tuple[Path, Path]:
 
 def test_brief_hook_passes_auto_flag(tmp_path, tmp_checkpoint_dir, sample_checkpoint):
     # #100: `daimon brief --auto` (Task 1) is only useful if the hook sends it.
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     fake_bin, capture = _fake_cli_argv_recording(tmp_path)
     proc = _run(
         BRIEF_HOOK,
@@ -336,7 +337,7 @@ def _fake_cli_preflag(tmp_path) -> tuple[Path, Path]:
 def test_brief_hook_retries_without_auto_on_preflag_cli(tmp_path, tmp_checkpoint_dir, sample_checkpoint):
     # #100: exit 2 (argparse rejection) from a pre-flag CLI must degrade to a
     # plain retry, never a lost briefing.
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     fake_bin, capture = _fake_cli_preflag(tmp_path)
     proc = _run(
         BRIEF_HOOK,
@@ -1186,7 +1187,7 @@ def test_brief_hook_sweep_never_breaks_briefing_output(
 ):
     # No transcript_path in the payload at all -> sweep can't act, briefing is
     # unaffected (matches every pre-#185 brief-hook test's payload shape).
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
     assert "checkpoint: S-global" in proc.stdout
@@ -1292,7 +1293,7 @@ def _seed_prompt_history(cwd):
              "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=cwd,
+        project_dir=cwd, writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-latest",
@@ -1302,7 +1303,7 @@ def _seed_prompt_history(cwd):
              "open_questions": [], "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=cwd,
+        project_dir=cwd, writer=Writer.HUMAN
     )
 
 
@@ -1578,7 +1579,7 @@ def _seed_addressed_request(cwd):
         {"session_id": "S-sender-seed", "created": "2026-06-20T00:00:00Z",
          "working_context": {"recent_decisions": [
              {"text": "x", "trust": "inferred"}]}},
-        project_dir="/Users/x/projSender")
+        project_dir="/Users/x/projSender", writer=Writer.HUMAN)
     return requests.open_request(
         to=_store.project_slug(cwd),
         ask="confirm the delivery stamp lands before Friday",

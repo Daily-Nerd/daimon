@@ -14,6 +14,7 @@ import time
 import pytest
 
 from daimon_briefing import cli, config, store, teamproject, teamsync
+from daimon_briefing.surfaces import Writer
 
 
 def _git(cwd, *args) -> subprocess.CompletedProcess:
@@ -460,7 +461,7 @@ def test_dual_write_routes_into_single_remote_sidecar(bare_remote, monkeypatch):
     # grants it (and, as tier-1 resolution, also names the nested path).
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "repo-x")
     sidecar = teamsync.init(str(bare_remote))
-    store.write_checkpoint("S-r", _checkpoint("S-r"), project_dir="/repo/x")
+    store.write_checkpoint("S-r", _checkpoint("S-r"), project_dir="/repo/x", writer=Writer.HUMAN)
     assert (sidecar / "projects" / "repo-x" / "authors" / "Ada" / "S-r.json").exists()
     assert not (config.team_dir() / "local").exists()
 
@@ -473,7 +474,7 @@ def test_dual_write_multiple_remotes_keeps_local(bare_remote, tmp_path, monkeypa
     subprocess.run(["git", "init", "--bare", "-b", "main", str(second)],
                    check=True, capture_output=True, timeout=30)
     teamsync.init(str(second))
-    store.write_checkpoint("S-l", _checkpoint("S-l"), project_dir="/repo/x")
+    store.write_checkpoint("S-l", _checkpoint("S-l"), project_dir="/repo/x", writer=Writer.HUMAN)
     # Ambiguous routing -> the documented 'local' fallback, not a guess.
     assert (config.team_dir() / "local" / "authors" / "Ada" / "S-l.json").exists()
 

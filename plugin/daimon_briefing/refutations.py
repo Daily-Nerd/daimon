@@ -33,6 +33,7 @@ from typing import NamedTuple
 
 from . import (channels, clock, config, jsonl, normalize, policy, redact, store,
                surfaces)
+from .surfaces import WritePosture, Writer
 
 
 VERSION = 1
@@ -291,8 +292,11 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         store.record_bucket_root(project_dir)  # #1092: first writer wins
+        # A forget is a cure: it writes the tombstone whatever the ledger's
+        # health, so the posture is PROCEED and no read is made.
         jsonl.append_lines(
-            path, [json.dumps(row, ensure_ascii=False) for row in rows])
+            path, [json.dumps(row, ensure_ascii=False) for row in rows],
+            posture=WritePosture.PROCEED)
     except OSError:
         pass
 
@@ -680,7 +684,7 @@ def _scrub_list(values: list[str]) -> list[str]:
     return out
 
 
-def append(row: dict, project_dir=None) -> bool:
+def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row.  Never mutates another ledger."""
     if config.is_disabled():
         return False
@@ -706,8 +710,9 @@ def append(row: dict, project_dir=None) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         store.record_bucket_root(project_dir)  # #1092: first writer wins
-        jsonl.append(path, admitted)
-        return True
+        return jsonl.append_as(path, admitted, writer)
+    except jsonl.Refused:
+        raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
 
@@ -862,7 +867,7 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     # records are already gone from the ledger here, so the manifest is
     # rebuilt unconditionally rather than from a record that no longer
     # exists to be inspected.
-    _sync_checks(project_dir, force=bool(doomed))
+    _sync_checks(project_dir, force=bool(doomed), writer=Writer.CURE)
     return sorted(doomed)
 
 
@@ -1542,7 +1547,8 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     })
     if ratified:
         row["ratified"] = True
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RefutationError("refutation not written (daimon disabled, project unknown, or ledger unwritable)")
     return ref_id
 
@@ -1856,7 +1862,8 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
         row["request_policy"] = request_policy
     if ratified:
         row["ratified"] = True
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RefutationError(
             "ruling not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
@@ -1867,7 +1874,7 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
         # from the manifest until someone ran `check sync` by hand. `ratify`
         # and `revise` already sync after every write that could carry one;
         # this closes the one activation path that did not.
-        _sync_checks(project_dir, row=row)
+        _sync_checks(project_dir, row=row, writer=Writer.HUMAN)
     return ref_id
 
 
@@ -1904,7 +1911,7 @@ def _load_checks():
 
 
 def _sync_checks(project_dir=None, *, record=None, row=None,
-                 force: bool = False) -> None:
+                 force: bool = False, writer: Writer) -> None:
     """Rebuild the armed-check manifest after a write that could change it.
 
     Skipped when nothing in sight carries a check. `checks.sync` re-folds the
@@ -1922,7 +1929,7 @@ def _sync_checks(project_dir=None, *, record=None, row=None,
     if not carries:
         return
     try:
-        _last_check_sync = _load_checks().sync(project_dir)
+        _last_check_sync = _load_checks().sync(project_dir, writer=writer)
     except Exception as exc:  # noqa: BLE001 — a report, never a raise
         _last_check_sync = _CheckSyncFailure(f"{type(exc).__name__}: {exc}")
 
@@ -1949,9 +1956,10 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
     row = _stamp(event, ruling_id, channel)
     row["evidence"] = _evidence(evidence, required=False)
     row["note"] = _text("note", note, required=False)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RefutationError("retirement not written")
-    _sync_checks(project_dir, record=current)
+    _sync_checks(project_dir, record=current, writer=Writer.HUMAN)
     return event
 
 
@@ -2007,7 +2015,8 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     # SAW, the same reasoning check_sha256 carries just above.
     if policy_sha256:
         row["policy_sha256"] = str(policy_sha256)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RefutationError("ratification not written")
     # #1090: `current` was fetched BEFORE this row landed, so a proposal
     # that is ADDING a check for the first time is not yet on `current`
@@ -2017,7 +2026,8 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     # accepted proposal never reaches `checks.sync` at all (the literal
     # `armed 0 of 0 wanted` symptom this issue reported).
     _sync_checks(project_dir, record=current,
-                row=current.get("revision_proposed"))
+                row=current.get("revision_proposed"),
+                 writer=Writer.HUMAN)
 
 
 def revise(refutation_id: str, *, channel: str, evidence,
@@ -2149,11 +2159,13 @@ def revise(refutation_id: str, *, channel: str, evidence,
                 make_id(new_subject, new_scope), project_dir)
     if ratified:
         row["ratified"] = True
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RefutationError("revision not written")
     # Either side can carry it: the record may already be armed, and this
     # row may be what arms it.
-    _sync_checks(project_dir, record=current, row=row)
+    _sync_checks(project_dir, record=current, row=row,
+                 writer=Writer.HUMAN)
 
 
 def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
@@ -2174,12 +2186,13 @@ def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
     row = _stamp(event, refutation_id, channel)
     row["evidence"] = _evidence(evidence)
     row["note"] = _text("note", note, required=False)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RefutationError("overturn event not written")
     # Inert by construction today: this function refuses rulings outright,
     # and only a ruling carries a check. Wired so the seam is one set of
     # writers rather than four plus an exception.
-    _sync_checks(project_dir, record=current)
+    _sync_checks(project_dir, record=current, writer=Writer.HUMAN)
     return event
 
 

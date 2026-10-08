@@ -12,6 +12,7 @@ from pathlib import Path
 import daimon_briefing.cli as _cli
 
 from .. import render
+from ..surfaces import Writer
 
 
 def _cmd_hooks_list(args) -> int:
@@ -51,10 +52,10 @@ def _checks_lines() -> list:
     from .. import checks, config
 
     project = _cli._resolve_project(None)
-    report = checks.sync(project)
+    report = checks.sync(project, writer=Writer.HUMAN)
     lines = ([f"checks: {report.armed} armed for {report.slug}"] if report.ok
              else [f"checks: {report.reason}"])
-    for layer, layer_report in checks.sync_layers(project):
+    for layer, layer_report in checks.sync_layers(project, writer=Writer.HUMAN):
         home = config.home_relative(layer)
         if not layer_report.ok:
             lines.append(f"checks: {layer_report.reason} (layer {home})")

@@ -17,6 +17,7 @@ import json
 import pytest
 
 from daimon_briefing import cli, policy, provenance, serializer, store
+from daimon_briefing.surfaces import Writer
 
 _HASH = "a" * 64
 
@@ -64,7 +65,7 @@ def _write(session, items, project_dir, messages=_MESSAGES):
         cp, serializer._render_transcript(messages), messages,
         source_ref=_source(session), transcript_hash=_HASH)
     policy.stamp_item_ids(cp)
-    assert store.write_checkpoint(session, cp, project_dir=project_dir)
+    assert store.write_checkpoint(session, cp, project_dir=project_dir, writer=Writer.HUMAN)
     return cp
 
 
@@ -168,7 +169,7 @@ def test_a_corpus_of_only_legacy_receipts_says_so_instead_of_reporting_zero(
         cp, serializer._render_transcript(_MESSAGES),
         source_ref=_source("S1"), transcript_hash=_HASH)
     policy.stamp_item_ids(cp)
-    assert store.write_checkpoint("S1", cp, project_dir=project)
+    assert store.write_checkpoint("S1", cp, project_dir=project, writer=Writer.HUMAN)
 
     s = _stats_json(capsys)["stitching"]
     assert s["verified"] == 1
@@ -188,7 +189,7 @@ def test_a_legacy_receipt_stays_out_of_the_denominator(project, capsys):
         legacy, serializer._render_transcript(_MESSAGES),
         source_ref=_source("S2"), transcript_hash=_HASH)
     policy.stamp_item_ids(legacy)
-    assert store.write_checkpoint("S2", legacy, project_dir=project)
+    assert store.write_checkpoint("S2", legacy, project_dir=project, writer=Writer.HUMAN)
 
     s = _stats_json(capsys)["stitching"]
     assert s["verified"] == 2
@@ -238,7 +239,7 @@ def test_one_item_carried_across_sessions_counts_once(project, capsys):
     carried = json.loads(json.dumps(
         first["working_context"]["open_questions"][0]))
     second = _checkpoint("S2", [carried])
-    assert store.write_checkpoint("S2", second, project_dir=project)
+    assert store.write_checkpoint("S2", second, project_dir=project, writer=Writer.HUMAN)
 
     s = _stats_json(capsys)["stitching"]
     assert s["verified"] == 1

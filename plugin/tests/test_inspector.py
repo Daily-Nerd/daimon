@@ -9,6 +9,7 @@ import pytest
 from daimon_briefing import (cli, config, inspector, normalize, provenance,
                               recall, redact, schema, scoring, store,
                               transcript)
+from daimon_briefing.surfaces import Writer
 
 
 _PROJECT = "/p/A"
@@ -75,7 +76,7 @@ def _checkpoint(session_id, items, created="2026-08-05T10:00:00Z"):
 def _write_checkpoint(session_id, items, *, project=_PROJECT,
                       created="2026-08-05T10:00:00Z"):
     checkpoint = _checkpoint(session_id, items, created)
-    assert store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    assert store.write_checkpoint(session_id, checkpoint, project_dir=project, writer=Writer.HUMAN)
     return checkpoint
 
 
@@ -337,7 +338,7 @@ def test_legacy_item_prefers_origin_checkpoint_source_ref(
     source = _source("S-raw-origin")
     origin = _checkpoint("S-origin", [])
     origin["source_ref"] = source
-    assert store.write_checkpoint("S-origin", origin, project_dir=_PROJECT)
+    assert store.write_checkpoint("S-origin", origin, project_dir=_PROJECT, writer=Writer.HUMAN)
     _write_checkpoint("S-containing", [
         _item(origin_session="S-origin", origin_author="alice"),
     ])
@@ -478,7 +479,7 @@ def test_forgotten_event_remains_inspectable_after_plaintext_is_gone(
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
     assert store.append_event(
         _ITEM_ID, "forgotten:" + "a" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 
@@ -688,7 +689,7 @@ def test_source_disclosure_caps_message_count_and_reports_unavailable(
     # this assertion is testing the unrelated no-occurrence-at-all shape.
     assert store.append_event(
         "o-fedcba", "resolved",
-        project_dir=_PROJECT, allow_disabled=True)
+        project_dir=_PROJECT, allow_disabled=True, writer=Writer.HUMAN)
     unavailable = inspector.inspect_item(
         _PROJECT, "o-fedcba", include_source=True,
         resolver=_resolver(tmp_path, projects))
@@ -727,7 +728,7 @@ def test_source_disclosure_is_withheld_when_project_holds_a_forget_tombstone(
     # The tombstone below is for a DIFFERENT item entirely.
     assert store.append_event(
         "o-elsewhere", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
 
     withheld = inspector.inspect_item(
         _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
@@ -747,10 +748,10 @@ def test_source_disclosure_withheld_count_reflects_every_live_tombstone(
     _write_checkpoint("S-containing", [_item()])
     assert store.append_event(
         "o-one", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
     assert store.append_event(
         "o-two", "forgotten:" + "c" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
@@ -789,7 +790,7 @@ def test_source_disclosure_withheld_path_still_redacts_the_item_text(
     ])
     assert store.append_event(
         "o-elsewhere", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
@@ -807,7 +808,7 @@ def test_why_cli_source_flag_prints_withheld_line_when_project_forgot(
     _write_checkpoint("S-containing", [_item()])
     assert store.append_event(
         "o-elsewhere", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
 
     assert cli.main([
         "why", _ITEM_ID, "--project", _PROJECT, "--source",
@@ -1024,7 +1025,7 @@ def test_why_ranking_uses_the_item_kind_not_a_fixed_type(tmp_checkpoint_dir,
         _item(item_id="q-abcdef", text="still open", quote=None,
               importance=5, first_seen="2026-06-01T00:00:00Z"),
     ]
-    assert store.write_checkpoint("S-q", checkpoint, project_dir=_PROJECT)
+    assert store.write_checkpoint("S-q", checkpoint, project_dir=_PROJECT, writer=Writer.HUMAN)
 
     got = inspector.inspect_item(_PROJECT, "q-abcdef", now=1_800_000_000.0)
     assert got["ranking"]["rules"] == "open_question"
@@ -1345,7 +1346,7 @@ def test_forgotten_team_only_item_is_not_resurrected(
     _write_team_checkpoint("S-team-forgotten", [_item(quote=None)])
     assert store.append_event(
         _ITEM_ID, "forgotten:" + "a" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 

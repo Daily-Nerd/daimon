@@ -11,6 +11,7 @@ from daimon_briefing import (briefing, cli, render, requests, store, trust,
 
 from ._prepared import in_hand
 from .test_briefing_select import NOW, _fixture_checkpoint
+from daimon_briefing.surfaces import Writer
 
 ROUTE = "/repo/failopen"
 
@@ -121,7 +122,7 @@ def test_is_flagged_ignores_a_non_item():
 
 
 def _write_checkpoint(project):
-    store.write_checkpoint("S-fo", _cp(), project_dir=project)
+    store.write_checkpoint("S-fo", _cp(), project_dir=project, writer=Writer.HUMAN)
 
 
 def test_cli_brief_records_worldcheck_counters_and_ledger(
@@ -185,7 +186,7 @@ def test_a_collapsed_verdict_panel_is_not_stamped(
         store.write_checkpoint(sess, {
             "session_id": sess, "created": "2026-08-16T00:00:00Z",
             "working_context": {"recent_decisions": [
-                {"text": "x", "trust": "inferred"}]}}, project_dir=proj)
+                {"text": "x", "trust": "inferred"}]}}, project_dir=proj, writer=Writer.HUMAN)
     q_id = requests.open_request(
         to=store.project_slug(recipient), ask="publish the schema", why="b",
         channel="cli-agent", project_dir=sender)

@@ -6,6 +6,7 @@ import json
 import os
 
 from daimon_briefing import config, ledger_census, privacy, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/marker-app"
 SECRET = "a distinctive row value the marker must never copy"
@@ -15,8 +16,8 @@ def _marker():
     return config.checkpoint_dir() / store.project_slug(PROJECT) / ".ledger-census"
 
 
-def _write(sid="S1"):
-    return store.write_checkpoint(sid, {"session_id": sid}, project_dir=PROJECT)
+def _write(sid="S1", writer=Writer.HUMAN):
+    return store.write_checkpoint(sid, {"session_id": sid}, project_dir=PROJECT, writer=writer)
 
 
 def _bucket():
@@ -90,7 +91,7 @@ def test_no_marker_under_the_kill_switch_even_for_the_forget_rewrite(
         monkeypatch):
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     store.write_checkpoint("S1", {"session_id": "S1"}, project_dir=PROJECT,
-                           allow_disabled=True)
+                           allow_disabled=True, writer=Writer.HUMAN)
     assert not _marker().exists()
 
 
@@ -133,7 +134,9 @@ def test_the_marker_carries_the_unavailable_forgotten_check():
                     "status": "forgotten:" + normalize.content_key(SECRET)}
                    ).encode() + b'\n{"note": "\xff"}\n')
     (_bucket() / "trust.jsonl").write_bytes(json.dumps({"reason": SECRET}).encode())
-    _write()
+    # A CURE write (forget's own rewrite): an admission would be refused by the
+    # unreadable events ledger (#1132 PR 10b) and never reach the marker.
+    _write(writer=Writer.CURE)
     marker = json.loads(_marker().read_text(encoding="utf-8"))
     assert marker["forgotten_check"] == "unavailable"
     assert marker["ledgers"]["trust.jsonl"]["tombstoned_present"] is None

@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 
 from . import (channels, clock, config, jsonl, normalize, policy, redact, schema, store,
                surfaces)
+from .surfaces import Writer
 
 VERSION = 1
 EVENTS = frozenset({"quarantined", "confirmed", "dismissed", "released"})
@@ -218,7 +219,7 @@ def _stamp(event: str, quarantine_id: str, channel: str,
     }
 
 
-def append(row: dict, project_dir=None) -> bool:
+def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row. Never mutates another ledger."""
     if config.is_disabled():
         return False
@@ -229,8 +230,9 @@ def append(row: dict, project_dir=None) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         store.record_bucket_root(project_dir)  # #1092: first writer wins
-        jsonl.append(path, admitted)
-        return True
+        return jsonl.append_as(path, admitted, writer)
+    except jsonl.Refused:
+        raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
 
@@ -373,6 +375,15 @@ def active_value_keys(project_dir=None) -> set[tuple[str, str]]:
             if record["state"] == "active" and record.get("value_key")}
 
 
+def _require_writable(project_dir) -> None:
+    """Judge the trust ledger before a verb reads its rows (D10.3): a ledger
+    that cannot be read must not answer "unknown quarantine" or let the same
+    value be proposed twice."""
+    path = _path(project_dir)
+    if path is not None:
+        jsonl.require_writable(path, Writer.HUMAN, error=TrustError)
+
+
 def propose(*, text, kind: str, reason, evidence, channel: str,
             item_id: str = "", project_dir=None,
             now_ns: int | None = None) -> str:
@@ -383,6 +394,7 @@ def propose(*, text, kind: str, reason, evidence, channel: str,
         raise TrustError(f"kind must be one of: {', '.join(sorted(KINDS))}")
     if item_id and not _ITEM_ID_RE.fullmatch(str(item_id)):
         raise TrustError(f"invalid item id: {item_id!r}")
+    _require_writable(project_dir)
     scope_slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not scope_slug:
         raise TrustError(
@@ -410,7 +422,8 @@ def propose(*, text, kind: str, reason, evidence, channel: str,
     })
     if human:
         row["ratified"] = True
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise TrustError(
             "quarantine not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
@@ -426,6 +439,7 @@ def _human_transition(event: str, quarantine_id: str, channel: str,
         raise TrustError(
             f"{event} requires a human channel; this call arrived through "
             f"{channel!r}")
+    _require_writable(project_dir)
     current = get(quarantine_id, project_dir=project_dir)
     if current is None:
         raise TrustError(f"unknown quarantine: {quarantine_id}")
@@ -443,7 +457,8 @@ def _human_transition(event: str, quarantine_id: str, channel: str,
             f"{quarantine_id} is {current['state']}; only an active "
             "quarantine can be released")
     row = _stamp(event, quarantine_id, channel, now_ns=now_ns)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise TrustError(f"{event} not written")
 
 

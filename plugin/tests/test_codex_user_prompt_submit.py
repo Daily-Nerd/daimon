@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from daimon_briefing import store
+from daimon_briefing.surfaces import Writer
 
 HOOK_DIR = Path(__file__).resolve().parents[2] / "hook"
 PROMPT_HOOK = HOOK_DIR / "daimon-codex-user-prompt-submit.py"
@@ -79,7 +80,7 @@ def _seed_prompt_history(cwd):
              "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=cwd,
+        project_dir=cwd, writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-latest",
@@ -89,7 +90,7 @@ def _seed_prompt_history(cwd):
              "open_questions": [], "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=cwd,
+        project_dir=cwd, writer=Writer.HUMAN
     )
 
 

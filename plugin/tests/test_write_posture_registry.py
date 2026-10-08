@@ -110,4 +110,9 @@ def test_write_posture_reads_the_registry(name, writer, state, index):
 @pytest.mark.parametrize("state", [Health.OK, Health.ABSENT])
 def test_an_ok_or_absent_ledger_always_proceeds(name, writer, state):
     row = surfaces.bucket_ledger(name)
-    assert surfaces.write_posture(row, writer, state.value) is PROCEED
+    if writer is CURE or writer in EXPECTED[name]:
+        assert surfaces.write_posture(row, writer, state.value) is PROCEED
+    else:
+        # An undeclared writer is a bug even while the ledger is healthy.
+        with pytest.raises(LookupError):
+            surfaces.write_posture(row, writer, state.value)

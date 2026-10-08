@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import cli, jsonl, normalize, refutations, store
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/repo/forget-refutations"
@@ -36,7 +37,7 @@ def _checkpoint(*texts, project_dir=PROJECT):
         "session_id": "S1", "created": "2026-07-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": t, "trust": "inferred"} for t in texts]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
 
 
 def _ledger_text(project_dir=PROJECT):
@@ -720,7 +721,7 @@ def test_dry_run_names_spliced_checkpoint_siblings(
         "working_context": {
             "recent_decisions": [{"text": shared, "trust": "inferred"}],
             "open_questions": [{"text": shared, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     ids = {stored["working_context"]["recent_decisions"][0]["id"],
@@ -755,7 +756,7 @@ def test_dry_run_previews_amendments_of_a_superseded_item(
         "working_context": {"recent_decisions": [
             {"text": "a completely different later decision",
              "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
 
     assert cli.main(["forget", doomed_text,
                      "--dry-run", "--project", PROJECT]) == 0

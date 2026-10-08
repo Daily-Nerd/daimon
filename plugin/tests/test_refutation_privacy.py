@@ -9,6 +9,7 @@ import pytest
 
 from daimon_briefing import (cli, normalize, privacy, refutations, store,
                              surfaces)
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/p/refutation-privacy"
@@ -31,7 +32,7 @@ def _checkpoint(text="an ordinary decision about logging"):
         "created": "2026-08-08T00:00:00Z",
         "working_context": {
             "recent_decisions": [{"text": text, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _refute(**overrides):
@@ -57,7 +58,7 @@ def _tombstone(value):
     the audit has to find it — the same device the checkpoint suites use."""
     key = normalize.content_key(value)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True)
+                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     return key
 
 

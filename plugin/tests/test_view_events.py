@@ -12,6 +12,7 @@ import json
 import pytest
 
 from daimon_briefing import display, normalize, store, trust, view
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/events"
 SLUG = store.project_slug(PROJECT)
@@ -27,11 +28,11 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _event(ref="o-aaaaaaaaaaaa", status="resolved", **kw):
-    assert store.append_event(ref, status, project_dir=PROJECT, **kw)
+    assert store.append_event(ref, status, project_dir=PROJECT, **kw, writer=Writer.HUMAN)
 
 
 def _ledger(name):
