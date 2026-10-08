@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import reader
 
 # Engine imports (#670): search and item inspection are served by daimon's own
-# engines — recall.query is the one matcher (the viewer renders recall, it
+# engines: recall.query is the one matcher (the viewer renders recall, it
 # never grows a second search engine) and inspector.inspect_item is the same
 # read-side receipt `daimon why` prints. reader.py reaches daimon only through
 # the view (`view`, `schema`, `api`, pinned by tests/test_read_layers.py); the

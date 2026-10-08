@@ -574,7 +574,7 @@ def _resolution_marks(entries: list, withheld_ids: set) -> dict:
     (case-insensitive), supersede-candidate:* never marks (a machine guess
     must never suppress, #111), and same-second ties break on content (#143;
     reopen wins a tie → unmarked, never-guess). The stored value is the
-    superseding item id when the status names one, else "resolved" — and
+    superseding item id when the status names one, else "resolved", and
     "resolved" also when that id is withheld, so a label never names a value
     the reader may not see.
 
@@ -624,7 +624,7 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     """Delete index snapshots left by crashed rebuilds (#601).
 
     rebuild() stages into `recall.db.<pid>.tmp.<token>` (older builds: a bare
-    `recall.db.<pid>.tmp`) and unlinks its own file on failure — a crash
+    `recall.db.<pid>.tmp`) and unlinks its own file on failure; a crash
     strands the snapshot (plus sqlite's `-journal` sidecar) forever: store._reap_stale_tmps never visits
     this directory and its filter is `.endswith(".tmp")`, which the sidecars
     fail. The strands are full plaintext copies, and the unopenable sidecars
@@ -1490,7 +1490,7 @@ def find(item_id: str, project_dir=None,
 
     This is a companion to search(), never a substitute for its scoping:
     same project_slug equality (never team_project/granted-segments), same
-    fail-open posture (any index trouble degrades to Absent, not a raise —
+    fail-open posture (any index trouble degrades to Absent, not a raise;
     the caller's own "not found" refusal is the safe default already).
     Read-only. Callers must never treat a hit here as license to widen what
     forget/project_surfaces/the privacy audit consider this project's own

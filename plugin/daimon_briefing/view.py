@@ -405,7 +405,7 @@ def _read_judge(slug) -> tuple[Judge, bool]:
     proven = True
     try:
         forgotten = forgotten_keys()
-    except Exception:  # noqa: BLE001 — a fold's raise is a health state
+    except Exception:  # noqa: BLE001
         forgotten, proven = frozenset(), False
     if bucket is None:
         return (Judge(dataclasses.replace(Snapshot.empty(),
@@ -416,7 +416,7 @@ def _read_judge(slug) -> tuple[Judge, bool]:
     ids, health, _detail = _trust_index(slug, trust_read)
     try:
         folded = forgotten_ids(store.fold_resolutions(events_read.rows))
-    except Exception:  # noqa: BLE001 — a fold's raise is a health state
+    except Exception:  # noqa: BLE001
         folded, proven = frozenset(), False
     snap = dataclasses.replace(
         Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
