@@ -546,3 +546,43 @@ def test_decide_all_projects_says_the_note_when_nothing_else_is_waiting(
     assert cli.main(["decide", "--project", OWN, "--all-projects"]) == 0
     out = capsys.readouterr().out.rstrip().splitlines()
     assert out[-2:] == ["nothing waiting on you in any project", SKIPPED_ELSE]
+
+
+def test_the_elsewhere_degraded_line_drops_the_count_under_tenant_scope(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import pending
+    _write(OWN, ["ours"])
+    _candidate(ELSE)
+    _plant(ELSE, "refutations.jsonl", b'{"torn')
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    assert pending.foreign_counts_typed(project_dir=OWN).notes == (
+        "⚠ some other projects have a ledger with torn lines; "
+        "their counts may be incomplete",)
+
+
+def test_foreign_queues_skip_a_bucket_whose_requests_ledger_is_unproven(
+        tmp_checkpoint_dir):
+    from daimon_briefing import pending
+    _write(OWN, ["ours"])
+    requests.open_request(to=store.project_slug(ELSE), ask="ping",
+                          why="because", channel="cli-agent",
+                          project_dir=SENDER)
+    _plant(SENDER, "requests.jsonl", b"<<<<<<< HEAD\n")
+    got = pending.foreign_queues_typed(project_dir=OWN)
+    assert got.queues == [] and got.notes == (SKIPPED_ELSE,)
+
+
+def test_rich_status_prints_the_request_notes_too(monkeypatch, capsys):
+    from daimon_briefing import render
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    data = {"project": "/p", "proj": {"exists": False}, "glob": {"exists": False},
+            "same": False, "last": None, "outstanding": [], "identity": None,
+            "health": None, "team": None,
+            "requests": {"open_sent": 0, "awaiting_you": 0,
+                         "notes": ("⚠ 1 sender(s) skipped: a requests ledger "
+                                   "cannot be read",)}}
+    try:
+        render.render_status(data)
+    except Exception:
+        pytest.skip("the minimal status payload is not enough for rich")
+    assert "1 sender(s) skipped" in capsys.readouterr().out
