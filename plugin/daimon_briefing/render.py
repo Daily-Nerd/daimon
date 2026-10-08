@@ -1098,6 +1098,11 @@ def _ledger_lines(data: dict) -> list:
     for name, entry in (census.get("other") or {}).items():
         if entry["state"] not in ("ok", "absent"):
             lines.append(f"⚠ ledger file {name}: {_ledger_state_text(entry)}")
+    for entry in census.get("admission") or []:
+        lines.append(
+            f"⚠ admission refused: {entry['count']} session(s) of "
+            f"{entry['slug']} not serialized: events.jsonl is "
+            f"{entry['state']}; {entry['hint']} ({entry['path']})")
     for entry in census.get("forget_incomplete") or []:
         shown = f" ({entry['detail']})" if entry.get("detail") else ""
         lines.append(

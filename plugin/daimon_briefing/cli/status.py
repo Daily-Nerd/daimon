@@ -20,6 +20,7 @@ from .. import (
     config,
     display,
     effects_commit,
+    ledger,
     ledger_census,
     llm,
     recall,
@@ -218,6 +219,10 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
     # #936: a repair in flight is listed in the outstanding block but is not
     # a failure; counting it would warn about the thing heal is fixing.
     failed = [f for f in outstanding if f.get("kind") != "in-flight"]
+    # D10.4: a refusal waits for a ledger repair, not for heal, so it gets its
+    # own line with the cure and does not make the others read "run heal".
+    refused = [f for f in failed if f.get("class") == "admission-refused"]
+    failed = [f for f in failed if f.get("class") != "admission-refused"]
     if failed:
         n = len(failed)
         msg = f"{n} session{'s' if n != 1 else ''} failed to serialize"
@@ -228,6 +233,10 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
         else:
             msg += " (not auto-repairable)"
         warnings.append(msg)
+    if refused:
+        warnings.append(
+            f"{len(refused)} session(s) not serialized: events.jsonl is "
+            f"{refused[0]['state']}; {refused[0]['hint']}, then daimon heal")
 
     if not warnings:
         verdict = "✓ fresh"
@@ -491,7 +500,26 @@ def _status_checks(project_dir, now: float):
             "drift": checks.audit(project_dir).drift}
 
 
-def _status_ledgers(slug) -> dict | None:
+def _admission_lines(slug: str, outstanding) -> list:
+    """The refused admissions of the buckets IN SCOPE for `slug`, one entry
+    per bucket: how many sessions wait, why, and the ledger path. The human's
+    own `status` names buckets and paths; a tenant scope lists none but its
+    own."""
+    scope = set(view.buckets(slug)) | {slug}  # the caller's own, bucket or not
+    held: dict = {}
+    for f in outstanding:
+        if f.get("class") != "admission-refused":
+            continue
+        other = ledger._slug_of(f.get("project"))
+        if other in scope:
+            held.setdefault(other, []).append(f)
+    return [{"slug": other, "count": len(rows),
+             "state": rows[0]["state"], "hint": rows[0]["hint"],
+             "path": str(config.checkpoint_dir() / other / "events.jsonl")}
+            for other, rows in sorted(held.items())]
+
+
+def _status_ledgers(slug, outstanding=()) -> dict | None:
     """The ledger census for `status`: this bucket's ledgers plus the
     machine-level ledger files under "other". None when the project has no
     bucket name to census."""
@@ -520,7 +548,8 @@ def _status_ledgers(slug) -> dict | None:
             "path": str(config.checkpoint_dir() / other / "events.jsonl")})
     return {**ledger_census.census_bucket(slug),
             "other": ledger_census.census_machine(),
-            "repair": repair, "forget_incomplete": incomplete}
+            "repair": repair, "forget_incomplete": incomplete,
+            "admission": _admission_lines(slug, outstanding)}
 
 
 def _status_world(project_arg=None) -> dict:
@@ -566,6 +595,14 @@ def _status_world(project_arg=None) -> dict:
     # window. A FAIL payload (or None) renders at the very TOP of status — a
     # class of failure that otherwise hides until a briefing turns up empty.
     capture_alarm = _capture_alarm(now)
+    # D10.4: while every outstanding failure is a refused admission, "hooks
+    # fire but no checkpoint lands" has its cause and its cure on the lines
+    # below; the banner would send the reader to `configure --test` for a
+    # ledger problem.
+    failures = [f for f in outstanding if f.get("kind") != "in-flight"]
+    if failures and all(f.get("class") == "admission-refused"
+                        for f in failures):
+        capture_alarm = None
     # One-line pointer only when installed hook copies have drifted (#266);
     # silent on a clean machine. Cheap: hashes a handful of small files.
     hook_drift = _cli._hook_drift_present()
@@ -669,7 +706,7 @@ def _status_world(project_arg=None) -> dict:
     # #1132 PR 2b: the ledger census. Read-only and fail-open like every other
     # best-effort status fact; None drops the lines and nulls the payload field.
     try:
-        ledgers = _status_ledgers(identity["slug"])
+        ledgers = _status_ledgers(identity["slug"], outstanding)
     except Exception:
         ledgers = None
     # 0 = some checkpoint would back a briefing; 1 = neither pointer exists

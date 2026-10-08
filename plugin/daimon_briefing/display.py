@@ -257,6 +257,15 @@ def elsewhere_degraded_note(count: int, scoped: bool) -> str:
                          "lines; their counts may be incomplete")
 
 
+def admission_refused_note(count: int, state: str, hint: str) -> str:
+    """`admission-refused`: sessions of THIS project that were not serialized
+    because its events ledger is not proven. The caller's own project, so the
+    count is allowed under tenant scope; it names no id, no path, no slug."""
+    return marks.warning(
+        f"{count} session(s) of this project not serialized: events.jsonl is "
+        f"{state}; {hint}, then daimon heal")
+
+
 class Capped(tuple):
     """A tuple of note lines that has been capped, remembering every line it
     was capped from (`all`), so a later composition point can add its own

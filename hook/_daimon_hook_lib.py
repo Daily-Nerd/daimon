@@ -264,6 +264,12 @@ _ORPHAN_MAX_AGE_SECONDS = 14 * 24 * 3600  # 14 days — bounds the sweep's direc
 _LOG_RESULT_OK_RE = re.compile(r"^wrote checkpoint: (.+?) \(took \d+s\)")
 _LOG_RESULT_ERR_RE = re.compile(r"^error: .*?(?: after (\d+)s)?$")
 _LOG_ERR_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
+# A refused admission (#1132 PR 10b) names its session in a group BEFORE the
+# transcript group, which is how a Kimi refusal (transcript stem always `wire`)
+# lands on the real session. Mirrors ledger._ERR_SESSION_RE; the prefix mirrors
+# jsonl.ADMISSION_PREFIX and a test pins both.
+_LOG_ERR_SESSION_RE = re.compile(r"\(session: (.+?)\)(?= \(transcript: )")
+_ADMISSION_PREFIX = "error: admission refused: "
 
 
 def hung_after_seconds() -> int:
@@ -503,6 +509,9 @@ def _failed_session_stems() -> set:
                 tm = _LOG_ERR_TRANSCRIPT_RE.search(line)
                 if tm:
                     state[Path(tm.group(1)).stem] = "error"
+                    sm = _LOG_ERR_SESSION_RE.search(line)
+                    if sm:
+                        state[sm.group(1)] = "error"
         return {stem for stem, outcome in state.items() if outcome == "error"}
     except Exception:  # noqa: BLE001 — fail-open, see docstring
         return set()
