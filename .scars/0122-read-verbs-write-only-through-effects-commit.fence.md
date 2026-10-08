@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 122
 type: fence
 title: A read verb records usage, stamps and ledger rows only through effects_commit, after its output is flushed
 severity: high
 confidence: 0.8
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/effects_commit.py
   - path: plugin/daimon_briefing/mcp_tools.py
 evidence:
-  - note: "tests/test_effects_commit.py pins the order per host family (CLI brief, loops, status, projects, every MCP handler)"
+  - note: tests/test_effects_commit.py pins the order per host family (CLI brief, loops, status, projects, every MCP handler)
 expires:
   condition: "the read verbs stop recording effects, or effects_commit is replaced by another single commit point"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 A briefing host builds its output, writes it, and only then commits what it

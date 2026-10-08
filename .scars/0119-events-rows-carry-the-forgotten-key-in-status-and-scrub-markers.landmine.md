@@ -1,20 +1,21 @@
 ---
-id: 0
+id: 119
 type: landmine
 title: An events.jsonl row can carry the content key of a forgotten value (a tombstone's status, a scrub marker in note, item_text or status); a reader that prints the row prints the key
 severity: high
 confidence: 0.85
 created: 2026-10-07
-authors: []
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/view.py
   - pattern: "def _event\("
 evidence:
-  - note: "#1132 PR 8b-2: view.events collapses a tombstone status to the bare word forgotten and reads a scrubbed field as absent; tests/test_view_events.py and tests/ui/test_viewer_events.py pin that the key is in no row of the activity feed"
+  - note: #1132 PR 8b-2: view.events collapses a tombstone status to the bare word forgotten and reads a scrubbed field as absent; tests/test_view_events.py and tests/ui/test_viewer_events.py pin that the key is in no row of the activity feed
 expires:
   condition: "forget stops writing the key into events.jsonl (tombstone status and scrub marker), or every events reader goes through view.events"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 A forget writes a tombstone row whose `status` is `forgotten:<content key>`,

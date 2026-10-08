@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 121
 type: fence
 title: A test that needs distinct or pinned ledger seconds uses clock.use, not a monkeypatch of module.time.time_ns
 severity: medium
 confidence: 0.8
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/clock.py
 evidence:
-  - note: "tests/test_clock.py pins the seam; tests/test_clock_census.py fails on a new time.time_ns, time.time, datetime.now or uuid4 call in a ledger or write module outside its allowlist"
+  - note: tests/test_clock.py pins the seam; tests/test_clock_census.py fails on a new time.time_ns, time.time, datetime.now or uuid4 call in a ledger or write module outside its allowlist
 expires:
   condition: "ledger stamps stop drawing order and event_id from clock.py"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 Every ledger row now takes `order` and `event_id` from `clock.now_ns()` and

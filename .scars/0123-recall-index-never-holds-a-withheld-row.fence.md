@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 123
 type: fence
 title: The recall index is built by judging each row before insert, so deleting rows afterwards (FTS 'delete', DELETE) is the wrong repair and would leave the value in free pages
 severity: high
 confidence: 0.85
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/recall.py
   - pattern: "INSERT INTO items_fts\(items_fts, rowid"
 evidence:
-  - note: "#1132 PR 9a: tests/test_recall_judged.py pins that no withheld byte reaches the index file, including after an upgrade from a schema-9 index; tests/test_read_sentinel.py scans the file bytes"
+  - note: #1132 PR 9a: tests/test_recall_judged.py pins that no withheld byte reaches the index file, including after an upgrade from a schema-9 index; tests/test_read_sentinel.py scans the file bytes
 expires:
   condition: "the index stops being a sqlite file the process writes (a different store, or an in-memory index)"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 A row that is inserted and then deleted is still in the file: the page it sat
