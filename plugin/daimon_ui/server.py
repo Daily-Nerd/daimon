@@ -145,8 +145,9 @@ def _page(h, path, params):
 
 
 def _projects(h, path, params):
-    h._json({"projects": reader.list_buckets(h.default_slug),
-             "current": h.default_slug})
+    listing = reader.list_projects(h.default_slug)
+    h._json({"projects": listing["projects"], "current": h.default_slug,
+             "notes": listing["notes"]})
 
 
 def _checkpoints(h, path, params):

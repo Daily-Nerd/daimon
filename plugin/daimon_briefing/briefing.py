@@ -861,7 +861,7 @@ class RulingsRead(NamedTuple):
     path: Path | None
 
 
-def rulings_read(project_dir=None) -> RulingsRead:
+def rulings_read(project_dir=None, *, read=None) -> RulingsRead:
     """The pinned in-process read for standing rulings, sub-0.1ms against
     100ms+ for a `daimon ruling list --json` subprocess (#962). Every row
     matches `active_rulings`'s order: newest-activated first, ties broken on
@@ -878,15 +878,20 @@ def rulings_read(project_dir=None) -> RulingsRead:
       downstream is attempted once this fires.
     - "no-bucket": the path resolved, but the project's bucket directory
       does not exist — a mis-resolved `--project`, never written from.
-    - "unreadable": the path resolved and the bucket exists, but the ledger
-      could not be read (permissions, a symlink loop, refutations.jsonl
-      replaced by a directory), or the fold/sort raised over hand-edited
+    - "unreadable": the path resolved and the bucket exists, but the read
+      could not be vouched for (`jsonl.Read.cannot_scan`: an OS error such as
+      permissions, a symlink loop or a directory in the ledger's place, a
+      transient failure that outlasted the retries, an undecodable byte), or
+      the fold/sort raised over hand-edited
       rows (a stray non-list `anchors`/`evidence` on a hand-built row is one
       way to land here — known, not fixed by this function). `rows` is [].
     - "read": a successful read, including a bucket that simply carries no
       ledger yet (a clean empty read per `bucket_exists`'s own docstring)
       and a ledger whose malformed lines stay skipped and invisible, same
       as always.
+
+    `read` is the `jsonl.read` result of this ledger when the caller (the
+    view's snapshot) already holds it, so the file is read once.
     """
     try:
         path = refutations._path(project_dir)
@@ -897,8 +902,10 @@ def rulings_read(project_dir=None) -> RulingsRead:
     try:
         if not refutations.bucket_exists(project_dir):
             return RulingsRead(rows=[], state="no-bucket", path=path)
-        records = refutations.fold(
-            refutations.events(project_dir, strict=True))
+        got = refutations.read_events(project_dir, read=read)
+        if got.unscannable:
+            return RulingsRead(rows=[], state="unreadable", path=path)
+        records = refutations.fold(got.rows)
         rows = [r for r in records.values()
                 if r.get("state") == "active" and r.get("polarity") == "ruling"]
         rows.sort(key=lambda r: (str(r.get("activated_at") or ""),
@@ -1496,8 +1503,11 @@ def request_panel(project_dir=None, *, mask=None):
     except Exception:
         return [], ()
     rows = entry.get("rows") or []
+    # #1132 PR 10a: `sender-skipped`, the one note of the join, ends this
+    # panel (and stands alone when every sender was left out).
+    notes = list(entry.get("notes") or ())
     if not rows:
-        return [], ()
+        return notes, ()
     mask = mask or (lambda text: text)
     lines = [_REQUEST_PANEL_HEADER]
     cards = []
@@ -1521,6 +1531,7 @@ def request_panel(project_dir=None, *, mask=None):
         plural = "s" if overflow != 1 else ""
         lines.append(f"  (+{overflow} more waiting{plural} — "
                      "daimon request inbox)")
+    lines.extend(notes)
     return lines, tuple(cards)
 
 

@@ -1078,10 +1078,18 @@ def _ledger_lines(data: dict) -> list:
         if tombstoned:
             text += ", " + _plural(tombstoned, "row still carries",
                                    "rows still carry") + " a forgotten value"
+        fix = (census.get("repair") or {}).get(name)
+        if fix:
+            text += f"; {fix['hint']} ({fix['path']})"
         lines.append(f"⚠ ledger {name}: {text}")
     for name, entry in (census.get("other") or {}).items():
         if entry["state"] not in ("ok", "absent"):
             lines.append(f"⚠ ledger file {name}: {_ledger_state_text(entry)}")
+    for entry in census.get("forget_incomplete") or []:
+        shown = f" ({entry['detail']})" if entry.get("detail") else ""
+        lines.append(
+            f"⚠ forget set incomplete: {entry['slug']} events.jsonl is "
+            f"{entry['state']}{shown}; {entry['hint']} ({entry['path']})")
     if census.get("forgotten_check") == "unavailable":
         state = (census.get("ledgers") or {}).get(
             "events.jsonl", {}).get("state")

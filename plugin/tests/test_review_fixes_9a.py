@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from daimon_briefing import (cli, config, jsonl, mcp_tools, normalize, recall,
+from daimon_briefing import (cli, config, jsonl, mcp_tools, recall,
                              store, trust, view)
 from daimon_briefing.jsonl import Health
 
@@ -126,30 +126,9 @@ def test_a_transient_trust_read_closes_the_bucket_at_build(
     assert [r["text"] for r in got.rows] == [VISIBLE]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "PR 10 (health policies on every host): an events.jsonl that cannot be "
-    "read empties the machine-wide forgotten set silently, for every host. "
-    "store.all_forgotten_content_keys swallows the error. Not fixed in 9a."))
-def test_an_unreadable_events_ledger_does_not_empty_the_forgotten_set(
-        tmp_checkpoint_dir, monkeypatch):
-    forgetful = "/repo/forgetful"
-    other = _write("/repo/other", ["the pangolinsentinel decision stays"])
-    _write(forgetful, ["x is the forgotten words here"])
-    store.append_event(
-        "d-aaaaaa", "forgotten:" + normalize.content_key(
-            "the pangolinsentinel decision stays"),
-        kind="tombstone", tombstone=True, project_dir=forgetful)
-    real = jsonl.read
-
-    def read(path, *a, **k):
-        if path.name == "events.jsonl":
-            return jsonl.Read(Health.UNREADABLE, [], detail="EIO")
-        return real(path, *a, **k)
-
-    monkeypatch.setattr(jsonl, "read", read)
-    store._all_forgotten_cache.clear()
-    # desired: a reader of ANY bucket is closed (or still withholds the value)
-    assert view.judge(other).closed is True
+# The strict xfail that stood here (an unreadable events ledger empties the
+# machine-wide forgotten set) is replaced by the two tests in
+# tests/test_forgotten_incomplete.py (#1132 PR 10a, D10.2).
 
 
 # ---- 4: the id rule uses the tombstone predicate ----------------------------

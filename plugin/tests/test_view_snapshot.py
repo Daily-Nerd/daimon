@@ -43,13 +43,13 @@ def _quarantine(text, kind="decision"):
 
 
 def test_every_health_key_is_a_registered_bucket_ledger():
-    for name in view.LEDGERS:
+    for name in view.snapshot(PROJECT).health:
         assert surfaces.bucket_ledger(name) is not None, name
 
 
 def test_an_unknown_project_is_all_absent_and_open(tmp_checkpoint_dir):
     snap = view.snapshot(None)
-    assert set(snap.health) == set(view.LEDGERS)
+    assert set(snap.health) == set(surfaces.bucket_ledger_names())
     assert set(snap.health.values()) == {Health.ABSENT}
     assert snap.closed is False
     assert snap.notes() == ()
@@ -86,7 +86,10 @@ def test_each_ledger_folds_into_its_field(tmp_checkpoint_dir):
     assert r_id in snap.requests
     assert snap.rulings.state == "read" and len(snap.rulings.rows) == 1
     assert snap.corroborations == {}
-    assert set(snap.health.values()) == {Health.OK}
+    assert {snap.health[n] for n in ("events.jsonl", "trust.jsonl",
+                                     "amendments.jsonl", "requests.jsonl",
+                                     "refutations.jsonl")} == {Health.OK}
+    assert set(snap.health.values()) <= {Health.OK, Health.ABSENT}
     assert snap.notes() == ()
 
 
@@ -102,7 +105,8 @@ def test_a_torn_tail_is_degraded_and_noted_without_content(tmp_checkpoint_dir):
     assert snap.health["events.jsonl"] is Health.DEGRADED
     assert "o-aaaaaa" in snap.resolutions
     assert snap.closed is False
-    assert snap.notes() == ("⚠ events.jsonl is degraded (torn)",)
+    assert snap.notes() == (
+        "⚠ events.jsonl is degraded (torn); run: daimon ledger repair events",)
 
 
 def test_an_undecodable_line_is_unreadable_but_the_good_rows_stay(
@@ -189,7 +193,7 @@ def test_notes_are_empty_for_ok_and_absent_only():
     health["trust.jsonl"] = Health.TRANSIENT
     snap = dataclasses.replace(snap, health=MappingProxyType(health),
                                details=MappingProxyType({"trust.jsonl": "EAGAIN"}))
-    assert snap.notes() == ("⚠ trust.jsonl is transient (EAGAIN)",)
+    assert snap.notes() == ("⚠ trust.jsonl is transient (EAGAIN); retry",)
 
 
 def test_the_snapshot_is_frozen():

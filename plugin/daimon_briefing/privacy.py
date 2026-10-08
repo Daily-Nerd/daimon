@@ -437,6 +437,18 @@ def audit_project(project_dir=None) -> dict:
         for f in res + info:
             f["surface"] = "orphan-tmp"
             result["findings"].append(f)
+    # #1132 PR 10a: the recall-index residue check proves a forgotten value is
+    # gone by hashing against the machine-wide forget set. When a bucket's
+    # events ledger cannot be read that set may be missing a tombstone, so
+    # "nothing found" proves nothing: cannot-prove (exit 3), naming only the
+    # in-scope buckets (tenant scope: none).
+    incomplete = store.forgotten_incomplete()
+    if incomplete:
+        from . import view
+        scope = sorted(incomplete & set(view.buckets(slug)))
+        result["unscannable"].append(
+            "cannot prove: the forget set is incomplete ("
+            + (", ".join(scope) or "no bucket in scope") + ")")
     # Event ledger: every free-text field hashed WHOLE — catches a field that
     # IS the value verbatim; one merely containing it is undetectable by hash
     # (stated report limitation). `status` on the tombstone row is

@@ -131,12 +131,12 @@ def test_a_raise_in_a_handler_is_a_generic_500(bucket):
 
     s, base = _serve(bucket.parent)
     try:
-        orig = reader.list_buckets
-        reader.list_buckets = boom
+        orig = reader.list_projects
+        reader.list_projects = boom
         try:
             status, body = _fetch(base, "/api/projects")
         finally:
-            reader.list_buckets = orig
+            reader.list_projects = orig
         again = _fetch(base, "/api/projects")[0]
     finally:
         s.shutdown()

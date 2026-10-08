@@ -96,6 +96,7 @@ class _TeamCounts:
     def __init__(self):
         self.resolved = 0
         self.quarantined = 0
+        self.notes: tuple = ()
 
 
 def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
@@ -121,6 +122,10 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     self_slug = store.project_slug(config.author())
     now = time.time()
     out = []
+    if counts is not None:
+        # #1132 PR 10a: a teammate whose tombstones cannot be read is not
+        # shown; the trailer says so instead of a shorter list.
+        counts.notes = view.team_notes()
     for author, opened in view.team(project, live=True):
         if store.project_slug(author) == self_slug:
             continue  # never surface your own state as a teammate
@@ -143,7 +148,7 @@ def _withheld_trailer(own, team) -> list:
     resolved = (own.suppressed if own else 0) + (team.resolved if team else 0)
     quarantined = ((own.quarantined if own else 0)
                    + (team.quarantined if team else 0))
-    trailer = []
+    trailer = list(team.notes) if team else []
     if resolved:
         # #981: the count covers the Teammates section too, and says how
         # many were a teammate's, since `status --suppressed` lists only the

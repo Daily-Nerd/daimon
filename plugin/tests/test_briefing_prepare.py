@@ -211,7 +211,8 @@ def test_a_degraded_ledger_adds_a_note_and_keeps_the_items(tmp_checkpoint_dir):
                             / "events.jsonl").read_bytes()
            + b'{"kind": "resolution", "item_ref": "o-bb')
     got = briefing.prepare(PROJECT, NOW)
-    assert got.notes == ("⚠ events.jsonl is degraded (torn)",)
+    assert got.notes == (
+        "⚠ events.jsonl is degraded (torn); run: daimon ledger repair events",)
     assert T_KEPT in _texts(got.checkpoint)
 
 

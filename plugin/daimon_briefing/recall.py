@@ -246,8 +246,8 @@ def _scan_sources():
     # #600 slice B: teammates' published tombstones gate the index too — an
     # inbound row is suppressed by ANY tombstone this machine can see, local
     # or foreign (over-suppression is this path's documented posture).
-    forgotten = (store.all_forgotten_content_keys()
-                 | store.foreign_forgotten_content_keys())
+    tombs = store.foreign_tombstones()
+    forgotten = store.all_forgotten_content_keys() | tombs.keys
     try:
         remotes = list(root.iterdir())
     except OSError:
@@ -267,6 +267,10 @@ def _scan_sources():
         # projects/**/authors/* — same walker read_team's fan-in rests on.
         author_dirs = store._team_author_dirs(remote)
         for adir in author_dirs:
+            if foreign and adir.name in tombs.unproven:
+                # O3: a teammate whose published forgets cannot be read is
+                # not indexed; "no tombstone found" would prove nothing.
+                continue
             try:
                 files = [p for p in adir.iterdir()
                          if p.is_file() and p.suffix == ".json"]
@@ -1218,7 +1222,13 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
         for (kind, text, _trust, quote, scene, importance, first_seen,
              item_id, pinned, targets, stated_by) in _items(cp):
             visible = True
-            if not judge.empty:
+            if judge.index_closed:
+                # This bucket's own events ledger cannot be read, so its
+                # tombstones cannot all be known: the index holds no rows for
+                # it (D10.2). Only the index closes; `why`, the viewer and the
+                # briefing read the bucket through its good lines.
+                visible = False
+            elif not judge.empty:
                 vkey = (slug, kind, item_id, text, quote, scene)
                 seen = verdicts.get(vkey)
                 if seen is None:
@@ -1289,6 +1299,11 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     # it and rebuilds when it reads again.
     conn.execute("INSERT INTO meta VALUES ('closed', ?)",
                  (json.dumps(_closed_buckets(stamp)),))
+    # The buckets whose events ledger could not be read at build: the forget
+    # set was incomplete. Slugs for the next query's "has one cleared?" test,
+    # never rendered.
+    conn.execute("INSERT INTO meta VALUES ('incomplete', ?)",
+                 (json.dumps(sorted(store.forgotten_incomplete())),))
     conn.commit()
     return count
 
@@ -1299,7 +1314,12 @@ def _closed_buckets(stamp) -> list[str]:
                        if d.is_dir())
     except OSError:
         return []
-    return [name for name in names if view.judge(name, stamp=stamp).closed]
+    out = []
+    for name in names:
+        judge = view.judge(name, stamp=stamp)
+        if judge.closed or judge.index_closed:
+            out.append(name)
+    return out
 
 
 def _field_for(kind) -> schema.ItemField:
@@ -1473,10 +1493,36 @@ def _closed_still(scopes, path: Path, notes: list) -> bool:
     if not closed:
         return False
     stamp = store.forgotten_stamp()
-    still = [slug for slug in closed if view.judge(slug, stamp=stamp).closed]
+    still = []
+    for slug in closed:
+        judge = view.judge(slug, stamp=stamp)
+        if judge.closed or judge.index_closed:
+            still.append(slug)
     if len(still) < len(closed) and not _rebuild_forced(path, notes):
         _note(notes, "stale")
     return bool(still)
+
+
+def _incomplete_cleared(path: Path, notes: list) -> None:
+    """Rebuild (once per window) when a bucket the index was built without
+    knowing the tombstones of (`meta.incomplete`) reads again: until then the
+    index may hold a value that bucket forgot. When the rebuild is skipped or
+    fails the index is behind, so the read says `stale`."""
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'incomplete'").fetchone()
+        finally:
+            conn.close()
+        listed = json.loads(row[0]) if row else []
+    except (sqlite3.Error, ValueError, TypeError):
+        return
+    if not listed:
+        return
+    cleared = set(listed) - store.forgotten_incomplete()
+    if cleared and not _rebuild_forced(path, notes):
+        _note(notes, "stale")
 
 
 def _withheld(row: dict, judge) -> "view.Withheld | None":
@@ -1504,7 +1550,12 @@ def _judge_rows(rows: list[dict]) -> tuple[list[dict], bool]:
         slug = row.get("project_slug")
         if slug not in judges:
             judges[slug] = view.judge(slug, stamp=stamp)
-        if _withheld(row, judges[slug]) is None:
+        if judges[slug].index_closed:
+            # The bucket's own events ledger cannot be read (D10.2): the
+            # index must hold no rows for it, so a row here is behind.
+            row.pop("_scene", None)
+            dropped = True
+        elif _withheld(row, judges[slug]) is None:
             kept.append(row)
         else:
             dropped = True
@@ -1516,8 +1567,10 @@ class Recalled:
     """`query`'s answer: the judged, ranked rows and the notes a presenter may
     show (`display.recall_note`). A note is a code, never a count: `stale`
     (the index could not be refreshed and the last one was served) and
-    `closed` (a bucket in scope has an unreadable trust ledger, so its history
-    is not shown)."""
+    `closed` (a bucket in scope has an unreadable trust ledger, or an events
+    ledger of its own that cannot be read, so its history is not shown) and
+    `forget-incomplete` (some bucket's events ledger cannot be read, so the
+    forget set may be missing a tombstone)."""
 
     rows: list
     notes: tuple = ()
@@ -1580,6 +1633,9 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     path = config.recall_db()
     if _closed_still(scopes, path, notes):
         _note(notes, "closed")
+    _incomplete_cleared(path, notes)
+    if store.forgotten_incomplete():
+        _note(notes, "forget-incomplete")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"

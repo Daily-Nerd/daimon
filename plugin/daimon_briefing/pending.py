@@ -42,6 +42,8 @@ its outgoing asks to someone else) stays behind the explicit flag.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from . import (
     amendments,
     config,
@@ -52,6 +54,7 @@ from . import (
     store,
     surfaces,
     trust,
+    view,
 )
 
 # #1087: per-loop text cap on the decide row — the quote alone is not
@@ -412,6 +415,43 @@ _LANES = (
 )
 _KIND_RANK = {kind: rank for _source, ranks in _LANES
               for kind, rank in ranks.items()}
+
+
+class Queue(NamedTuple):
+    """`queue_typed`'s answer: the rows of `queue` and the notes of the
+    ledgers its lanes read (worded by `display`, one line per ledger that is
+    not read as-is, plus `sender-skipped` for the request lane)."""
+    rows: list
+    notes: tuple
+
+
+def queue_notes(*, project_dir=None) -> tuple:
+    """The notes of the ledgers `queue`'s lanes read: one line for each lane
+    ledger (requests, refutations, amendments, trust) whose registry read
+    posture is not OPEN in its current state, and `sender-skipped` for the
+    senders the request lane's join left out. A lane that cannot be read is
+    still omitted from the rows (the fail-open contract of `queue`); what
+    changes is that it is said."""
+    project_dir = config.resolve_project_dir(project_dir)
+    slug = store.project_slug(project_dir)
+    notes: list[str] = []
+    if slug:
+        states = view.ledger_states(slug)
+        for name in ("requests.jsonl", "refutations.jsonl",
+                     "amendments.jsonl", "trust.jsonl"):
+            st = states[name]
+            if view.posture(name, st.health) is not view.ReadPosture.OPEN:
+                notes.append(display.ledger_note(
+                    name, st.health.value, st.detail, st.unscannable))
+    notes.extend(requests.join(project_dir).notes)
+    return display.cap_notes(notes)
+
+
+def queue_typed(*, project_dir=None) -> Queue:
+    """`queue`'s rows with `queue_notes`: the typed core a surface that shows
+    the notes asks for. `queue` itself keeps its dict shape (`api.queue`)."""
+    return Queue(queue(project_dir=project_dir)["rows"],
+                 queue_notes(project_dir=project_dir))
 
 
 def queue(*, project_dir=None) -> dict:

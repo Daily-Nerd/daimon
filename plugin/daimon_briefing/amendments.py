@@ -188,13 +188,17 @@ def append(row: dict, project_dir=None) -> bool:
         return False
 
 
-def events(project_dir=None) -> list[dict]:
-    """Read valid ledger rows best-effort; malformed lines never sink reads."""
-    path = _path(project_dir)
-    if path is None:
-        return []
-    rows = []
-    for index, row in enumerate(jsonl.read(path).rows):
+def events(project_dir=None, *, rows=None) -> list[dict]:
+    """Read valid ledger rows best-effort; malformed lines never sink reads.
+    `rows` hands in the raw rows of a `jsonl.read` the caller already did
+    (the snapshot's single read), filtered exactly as a fresh read is."""
+    if rows is None:
+        path = _path(project_dir)
+        if path is None:
+            return []
+        rows = jsonl.read(path).rows
+    out = []
+    for index, row in enumerate(rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _AMEND_ID_RE.fullmatch(str(row.get("amendment_id") or ""))):
@@ -204,8 +208,8 @@ def events(project_dir=None) -> list[dict]:
         # (torn and garbage lines do not count); it is only a read-order
         # tie-break, so its absolute value is not part of any contract.
         copy["_line"] = index
-        rows.append(copy)
-    return rows
+        out.append(copy)
+    return out
 
 
 def fold(rows: list[dict]) -> dict[str, dict]:
@@ -296,8 +300,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def records(project_dir=None) -> dict[str, dict]:
-    return fold(events(project_dir=project_dir))
+def records(project_dir=None, *, rows=None) -> dict[str, dict]:
+    return fold(events(project_dir=project_dir, rows=rows))
 
 
 def get(amendment_id: str, project_dir=None) -> dict | None:

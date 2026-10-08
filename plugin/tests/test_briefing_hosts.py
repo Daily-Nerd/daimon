@@ -257,7 +257,8 @@ def test_the_hermes_injection_of_a_project_with_no_checkpoint_carries_notes(
     out = hooks.pre_llm_call(session_id="S-n", user_message="hi",
                              conversation_history=[], is_first_turn=True,
                              model="m", platform="cli")["context"]
-    assert out.splitlines()[0] == "⚠ events.jsonl is degraded (torn)"
+    assert out.splitlines()[0] == (
+        "⚠ events.jsonl is degraded (torn); run: daimon ledger repair events")
     assert "§ never ship a Friday deploy" in out
 
 
@@ -334,7 +335,8 @@ def test_a_torn_ledger_prints_a_note_after_the_greeting_and_keeps_the_items(
     _, out = _brief(capsys, monkeypatch)
     lines = out.splitlines()
     assert lines[0] == briefing.GREETING
-    assert lines[2] == "⚠ events.jsonl is degraded (torn)"
+    assert lines[2] == (
+        "⚠ events.jsonl is degraded (torn); run: daimon ledger repair events")
     assert KEPT in out
 
 
@@ -510,7 +512,8 @@ def test_the_header_only_fallback_prints_the_notes_of_the_readers_ledgers(
            project="/p/hosts-fresh")
     rc, out = _brief(capsys, monkeypatch, project="/p/hosts-fresh")
     assert rc == 0
-    assert out.splitlines()[0] == "⚠ events.jsonl is degraded (torn)"
+    assert out.splitlines()[0] == (
+        "⚠ events.jsonl is degraded (torn); run: daimon ledger repair events")
     assert "No briefing for this project yet" in out
     assert KEPT not in out
 

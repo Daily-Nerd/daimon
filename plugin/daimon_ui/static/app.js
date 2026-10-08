@@ -38,6 +38,7 @@ import { state } from "./state.js";
     api("/api/projects").then(function (data) {
       if (reqId !== state.requestId) return; // superseded by a newer navigation
       state.projects = data.projects || [];
+      state.projectNotes = data.notes || [];
       state.defaultSlug = data.current;
       var hasCurrent = state.projects.some(function (p) { return p.slug === state.defaultSlug; });
       if (state.projects.length > 1 || !hasCurrent) {
@@ -468,6 +469,9 @@ import { state } from "./state.js";
       '<div class="grid-head"><h1 class="page-heading">Projects</h1>' +
       '<span class="brief-sub">' + ordered.length +
       ' project(s) · each card is where that project left off</span></div>' +
+      (state.projectNotes || []).map(function (n) {
+        return '<p class="life-note">' + escapeHtml(n) + "</p>";
+      }).join("") +
       '<div class="proj-grid">' + ordered.map(renderProjCard).join("") + "</div>";
     Array.prototype.forEach.call(sectionsEl.querySelectorAll(".proj-card"), function (btn) {
       btn.addEventListener("click", function () { enterProject(btn.dataset.slug, true); });

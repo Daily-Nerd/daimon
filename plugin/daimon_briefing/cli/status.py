@@ -497,8 +497,30 @@ def _status_ledgers(slug) -> dict | None:
     bucket name to census."""
     if not slug:
         return None
+    states = view.ledger_states(slug)
+    bucket = config.checkpoint_dir() / slug
+    # What to do about each ledger that is not read as-is, and where it is
+    # (the human's own status names paths).
+    repair = {name: {"hint": display.ledger_hint(
+                         name, st.health.value, st.detail, st.unscannable,
+                         on_status=True),
+                     "path": str(bucket / name)}
+              for name, st in states.items()
+              if view.posture(name, st.health) is not view.ReadPosture.OPEN}
+    # The buckets in scope whose events ledger cannot be read: the forget set
+    # may be missing a tombstone of theirs. Tenant scope names none.
+    incomplete = []
+    for other in sorted(store.forgotten_incomplete() & set(view.buckets(slug))):
+        st = view.ledger_states(other)["events.jsonl"]
+        incomplete.append({
+            "slug": other, "state": st.health.value, "detail": st.detail,
+            "hint": display.ledger_hint("events.jsonl", st.health.value,
+                                        st.detail, st.unscannable,
+                                        on_status=True),
+            "path": str(config.checkpoint_dir() / other / "events.jsonl")})
     return {**ledger_census.census_bucket(slug),
-            "other": ledger_census.census_machine()}
+            "other": ledger_census.census_machine(),
+            "repair": repair, "forget_incomplete": incomplete}
 
 
 def _status_world(project_arg=None) -> dict:

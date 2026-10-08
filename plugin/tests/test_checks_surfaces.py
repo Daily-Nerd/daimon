@@ -1546,8 +1546,8 @@ def test_a_ledger_that_cannot_be_read_leaves_the_log_scoped_to_nothing(
     ruling_id = _arm(tmp_path)
     _write_log(_row(ruling_id=ruling_id, outcome="clean"),
                _row(cause="no-match", host="codex"))
-    monkeypatch.setattr(refutations, "listing",
-                        lambda **kw: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(refutations, "read_events",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("x")))
     summary = checks.firing_summary(str(tmp_path))
     assert summary.log_state == "read"
     assert summary.rulings == {} and summary.totals["fired"] == 0

@@ -182,14 +182,15 @@ def _brief(arguments: dict, fx) -> str:
 
 
 @_tool("projects")
-def _projects(arguments: dict, fx) -> str:
+def _projects(arguments: dict, fx) -> ToolResult:
     from . import cli
     try:
-        rows = cli.projects_rows(None)
+        rows, notes = cli.projects_listing(None)
     except Exception as exc:
         raise ToolError("the projects could not be listed "
                         f"({type(exc).__name__})") from exc
-    return json.dumps(rows, ensure_ascii=False, indent=2)
+    # The array stays the payload; the listing's notes ride as blocks.
+    return ToolResult(json.dumps(rows, ensure_ascii=False, indent=2), notes)
 
 
 @_tool("status")
@@ -200,7 +201,7 @@ def _status(arguments: dict, fx) -> str:
 
 
 @_tool("requests_inbox")
-def _requests_inbox(arguments: dict, fx) -> str:
+def _requests_inbox(arguments: dict, fx) -> ToolResult:
     """Read-only pull (#694 PR 2): requests other projects have addressed to
     this one. Deliberate — daimon_brief does NOT carry this content (D2's
     CLI-only gate); an MCP client that wants it calls this tool explicitly.
@@ -208,8 +209,11 @@ def _requests_inbox(arguments: dict, fx) -> str:
     stays CLI-only — no tool here mutates the ledger."""
     from . import cli
     project = cli._resolve_project(arguments.get("project") or None)
-    rows = requests.inbox_listing(project_dir=project)
-    return json.dumps(rows, ensure_ascii=False, indent=2)
+    got = requests.inbox(project)
+    # A sender left out of the join is said in a block of its own, so the
+    # payload stays exactly the JSON array it says it is.
+    return ToolResult(json.dumps(got.rows, ensure_ascii=False, indent=2),
+                      got.notes)
 
 
 HANDLERS = {

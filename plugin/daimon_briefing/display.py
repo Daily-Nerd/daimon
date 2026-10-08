@@ -124,11 +124,100 @@ _RECALL_NOTES = {
 
 
 def recall_note(notes) -> str | None:
-    """One warning line for the notes a recall carries, or None. The CLI, the
-    MCP tool and the viewer all show recall's notes through this, so no
-    surface words them differently. A note is a code; the line names no
-    project, no id and no count, so it cannot say how much is missing."""
+    """The warning for the notes a recall carries, or None. The CLI, the MCP
+    tool and the viewer all show recall's notes through this, so no surface
+    words them differently. A note is a code; the lines name no project, no
+    id and no count, so they cannot say how much is missing. `stale` and
+    `closed` share one `recall:` line; `forget-incomplete` is the same line
+    every other surface shows for it (a second line, same text)."""
     known = [_RECALL_NOTES[n] for n in ("stale", "closed") if n in notes]
-    if not known:
-        return None
-    return marks.warning("recall: " + "; ".join(known))
+    lines = [marks.warning("recall: " + "; ".join(known))] if known else []
+    if "forget-incomplete" in notes:
+        lines.append(forget_incomplete_note())
+    return "\n".join(lines) or None
+
+
+# ---- #1132 PR 10: ledger-health notes, one presenter -------------------------
+#
+# A note is a CODE the readers carry and this module words. Every channel
+# (briefing, status, recall, the projects verbs, the inbox, the viewer) shows
+# the same line for the same code. A note names no slug, no id and no path; a
+# count appears only outside tenant scope, because a count over buckets the
+# caller may not list is enumeration.
+
+NOTE_CAP = 5
+
+
+def ledger_hint(name: str, state: str, detail: str = "",
+                unscannable: str = "", *, on_status: bool = False) -> str:
+    """What to do about a ledger in `state`: retry a transient failure, check
+    permissions after an OS error (the errno is in `unscannable`), repair a
+    degraded or garbage ledger. `state` is a `jsonl.Health` value. On the
+    `status` verb itself ("run: daimon status" would send the reader in a
+    circle) the pointer back to it is dropped and the path is printed
+    instead."""
+    if state == "transient":
+        return "retry"
+    if str(detail).startswith("fold raised"):
+        return "check the ledger file" if on_status else "run: daimon status"
+    if state == "unreadable" and unscannable and unscannable != "undecodable":
+        hint = f"check permissions ({unscannable})"
+        return hint if on_status else hint + "; run: daimon status"
+    if name == "trust.jsonl":
+        return "run: daimon trust repair"
+    return f"run: daimon ledger repair {name.removesuffix('.jsonl')}"
+
+
+def ledger_note(name: str, state: str, detail: str = "",
+                unscannable: str = "") -> str:
+    """`ledger:<name>:<state>`: the line for one ledger a reader read around."""
+    shown = f" ({detail})" if detail else ""
+    hint = ledger_hint(name, state, detail, unscannable)
+    return marks.warning(f"{name} is {state}{shown}; {hint}")
+
+
+def forget_incomplete_note() -> str:
+    """`forget-incomplete`: some bucket's events ledger cannot be read, so the
+    machine-wide forget set may be missing a tombstone."""
+    return marks.warning("the forget set is incomplete: an events ledger "
+                         "cannot be read; run: daimon status")
+
+
+def projects_closed_note(count: int, scoped: bool) -> str:
+    """`projects-closed`: listed buckets whose trust ledger cannot be read."""
+    if scoped:
+        return marks.warning(
+            "some projects have a trust ledger that cannot be read")
+    return marks.warning(
+        f"{count} project(s) have a trust ledger that cannot be read")
+
+
+def sender_skipped_note(count: int, scoped: bool) -> str:
+    """`sender-skipped`: foreign buckets left out of an inbox join because
+    their requests ledger is not proven."""
+    if scoped:
+        return marks.warning(
+            "some senders skipped: a requests ledger cannot be read")
+    return marks.warning(
+        f"{count} sender(s) skipped: a requests ledger cannot be read")
+
+
+def author_skipped_note() -> str:
+    """`author-skipped`: a teammate's tombstones cannot be read."""
+    return marks.warning("a teammate's tombstones cannot be read; their "
+                         "checkpoints are not admitted")
+
+
+def author_degraded_note() -> str:
+    """`author-degraded`: a teammate's tombstones ledger has torn lines."""
+    return marks.warning("a teammate's tombstones ledger has torn lines; "
+                         "their forgets may be incomplete")
+
+
+def cap_notes(lines, cap: int = NOTE_CAP) -> tuple[str, ...]:
+    """`lines` limited to `cap`, then `notes-capped` with the rest counted."""
+    lines = tuple(lines)
+    if len(lines) <= cap:
+        return lines
+    return lines[:cap] + (marks.warning(
+        f"and {len(lines) - cap} more notes; run: daimon status"),)

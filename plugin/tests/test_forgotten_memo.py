@@ -3,7 +3,7 @@
 
 import json
 
-from daimon_briefing import config, store
+from daimon_briefing import config, jsonl, store
 
 
 def _bucket(root, name, status):
@@ -21,9 +21,14 @@ def test_the_union_is_memoized_until_a_ledger_changes(tmp_checkpoint_dir,
     _bucket(tmp_checkpoint_dir, "one", "forgotten:aaaa")
     assert store.all_forgotten_content_keys() == {"aaaa"}
     calls = []
-    real = store.forgotten_content_keys
-    monkeypatch.setattr(store, "forgotten_content_keys",
-                        lambda name: calls.append(name) or real(name))
+    real = jsonl.read
+
+    def read(path, *a, **k):
+        if path.name == "events.jsonl":
+            calls.append(path.parent.name)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(jsonl, "read", read)
     assert store.all_forgotten_content_keys() == {"aaaa"}
     assert calls == []                         # served from the memo
     _bucket(tmp_checkpoint_dir, "two", "forgotten:bbbb")
