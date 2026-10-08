@@ -59,6 +59,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/relations.py": "ledger",  # owns relations.jsonl and its fold
     "daimon_briefing/requests.py": "ledger",  # owns requests.jsonl and its fold
     "daimon_briefing/surfaces.py": "ledger",  # registry of every store shape and its delete strategy
+    "daimon_briefing/terms.py": "ledger",  # salient-term extraction shared by recall and carry; imports nothing from daimon
     "daimon_briefing/trust.py": "ledger",  # owns trust.jsonl (quarantine) and its fold
     "daimon_briefing/anchor.py": "read",  # drift scan of anchored items; no bucket reads
     "daimon_briefing/briefing.py": "read",  # builds and renders the briefing

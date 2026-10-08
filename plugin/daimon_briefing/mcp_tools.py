@@ -20,6 +20,7 @@ import time
 from . import (briefing, config, effects_commit, recall, recall_telemetry,
                requests, store)
 from .effects import Effects, Telemetry
+from .terms import salient_terms
 
 
 class ToolError(Exception):
@@ -79,7 +80,7 @@ def _recall(arguments: dict, fx) -> str:
     # untouched.
     try:
         fx.add(Effects(telemetry=(Telemetry([dict(r) for r in rows], {
-            "query_terms": recall.salient_terms(query),
+            "query_terms": salient_terms(query),
             "surface": "recall-search", "via": "mcp",
             "injected_into": session}),)))
     except Exception:  # noqa: BLE001 — see comment above

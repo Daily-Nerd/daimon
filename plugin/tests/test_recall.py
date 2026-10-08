@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from daimon_briefing import config, recall, store, trust
+from daimon_briefing import config, recall, store, terms, trust
 
 
 def _cp(sid, topic="working on something", decisions=None, questions=None,
@@ -2446,7 +2446,7 @@ def test_marker_beyond_the_scan_window_is_not_machine(marker):
     prompt = ("here is the failing gateway trace I want to talk about\n"
               + "padding line about the gateway seam\n" * 20
               + f"{marker} pasted for reference")
-    assert len(prompt) > recall._MACHINE_SCAN_CHARS
+    assert len(prompt) > terms._MACHINE_SCAN_CHARS
     assert recall.is_machine_prompt(prompt) is False
 
 

@@ -12,6 +12,7 @@ import time
 import daimon_briefing.cli as _cli
 
 from .. import config, inspector, recall, recall_telemetry, render, store
+from ..terms import salient_terms
 from ..ledger import _format_age
 
 
@@ -44,7 +45,7 @@ def _cmd_recall(args) -> int:
         return 1
     recall_telemetry.record(
         results,
-        query_terms=recall.salient_terms(query),
+        query_terms=salient_terms(query),
         surface="recall-search",
         via="cli",
     )
