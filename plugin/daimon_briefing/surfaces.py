@@ -196,7 +196,7 @@ SURFACES: tuple[Surface, ...] = (
                            "note") + (
                 FieldPath(("anchors",), True), FieldPath(("evidence",), True),
                 FieldPath(("check", "match")), FieldPath(("check", "body"))),
-            mergeable=True, read=_READ_NOTED),
+            mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN),
     # -- the amendment ledger (#691): the fourth bucket ledger — evidence
     #    quotes and human-channel notes, both length-capped, both plaintext
     #    by design, so it sits in the checkpoint's deletion category with
@@ -219,7 +219,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
             True, "rewrite", "forget", fold="amendments.fold",
             prose=_scalars("evidence", "note"), mergeable=True,
-            read=_READ_NOTED),
+            read=_READ_NOTED, foreign_read=_READ_FOREIGN),
     # -- the request ledger (#694): the fifth bucket ledger — one project's
     #    ask of another, so its rows carry the ask, its rationale, a human
     #    verdict note, and a completion quote: plaintext by design, in the

@@ -998,6 +998,30 @@ def _tombstone_keys(path) -> TombstoneRead:
     return TombstoneRead(_row_keys(rows), jsonl.Health.DEGRADED, True)
 
 
+class ForeignLedger(NamedTuple):
+    """Another bucket's ledger read across the boundary: the `jsonl.Read`,
+    whether the registry's foreign column says to leave the source out
+    (`skip`), and whether it is read around with a note (`degraded`)."""
+
+    read: "jsonl.Read"
+    skip: bool
+    degraded: bool
+
+
+def foreign_ledger(slug: str, name: str) -> ForeignLedger:
+    """The one seam through which another bucket's ledger is read: the
+    registry's foreign column decides, so the inbox, the decide counts and
+    the listings cannot disagree about what a torn or unreadable foreign
+    ledger means. Never raises."""
+    read = jsonl.read(config.checkpoint_dir() / slug / name)
+    posture = surfaces.read_posture(surfaces.bucket_ledger(name),
+                                    read.health.value, foreign=True)
+    return ForeignLedger(
+        read, posture is surfaces.ReadPosture.SKIP_SOURCE,
+        read.health is jsonl.Health.DEGRADED
+        and posture is surfaces.ReadPosture.NOTE)
+
+
 class ForeignTombstones(NamedTuple):
     """Every other author's published tombstones, read once: the union of
     their keys, the author directory names whose ledger is not proven (their
@@ -1096,16 +1120,18 @@ def forgotten_stamp() -> tuple:
     for name in names:
         try:
             st = os.stat(os.path.join(base, name, "events.jsonl"))
-            local.append((name, st.st_ino, st.st_mtime_ns, st.st_size))
+            local.append((name, st.st_ino, st.st_mtime_ns, st.st_ctime_ns,
+                          st.st_size))
         except OSError:
-            local.append((name, None, None, None))
+            local.append((name, None, None, None, None))
     foreign: list[tuple] = []
     for path in _foreign_tombstone_paths(include_own=True):
         try:
             st = os.stat(path)
-            foreign.append((str(path), st.st_mtime_ns, st.st_size))
+            foreign.append((str(path), st.st_mtime_ns, st.st_ctime_ns,
+                            st.st_size))
         except OSError:
-            foreign.append((str(path), None, None))
+            foreign.append((str(path), None, None, None))
     return (base, tuple(local), tuple(sorted(foreign)))
 
 
@@ -1990,6 +2016,13 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
 
     Pure file-ops, never raises — a missing/broken/torn team dir yields []."""
     project_dir = _resolved(project_dir)
+    own_events = _events_path(project_dir)
+    if own_events is not None and jsonl.read(own_events).health in (
+            jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
+        # This project's own tombstones cannot all be known, so a teammate's
+        # copy of a value it forgot could not be told from any other: no
+        # foreign checkpoint is admitted (the mirror of an unproven author).
+        return []
     root = config.team_dir()
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
@@ -3047,9 +3080,10 @@ def _forgotten_walk() -> tuple[frozenset, frozenset]:
     for child in children:
         try:
             st = (child / "events.jsonl").stat()
-            stamp.append((child.name, st.st_ino, st.st_mtime_ns, st.st_size))
+            stamp.append((child.name, st.st_ino, st.st_mtime_ns,
+                          st.st_ctime_ns, st.st_size))
         except OSError:
-            stamp.append((child.name, None, None, None))
+            stamp.append((child.name, None, None, None, None))
     key = tuple(stamp)
     cached = _all_forgotten_cache.get(root)
     if cached is not None and cached[0] == key:

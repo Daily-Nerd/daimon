@@ -256,10 +256,7 @@ def test_the_light_snapshot_closes_on_transient_trust(tmp_checkpoint_dir,
 # ---- every registry ledger is read once per snapshot
 
 
-def test_a_snapshot_reads_each_registry_ledger_of_the_bucket_once(
-        tmp_checkpoint_dir, monkeypatch):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
-    view.forgotten_keys()                     # warm the machine-wide memo
+def _own_reads(monkeypatch):
     bucket = _bucket()
     seen = []
     real = jsonl.read
@@ -269,11 +266,31 @@ def test_a_snapshot_reads_each_registry_ledger_of_the_bucket_once(
         return real(path, *a, **k)
 
     monkeypatch.setattr(jsonl, "read", spy)
+    return lambda: [p for p in seen if p.parent == bucket]
+
+
+def test_a_cold_snapshot_reads_events_twice_and_every_other_ledger_once(
+        tmp_checkpoint_dir, monkeypatch):
+    """The registry loop reads every ledger once. On a cold process the
+    machine-wide forget walk then reads each bucket's events ledger again,
+    this one's included: that second read is the true cost, named here, and
+    it is paid once per process while the stats hold."""
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    own = _own_reads(monkeypatch)
     view.snapshot(PROJECT)
-    own = [p for p in seen if p.parent == bucket]
-    assert sorted(p.name for p in own) == sorted(
+    names = sorted(p.name for p in own())
+    expected = sorted([*surfaces.bucket_ledger_names(), "events.jsonl"])
+    assert names == expected
+
+
+def test_a_warm_snapshot_reads_each_registry_ledger_of_the_bucket_once(
+        tmp_checkpoint_dir, monkeypatch):
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT)
+    view.forgotten_keys()                     # warm the machine-wide memo
+    own = _own_reads(monkeypatch)
+    view.snapshot(PROJECT)
+    assert sorted(p.name for p in own()) == sorted(
         surfaces.bucket_ledger_names())
-    assert len(own) == len(set(own))
 
 
 # ---- projects

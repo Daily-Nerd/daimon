@@ -86,7 +86,9 @@ def test_a_degraded_sender_ledger_is_read_around(tmp_checkpoint_dir):
         handle.write(b'{"event": "opened", "request_id": "q-torn')
     got = requests.inbox(RECIPIENT)
     assert [r["request_id"] for r in got.rows] == [rid]
-    assert got.notes == ()
+    assert got.notes == (
+        "⚠ 1 sender(s) have a requests ledger with torn lines; "
+        "their asks may be incomplete",)
 
 
 def test_the_note_carries_no_count_under_tenant_scope(tmp_checkpoint_dir,

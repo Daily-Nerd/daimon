@@ -33,7 +33,8 @@ from . import (capture, checks_host, checks_runtime, config, display,
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
 from .amendments import found_label as _amend_found_label
-from .marks import GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE
+from .marks import (GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE,
+                    WARNING_MARK)
 
 log = logging.getLogger("daimon.briefing")
 
@@ -1423,18 +1424,21 @@ def decision_count_line(project_dir=None) -> str | None:
     except Exception:
         return None
     elsewhere = 0
+    notes: tuple = ()
     if not config.tenant_scoped():
         try:
-            elsewhere = sum(pending.foreign_counts(project_dir=project_dir)
-                            .values())
+            got = pending.foreign_counts_typed(project_dir=project_dir)
+            elsewhere, notes = sum(got.counts.values()), got.notes
         except Exception:
             elsewhere = 0
     if here == 0 and elsewhere == 0:
-        return None
+        # #1132 PR 10a: other projects left out are said even when nothing
+        # was counted (the note stands alone).
+        return "\n".join(notes) or None
     suffix = f" ({elsewhere} elsewhere)" if elsewhere else ""
     template = (_DECISION_COUNT_LINE_SINGULAR if here == 1
                 else _DECISION_COUNT_LINE_PLURAL)
-    return template.format(n=here, elsewhere=suffix)
+    return "\n".join([template.format(n=here, elsewhere=suffix), *notes])
 
 
 # ---- #694 PR 2: the recipient-side request panel ---------------------------
@@ -1560,8 +1564,9 @@ def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     except Exception:
         return []
     rows = entry.get("rows") or []
+    notes = list(entry.get("notes") or ())
     if not rows:
-        return []
+        return notes
     mask = mask or (lambda text: text)
     lines = [_OWED_PANEL_HEADER]
     for row in rows:
@@ -1577,6 +1582,7 @@ def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
         lines.append(f"  (+{overflow} more owed — "
                      "daimon request inbox)")
     lines.append("  Close one with: daimon request done <id> --evidence …")
+    lines.extend(notes)
     return lines
 
 
@@ -1626,8 +1632,9 @@ def verdict_panel(project_dir=None, *, mask=None):
     except Exception:
         return [], ()
     rows = entry.get("rows") or []
+    notes = list(entry.get("notes") or ())
     if not rows:
-        return [], ()
+        return notes, ()
     mask = mask or (lambda text: text)
     lines = [_VERDICT_PANEL_HEADER]
     cards = []
@@ -1668,7 +1675,26 @@ def verdict_panel(project_dir=None, *, mask=None):
         plural = "s" if overflow != 1 else ""
         lines.append(f"  (+{overflow} more decided{plural} — "
                      "daimon request list)")
+    lines.extend(notes)
     return lines, tuple(cards)
+
+
+def drop_repeated_notes(*blocks) -> list:
+    """The panel blocks with each warning line kept once, at its first
+    appearance: the three request panels read the same joins, so a sender
+    left out would otherwise be said up to three times in one brief."""
+    seen: set = set()
+    out = []
+    for block in blocks:
+        kept = []
+        for line in block:
+            if line.startswith(WARNING_MARK):
+                if line in seen:
+                    continue
+                seen.add(line)
+            kept.append(line)
+        out.append(kept)
+    return out
 
 
 def render_plain(b: dict, degraded: bool = False, rulings=(),
@@ -2380,6 +2406,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     verdict_lines, verdict_cards = verdict_panel(worldcheck_project, mask=mask)
     owed_lines = (owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
+    request_lines, verdict_lines, owed_lines = drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines)
     if cards_out is not None:
         # Both panels print whole on this path: the caller stamps from these.
         cards_out.update(request=request_cards, verdict=verdict_cards)

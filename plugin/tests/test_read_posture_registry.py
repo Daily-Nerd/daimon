@@ -41,9 +41,11 @@ def test_the_quarantine_sidecar_reads_like_a_plaintext_ledger():
     assert row is not None and row.read == (OPEN, NOTE, NOTE, NOTE)
 
 
-def test_foreign_read_is_declared_on_requests_and_team_tombstones_only():
+def test_foreign_read_is_declared_where_another_bucket_or_author_is_read():
     carrying = {s.shape for s in surfaces.SURFACES if s.foreign_read}
     assert carrying == {"checkpoints/{slug}/requests.jsonl",
+                        "checkpoints/{slug}/refutations.jsonl",
+                        "checkpoints/{slug}/amendments.jsonl",
                         "team/{remote}/**/tombstones.jsonl"}
     assert surfaces.bucket_ledger("requests.jsonl").foreign_read == (
         OPEN, NOTE, SKIP, SKIP)

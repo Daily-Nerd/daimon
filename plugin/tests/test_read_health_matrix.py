@@ -138,7 +138,8 @@ def test_a_requests_ledger_of_another_bucket_is_skipped_only_when_unproven(
             handle.write(how)
     got = requests.inbox(PROJECT)
     skipped = STATES[state][1] in (Health.TRANSIENT, Health.UNREADABLE)
-    assert bool(got.notes) is skipped
+    degraded = STATES[state][1] is Health.DEGRADED
+    assert bool(got.notes) is (skipped or degraded)
     if skipped:
         assert got.rows == []
     elif state != "absent":

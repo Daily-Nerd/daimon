@@ -456,7 +456,9 @@ def _stat_key(path) -> tuple | None:
         st = os.stat(path)
     except OSError:
         return None
-    return (st.st_ino, st.st_mtime_ns, st.st_size)
+    # ctime too: a chmod that makes a ledger unreadable (or readable again)
+    # moves it, and nothing else about the file.
+    return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
 
 
 @dataclass(frozen=True)
@@ -549,7 +551,7 @@ def _read_judge(slug, forgotten=None) -> tuple[Judge, bool]:
                          and events_read.health in steady)
 
 
-def judge(slug, *, stamp=None, forgotten=None) -> Judge:
+def judge(slug, *, stamp=None, forgotten=None, incomplete=None) -> Judge:
     """The verdict source for one bucket (`slug`; None or a name with no
     bucket judges the forgotten set alone). Memoized on the stat of the
     bucket's `trust.jsonl` and `events.jsonl` and of everything that feeds the
@@ -559,7 +561,10 @@ def judge(slug, *, stamp=None, forgotten=None) -> Judge:
     one pass (a build, a query, a listing), so it is computed once for the
     pass; `forgotten` is `forgotten_keys()` taken the same way. A trust ledger
     that is UNREADABLE or still failing after the retries (TRANSIENT, no rows)
-    closes the judge: nothing can be proven not quarantined."""
+    closes the judge: nothing can be proven not quarantined. `incomplete` is
+    `store.forgotten_incomplete()` taken by the same caller for the same pass
+    (a build, a query, a listing), so a judge does not walk every bucket's
+    events ledger again to learn it."""
     if not _is_bare_slug(slug):
         slug = None   # a stamp that is not a bucket name routes nowhere
     bucket = _bucket(slug) if slug else None
@@ -576,19 +581,22 @@ def judge(slug, *, stamp=None, forgotten=None) -> Judge:
     # a forget set that may be short; the stat key cannot see that ledger
     # become readable again (a permission fix changes no mtime or size), so it
     # is not kept (D10.2).
-    if memoizable and not store.forgotten_incomplete():
+    still = (incomplete if incomplete is not None
+             else store.forgotten_incomplete())
+    if memoizable and not still:
         _judge_memo[memo_slot] = (key, got)
     else:
         _judge_memo.pop(memo_slot, None)
     return got
 
 
-def _light(slug, forgotten, stamp=None) -> Snapshot:
+def _light(slug, forgotten, stamp=None, incomplete=None) -> Snapshot:
     """A snapshot with only what `classify` reads: the forgotten set the
     caller holds and the bucket's judgement (`judge`): its forgotten ids, its
     active quarantines and `closed`."""
     return dataclasses.replace(
-        judge(slug, stamp=stamp, forgotten=forgotten).snap,
+        judge(slug, stamp=stamp, forgotten=forgotten,
+              incomplete=incomplete).snap,
         forgotten=forgotten)
 
 
@@ -663,6 +671,7 @@ def projects(own: str | None) -> tuple[Listed, ...]:
     Unsorted; ordering is a display concern."""
     forgotten = forgotten_keys()
     stamp = store.forgotten_stamp()   # once for the listing, not per bucket
+    incomplete = store.forgotten_incomplete()   # likewise
     out = []
     for b in store.list_buckets(only=frozenset(buckets(own))):
         cp = b["checkpoint"]
@@ -670,7 +679,7 @@ def projects(own: str | None) -> tuple[Listed, ...]:
         # One light snapshot per bucket serves the peek AND the closed flag
         # (a torn pointer's bucket can still have a trust ledger that
         # cannot be read).
-        snap = _light(b["slug"], forgotten, stamp)
+        snap = _light(b["slug"], forgotten, stamp, incomplete)
         out.append(Listed(
             b["slug"], b["mtime"], cp is not None, data.get("project_name"),
             data.get("session_id"), data.get("created"),
@@ -703,12 +712,19 @@ def projects_notes(own: str | None, listed=None) -> tuple[str, ...]:
     return display.cap_notes([*lines, *forgotten_notes()])
 
 
-def team_notes() -> tuple[str, ...]:
-    """`author-skipped` / `author-degraded` for the teammates' published
-    tombstone ledgers: an author whose ledger cannot be read is not admitted
-    (O3); one whose ledger has torn lines is read around."""
+def team_notes(project=None) -> tuple[str, ...]:
+    """`team-closed` when `project`'s own events ledger cannot be read (no
+    teammate is shown), `author-skipped` / `author-degraded` for the
+    teammates' published tombstone ledgers: an author whose ledger cannot be
+    read is not admitted (O3); one whose ledger has torn lines is read
+    around."""
     tombs = store.foreign_tombstones()
     lines = []
+    if project is not None:
+        bucket = _bucket(project)
+        if bucket is not None and unproven(
+                jsonl.read(bucket / "events.jsonl").health):
+            lines.append(display.team_closed_note())
     if tombs.unproven:
         lines.append(display.author_skipped_note())
     if tombs.degraded:

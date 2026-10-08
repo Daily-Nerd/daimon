@@ -125,7 +125,7 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     if counts is not None:
         # #1132 PR 10a: a teammate whose tombstones cannot be read is not
         # shown; the trailer says so instead of a shorter list.
-        counts.notes = view.team_notes()
+        counts.notes = view.team_notes(project)
     for author, opened in view.team(project, live=True):
         if store.project_slug(author) == self_slug:
             continue  # never surface your own state as a teammate
@@ -340,6 +340,8 @@ def _cmd_brief(args, fx) -> int:
         if getattr(args, "team", False):
             counts = _TeamCounts()
             render.render_teammates(_team_briefings(project, counts))
+            for note in counts.notes:
+                render.render_brief_line([note])
             if counts.resolved:
                 render.render_brief_line([
                     f"{counts.resolved} resolved item(s) withheld "

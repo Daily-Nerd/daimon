@@ -709,7 +709,9 @@ def status_payload(project_arg=None) -> tuple:
         "rescue_gap": w["rescue_gap"],
         "rescue_posture": w["rescue_posture"],
         "forget_hits": w["forget_hits"],
-        "requests": w["requests"],
+        # The notes are for the human render; the --json contract keeps the
+        # two counts.
+        "requests": {k: v for k, v in w["requests"].items() if k != "notes"},
         "handoff": w["handoff"],
         # #943 slice 5: appended at the tail — payload key order is
         # part of the --json contract.

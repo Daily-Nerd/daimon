@@ -1203,6 +1203,7 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     judges: dict = {}
     # The forgotten-set stamp is read once for the whole build, not per bucket.
     stamp = store.forgotten_stamp()
+    incomplete = store.forgotten_incomplete()   # once for the whole build
     # One verdict per distinct value, because a carried item is one row per
     # checkpoint that carries it and canonicalizing it is the cost.
     verdicts: dict = {}
@@ -1218,7 +1219,8 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
                 newest[key] = (stamped, recency, sid)
         judge = judges.get(slug)
         if judge is None:
-            judge = judges[slug] = view.judge(slug, stamp=stamp)
+            judge = judges[slug] = view.judge(slug, stamp=stamp,
+                                              incomplete=incomplete)
         for (kind, text, _trust, quote, scene, importance, first_seen,
              item_id, pinned, targets, stated_by) in _items(cp):
             visible = True
@@ -1298,17 +1300,17 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     # (nothing can be proven not quarantined). A query touching one re-judges
     # it and rebuilds when it reads again.
     conn.execute("INSERT INTO meta VALUES ('closed', ?)",
-                 (json.dumps(_closed_buckets(stamp)),))
+                 (json.dumps(_closed_buckets(stamp, incomplete)),))
     # The buckets whose events ledger could not be read at build: the forget
     # set was incomplete. Slugs for the next query's "has one cleared?" test,
     # never rendered.
     conn.execute("INSERT INTO meta VALUES ('incomplete', ?)",
-                 (json.dumps(sorted(store.forgotten_incomplete())),))
+                 (json.dumps(sorted(incomplete)),))
     conn.commit()
     return count
 
 
-def _closed_buckets(stamp) -> list[str]:
+def _closed_buckets(stamp, incomplete) -> list[str]:
     try:
         names = sorted(d.name for d in config.checkpoint_dir().iterdir()
                        if d.is_dir())
@@ -1316,7 +1318,7 @@ def _closed_buckets(stamp) -> list[str]:
         return []
     out = []
     for name in names:
-        judge = view.judge(name, stamp=stamp)
+        judge = view.judge(name, stamp=stamp, incomplete=incomplete)
         if judge.closed or judge.index_closed:
             out.append(name)
     return out
@@ -1493,9 +1495,10 @@ def _closed_still(scopes, path: Path, notes: list) -> bool:
     if not closed:
         return False
     stamp = store.forgotten_stamp()
+    incomplete = store.forgotten_incomplete()
     still = []
     for slug in closed:
-        judge = view.judge(slug, stamp=stamp)
+        judge = view.judge(slug, stamp=stamp, incomplete=incomplete)
         if judge.closed or judge.index_closed:
             still.append(slug)
     if len(still) < len(closed) and not _rebuild_forced(path, notes):
@@ -1546,10 +1549,12 @@ def _judge_rows(rows: list[dict]) -> tuple[list[dict], bool]:
     dropped = False
     judges: dict = {}
     stamp = store.forgotten_stamp()
+    incomplete = store.forgotten_incomplete()
     for row in rows:
         slug = row.get("project_slug")
         if slug not in judges:
-            judges[slug] = view.judge(slug, stamp=stamp)
+            judges[slug] = view.judge(slug, stamp=stamp,
+                                      incomplete=incomplete)
         if judges[slug].index_closed:
             # The bucket's own events ledger cannot be read (D10.2): the
             # index must hold no rows for it, so a row here is behind.
@@ -1636,6 +1641,11 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     _incomplete_cleared(path, notes)
     if store.forgotten_incomplete():
         _note(notes, "forget-incomplete")
+    tombs = store.foreign_tombstones()
+    if tombs.unproven:
+        _note(notes, "author-skipped")    # the index left that author out
+    if tombs.degraded:
+        _note(notes, "author-degraded")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"

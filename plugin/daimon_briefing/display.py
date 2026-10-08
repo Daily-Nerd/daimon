@@ -134,6 +134,10 @@ def recall_note(notes) -> str | None:
     lines = [marks.warning("recall: " + "; ".join(known))] if known else []
     if "forget-incomplete" in notes:
         lines.append(forget_incomplete_note())
+    if "author-skipped" in notes:
+        lines.append(author_skipped_note())
+    if "author-degraded" in notes:
+        lines.append(author_degraded_note())
     return "\n".join(lines) or None
 
 
@@ -212,6 +216,45 @@ def author_degraded_note() -> str:
     """`author-degraded`: a teammate's tombstones ledger has torn lines."""
     return marks.warning("a teammate's tombstones ledger has torn lines; "
                          "their forgets may be incomplete")
+
+
+def team_closed_note() -> str:
+    """`team-closed`: this project's own events ledger cannot be read, so no
+    teammate's checkpoint is shown (their copy of a value this project forgot
+    could not be told from any other)."""
+    return marks.warning("this project's events ledger cannot be read; "
+                         "teammates' checkpoints are not shown; "
+                         "run: daimon status")
+
+
+def sender_degraded_note(count: int, scoped: bool) -> str:
+    """`sender-degraded`: foreign requests ledgers with torn lines, read
+    around."""
+    if scoped:
+        return marks.warning("some senders have a requests ledger with torn "
+                             "lines; their asks may be incomplete")
+    return marks.warning(f"{count} sender(s) have a requests ledger with "
+                         "torn lines; their asks may be incomplete")
+
+
+def elsewhere_skipped_note(count: int, scoped: bool) -> str:
+    """`elsewhere-skipped`: other projects left out of a count or a listing
+    because one of their ledgers cannot be read."""
+    if scoped:
+        return marks.warning("some other projects skipped: a ledger cannot "
+                             "be read")
+    return marks.warning(f"{count} other project(s) skipped: a ledger "
+                         "cannot be read")
+
+
+def elsewhere_degraded_note(count: int, scoped: bool) -> str:
+    """`elsewhere-degraded`: other projects whose ledger has torn lines,
+    counted around them."""
+    if scoped:
+        return marks.warning("some other projects have a ledger with torn "
+                             "lines; their counts may be incomplete")
+    return marks.warning(f"{count} other project(s) have a ledger with torn "
+                         "lines; their counts may be incomplete")
 
 
 def cap_notes(lines, cap: int = NOTE_CAP) -> tuple[str, ...]:

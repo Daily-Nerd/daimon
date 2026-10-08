@@ -2047,14 +2047,12 @@ def _without_suppression(rows: list[dict]) -> list[dict]:
 
 
 def _foreign_requests(slug: str):
-    """`(read, skip)` for another bucket's requests ledger: the read, and
-    whether the registry's foreign column says to leave that source out (a
-    ledger that cannot be proven; one with only torn lines is read around)."""
-    read = jsonl.read(_path(slug))
-    skip = surfaces.read_posture(
-        surfaces.bucket_ledger("requests.jsonl"), read.health.value,
-        foreign=True) is surfaces.ReadPosture.SKIP_SOURCE
-    return read, skip
+    """`(read, skip, degraded)` for another bucket's requests ledger, through
+    the one foreign seam (`store.foreign_ledger`): the registry's foreign
+    column leaves out a ledger that cannot be proven and reads around one
+    with only torn lines, saying so."""
+    got = store.foreign_ledger(slug, "requests.jsonl")
+    return got.read, got.skip, got.degraded
 
 
 def _sender_rows(project_dir) -> dict[str, list]:
@@ -2100,23 +2098,30 @@ def _sender_group(project_dir) -> Join:
                 abroad.add(rid)
     if not abroad:
         return Join(by_id, ())
-    skipped = 0
+    skipped = degraded = 0
     for slug in _bucket_slugs():
         if slug == sender_slug:
             continue  # already covered by this bucket's own rows above
-        read, skip = _foreign_requests(slug)
+        read, skip, torn = _foreign_requests(slug)
         if skip:
             skipped += 1   # #1132 PR 10a: said, never read as "decided nothing"
             continue
+        degraded += torn
         foreign = [row for row in _stamped(events(project_dir=slug,
                                                   rows=read.rows), slug)
                    if str(row.get("request_id") or "") in abroad]
         for row in _without_suppression(foreign):
             by_id[str(row.get("request_id") or "")].append(row)
-    return Join(by_id, _skipped_notes(skipped))
+    return Join(by_id, _skipped_notes(skipped, degraded))
 
 
 def sender_join(project_dir=None) -> dict[str, dict]:
+    """`sent(project_dir).by_id`: the records, for the callers that have no
+    use for the notes. See `sent`."""
+    return sent(project_dir).by_id
+
+
+def sent(project_dir=None) -> Join:
     """Every request this project SENT, joined with whatever its recipient
     decided (D0) — the per-bucket `records()` above only ever sees this
     project's OWN rows, and a verdict lives in the recipient's bucket.
@@ -2127,11 +2132,14 @@ def sender_join(project_dir=None) -> dict[str, dict]:
     `listing()` now uses (its own docstring has the full reasoning) — this
     composer shares `_sender_rows`'s traversal and can fold requests
     addressed to several different recipients in one call."""
+    grouped = _sender_group(project_dir)
     rows = _without_suppression(
-        [row for group in _sender_rows(project_dir).values() for row in group])
+        [row for group in grouped.by_id.values() for row in group])
     own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return fold(rows, policies_by_to=_policies_by_to(rows), own_slug=own_slug,
-               open_policies=_open_policies_local(project_dir))
+    return Join(fold(rows, policies_by_to=_policies_by_to(rows),
+                     own_slug=own_slug,
+                     open_policies=_open_policies_local(project_dir)),
+                grouped.notes)
 
 
 def _bucket_slugs() -> list[str]:
@@ -2150,11 +2158,16 @@ def _bucket_slugs() -> list[str]:
             if (child / "requests.jsonl").exists()]
 
 
-def _skipped_notes(skipped: int) -> tuple:
+def _skipped_notes(skipped: int, degraded: int = 0) -> tuple:
     """`sender-skipped` for `skipped` buckets left out of a cross-bucket
-    read, or nothing."""
-    return ((display.sender_skipped_note(skipped, config.tenant_scoped()),)
-            if skipped else ())
+    read and `sender-degraded` for `degraded` ones read around, or nothing."""
+    scoped = config.tenant_scoped()
+    out = []
+    if skipped:
+        out.append(display.sender_skipped_note(skipped, scoped))
+    if degraded:
+        out.append(display.sender_degraded_note(degraded, scoped))
+    return tuple(out)
 
 
 class Join(NamedTuple):
@@ -2232,7 +2245,7 @@ def join(project_dir=None) -> Join:
         by_id[rid] = rows
     origin_of: dict[str, str] = {}
     orphans: list[tuple[str, list]] = []
-    skipped = 0
+    skipped = degraded = 0
     for slug in _bucket_slugs():
         # A bucket this project MOVED OUT OF is not a foreign sender. Left
         # standing by a merge that could not empty it, its rows would
@@ -2243,10 +2256,11 @@ def join(project_dir=None) -> Join:
         # a code, never read as "sent nothing". The registry's foreign column
         # decides (a torn ledger is read around, an unreadable one is left
         # out), so the verb and the panel cannot disagree.
-        foreign, skip = _foreign_requests(slug)
+        foreign, skip, torn = _foreign_requests(slug)
         if skip:
             skipped += 1
             continue
+        degraded += torn
         # #961 slice 4, widened by #1083: stamp the origin bucket onto every
         # row read from THIS foreign bucket, at read time — covers both the
         # `elif` branch below and an orphan row (a verdict recorded in a
@@ -2313,7 +2327,7 @@ def join(project_dir=None) -> Join:
         open_policies[origin_slug] = refutations.request_policy_history(
             project_dir=origin_slug)
     return Join(fold(all_rows, policies=_request_policy_history(project_dir),
-                     open_policies=open_policies), _skipped_notes(skipped))
+                     open_policies=open_policies), _skipped_notes(skipped, degraded))
 
 
 def inbox(project_dir=None) -> Inbox:
@@ -2373,11 +2387,23 @@ def owed_renderable(project_dir=None) -> dict:
     and the verb differs. An undecided ask offers accept and reject; an
     accepted one offers `done`. Mixing them would ask the reader to sort out
     which is which from the state glyph alone."""
-    rows = [r for r in recipient_join(project_dir=project_dir).values()
+    got = join(project_dir)
+    rows = [r for r in got.by_id.values()
             if _is_owed(r, project_dir=project_dir)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
+
+
+def _with_notes(entry: dict, notes: tuple) -> dict:
+    """A renderable's entry with the join's notes, present only when there
+    is something to say (a sender left out is said, never a silently shorter
+    list)."""
+    if notes:
+        entry["notes"] = notes
+    return entry
 
 
 def needs_owed_delivered_stamp(record: dict, session: str) -> bool:
@@ -2471,13 +2497,9 @@ def decision_renderable(project_dir=None) -> dict:
             and r.get("kind") != "info"]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    entry = {"rows": rows[:RENDER_CAP],
-             "overflow": max(0, len(rows) - RENDER_CAP)}
-    if got.notes:
-        # #1132 PR 10a: a sender left out of the join is said, never a
-        # silently shorter list. Present only when there is something to say.
-        entry["notes"] = got.notes
-    return entry
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
 
 
 def deliverable(session: str, project_dir=None) -> dict:
@@ -2727,13 +2749,16 @@ def verdict_renderable(project_dir=None) -> dict:
     newest first, capped at RENDER_CAP with the remainder COUNTED. Expired
     verdicts (D3) are filtered here and only here — the record stays fully
     readable through `sender_join`, only ambient panel attention decays."""
-    rows = [r for r in sender_join(project_dir=project_dir).values()
+    got = sent(project_dir)
+    rows = [r for r in got.by_id.values()
             if r["state"] in _VERDICT_STATES
             and (not verdict_panel_expired(r, project_dir=project_dir)
                  or unseen_reply_id(r))]  # #1117: expiry measures the decision
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
 
 
 def needs_surfaced_stamp(record: dict) -> bool:
@@ -2808,11 +2833,14 @@ def status_counts(project_dir=None) -> dict:
     A full honest count, not an attention-filtered one: suppressed and
     stale records still await a decision, so they count here even though
     neither panel renders them."""
-    sent = sum(1 for r in sender_join(project_dir=project_dir).values()
-              if r["state"] in _SENDER_MOVABLE)
-    awaiting = sum(1 for r in recipient_join(project_dir=project_dir).values()
-                  if r["state"] in _SENDER_MOVABLE)
-    return {"open_sent": sent, "awaiting_you": awaiting}
+    out_join, in_join = sent(project_dir), join(project_dir)
+    open_sent = sum(1 for r in out_join.by_id.values()
+                    if r["state"] in _SENDER_MOVABLE)
+    awaiting = sum(1 for r in in_join.by_id.values()
+                   if r["state"] in _SENDER_MOVABLE)
+    # `notes`: what the two joins left out or read around, once each.
+    notes = tuple(dict.fromkeys([*out_join.notes, *in_join.notes]))
+    return {"open_sent": open_sent, "awaiting_you": awaiting, "notes": notes}
 
 
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:

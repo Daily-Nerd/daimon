@@ -518,7 +518,47 @@ def _strip_plaintext(row: dict) -> dict:
     return out
 
 
-def _foreign_request_counts(slug: str | None) -> dict[str, int]:
+class _Tally:
+    """The other buckets a fleet-wide pass left out (`skipped`) or read
+    around (`degraded`), by slug, so the note counts projects and not
+    ledgers."""
+
+    def __init__(self) -> None:
+        self.skipped: set[str] = set()
+        self.degraded: set[str] = set()
+
+    def notes(self) -> tuple:
+        scoped = config.tenant_scoped()
+        out = []
+        if self.skipped:
+            out.append(display.elsewhere_skipped_note(len(self.skipped),
+                                                      scoped))
+        torn = self.degraded - self.skipped
+        if torn:
+            out.append(display.elsewhere_degraded_note(len(torn), scoped))
+        return tuple(out)
+
+
+def _foreign_rows(bucket: str, name: str, own: str | None,
+                  tally: "_Tally | None"):
+    """The raw rows of another bucket's ledger `name`, through the one
+    foreign seam (`store.foreign_ledger`), or None when the registry says to
+    skip that source. The own bucket is no foreign source: its health is the
+    snapshot's to say. A skipped or torn bucket is recorded in `tally`."""
+    if bucket == own:
+        return store.foreign_ledger(bucket, name).read.rows
+    got = store.foreign_ledger(bucket, name)
+    if got.skip:
+        if tally is not None:
+            tally.skipped.add(bucket)
+        return None
+    if got.degraded and tally is not None:
+        tally.degraded.add(bucket)
+    return got.read.rows
+
+
+def _foreign_request_counts(slug: str | None,
+                            tally: "_Tally | None" = None) -> dict[str, int]:
     """Every foreign project's waiting request count, in ONE fleet-wide pass.
 
     A request's rows can span two buckets — the `opened` row in the
@@ -548,8 +588,11 @@ def _foreign_request_counts(slug: str | None) -> dict[str, int]:
     """
     by_id: dict[str, list] = {}
     for bucket in requests._bucket_slugs():
+        raw = _foreign_rows(bucket, "requests.jsonl", slug, tally)
+        if raw is None:
+            continue
         try:
-            rows = requests.events(project_dir=bucket)
+            rows = requests.events(project_dir=bucket, rows=raw)
         except Exception:
             continue
         for row in rows:
@@ -642,7 +685,8 @@ def _ledger_bucket_slugs() -> list[str]:
         return []
 
 
-def _foreign_ledger_counts(slug: str | None) -> dict[str, int]:
+def _foreign_ledger_counts(slug: str | None,
+                           tally: "_Tally | None" = None) -> dict[str, int]:
     """Candidate rulings/refutations and verified amendments in every OTHER
     bucket, read directly (single-bucket lanes) — fail-open per bucket, per
     lane, matching `queue`'s own degradation posture. Only `state` survives
@@ -653,22 +697,45 @@ def _foreign_ledger_counts(slug: str | None) -> dict[str, int]:
     for bucket in _ledger_bucket_slugs():
         if bucket == slug:
             continue
-        try:
-            for record in refutations.records(project_dir=bucket).values():
-                if record.get("state") == "candidate":
-                    counts[bucket] = counts.get(bucket, 0) + 1
-        except Exception:
-            pass
-        try:
-            for record in amendments.records(project_dir=bucket).values():
-                if record.get("state") == "verified":
-                    counts[bucket] = counts.get(bucket, 0) + 1
-        except Exception:
-            pass
+        raw = _foreign_rows(bucket, "refutations.jsonl", slug, tally)
+        if raw is not None:
+            try:
+                for record in refutations.records(rows=raw).values():
+                    if record.get("state") == "candidate":
+                        counts[bucket] = counts.get(bucket, 0) + 1
+            except Exception:
+                pass
+        raw = _foreign_rows(bucket, "amendments.jsonl", slug, tally)
+        if raw is not None:
+            try:
+                for record in amendments.records(rows=raw).values():
+                    if record.get("state") == "verified":
+                        counts[bucket] = counts.get(bucket, 0) + 1
+            except Exception:
+                pass
     return counts
 
 
+class ForeignQueues(NamedTuple):
+    """`foreign_queues_typed`'s answer: each other bucket's queue and the
+    `elsewhere-*` notes of the buckets a ledger of which could not be read."""
+    queues: list
+    notes: tuple
+
+
+class ForeignCounts(NamedTuple):
+    """`foreign_counts_typed`'s answer: the integer counts per other project
+    and the `elsewhere-*` notes."""
+    counts: dict
+    notes: tuple
+
+
 def foreign_queues(*, project_dir=None) -> list[tuple[str, dict]]:
+    """`foreign_queues_typed(...).queues`; see it."""
+    return foreign_queues_typed(project_dir=project_dir).queues
+
+
+def foreign_queues_typed(*, project_dir=None) -> ForeignQueues:
     """Slice 4: every OTHER bucket's own queue, as TEXT, behind the explicit
     `--all-projects` the caller typed. [(slug, queue-result), ...], buckets
     with nothing waiting and nothing suppressed omitted.
@@ -691,10 +758,14 @@ def foreign_queues(*, project_dir=None) -> list[tuple[str, dict]]:
     # own: its mail sits in the SENDER's ledger, addressed by slug. So the
     # candidates are every bucket directory plus every `to` an opened row
     # names, ids only, no text read here.
+    tally = _Tally()
     candidates = {b for b in _ledger_bucket_slugs() if not b.startswith(".")}
     for bucket in requests._bucket_slugs():
+        raw = _foreign_rows(bucket, "requests.jsonl", own, tally)
+        if raw is None:
+            continue
         try:
-            rows = requests.events(project_dir=bucket)
+            rows = requests.events(project_dir=bucket, rows=raw)
         except Exception:
             continue
         for row in rows:
@@ -703,6 +774,13 @@ def foreign_queues(*, project_dir=None) -> list[tuple[str, dict]]:
     out: list[tuple[str, dict]] = []
     for bucket in sorted(candidates):
         if bucket == own:
+            continue
+        # A bucket whose ledgers cannot be proven is left out whole: a queue
+        # composed from some of its lanes would read as all of them.
+        readable = [_foreign_rows(bucket, name, own, tally) is not None
+                    for name in ("requests.jsonl", "refutations.jsonl",
+                                 "amendments.jsonl")]
+        if not all(readable):
             continue
         try:
             result = queue(project_dir=bucket)
@@ -716,10 +794,15 @@ def foreign_queues(*, project_dir=None) -> list[tuple[str, dict]]:
             row["commands"] = [(label, f"{command} --slug={bucket}")
                                for label, command in row.get("commands") or []]
         out.append((bucket, result))
-    return out
+    return ForeignQueues(out, tally.notes())
 
 
 def foreign_counts(*, project_dir=None) -> dict[str, int]:
+    """`foreign_counts_typed(...).counts`; see it."""
+    return foreign_counts_typed(project_dir=project_dir).counts
+
+
+def foreign_counts_typed(*, project_dir=None) -> ForeignCounts:
     """{"slug": waiting_count} for every OTHER project's decide queue —
     integers only, never records, ids, or text. This project's own slug is
     excluded; its own queue is `queue()` above.
@@ -730,14 +813,15 @@ def foreign_counts(*, project_dir=None) -> dict[str, int]:
     """
     slug = store.project_slug(config.resolve_project_dir(project_dir))
     counts: dict[str, int] = {}
+    tally = _Tally()
     try:
-        for foreign_slug, n in _foreign_request_counts(slug).items():
+        for foreign_slug, n in _foreign_request_counts(slug, tally).items():
             counts[foreign_slug] = counts.get(foreign_slug, 0) + n
     except Exception:
         pass
     try:
-        for foreign_slug, n in _foreign_ledger_counts(slug).items():
+        for foreign_slug, n in _foreign_ledger_counts(slug, tally).items():
             counts[foreign_slug] = counts.get(foreign_slug, 0) + n
     except Exception:
         pass
-    return counts
+    return ForeignCounts(counts, tally.notes())

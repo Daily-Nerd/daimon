@@ -100,7 +100,8 @@ CONDITIONS = {
         {("cli:brief", "default"):
              "⚠ events.jsonl is unreadable (EIO); check permissions (EIO)",
          ("mcp:daimon_recall", "query"): "the forget set is incomplete",
-         ("cli:status", "default"): "forget set incomplete"}),
+         ("cli:status", "default"): "forget set incomplete",
+         ("cli:brief", "team"): "teammates' checkpoints are not shown"}),
     "foreign-events-os-error": (
         lambda m, w: _seam(m, _bucket(w.other) / "events.jsonl",
                            jsonl.Read(Health.UNREADABLE, [], detail="EIO")),
@@ -130,20 +131,12 @@ CONDITIONS = {
 # when they equal a quarantined value, because nothing can be proven
 # quarantined and the human ratified that text. The same lines show under an
 # UNREADABLE trust ledger today.
-#
-# own-events-os-error: decision 1(a) leaves the bucket's own briefing reading
-# through its good lines, and with an OS error there are none, so the forget
-# set of this bucket is empty: a teammate's copy of a value this bucket
-# forgot shows under `brief --team`. The note says the set is incomplete; the
-# value is not withheld. Closing `view.team` on `Snapshot.index_closed` would
-# remove it (reported on the PR as the one follow-up this axis found).
 ALLOWED = {
     "trust-transient": {
         ("cli:brief", "contradiction"), ("cli:brief", "question"),
         ("cli:brief", "topic"), ("hook:pre_llm_call", "question"),
         ("http:/api/activity", "contradiction"),
         ("http:/api/activity", "topic"), ("mcp:daimon_brief", "question")},
-    "own-events-os-error": {("cli:brief", "decision")},
 }
 
 
