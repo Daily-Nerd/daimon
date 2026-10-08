@@ -102,3 +102,12 @@ def test_a_refusal_beyond_the_200_line_tail_is_still_briefed(refused, capsys):
     log.write_text(log.read_text() + noise)
     assert cli.main(["brief"]) == 0
     assert NOTE in capsys.readouterr().out
+
+
+def test_a_scan_that_raises_never_costs_the_briefing(refused, monkeypatch):
+    def boom(slug):
+        raise RuntimeError("a log it cannot read")
+    monkeypatch.setattr(briefing.ledger, "admission_notes", boom)
+    annotated = briefing.prepare(PROJECT, time.time())
+    assert annotated.checkpoint is not None
+    assert not any("not serialized" in n for n in annotated.notes)

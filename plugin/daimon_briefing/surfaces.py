@@ -402,7 +402,9 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/request_policy_tombstones.jsonl",
             "refutations._write_policy_tombstones", False,
             "exempt-no-plaintext", "none", audit_exempt=True,
-            mergeable=True, read=_READ_NOTED, write=_W_HUMAN),
+            # Cure-only writer (forget's policy tombstones, PROCEED outright):
+            # no write column.
+            mergeable=True, read=_READ_NOTED),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,
@@ -725,14 +727,18 @@ def ledger_hint(name: str, state: str, detail: str = "",
 
 
 def write_row(name: str) -> Surface:
-    """The registry row that declares a write column for the ledger file
-    `name` ("events.jsonl", "events.quarantined-lines", "tombstones.jsonl").
-    Raises LookupError for a name no row declares a write column for: a
-    writer asking about a ledger the registry never governed is a bug."""
+    """The registry row for the ledger file `name` ("events.jsonl",
+    "events.quarantined-lines", "tombstones.jsonl"). Raises LookupError for a
+    name no row declares: a writer asking about a ledger the registry never
+    governed is a bug. A row with no write column (a cure-only writer) is
+    returned too, and `write_posture` then refuses any class but CURE."""
     for s in SURFACES:
-        if s.write and _part_matches(s.shape.split("/")[-1], name):
+        last = s.shape.split("/")[-1]
+        # Ledger shapes only: a generic glob (`*`, `*.json`) names no ledger.
+        if (last.endswith((".jsonl", QUARANTINE_SIDECAR_SUFFIX))
+                and _part_matches(last, name)):
             return s
-    raise LookupError(f"no declared write column for ledger {name!r}")
+    raise LookupError(f"no declared ledger {name!r}")
 
 
 def match(pattern: str) -> Surface | None:

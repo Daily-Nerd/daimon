@@ -456,7 +456,7 @@ def admission_notes(slug: str, *, text: str | None = None,
                 long_fold, t, _has_checkpoint, config.hung_after_seconds(),
                 lambda p: bool(p) and Path(p).exists(),
                 checkpoint_covers=checkpoint_covers,
-                admission_state=admission_state)
+                admission_state=_memoized_admission_state())
             if f["class"] == "admission-refused"
             and _slug_of(f["project"]) == slug]
     if not held:
@@ -488,7 +488,7 @@ def admission_waiting(slug: str, *, text: str | None = None,
             long_fold, t, _has_checkpoint, config.hung_after_seconds(),
             lambda p: bool(p) and Path(p).exists(),
             checkpoint_covers=checkpoint_covers,
-            admission_state=admission_state)
+            admission_state=_memoized_admission_state())
         if f["class"] == "healable" and _slug_of(f["project"]) == slug)
 
 
@@ -496,6 +496,18 @@ def admission_waiting(slug: str, *, text: str | None = None,
 # refusal is the one failure that must outlive the 200-line tail, because it
 # waits for a ledger repair that can take days; the window bounds the cost.
 _ADMISSION_WINDOW_BYTES = 4 * 1024 * 1024
+
+
+def _memoized_admission_state():
+    """`admission_state` remembered per project for the life of one scan:
+    N refused sessions of a project cost one events read, not N."""
+    seen: dict = {}
+
+    def state_of(project):
+        if project not in seen:
+            seen[project] = admission_state(project)
+        return seen[project]
+    return state_of
 
 
 def _admission_window(text: str) -> str:
@@ -528,13 +540,7 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
     had, and a refused admission (D10.4) is read over the last 4 MB instead,
     so it is never counted, briefed or healed late. An admission entry from
     the long fold replaces the same session's entry from the short one."""
-    seen_states: dict = {}
-
-    def state_of(project):
-        if project not in seen_states:
-            seen_states[project] = admission_state(project)
-        return seen_states[project]
-
+    state_of = _memoized_admission_state()
     common = dict(
         has_checkpoint=_has_checkpoint,
         ceiling=config.hung_after_seconds(),

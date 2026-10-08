@@ -27,7 +27,8 @@ EXPECTED = {
     "amendments.jsonl": {HUMAN: _H, EMITTER: _E},
     "requests.jsonl": {HUMAN: _H, EMITTER: _E},
     "relations.jsonl": {HUMAN: _H},
-    "request_policy_tombstones.jsonl": {HUMAN: _H},
+    # Cure-only writer (forget), which says PROCEED outright: no column.
+    "request_policy_tombstones.jsonl": {},
     "verification.jsonl": {EMITTER: _E},
     "forget-hits.jsonl": {EMITTER: _E},
 }
@@ -69,7 +70,6 @@ def test_no_other_row_declares_a_write_posture():
         "checkpoints/{slug}/*.quarantined-lines",
         "checkpoints/{slug}/relations.jsonl",
         "checkpoints/{slug}/trust.jsonl",
-        "checkpoints/{slug}/request_policy_tombstones.jsonl",
         "team/{remote}/**/tombstones.jsonl",
         "logs/recall-delivery.jsonl",
     }

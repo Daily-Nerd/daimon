@@ -7,6 +7,8 @@ it, it is held back while the ledger is unproven, and it is never lost to the
 
 import importlib.util
 import re
+
+import pytest
 import sys
 import time
 from pathlib import Path
@@ -20,8 +22,11 @@ GARBAGE = b"<<<<<<< conflict\n"
 HINT = "run: daimon ledger repair events"
 
 
-def _hook_lib():
-    path = Path(__file__).resolve().parents[2] / "hook" / "_daimon_hook_lib.py"
+HOOK_LIBS = (Path(__file__).resolve().parents[2] / "hook" / "_daimon_hook_lib.py",
+             Path(ledger.__file__).parent / "_hooks" / "_daimon_hook_lib.py")
+
+
+def _hook_lib(path=HOOK_LIBS[0]):
     spec = importlib.util.spec_from_file_location("_daimon_hook_lib_t", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -43,8 +48,15 @@ def _refusal(transcript, *, session=None, state="unreadable", hint=HINT,
 
 # ---- the exact line through both folds --------------------------------------
 
-def test_the_admission_prefix_is_mirrored_in_the_hook_library():
-    assert _hook_lib()._ADMISSION_PREFIX == jsonl.ADMISSION_PREFIX
+@pytest.mark.parametrize("path", HOOK_LIBS, ids=["hook", "mirror"])
+def test_the_admission_prefix_is_mirrored_in_the_hook_library(path):
+    assert _hook_lib(path)._ADMISSION_PREFIX == jsonl.ADMISSION_PREFIX
+
+
+@pytest.mark.parametrize("path", HOOK_LIBS, ids=["hook", "mirror"])
+def test_the_session_group_regex_is_the_same_in_both_folds(path):
+    assert (_hook_lib(path)._LOG_ERR_SESSION_RE.pattern
+            == ledger._ERR_SESSION_RE.pattern)
 
 
 def test_a_claude_refusal_is_keyed_by_the_transcript_stem():
@@ -322,3 +334,39 @@ def test_admission_notes_name_no_path_no_id_no_slug(tmp_checkpoint_dir):
                           _refusal("/t/sess-xyz.jsonl")]))
     [note] = ledger.admission_notes(store.project_slug(project))
     assert not re.search(r"sess-xyz|/t/|note-proj", note)
+
+
+# ---- one read per project per call ----------------------------------------------
+
+def _five_refusals(tmp_path, project):
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - 120))
+    lines = []
+    for i in range(5):
+        tp = tmp_path / f"many-{i}.jsonl"
+        tp.write_text("{}\n")
+        lines += [f"{stamp} session-end: spawned serialize for many-{i} "
+                  f"(reason: x, project: {project}) (transcript: {tp})",
+                  _refusal(str(tp))]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("call", ["notes", "waiting"])
+def test_five_refusals_of_one_project_cost_one_events_read_per_call(
+        tmp_checkpoint_dir, tmp_path, monkeypatch, call):
+    project = "/work/many-proj"
+    path = store._events_path(store._resolved(project))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(GARBAGE)
+    text = _five_refusals(tmp_path, project)
+    slug = store.project_slug(store._resolved(project))
+    reads = []
+    real = store.admission_state
+    monkeypatch.setattr(store, "admission_state",
+                        lambda p: reads.append(p) or real(p))
+    if call == "notes":
+        [note] = ledger.admission_notes(slug, text=text, now=NOW)
+        assert note.startswith("⚠ 5 session(s)")
+    else:
+        path.write_bytes(b"")          # proven: they are waiting now
+        assert ledger.admission_waiting(slug, text=text, now=NOW) == 5
+    assert len(reads) <= 1

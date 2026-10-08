@@ -235,6 +235,10 @@ def _cmd_forget(args) -> int:
     recall index deletion all inherit it with no new plumbing. The rewritten
     checkpoint re-mints its receipt, so the post-removal state is signed."""
     if getattr(args, "republish", False):
+        if args.target:
+            print("error: --republish takes no target; it publishes the "
+                  "forgets already recorded", file=sys.stderr)
+            return 2
         return _cmd_forget_republish(args)
     if not args.target:
         print("error: forget needs a target (an item id or a query), or "

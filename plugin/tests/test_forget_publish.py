@@ -217,3 +217,13 @@ def test_republish_refuses_an_unproven_events_ledger_instead_of_reporting_zero(
     assert "events.jsonl is unreadable" in out.err
     assert "republished" not in out.out
     assert not _sidecar().exists()
+
+
+def test_republish_with_a_target_is_a_usage_error(tmp_checkpoint_dir, capsys):
+    _forget_locally(KEY, "o-1")
+    rc = cli.main(["forget", "some value", "--republish", "--project",
+                   PROJECT])
+    out = capsys.readouterr()
+    assert rc == 2
+    assert "--republish takes no target" in out.err
+    assert not _sidecar().exists()

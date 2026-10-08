@@ -19,7 +19,16 @@ from daimon_briefing import (amendments, config, jsonl, refutations,
                              relations, requests, store, trust)
 from daimon_briefing.surfaces import WritePosture as W
 from daimon_briefing.surfaces import Writer
-from tests.test_write_posture_registry import EXPECTED
+from tests.test_write_posture_registry import EXPECTED as REGISTRY_EXPECTED
+
+_H = REGISTRY_EXPECTED["events.jsonl"][Writer.HUMAN]
+# The registry test's table covers the bucket ledgers; the sidecar, the own
+# team tombstones and the cure-only policy tombstones are added here.
+EXPECTED = {
+    **REGISTRY_EXPECTED,
+    "events.quarantined-lines": {Writer.HUMAN: _H},
+    "tombstones.jsonl": {Writer.HUMAN: (W.PROCEED, W.PROCEED, W.PROCEED)},
+}
 
 PROJECT = "/p/write-matrix"
 GOOD = json.dumps({"item_ref": "i-1", "status": "resolved",
@@ -39,6 +48,10 @@ STATES = {
 
 
 def _path(name):
+    if name == "tombstones.jsonl":
+        [adir] = store._own_team_dirs(PROJECT)
+        adir.mkdir(parents=True, exist_ok=True)
+        return adir / name
     d = config.checkpoint_dir() / store.project_slug(PROJECT)
     d.mkdir(parents=True, exist_ok=True)
     return d / name
@@ -66,6 +79,10 @@ def _damage(monkeypatch, path, how):
             return real(p)
         monkeypatch.setattr(jsonl, "_read_bytes", fake)
         monkeypatch.setattr(jsonl.time, "sleep", lambda _s: None)
+
+
+# Real-writer cells where the capped reader, not the posture, decides.
+CAPPED_READER_REFUSES = {"garbage", "undecodable", "transient", "os-error"}
 
 
 def _expected(name, writer, index):
@@ -97,13 +114,19 @@ def _writers():
             "o-1", "quote", "missed", project_dir=PROJECT),
         "forget-hits.jsonl": lambda w: store.record_forget_hits(
             [{"text": "a value"}], project_dir=PROJECT),
+        # The own team sidecar: PROCEED in every state by the registry, but
+        # `publish_tombstone` also reads it through the capped reader, and a
+        # ledger it cannot prove is a failure, never re-appended as absent.
+        "tombstones.jsonl": lambda w: bool(store.publish_tombstone(
+            "f" * 64, project_dir=PROJECT)),
     }
 
 
+# The cure-only policy tombstones declare no column: CURE is the only class.
 CELLS = [(name, state, writer)
-         for name in sorted(EXPECTED)
+         for name in sorted([*EXPECTED, "request_policy_tombstones.jsonl"])
          for state in STATES
-         for writer in list(EXPECTED[name]) + [Writer.CURE]]
+         for writer in list(EXPECTED.get(name, {})) + [Writer.CURE]]
 
 
 @pytest.mark.parametrize("name,state,writer", CELLS)
@@ -116,21 +139,32 @@ def test_the_posture_of_every_cell(tmp_checkpoint_dir, monkeypatch,
     assert got.write is _expected(name, writer, index), (name, state, writer)
 
 
+# The two counters take no writer (EMITTER is their only class), so a CURE
+# real-writer row does not exist for them.
+COUNTERS = {"verification.jsonl", "forget-hits.jsonl"}
+
+
 @pytest.mark.parametrize("name,state,writer", [
-    c for c in CELLS if c[0] in _writers() and c[2] is not Writer.CURE])
+    c for c in CELLS
+    if c[0] in _writers() and not (c[0] in COUNTERS and c[2] is Writer.CURE)])
 def test_the_real_writer_does_what_its_posture_says(
         tmp_checkpoint_dir, monkeypatch, name, state, writer):
+    if name == "tombstones.jsonl":
+        monkeypatch.setenv("DAIMON_TEAM", "1")
+        monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     how, index = STATES[state]
     path = _path(name)
     _damage(monkeypatch, path, how)
     before = path.read_bytes() if path.exists() else b""
     posture = _expected(name, writer, index)
     write = _writers()[name]
-    if name in ("verification.jsonl", "forget-hits.jsonl"):
+    if name in COUNTERS:
         # Counters: the only class is EMITTER, so judge them as one.
         assert writer is Writer.EMITTER
+    if name == "tombstones.jsonl" and state in CAPPED_READER_REFUSES:
+        posture = W.SKIP  # not a posture: the capped reader's failure
     with jsonl.surface_refusals():
-        if posture is W.REFUSE:
+        if posture is W.REFUSE and writer is not Writer.CURE:
             with pytest.raises(jsonl.Refused):
                 write(writer)
             landed = False
@@ -143,10 +177,20 @@ def test_the_real_writer_does_what_its_posture_says(
         assert not landed and after == before, (name, state, writer)
 
 
+def test_a_cure_writes_every_ledger_in_every_state():
+    cure = [c for c in CELLS if c[2] is Writer.CURE]
+    assert {c[0] for c in cure} >= set(EXPECTED) | {
+        "request_policy_tombstones.jsonl"}
+    for name, state, _w in cure:
+        assert _expected(name, Writer.CURE, STATES[state][1]) is W.PROCEED
+
+
 def test_the_matrix_is_not_vacuous():
-    assert len(CELLS) >= 150
-    # Every ledger the registry declares for writes appears.
-    assert {c[0] for c in CELLS} == set(EXPECTED)
+    assert len(CELLS) >= 180
+    # Every ledger the registry declares for writes appears, and the cure-only
+    # policy tombstones beside them.
+    assert {c[0] for c in CELLS} == set(EXPECTED) | {
+        "request_policy_tombstones.jsonl"}
     # And every state and every declared class.
     assert {c[1] for c in CELLS} == set(STATES)
     assert {c[2] for c in CELLS} == set(Writer)

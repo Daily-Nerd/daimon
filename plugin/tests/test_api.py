@@ -4,11 +4,11 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import api, display, pending, requests, store, view
+from daimon_briefing import api, display, pending, requests, store, surfaces, view
 
 REEXPORTS = ("lookup", "match", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing", "inbox",
-             "join", "ledger_health", "project_slug", "receipt_state")
+             "join", "ledger_health", "project_slug", "receipt_state", "Writer")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -32,6 +32,8 @@ def test_every_name_is_the_source_object():
     assert api.ledger_health is view.ledger_health
     assert api.project_slug is store.project_slug
     assert api.receipt_state is view.receipt_state
+    assert api.Writer is surfaces.Writer
+    assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
 
 def test_only_the_briefing_parser_is_defined_in_the_module():

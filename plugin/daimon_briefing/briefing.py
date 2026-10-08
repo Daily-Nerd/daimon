@@ -753,8 +753,11 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
     # D10.4: sessions of THIS project that were refused for an unproven events
     # ledger and are waiting on a repair. Own bucket only; silent once the
     # ledger reads again, when they are ordinary healable failures.
-    admission = ledger.admission_notes(
-        store.project_slug(config.resolve_project_dir(project)) or "")
+    try:
+        admission = ledger.admission_notes(
+            store.project_slug(config.resolve_project_dir(project)) or "")
+    except Exception:  # noqa: BLE001 - a log it cannot read is no note
+        admission = ()
     if admission:
         notes = display.merge_notes(notes, admission)
     if worldcheck_project and not opened.fell_back:
