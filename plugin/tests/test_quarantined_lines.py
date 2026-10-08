@@ -169,7 +169,9 @@ def test_a_line_that_is_not_an_envelope_row_is_kept_untouched():
         + json.dumps(_envelope(VALUE)) + "\n" + "{torn line\n",
         encoding="utf-8")
     result = ledger_repair.forget_quarantined_lines(KEY, project_dir=PROJECT)
-    assert result == ledger_repair.Purged(1, 0)
+    assert (result.purged, result.kept) == (1, 0)
+    # The torn line may hold the value, so forget cannot vouch for the file.
+    assert [u.name for u in result.unreached] == ["trust.quarantined-lines"]
     assert path.read_text(encoding="utf-8") == (
         json.dumps(other) + "\n" + json.dumps(notext) + "\n" + "{torn line\n")
 
@@ -183,7 +185,9 @@ def test_a_sidecar_that_cannot_be_rewritten_is_left_alone(monkeypatch):
         raise OSError(errno.EROFS, "read-only")
     monkeypatch.setattr(store, "_atomic_write", refuse)
     result = ledger_repair.forget_quarantined_lines(KEY, project_dir=PROJECT)
-    assert result == ledger_repair.Purged(0, 0)
+    assert (result.purged, result.kept) == (0, 0)
+    # The value is still in the file it could not rewrite.
+    assert [u.name for u in result.unreached] == ["trust.quarantined-lines"]
     assert path.read_bytes() == before
 
 

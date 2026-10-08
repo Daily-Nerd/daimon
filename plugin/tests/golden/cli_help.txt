@@ -275,12 +275,14 @@ an event — look before the write (#304) Examples: daimon resolve o-3f8a2c daim
 pipeline approval" --note "shipped in 0.9"
 
 === forget ===
-usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] target positional
-arguments: target item id (exact) or a query that must match exactly one item options: -h, --help
-show this help message and exit --reason REASON recorded on the tombstone event (redacted like any
-note) --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run show
-what would be forgotten without writing — look before a destructive op Examples: daimon forget
-o-3f8a2c --reason "contains client name" daimon forget "wrong belief about retry nonce" --dry-run
+usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] [--republish] [target]
+positional arguments: target item id (exact) or a query that must match exactly one item options:
+-h, --help show this help message and exit --reason REASON recorded on the tombstone event (redacted
+like any note) --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run
+show what would be forgotten without writing — look before a destructive op --republish publish
+every local forget the team sidecar is missing (the cure for a publish that failed); takes no target
+Examples: daimon forget o-3f8a2c --reason "contains client name" daimon forget "wrong belief about
+retry nonce" --dry-run
 
 === reverify ===
 usage: daimon reverify [-h] [--evidence EVIDENCE] [--project PROJECT] target positional arguments:

@@ -139,7 +139,9 @@ def test_torn_and_non_json_lines_survive_verbatim(tmp_checkpoint_dir):
     with _ledger().open("ab") as handle:
         for line in junk:
             handle.write(line + b"\n")
-    _forget(CANARY)
+    # The ledger holds lines forget cannot read, so it says so (exit 4,
+    # #1132 PR 10b) while still redacting every row it could.
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
     lines = _ledger().read_bytes().split(b"\n")
     for line in junk:
         assert line in lines

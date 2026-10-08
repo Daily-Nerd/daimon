@@ -516,6 +516,25 @@ def display_text(value) -> str:
     return _FORGOTTEN_SHOWN if _FORGOTTEN_RE.fullmatch(text) else text
 
 
+def _unredacted(row: dict, content_key: str) -> bool:
+    """Does a row still carry prose `redact_content_key` would replace: a
+    prose value whose own key IS the forgotten key, or ANY prose on the
+    quarantine of the forgotten value itself (its `value_key`), short of the
+    marker. The deleter's own predicate, read back off the ledger."""
+    marker = store._FORGOTTEN_FIELD_MARKER.format(content_key)
+    whole = row.get("value_key") == content_key
+    for fp in surfaces.bucket_ledger(_LEDGER).prose:
+        if len(fp.path) != 1:
+            continue
+        value = row.get(fp.path[0])
+        for one in (value if isinstance(value, list) else [value]):
+            if (isinstance(one, str) and one.strip() and one != marker
+                    and (whole or normalize.content_key(one) == content_key)):
+                return True
+    return False
+
+
+@jsonl.reaching(_path, _unredacted)
 def redact_content_key(content_key: str, *, project_dir=None,
                        dry_run: bool = False) -> list[str]:
     """Redact, in place, the prose a forget of `content_key` reaches (#1132).

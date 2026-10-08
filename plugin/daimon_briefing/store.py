@@ -26,6 +26,7 @@ merged checkpoint history keeps a deep well of files to reconstruct from.
 
 import dataclasses
 import enum
+import errno
 import json
 import logging
 import os
@@ -902,7 +903,61 @@ def _own_team_dirs(project_dir=None) -> list:
     return out
 
 
-def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
+class Published(list):
+    """The sidecar paths a publish wrote (a `list` of `str`, so `== []` still
+    means "nothing was written"), and what it could NOT write: `failed` is a
+    tuple of `(path, reason)` for every own sidecar that was over the cap,
+    unproven, or refused the append (#1132 PR 10b, D10.5). `keys` is the set
+    of content keys newly written to at least one sidecar."""
+
+    def __init__(self, paths=(), failed=(), keys=frozenset()):
+        super().__init__(paths)
+        self.failed = tuple(failed)
+        self.keys = frozenset(keys)
+
+
+def _publish_keys(content_keys, project_dir) -> Published:
+    """Append each of `content_keys` to the author's own tombstone ledger in
+    every sidecar this project routes to, presence-checked: a key already
+    there is not appended again. The presence check reads the ledger through
+    the capped reader, so a ledger that is over the cap or not proven cannot
+    say whether the key is there; it is a FAILURE (never re-appended as
+    "absent"), reported with its reason."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    written: list[str] = []
+    failed: list[tuple] = []
+    wrote: set = set()
+    for adir in _own_team_dirs(project_dir):
+        path = adir / _TOMBSTONE_NAME
+        got = _tombstone_keys(path)
+        todo = [k for k in content_keys if k not in got.keys]
+        if not todo:
+            continue
+        if got.unproven:
+            why = ("its tombstone ledger is over the 1 MB cap" if got.over_cap
+                   else f"its tombstone ledger is {got.health.value}")
+            failed.append((path, why))
+            continue
+        rows = [json.dumps({"ts": stamp, "key": k,
+                            "author": config.author()}, ensure_ascii=False)
+                for k in todo]
+        try:
+            adir.mkdir(parents=True, exist_ok=True)
+            # lock=False: this dir is committed by teamsync._commit_own, and a
+            # .pointer.lock sidecar would travel to every teammate.
+            jsonl.append_lines(
+                path, rows, lock=False,
+                posture=jsonl.lazy_posture(path, Writer.HUMAN))
+        except OSError as exc:
+            name = errno.errorcode.get(exc.errno or 0, "OSError")
+            failed.append((path, f"{name} while writing"))
+            continue
+        written.append(str(path))
+        wrote.update(todo)
+    return Published(written, failed, wrote)
+
+
+def publish_tombstone(content_hash: str, project_dir=None) -> Published:
     """Publish a forget so teammates can act on it (#600 slice B).
 
     A hash-only row — {ts, key, author}, never the text (#321) — appended
@@ -913,31 +968,24 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
 
     Gated on config.team_enabled(): nothing is published into a team the
     user has not opted into. Best-effort — a failed publish never costs the
-    local deletion, which already happened by the time this runs."""
+    local deletion, which already happened by the time this runs; it is
+    reported in `Published.failed` and `forget` exits 4 on it."""
     if not content_hash or not config.team_enabled():
-        return []
+        return Published()
+    return _publish_keys([content_hash], _resolved(project_dir))
+
+
+def republish_tombstones(project_dir=None) -> Published:
+    """Publish every standing local `forgotten:` key the own sidecar is
+    missing (`daimon forget --republish`): the cure for a publish that
+    failed. Presence-checked, so it is safe to repeat. Gated on
+    `team_enabled`; an unproven or over-cap sidecar is reported in
+    `Published.failed` and left alone."""
+    if not config.team_enabled():
+        return Published()
     project_dir = _resolved(project_dir)
-    written: list[str] = []
-    row = json.dumps({
-        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "key": content_hash,
-        "author": config.author(),
-    }, ensure_ascii=False)
-    for adir in _own_team_dirs(project_dir):
-        path = adir / _TOMBSTONE_NAME
-        try:
-            if path.exists() and content_hash in _tombstone_keys(path).keys:
-                continue
-            adir.mkdir(parents=True, exist_ok=True)
-            # lock=False: this dir is committed by teamsync._commit_own, and a
-            # .pointer.lock sidecar would travel to every teammate.
-            jsonl.append_lines(
-                path, [row], lock=False,
-                posture=jsonl.lazy_posture(path, Writer.HUMAN))
-        except OSError:
-            continue
-        written.append(str(path))
-    return written
+    return _publish_keys(sorted(forgotten_content_keys(project_dir)),
+                         project_dir)
 
 
 # One ledger is read on the briefing path, so it cannot be unbounded: a

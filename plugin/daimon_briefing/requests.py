@@ -2857,6 +2857,7 @@ def status_counts(project_dir=None) -> dict:
     return {"open_sent": open_sent, "awaiting_you": awaiting, "notes": notes}
 
 
+@jsonl.reaching(_path, lambda row, key: key in row_content_keys(row))
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     """Remove every record holding `content_key` in a plaintext field.
 

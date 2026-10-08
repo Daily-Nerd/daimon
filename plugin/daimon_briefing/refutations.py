@@ -769,6 +769,7 @@ def active_rulings_reached(keys, *, item_ids=(), project_dir=None) -> list[str]:
         and folded[rid].get("state") == "active")
 
 
+@jsonl.reaching(_path, lambda row, key: key in row_content_keys(row))
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     """Remove every record holding `content_key` in a plaintext field (#578).
 

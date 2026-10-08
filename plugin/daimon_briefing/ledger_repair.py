@@ -14,10 +14,25 @@ from . import (amendments, config, jsonl, normalize, refutations,
                relations, requests, store, surfaces, trust)
 
 
+class Unreached(NamedTuple):
+    """A surface forget could not vouch for (#1132 PR 10b, D10.5): which
+    ledger file, what `read` judged it, how many torn lines it holds, and
+    whether it carries plaintext (a ledger that does not never fails forget;
+    it is only reported)."""
+    name: str
+    state: jsonl.Health
+    torn: int
+    plaintext: bool = True
+    detail: str = ""
+    unscannable: str = ""
+
+
 class Purged(NamedTuple):
-    """What `forget_quarantined_lines` did: envelope rows removed and kept."""
+    """What `forget_quarantined_lines` did: envelope rows removed and kept,
+    and the sidecars it could not vouch for."""
     purged: int
     kept: int
+    unreached: tuple = ()
 
 
 def _bucket_dir(project_dir) -> Path | None:
@@ -81,13 +96,27 @@ def forget_quarantined_lines(content_key: str, *, text: str = "",
         kept += 1
         return line
 
+    unreached = []
     for path in sidecars(bucket):
         before = kept
         try:
             purged += jsonl.rewrite(path, drop, write=_stage)
         except OSError:
             kept = before
-    return Purged(purged, kept)
+        got = jsonl.judge_reach(path, [], lambda row: _holds_value(
+            row, content_key, spellings))
+        if not got.reached:
+            unreached.append(Unreached(path.name, got.state, got.torn, True,
+                                       got.detail, got.unscannable))
+    return Purged(purged, kept, tuple(unreached))
+
+
+def _holds_value(row, content_key, spellings) -> bool:
+    """Does a sidecar envelope row still carry the forgotten value."""
+    body = row.get("text") if isinstance(row, dict) else None
+    return isinstance(body, str) and (
+        any(s in body for s in spellings)
+        or holds_forgotten_key(body, {content_key}))
 
 
 class Scrubbed(NamedTuple):
@@ -99,6 +128,8 @@ class Scrubbed(NamedTuple):
     requests: tuple = ()
     quarantines: tuple = ()
     lines: Purged = Purged(0, 0)
+    # The surfaces forget could not vouch for (`Unreached`), in ledger order.
+    unreached: tuple = ()
 
 
 def scrub_forgotten_key(content_key: str, *, item_id: str = "",
@@ -123,11 +154,12 @@ def scrub_forgotten_key(content_key: str, *, item_id: str = "",
     refuted = refutations.forget_content_key(content_key,
                                              project_dir=project_dir)
     related = relations.forget_item_id(item_id, project_dir=project_dir)
-    amended = set(amendments.forget_content_key(content_key,
-                                                project_dir=project_dir))
+    amend_parts = [amendments.forget_content_key(content_key,
+                                                 project_dir=project_dir)]
     for doomed in sorted(({item_id} | set(sibling_ids)) - {""}):
-        amended.update(amendments.forget_item_id(doomed,
-                                                 project_dir=project_dir))
+        amend_parts.append(amendments.forget_item_id(doomed,
+                                                     project_dir=project_dir))
+    amended = {rid for part in amend_parts for rid in part}
     requested = requests.forget_content_key(content_key,
                                             project_dir=project_dir)
     # A quarantine is a human verdict that withholds a value: redacted in
@@ -136,9 +168,29 @@ def scrub_forgotten_key(content_key: str, *, item_id: str = "",
                                            project_dir=project_dir)
     lines = forget_quarantined_lines(content_key, text=text,
                                      project_dir=project_dir)
+    unreached = [u for u in (
+        _unreached("refutations.jsonl", [refuted], True),
+        _unreached("relations.jsonl", [related], False),
+        _unreached("amendments.jsonl", amend_parts, True),
+        _unreached("requests.jsonl", [requested], True),
+        _unreached("trust.jsonl", [quarantined], True)) if u]
     return Scrubbed(events, tuple(refuted), tuple(related),
                     tuple(sorted(amended)), tuple(requested),
-                    tuple(quarantined), lines)
+                    tuple(quarantined), lines,
+                    tuple(unreached) + tuple(lines.unreached))
+
+
+def _unreached(name: str, parts, plaintext: bool) -> Unreached | None:
+    """The `Unreached` for a ledger one or more deleter calls ran on: None
+    when every call reached it (a per-sibling deleter ANDs across its
+    calls)."""
+    # A deleter that returned a plain list says nothing about its ledger and
+    # counts as reached (a stub in a test, a deleter not yet converted).
+    bad = [p for p in parts if not getattr(p, "reached", True)]
+    if not bad:
+        return None
+    return Unreached(name, bad[0].state, max(p.torn for p in bad), plaintext,
+                     bad[0].detail, bad[0].unscannable)
 
 
 class Report(NamedTuple):
@@ -150,6 +202,7 @@ class Report(NamedTuple):
     garbage: int = 0
     sidecar: str = ""          # the sidecar path, when lines moved to it
     sidecar_held: int = 0      # envelope rows it already held before this run
+    sidecar_rows: int = 0      # envelope rows it holds after this run
     keys: int = 0              # forget tombstone keys re-scrubbed
     rows: int = 0              # records removed or redacted by that scrub
     scrub_skipped: str = ""    # why the re-scrub could not run
@@ -305,7 +358,7 @@ def _run(project_dir, ledger: str, approve, dry_run: bool) -> Report:
             f"transient ({read.detail}); not touched, try again"))
     if read.health is jsonl.Health.UNREADABLE and read.detail != "garbage":
         return Report(ledger, "error", error=f"unreadable ({read.detail})")
-    rejoined = torn = garbage = held = 0
+    rejoined = torn = garbage = held = total = 0
     try:
         if read.health is not jsonl.Health.OK:
             # One lock hold from the read to the last swap: an append that
@@ -316,7 +369,7 @@ def _run(project_dir, ledger: str, approve, dry_run: bool) -> Report:
                 text = path.read_text(encoding="utf-8",
                                       errors="surrogateescape")
                 part = jsonl.partition(text)
-                held, _total = _quarantine(path, sidecar, part)
+                held, total = _quarantine(path, sidecar, part)
             rejoined, torn, garbage = (part.split, len(part.torn),
                                        len(part.garbage))
         keys, rows, skipped, rulings, refusal = _rescrub(
@@ -327,8 +380,8 @@ def _run(project_dir, ledger: str, approve, dry_run: bool) -> Report:
     changed = bool(rejoined or torn or garbage or rows)
     return Report(ledger, "repaired" if changed else "nothing", rejoined,
                   torn, garbage, str(sidecar) if torn or garbage else "",
-                  held if torn or garbage else 0, keys, rows, skipped,
-                  rulings, refusal)
+                  held if torn or garbage else 0, total if torn or garbage else 0,
+                  keys, rows, skipped, rulings, refusal)
 
 
 @contextmanager

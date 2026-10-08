@@ -557,6 +557,10 @@ def _row_item_ids(row: dict) -> set[str]:
     return out
 
 
+# No plaintext lives here, so a torn line cannot hide the value: only a ledger
+# that was not READ leaves this unreached.
+@jsonl.reaching(_path, lambda row, item: str(item or "") in _row_item_ids(row),
+                plaintext=False)
 def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     """Remove every record whose edge touches `item_id` (#678 fork A).
 

@@ -311,7 +311,8 @@ def test_a_failed_publish_never_costs_the_local_deletion(
                            project_dir=PROJECT, writer=Writer.HUMAN)
     assert _local_plaintext_present(), \
         "seed failed — the canary must be on disk BEFORE we assert it is gone"
-    assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 0
+    # Exit 4: scrubbed, with the team publish unreached (#1132 PR 10b).
+    assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 4
     assert store.publish_tombstone(KEY, project_dir=PROJECT) == [], \
         "an unwritable sidecar must report nothing published, not raise"
     assert not _local_plaintext_present(), \

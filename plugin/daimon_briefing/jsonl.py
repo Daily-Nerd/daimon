@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import enum
 import errno
+import functools
 import json
 import os
 import re
@@ -403,6 +404,66 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
     else:
         health, detail = Health.OK, ""
     return Read(health, rows, torn, split, garbage, detail, undecodable)
+
+
+class Reached(list):
+    """What a forget deleter removed, and whether it REACHED its ledger (#1132
+    PR 10b, D10.5). A `list` of the removed ids, so every `== [...]` assertion
+    in the suites holds, with three facts about the ledger it left behind.
+
+    `reached` is True only when the ledger was PROVEN and the value is gone
+    from every row that can be read. A plaintext ledger with a torn line is
+    NOT reached: `rewrite` writes a line it cannot parse back verbatim, and
+    that line may hold the value. `state` is what `read` judged afterwards and
+    `torn` how many torn lines it holds."""
+
+    def __init__(self, ids=(), *, reached: bool = True,
+                 state: "Health | None" = None, torn: int = 0,
+                 detail: str = "", unscannable: str = ""):
+        super().__init__(ids)
+        self.reached = reached
+        self.state = Health.OK if state is None else state
+        self.torn = torn
+        self.detail = detail
+        self.unscannable = unscannable
+
+
+def judge_reach(path, removed, holds: Callable[[dict], bool], *,
+                plaintext: bool = True) -> Reached:
+    """`removed` as a `Reached`, judged by reading `path` again: the ledger
+    must not be TRANSIENT or UNREADABLE, must hold no torn line when it
+    carries plaintext, and no row it can read may still `hold` the value.
+    Judging the ledger afterwards, rather than trusting a deleter's own
+    bookkeeping, is what makes a failed rewrite on a healthy ledger visible."""
+    if path is None:
+        return Reached(removed, state=Health.ABSENT)
+    got = read(path)
+    if got.health is Health.ABSENT:
+        return Reached(removed, state=Health.ABSENT)
+    unproven = got.health in (Health.TRANSIENT, Health.UNREADABLE)
+    unread = plaintext and got.torn > 0
+    still = any(holds(row) for row in got.rows)
+    return Reached(removed, reached=not (unproven or unread or still),
+                   state=got.health, torn=got.torn, detail=got.detail,
+                   unscannable=got.cannot_scan)
+
+
+def reaching(path_of: Callable, holds: Callable, *, plaintext: bool = True):
+    """Decorate a forget deleter `fn(key, *, project_dir=None, ...)` so it
+    returns a `Reached`. `path_of(project_dir)` names its ledger and
+    `holds(row, key)` says whether a row still carries the value. A dry run
+    returns what the deleter returned."""
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(key, *args, **kwargs):
+            removed = fn(key, *args, **kwargs)
+            if kwargs.get("dry_run"):
+                return removed
+            return judge_reach(path_of(kwargs.get("project_dir")), removed,
+                               lambda row: holds(row, key),
+                               plaintext=plaintext)
+        return inner
+    return wrap
 
 
 # ---- #1132 PR 10b: the write exits judge the ledger first ------------------

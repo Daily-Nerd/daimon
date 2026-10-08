@@ -595,6 +595,7 @@ def _rewrite_without(doomed: set[str], project_dir=None) -> list[str]:
     return sorted(doomed)
 
 
+@jsonl.reaching(_path, lambda row, key: key in row_content_keys(row))
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     """Remove every record holding `content_key` in a plaintext field.
 
@@ -612,6 +613,7 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     return _rewrite_without(doomed, project_dir=project_dir)
 
 
+@jsonl.reaching(_path, lambda row, item: str(row.get("item_id") or "") == str(item or ""))
 def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     """Remove every record targeting a forgotten item.
 
