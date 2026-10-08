@@ -20,7 +20,11 @@ from pathlib import Path
 from . import config, jsonl, ledger_repair, normalize, privacy, store, surfaces
 
 MARKER_NAME = store._LEDGER_CENSUS_NAME
-MARKER_VERSION = 1
+# 1 = the census ran once; 2 = "postures live" (#1132 PR 10b): every write exit
+# now judges its ledger, so a bucket stamped before that has its census run
+# once more. The marker RECORDS the once-per-upgrade census; the gate is the
+# posture read on every write, never this file.
+MARKER_VERSION = 2
 
 _MIGRATIONS = "migrations.jsonl"
 _LOG_LEDGERS = ("checks.jsonl", "recall-delivery.jsonl")
@@ -128,16 +132,28 @@ def census_machine() -> dict:
     return {key: _counts(jsonl.read(path)) for key, path in found.items()}
 
 
+def _marker_version(path: Path) -> int:
+    """The version an existing marker carries; a marker that is unreadable,
+    not an object, or has no integer version counts as 0."""
+    try:
+        version = json.loads(path.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return version if isinstance(version, int) else 0
+
+
 def record_marker(slug: str, *, force: bool = False) -> None:
     """Stamp `checkpoints/<slug>/.ledger-census` with this bucket's census,
-    once. An existing marker is left alone and costs one stat, unless
-    `force` (a repair re-stamps it). The marker
+    once per marker version. A marker at the current version is left alone
+    and costs one small read, unless `force` (a repair or a bucket migration
+    re-stamps it); an older one, or one that cannot be read, is stamped
+    again. The marker
     carries a version, a UTC stamp and the per-ledger state and counts: no
     row content, no checkpoint-surface walk (that part of the census grows
     with the whole store, and a first write should not pay for it). Raises on
     failure; the caller (`store._record_ledger_census`) owns the swallowing."""
     path = config.checkpoint_dir() / slug / MARKER_NAME
-    if path.exists() and not force:
+    if path.exists() and not force and _marker_version(path) >= MARKER_VERSION:
         return
     census = census_bucket(slug, checkpoints=False)
     marker = {"version": MARKER_VERSION,

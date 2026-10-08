@@ -465,6 +465,33 @@ def admission_notes(slug: str, *, text: str | None = None,
         len(held), held[0]["state"], held[0]["hint"]),)
 
 
+def admission_waiting(slug: str, *, text: str | None = None,
+                      now: float | None = None) -> int:
+    """How many sessions of `slug` were refused and can now be healed: the
+    ledger reads again, the transcript is on disk, and `heal` will take them
+    one per run (D10.4). Zero while the ledger is still unproven (they are
+    held, not waiting) and for a refusal whose transcript is gone."""
+    if not slug:
+        return 0
+    if text is None:
+        try:
+            text = (config.log_dir() / "serialize.log").read_text(
+                encoding="utf-8")
+        except OSError:
+            return 0
+    t = now if now is not None else time.time()
+    long_fold = _admission_ledger(text, t)
+    if not long_fold:
+        return 0
+    return sum(
+        1 for f in _outstanding_failures(
+            long_fold, t, _has_checkpoint, config.hung_after_seconds(),
+            lambda p: bool(p) and Path(p).exists(),
+            checkpoint_covers=checkpoint_covers,
+            admission_state=admission_state)
+        if f["class"] == "healable" and _slug_of(f["project"]) == slug)
+
+
 # The admission pass folds this many trailing bytes of serialize.log. A
 # refusal is the one failure that must outlive the 200-line tail, because it
 # waits for a ledger repair that can take days; the window bounds the cost.

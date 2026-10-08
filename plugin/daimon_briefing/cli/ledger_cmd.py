@@ -9,7 +9,8 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import ledger_repair, render
+from .. import ledger as _ledger
+from .. import ledger_repair, render, store
 
 
 def _report_lines(report: ledger_repair.Report) -> list:
@@ -32,6 +33,11 @@ def _report_lines(report: ledger_repair.Report) -> list:
             lines.append(
                 f"  {report.sidecar_held} line(s) already there; unrelated "
                 "fragments are kept in that file")
+        if report.sidecar_rows:
+            lines.append(
+                f"  the sidecar now holds {report.sidecar_rows} row(s); a "
+                "value fused into a torn row needs manual review of that "
+                "file")
     if report.keys:
         lines.append(
             f"{rescrub} {report.keys} forgotten key(s): "
@@ -76,7 +82,17 @@ def _cmd_ledger_repair(args) -> int:
     if report.outcome == "error":
         print(f"cannot repair {ledger}: {report.error}")
         return 1
-    render.render_ledger_lines(_report_lines(report))
+    lines = _report_lines(report)
+    # D10.4: a repaired events ledger lets the sessions it refused be
+    # serialized; heal takes ONE per run, so say how many are waiting.
+    if (ledger == "events.jsonl" and not report.dry_run
+            and report.outcome == "repaired"):
+        waiting = _ledger.admission_waiting(
+            store.project_slug(store._resolved(project)) or "")
+        if waiting:
+            lines.append(f"{waiting} session(s) wait to be serialized; "
+                         "daimon heal repairs one per run")
+    render.render_ledger_lines(lines)
     return 1 if report.scrub_skipped or report.refusal else 0
 
 

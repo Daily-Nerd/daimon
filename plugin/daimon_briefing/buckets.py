@@ -644,6 +644,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
         else:
             for path in _pointer_files(target_dir):
                 _restamp(path, legacy, target)
+            store._record_ledger_census(target, force=True)
             record = _record("rename", legacy, target, pointers=pointers,
                              by=by)
             _append_record(record)
@@ -713,6 +714,8 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
             (legacy_dir / name).unlink()
         except OSError:
             pass
+    # The target now holds rows it did not hold when its marker was stamped.
+    store._record_ledger_census(target, force=True)
     leftovers = _leftovers(legacy_dir)
     if not leftovers:
         try:
