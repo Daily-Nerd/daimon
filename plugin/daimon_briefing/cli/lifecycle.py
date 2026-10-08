@@ -1103,12 +1103,12 @@ def _cmd_decide(args) -> int:
     if everywhere and _cli._refuses_caller_scope(all_projects=True):
         return 2
     project = _cli._resolve_project(args.project)
-    result = pending.queue(project_dir=project)
+    result, lane_notes = pending.queue_with_notes(project_dir=project)
     rows = result.get("rows") or []
     suppressed = (result.get("excluded") or {}).get("suppressed") or 0
     # #1132 PR 10a: a lane whose ledger cannot be read is omitted from the
     # rows; the notes say so, in the words every other surface uses.
-    for note in pending.queue_notes(project_dir=project):
+    for note in lane_notes:
         print(note)
     # With the text itself on screen the counts footer is redundant.
     foreign = {} if everywhere else pending.foreign_counts(project_dir=project)

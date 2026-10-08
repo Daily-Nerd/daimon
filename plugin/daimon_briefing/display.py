@@ -257,10 +257,32 @@ def elsewhere_degraded_note(count: int, scoped: bool) -> str:
                          "lines; their counts may be incomplete")
 
 
-def cap_notes(lines, cap: int = NOTE_CAP) -> tuple[str, ...]:
+class Capped(tuple):
+    """A tuple of note lines that has been capped, remembering every line it
+    was capped from (`all`), so a later composition point can add its own
+    notes and cap ONCE over the whole set instead of appending after a cap.
+    Equal to the plain tuple it looks like."""
+
+    all: tuple = ()
+
+
+def cap_notes(lines, cap: int = NOTE_CAP) -> "Capped":
     """`lines` limited to `cap`, then `notes-capped` with the rest counted."""
     lines = tuple(lines)
-    if len(lines) <= cap:
-        return lines
-    return lines[:cap] + (marks.warning(
+    shown = lines if len(lines) <= cap else lines[:cap] + (marks.warning(
         f"and {len(lines) - cap} more notes; run: daimon status"),)
+    out = Capped(shown)
+    out.all = lines
+    return out
+
+
+def all_notes(notes) -> tuple:
+    """Every note line behind `notes`: what a `cap_notes` result was capped
+    from, or the tuple itself when it was never capped."""
+    return tuple(getattr(notes, "all", None) or notes)
+
+
+def merge_notes(base, extra) -> "Capped":
+    """`base` (capped or not) joined with `extra`, each line once, capped
+    once: the one cap of a surface that composes notes from several reads."""
+    return cap_notes(dict.fromkeys([*all_notes(base), *extra]))

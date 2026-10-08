@@ -1399,7 +1399,7 @@ def listing(project_dir=None) -> list[dict]:
 
 def listed(project_dir=None) -> "Inbox":
     """Every record in this bucket, undecided first — the `request list`
-    order — and the notes of the cross-bucket read behind it. Suppressed records are HERE by construction (D5): suppression
+    order, and the notes of the cross-bucket read behind it. Suppressed records are HERE by construction (D5): suppression
     takes away panel placement, never visibility.
 
     #798: read through the sender join, not the bucket-local fold. A request's
@@ -2332,7 +2332,7 @@ def join(project_dir=None) -> Join:
 
 def inbox(project_dir=None) -> Inbox:
     """Every request addressed to this project, undecided first — the
-    `request inbox` order — and the notes of the join that produced it.
+    `request inbox` order, and the notes of the join that produced it.
     Suppressed records are HERE by construction (D3/D5): suppression takes
     away panel placement, never visibility."""
     got = join(project_dir)

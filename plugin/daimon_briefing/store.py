@@ -992,8 +992,8 @@ def _tombstone_keys(path) -> TombstoneRead:
         return TombstoneRead(set(), jsonl.Health.UNREADABLE, True)
     rows = []
     for line in head.decode("utf-8", errors="surrogateescape").splitlines():
-        kind, row = jsonl._classify(line)
-        if kind == jsonl._ROW:
+        kind, row = jsonl.classify_line(line)
+        if kind == jsonl.ROW:
             rows.append(row)
     return TombstoneRead(_row_keys(rows), jsonl.Health.DEGRADED, True)
 
@@ -1047,14 +1047,6 @@ def foreign_tombstones() -> ForeignTombstones:
         elif got.health is jsonl.Health.DEGRADED:
             degraded.add(path.parent.name)
     return ForeignTombstones(keys, frozenset(unproven), frozenset(degraded))
-
-
-def foreign_unproven_authors() -> frozenset:
-    """The author directory names (`project_slug(author)`) whose published
-    tombstone ledger is TRANSIENT, an OS error, undecodable, garbage or over
-    the cap. A reader skips these authors: their forgets cannot be proven
-    applied (O3)."""
-    return foreign_tombstones().unproven
 
 
 def foreign_forgotten_content_keys() -> set[str]:

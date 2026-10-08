@@ -206,7 +206,7 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
     request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines)
+        request_lines, verdict_lines, owed_lines, notes=notes)
     closed = snap is not None and snap.closed
     blocks = [blk for blk in ([briefing.GREETING] if closed else [],
                               list(notes), rulings, decision_count_block,
@@ -224,7 +224,7 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
                              "verdict": verdict_cards}
 
 
-def _panel_lines(project_dir, worldcheck_project, snap=None):
+def _panel_lines(project_dir, worldcheck_project, snap=None, notes=()):
     """The skeleton panels (rulings, decision count, request, verdict, owed)
     computed once, shared by every render path once a checkpoint exists, and
     the request and verdict cards that same read produced. Kept as one seam
@@ -243,7 +243,7 @@ def _panel_lines(project_dir, worldcheck_project, snap=None):
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
     request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines)
+        request_lines, verdict_lines, owed_lines, notes=notes)
     return (rulings, decision_count, request_lines, verdict_lines, owed_lines,
             {"request": request_cards, "verdict": verdict_cards})
 
@@ -334,7 +334,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             _print_trailer(trailer)
             return _manifest(llm_cards)
         (rulings, decision_count, request_lines, verdict_lines, owed_lines,
-         cards) = _panel_lines(project_dir, worldcheck_project, snap)
+         cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
         # #204: degrade verbatim labels when the receipt can't be locally
         # confirmed. Cheap check (sidecar + byte match).
         degraded = briefing.receipt_degraded(checkpoint)
@@ -381,7 +381,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
              end="")
         return _manifest(cards)
     (rulings, decision_count, request_lines, verdict_lines, owed_lines,
-     cards) = _panel_lines(project_dir, worldcheck_project, snap)
+     cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
     # #204: degrade verbatim labels when the receipt can't be locally
     # confirmed. Cheap check (sidecar + byte match).
     degraded = briefing.receipt_degraded(checkpoint)

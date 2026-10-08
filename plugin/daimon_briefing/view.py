@@ -429,13 +429,14 @@ class LedgerState(NamedTuple):
     unscannable: str
 
 
-def ledger_states(project) -> dict:
-    """Each bucket ledger file name of `project` to its `LedgerState`. No
-    fold, no rows: a caller that needs to say what is wrong with a ledger and
-    what to do about it (`status`) asks here, never `jsonl.read`."""
+def ledger_states(project, names=None) -> dict:
+    """Each bucket ledger file name of `project` (or just `names`) to its
+    `LedgerState`. No fold, no rows: a caller that needs to say what is wrong
+    with a ledger and what to do about it (`status`) asks here, never
+    `jsonl.read`."""
     bucket = _bucket(project)
     out = {}
-    for name in surfaces.bucket_ledger_names():
+    for name in (names or surfaces.bucket_ledger_names()):
         read = (jsonl.Read(Health.ABSENT, []) if bucket is None
                 else jsonl.read(bucket / name))
         out[name] = LedgerState(read.health, read.detail, read.cannot_scan)
@@ -467,7 +468,10 @@ class Judge:
     rows: the same `Snapshot` fields `classify` reads (the machine forgotten
     set, this bucket's forgotten ids and active quarantines, `closed`) and
     nothing else. `empty` is the fast path: when True no row of the bucket
-    can be withheld, so a caller skips the per-row work."""
+    can be withheld, so a caller skips the per-row work. `empty` ignores
+    `index_closed` on purpose: the bucket's own rows are not withheld for the
+    briefing (D3), so a recall caller must check `index_closed` before taking
+    the fast path, as `recall._judge_rows` and `recall._build` do."""
 
     snap: Snapshot
 

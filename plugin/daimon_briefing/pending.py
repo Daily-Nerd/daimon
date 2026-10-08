@@ -148,7 +148,7 @@ def _order_key(row: dict, seq: int) -> tuple:
             _KIND_RANK.get(row["kind"], 9), row["id"])
 
 
-def _request_rows(project_dir, slug) -> tuple[list, int]:
+def _request_rows(project_dir, slug, joined=None) -> tuple[list, int]:
     """Asks addressed to this project that no human has answered.
 
     Sourced from `requests.recipient_join`, the cross-bucket inbox join —
@@ -159,7 +159,9 @@ def _request_rows(project_dir, slug) -> tuple[list, int]:
     outgoing asks. `requests.inbox_listing` is the shipped precedent for
     consuming it, including this same `state not in _SENDER_MOVABLE` filter.
     """
-    records = requests.recipient_join(project_dir=project_dir)
+    # `joined` is the join a caller already holds (`queue_with_notes`), so the
+    # lane and the notes come from one read.
+    records = (joined or requests.join(project_dir)).by_id
     # `seq` breaks the `waiting_since` tie on append order (see
     # `_order_key`), and that order lives in whichever bucket actually wrote
     # the `opened` row — the record's own `from_slug`, or this bucket itself
@@ -425,33 +427,44 @@ class Queue(NamedTuple):
     notes: tuple
 
 
-def queue_notes(*, project_dir=None) -> tuple:
+def queue_notes(*, project_dir=None, joined=None) -> tuple:
     """The notes of the ledgers `queue`'s lanes read: one line for each lane
     ledger (requests, refutations, amendments, trust) whose registry read
     posture is not OPEN in its current state, and `sender-skipped` for the
     senders the request lane's join left out. A lane that cannot be read is
     still omitted from the rows (the fail-open contract of `queue`); what
-    changes is that it is said."""
+    changes is that it is said. `joined` is the request join a caller already
+    holds."""
     project_dir = config.resolve_project_dir(project_dir)
     slug = store.project_slug(project_dir)
     notes: list[str] = []
     if slug:
-        states = view.ledger_states(slug)
-        for name in ("requests.jsonl", "refutations.jsonl",
-                     "amendments.jsonl", "trust.jsonl"):
+        lanes = ("requests.jsonl", "refutations.jsonl", "amendments.jsonl",
+                 "trust.jsonl")
+        states = view.ledger_states(slug, lanes)
+        for name in lanes:
             st = states[name]
             if view.posture(name, st.health) is not view.ReadPosture.OPEN:
                 notes.append(display.ledger_note(
                     name, st.health.value, st.detail, st.unscannable))
-    notes.extend(requests.join(project_dir).notes)
+    notes.extend((joined or requests.join(project_dir)).notes)
     return display.cap_notes(notes)
+
+
+def queue_with_notes(*, project_dir=None) -> tuple:
+    """`(queue(...), queue_notes(...))` from ONE read of the request join:
+    what a surface that shows both asks for."""
+    project_dir = config.resolve_project_dir(project_dir)
+    joined = requests.join(project_dir)
+    return (_queue(project_dir, joined),
+            queue_notes(project_dir=project_dir, joined=joined))
 
 
 def queue_typed(*, project_dir=None) -> Queue:
     """`queue`'s rows with `queue_notes`: the typed core a surface that shows
     the notes asks for. `queue` itself keeps its dict shape (`api.queue`)."""
-    return Queue(queue(project_dir=project_dir)["rows"],
-                 queue_notes(project_dir=project_dir))
+    result, notes = queue_with_notes(project_dir=project_dir)
+    return Queue(result["rows"], notes)
 
 
 def queue(*, project_dir=None) -> dict:
@@ -464,11 +477,14 @@ def queue(*, project_dir=None) -> dict:
     # #948: one resolution, shared with the CLI. Everything below keys
     # on the project, so a caller standing in a subdir must not answer
     # for a bucket of its own.
-    project_dir = config.resolve_project_dir(project_dir)
+    return _queue(config.resolve_project_dir(project_dir), None)
+
+
+def _queue(project_dir, joined) -> dict:
     slug = store.project_slug(project_dir)
     pairs, suppressed = [], 0
     try:
-        request_pairs, suppressed = _request_rows(project_dir, slug)
+        request_pairs, suppressed = _request_rows(project_dir, slug, joined)
         pairs += request_pairs
     except Exception:
         pass

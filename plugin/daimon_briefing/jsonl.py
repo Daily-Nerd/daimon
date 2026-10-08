@@ -273,20 +273,20 @@ def _is_dataless(st: os.stat_result) -> bool:
     return bool(getattr(st, "st_flags", 0) & _SF_DATALESS)
 
 
-_ROW, _TORN, _GARBAGE = "row", "torn", "garbage"
+ROW, TORN, GARBAGE = "row", "torn", "garbage"
 
 
-def _classify(line: str) -> tuple[str, object]:
+def classify_line(line: str) -> tuple[str, object]:
     """One line -> (kind, parsed row). A row parses as a JSON object; TORN
     opens like one (`{`) and does not parse; anything else is GARBAGE,
     undecodable bytes included. `read` and `partition` both judge by this."""
     if _UNDECODABLE.search(line):
-        return _GARBAGE, None
+        return GARBAGE, None
     try:
         row = json.loads(line)
     except (ValueError, RecursionError):
-        return (_TORN if line.lstrip().startswith("{") else _GARBAGE), None
-    return (_ROW, row) if isinstance(row, dict) else (_GARBAGE, None)
+        return (TORN if line.lstrip().startswith("{") else GARBAGE), None
+    return (ROW, row) if isinstance(row, dict) else (GARBAGE, None)
 
 
 def _read_bytes(path: Path) -> bytes:
@@ -344,10 +344,10 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
     rows: list = []
     torn = garbage = undecodable = 0
     for line in lines:
-        kind, row = _classify(line)
-        if kind == _ROW:
+        kind, row = classify_line(line)
+        if kind == ROW:
             rows.append(row)
-        elif kind == _TORN:
+        elif kind == TORN:
             torn += 1
         else:
             garbage += 1
@@ -386,9 +386,9 @@ def partition(text: str) -> Partition:
     garbage: list[str] = []
     moved: list[tuple[str, str]] = []
     for line in lines:
-        kind, _row = _classify(line)
-        {_ROW: rows, _TORN: torn, _GARBAGE: garbage}[kind].append(line)
-        if kind != _ROW:
+        kind, _row = classify_line(line)
+        {ROW: rows, TORN: torn, GARBAGE: garbage}[kind].append(line)
+        if kind != ROW:
             moved.append((kind, line))
     return Partition(rows, torn, garbage, split, moved)
 

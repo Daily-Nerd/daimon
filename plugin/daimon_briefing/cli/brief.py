@@ -18,6 +18,7 @@ from .. import (
     anchor,
     briefing,
     config,
+    display,
     effects_commit,
     ledger,
     recall,
@@ -148,7 +149,7 @@ def _withheld_trailer(own, team) -> list:
     resolved = (own.suppressed if own else 0) + (team.resolved if team else 0)
     quarantined = ((own.quarantined if own else 0)
                    + (team.quarantined if team else 0))
-    trailer = list(team.notes) if team else []
+    trailer = []
     if resolved:
         # #981: the count covers the Teammates section too, and says how
         # many were a teammate's, since `status --suppressed` lists only the
@@ -198,6 +199,10 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     except Exception:
         handoff = None
     trailer = _withheld_trailer(annotated, team_counts)
+    # One cap over every note this brief carries: the snapshot's, the request
+    # joins' (merged in `briefing.prepare`) and the teammates' (#1132 PR 10a).
+    notes = display.merge_notes(annotated.notes if annotated else (),
+                                team_counts.notes if team_counts else ())
     # #1128: the note rides INTO render_brief so it is charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the
     # budgeted brief actually showed of each panel.
@@ -207,7 +212,7 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                                   trailer=trailer,
                                   loops_pointer=loops_pointer,
                                   snap=annotated.snapshot if annotated else None,
-                                  notes=annotated.notes if annotated else ())
+                                  notes=notes)
 
     # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare, shared
     # with the MCP tool and the Hermes hook. It is opt-in, budget-bounded and

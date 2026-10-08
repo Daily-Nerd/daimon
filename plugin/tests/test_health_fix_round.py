@@ -586,3 +586,138 @@ def test_rich_status_prints_the_request_notes_too(monkeypatch, capsys):
     except Exception:
         pytest.skip("the minimal status payload is not enough for rich")
     assert "1 sender(s) skipped" in capsys.readouterr().out
+
+
+# ---- 10. cap once per surface -----------------------------------------------
+
+
+def test_a_brief_caps_all_of_its_notes_once(tmp_checkpoint_dir, monkeypatch,
+                                            capsys):
+    """Seven ledger notes, forget-incomplete, a skipped sender and an
+    unproven teammate (author-skipped and team-closed) are eleven candidate
+    notes: five lines and one count. The decision-count line's own
+    `elsewhere` note is part of that line, not of the note block."""
+    _write(OWN, ["our own decision"])
+    for name in ("events.jsonl", "refutations.jsonl", "amendments.jsonl",
+                 "relations.jsonl", "request_policy_tombstones.jsonl",
+                 "verification.jsonl", "trust.jsonl"):
+        _plant(OWN, name, b"{\"torn" if name == "trust.jsonl"
+               else b"<<<<<<< HEAD\n")
+    _ask()
+    _plant(SENDER, "requests.jsonl", b"<<<<<<< HEAD\n")
+    adir = _teammate(monkeypatch)
+    (adir / "tombstones.jsonl").write_bytes(b"<<<<<<< HEAD\n")
+    assert cli.main(["brief", "--project", OWN, "--team"]) == 0
+    warnings = [ln for ln in capsys.readouterr().out.splitlines()
+                if ln.startswith("⚠") and "other project(s)" not in ln]
+    capped = [ln for ln in warnings if "more notes; run: daimon status" in ln]
+    assert len(capped) == 1
+    assert warnings[-1] == capped[0]
+    assert len(warnings) == 6, warnings
+    assert warnings[-1] == "⚠ and 6 more notes; run: daimon status"
+
+
+def test_a_brief_with_few_notes_is_not_capped(tmp_checkpoint_dir, capsys):
+    _write(OWN, ["our own decision"])
+    _ask()
+    _plant(SENDER, "requests.jsonl", b"<<<<<<< HEAD\n")
+    assert cli.main(["brief", "--project", OWN]) == 0
+    out = capsys.readouterr().out
+    assert out.count("1 sender(s) skipped") == 1
+    assert "more notes" not in out
+
+
+def test_cap_notes_remembers_what_it_capped():
+    lines = [f"⚠ n{i}" for i in range(8)]
+    capped = display.cap_notes(lines)
+    assert len(capped) == 6 and display.all_notes(capped) == tuple(lines)
+    merged = display.merge_notes(capped, ["⚠ n3", "⚠ extra"])
+    assert display.all_notes(merged) == (*lines, "⚠ extra")
+    assert merged[-1] == "⚠ and 4 more notes; run: daimon status"
+    assert capped == tuple(capped)
+
+
+# ---- 11. loose ends ----------------------------------------------------------
+
+
+def test_queue_typed_reads_the_request_join_once(tmp_checkpoint_dir,
+                                                 monkeypatch):
+    from daimon_briefing import pending
+    _write(OWN, ["ours"])
+    _ask()
+    calls = []
+    real = requests.join
+    monkeypatch.setattr(requests, "join",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    got = pending.queue_typed(project_dir=OWN)
+    assert len(got.rows) == 1
+    assert len(calls) == 1
+
+
+def test_decide_reads_the_request_join_once(tmp_checkpoint_dir, monkeypatch,
+                                            capsys):
+    _write(OWN, ["ours"])
+    _ask()
+    calls = []
+    real = requests.join
+    monkeypatch.setattr(requests, "join",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert cli.main(["decide", "--project", OWN]) == 0
+    assert len(calls) == 1
+    assert "review the bar" in capsys.readouterr().out
+
+
+def test_queue_with_notes_is_queue_and_queue_notes(tmp_checkpoint_dir):
+    from daimon_briefing import pending
+    _write(OWN, ["ours"])
+    _ask()
+    _plant(OWN, "trust.jsonl", b"<<<<<<< HEAD\n")
+    result, notes = pending.queue_with_notes(project_dir=OWN)
+    assert result == pending.queue(project_dir=OWN)
+    assert notes == pending.queue_notes(project_dir=OWN)
+    assert notes and "trust.jsonl is unreadable" in notes[0]
+
+
+def test_ledger_states_can_be_narrowed_to_some_ledgers(tmp_checkpoint_dir):
+    _write(OWN, ["ours"])
+    got = view.ledger_states(OWN, ("trust.jsonl", "events.jsonl"))
+    assert set(got) == {"trust.jsonl", "events.jsonl"}
+
+
+def test_the_unused_author_helper_is_gone():
+    assert not hasattr(store, "foreign_unproven_authors")
+
+
+def test_jsonl_has_a_public_line_classifier():
+    assert jsonl.classify_line('{"a": 1}') == ("row", {"a": 1})
+    assert jsonl.classify_line('{"a": ')[0] == "torn"
+    assert jsonl.classify_line("<<<<<<< HEAD")[0] == "garbage"
+    assert jsonl.classify_line("[1, 2]")[0] == "garbage"
+    assert jsonl.classify_line("\udcff not utf-8")[0] == "garbage"
+    assert (jsonl.ROW, jsonl.TORN, jsonl.GARBAGE) == ("row", "torn", "garbage")
+
+
+def test_store_reaches_the_classifier_only_by_its_public_name():
+    import inspect
+    source = inspect.getsource(store._tombstone_keys)
+    assert "jsonl._" not in source and "jsonl.classify_line" in source
+
+
+def test_prepare_survives_a_join_that_raises(tmp_checkpoint_dir, monkeypatch):
+    import time
+    from daimon_briefing import briefing
+    _write(OWN, ["our own decision"])
+    _plant(OWN, "amendments.jsonl", b"<<<<<<< HEAD\n")
+    monkeypatch.setattr(requests, "join",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
+    got = briefing.prepare(OWN, time.time(), worldcheck_project=OWN)
+    assert [n for n in got.notes if "amendments.jsonl" in n]
+
+
+def test_a_panel_drops_a_warning_that_an_earlier_block_already_said():
+    from daimon_briefing import briefing
+    note = "⚠ 1 sender(s) skipped: a requests ledger cannot be read"
+    req, ver, owed = briefing.drop_repeated_notes(
+        ["Requests:", note], ["Decisions:", note], [note], notes=())
+    assert req == ["Requests:", note]
+    assert ver == ["Decisions:"] and owed == []

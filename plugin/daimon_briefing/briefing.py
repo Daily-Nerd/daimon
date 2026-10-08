@@ -749,11 +749,22 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         except Exception:
             wc_stats = None
             ledger_rows = []
+    notes = snap.notes()
+    if worldcheck_project and not opened.fell_back:
+        # The request panels of this brief read the same joins; their notes
+        # (a sender left out, or read around) join the snapshot's here, so
+        # the brief caps its notes once. Fail-open like the panels.
+        try:
+            notes = display.merge_notes(
+                notes, (*requests.join(worldcheck_project).notes,
+                        *requests.sent(worldcheck_project).notes))
+        except Exception:  # noqa: BLE001
+            pass
     return Annotated(
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
-        snap.notes(), opened.fell_back)
+        notes, opened.fell_back)
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -1679,11 +1690,13 @@ def verdict_panel(project_dir=None, *, mask=None):
     return lines, tuple(cards)
 
 
-def drop_repeated_notes(*blocks) -> list:
+def drop_repeated_notes(*blocks, notes=()) -> list:
     """The panel blocks with each warning line kept once, at its first
     appearance: the three request panels read the same joins, so a sender
-    left out would otherwise be said up to three times in one brief."""
-    seen: set = set()
+    left out would otherwise be said up to three times in one brief. A
+    warning the brief's own `notes` already carry (`prepare` merges the
+    joins' notes into them) is dropped from the panels too."""
+    seen: set = set(display.all_notes(notes)) | set(notes)
     out = []
     for block in blocks:
         kept = []
@@ -2407,7 +2420,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     owed_lines = (owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
     request_lines, verdict_lines, owed_lines = drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines)
+        request_lines, verdict_lines, owed_lines, notes=notes)
     if cards_out is not None:
         # Both panels print whole on this path: the caller stamps from these.
         cards_out.update(request=request_cards, verdict=verdict_cards)

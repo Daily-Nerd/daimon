@@ -208,13 +208,13 @@ def test_a_healthy_foreign_sidecar_contributes_keys_and_no_author_note(
         tmp_checkpoint_dir):
     _sidecar(data=_row())
     assert "k1" * 8 in store.foreign_forgotten_content_keys()
-    assert store.foreign_unproven_authors() == frozenset()
+    assert store.foreign_tombstones().unproven == frozenset()
     assert view.team_notes() == ()
 
 
 def test_a_garbage_line_makes_the_author_unproven(tmp_checkpoint_dir):
     _sidecar(data=_row() + b"<<<<<<< HEAD\n")
-    assert store.foreign_unproven_authors() == frozenset({"alice"})
+    assert store.foreign_tombstones().unproven == frozenset({"alice"})
     # The good line's key is still used: the set only grows.
     assert "k1" * 8 in store.foreign_forgotten_content_keys()
     assert view.team_notes() == (
@@ -225,7 +225,7 @@ def test_a_garbage_line_makes_the_author_unproven(tmp_checkpoint_dir):
 def test_a_torn_line_degrades_the_author_without_skipping_them(
         tmp_checkpoint_dir):
     _sidecar(data=_row() + b'{"ts": "x", "key": "tor')
-    assert store.foreign_unproven_authors() == frozenset()
+    assert store.foreign_tombstones().unproven == frozenset()
     assert view.team_notes() == (
         "⚠ a teammate's tombstones ledger has torn lines; "
         "their forgets may be incomplete",)
@@ -234,13 +234,13 @@ def test_a_torn_line_degrades_the_author_without_skipping_them(
 def test_an_over_cap_sidecar_is_unproven(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 60)
     _sidecar(data=_row() + _row("k2" * 8) + _row("k3" * 8))
-    assert store.foreign_unproven_authors() == frozenset({"alice"})
+    assert store.foreign_tombstones().unproven == frozenset({"alice"})
 
 
 def test_a_transient_sidecar_is_unproven(tmp_checkpoint_dir, monkeypatch):
     path = _sidecar(data=_row())
     _seam(monkeypatch, path, jsonl.Read(Health.TRANSIENT, [], detail="EBUSY"))
-    assert store.foreign_unproven_authors() == frozenset({"alice"})
+    assert store.foreign_tombstones().unproven == frozenset({"alice"})
 
 
 def test_the_tombstone_reader_returns_keys_plus_health(tmp_checkpoint_dir):
