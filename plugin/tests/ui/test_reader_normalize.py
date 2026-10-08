@@ -1,5 +1,7 @@
 import json
+from daimon_briefing import schema
 from daimon_ui import reader
+from tests.ui.scope import scoped
 from tests.ui.conftest import make_checkpoint
 
 def _write(bucket, name, data):
@@ -15,7 +17,7 @@ def test_normalizes_sections_and_trust(bucket):
         recent_decisions=[{"text": "chose B", "trust": "verbatim", "quote": "I like B", "because": "both audiences", "id": "r-aaa111aaa111", "carried_from": "prev-sid"}],
     )
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["ok"] is True
     keys = [s["key"] for s in got["sections"]]
     assert keys == ["verify_first", "decisions", "open_loops", "beliefs", "uncertainties", "contradictions"]
@@ -28,42 +30,42 @@ def test_normalizes_sections_and_trust(bucket):
 
 def test_bare_string_contradictions(bucket):
     _write(bucket, "latest.json", make_checkpoint(contradictions_flagged=["raw string item"]))
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     contra = got["sections"][5]["items"]
     assert contra[0]["text"] == "raw string item" and contra[0]["trust"] is None
 
 def test_unknown_format_version_is_partial(bucket):
     _write(bucket, "latest.json", make_checkpoint(format_version="D-099"))
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["ok"] is True and any("D-099" in p for p in got["partial"])
 
 def test_invalid_json_is_error(bucket):
     _write(bucket, "latest.json", "{torn")
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["ok"] is False
     err = got["error"]
     assert set(err) == {"what", "why", "fix"} and "daimon heal" in err["fix"]
 
 def test_bad_ref_rejected(bucket):
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "../../../etc/passwd")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "../../../etc/passwd")
     assert got["ok"] is False
 
 def test_worker_queue_never_leaks(bucket):
     _write(bucket, "latest.json", make_checkpoint())
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     texts = [i["text"] for s in got["sections"] for i in s["items"]]
     assert "x" not in texts
 
 def test_malformed_section_shape_drift(bucket):
     _write(bucket, "latest.json", make_checkpoint(strong_beliefs="not-a-list"))
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["ok"] is True
     beliefs = got["sections"][3]["items"]
     assert beliefs == []
     assert any("strong_beliefs" in p for p in got["partial"])
 
 def test_missing_pointer_in_chain_is_not_found(bucket):
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "prev-9")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "prev-9")
     assert got["ok"] is False
     err = got["error"]
     assert set(err) == {"what", "why", "fix"}
@@ -72,13 +74,13 @@ def test_missing_pointer_in_chain_is_not_found(bucket):
 def test_importance_valid_int_passes_through(bucket):
     cp = make_checkpoint(open_questions=[{"text": "t", "importance": 3, "external_state": True}])
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] == 3
 
 def test_importance_non_int_string_is_none(bucket):
     cp = make_checkpoint(open_questions=[{"text": "t", "importance": "high", "external_state": True}])
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] is None
 
 def test_importance_producer_range_passes_through(bucket):
@@ -90,25 +92,25 @@ def test_importance_producer_range_passes_through(bucket):
         {"text": "ten", "importance": 10, "external_state": True},
     ])
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert [i["importance"] for i in got["sections"][0]["items"]] == [7, 10]
 
 def test_importance_out_of_range_is_none(bucket):
     cp = make_checkpoint(open_questions=[{"text": "t", "importance": 11, "external_state": True}])
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] is None
 
 def test_importance_bool_is_none(bucket):
     cp = make_checkpoint(open_questions=[{"text": "t", "importance": True, "external_state": True}])
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] is None
 
 def test_importance_missing_is_none(bucket):
     cp = make_checkpoint(open_questions=[{"text": "t", "external_state": True}])
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     assert got["sections"][0]["items"][0]["importance"] is None
 
 def test_quote_verified_normalized_to_bool_or_none(bucket):
@@ -123,7 +125,7 @@ def test_quote_verified_normalized_to_bool_or_none(bucket):
         ],
     )
     _write(bucket, "latest.json", cp)
-    got = reader.load_checkpoint(bucket.parent, bucket.name, "latest")
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
     items = got["sections"][0]["items"] + got["sections"][2]["items"]
     qv_values = [i["quote_verified"] for i in items]
     assert qv_values == [True, False, None, None, None, None]
@@ -228,3 +230,18 @@ def test_norm_provenance_verifier_object_without_version():
     }})
     assert got["quote_provenance"]["verifier"] == "tier-f"
     assert got["quote_provenance"]["verifier_version"] is None
+
+
+def test_every_section_names_the_kind_of_its_schema_field(bucket):
+    """The viewer's sections draw their kind word from `schema.ITEM_FIELDS`:
+    each list field is read by some section and the section says the field's
+    kind."""
+    _write(bucket, "latest.json", make_checkpoint())
+    got = scoped(bucket.parent).load_checkpoint(bucket.name, "latest")
+    kinds = {s["key"]: s["kind"] for s in got["sections"]}
+    assert kinds == {"verify_first": "question", "open_loops": "question",
+                     "decisions": "decision", "beliefs": "belief",
+                     "uncertainties": "uncertainty",
+                     "contradictions": "contradiction"}
+    assert set(kinds.values()) == {f.kind for f in schema.ITEM_FIELDS
+                                   if not f.singleton}

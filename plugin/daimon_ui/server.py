@@ -13,8 +13,8 @@ from . import reader
 # engines — recall.search is the one matcher (the viewer renders recall, it
 # never grows a second search engine) and inspector.inspect_item is the same
 # read-side receipt `daimon why` prints. reader.py reaches daimon only through
-# the view (`view`, `schema`, `api`, `config`, pinned by tests/test_read_layers.py);
-# the engine boundary lives here in dispatch only.
+# the view (`view`, `schema`, `api`, pinned by tests/test_read_layers.py); the
+# engine boundary lives here in dispatch only.
 from daimon_briefing import (config, inspector, recall, refutations,
                              relations, view)
 
@@ -127,8 +127,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             # The store scope is per request and set HERE, inside the handler
             # thread: a ContextVar set in the main thread is invisible to a
-            # ThreadingHTTPServer request thread. Every read, the reader's
-            # files and the engines alike, then answers for `--data-dir`.
+            # ThreadingHTTPServer request thread. Every read, the view's and
+            # the engines' alike, then answers for `--data-dir`: this is the
+            # one place the store is set.
             with config.checkpoint_dir_override(self.data_dir):
                 route.handler(self, path, params)
         except Exception as exc:  # noqa: BLE001 - the one catch-all, by design
@@ -144,7 +145,7 @@ def _page(h, path, params):
 
 
 def _projects(h, path, params):
-    h._json({"projects": reader.list_buckets(h.data_dir, h.default_slug),
+    h._json({"projects": reader.list_buckets(h.default_slug),
              "current": h.default_slug})
 
 
@@ -155,7 +156,7 @@ def _checkpoints(h, path, params):
     # `checkpoints` is the pointer window; `sessions_total` counts every
     # session file for the slug. The sidebar needs both numbers or it
     # silently presents a window as if it were the whole history.
-    h._json(dict(reader.list_recent(h.data_dir, slug),
+    h._json(dict(reader.list_recent(slug),
                  project=h._label_for(slug)))
 
 
@@ -164,14 +165,14 @@ def _checkpoint(h, path, params):
     if slug is None:
         return
     ref = path.removeprefix("/api/checkpoint/")
-    h._json(reader.load_checkpoint(h.data_dir, slug, ref))
+    h._json(reader.load_checkpoint(slug, ref))
 
 
 def _history(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    h._json(dict(reader.history(h.data_dir, slug),
+    h._json(dict(reader.history(slug),
                  project=h._label_for(slug)))
 
 
@@ -182,13 +183,13 @@ def _diff(h, path, params):
     a = params.get("a", [None])[0]
     b = params.get("b", [None])[0]
     if a is None or b is None:
-        sessions = reader.history(h.data_dir, slug)["sessions"]
+        sessions = reader.history(slug)["sessions"]
         if len(sessions) < 2:
             h._json({"ok": True, "empty": "single_checkpoint", "sessions": len(sessions)})
             return
         a = sessions[1]["session_id"]
         b = sessions[0]["session_id"]
-    h._json(reader.diff_checkpoints(h.data_dir, slug, a, b))
+    h._json(reader.diff_checkpoints(slug, a, b))
 
 
 def _biography(h, path, params):
@@ -196,7 +197,7 @@ def _biography(h, path, params):
     if slug is None:
         return
     item_id = params.get("id", [None])[0]
-    h._json(reader.item_biography(h.data_dir, slug, item_id))
+    h._json(reader.item_biography(slug, item_id))
 
 
 def _recall(h, path, params):
@@ -263,7 +264,7 @@ def _grid(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    h._json(reader.project_grid(h.data_dir, slug))
+    h._json(reader.project_grid(slug))
 
 
 def _refutations(h, path, params):
@@ -303,7 +304,7 @@ def _ledger(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    h._json(reader.project_ledger(h.data_dir, slug))
+    h._json(reader.project_ledger(slug))
 
 
 def _session(h, path, params):
@@ -318,14 +319,14 @@ def _session(h, path, params):
             "fix": "Open a session from the ledger's session list.",
         }})
         return
-    h._json(reader.session_events(h.data_dir, slug, sid))
+    h._json(reader.session_events(slug, sid))
 
 
 def _activity(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    h._json(reader.project_activity(h.data_dir, slug))
+    h._json(reader.project_activity(slug))
 
 
 def _static(h, path, params):

@@ -1,5 +1,5 @@
 import json
-from daimon_ui import reader
+from tests.ui.scope import scoped
 from tests.ui.conftest import make_checkpoint
 
 BIO_ID = "o-abc123abc123"
@@ -46,21 +46,21 @@ def _write_bio_sessions(d, slug):
 
 def test_item_biography_rejects_path_traversal_id(flat_history):
     d, slug = flat_history
-    got = reader.item_biography(d, slug, "../x")
+    got = scoped(d).item_biography(slug, "../x")
     assert got["ok"] is False
     assert set(got["error"]) == {"what", "why", "fix"}
 
 
 def test_item_biography_rejects_malformed_id(flat_history):
     d, slug = flat_history
-    got = reader.item_biography(d, slug, "o-XYZ")
+    got = scoped(d).item_biography(slug, "o-XYZ")
     assert got["ok"] is False
     assert set(got["error"]) == {"what", "why", "fix"}
 
 
 def test_item_biography_unknown_valid_id_points_at_diff_view(flat_history):
     d, slug = flat_history
-    got = reader.item_biography(d, slug, "o-ffffff000000")
+    got = scoped(d).item_biography(slug, "o-ffffff000000")
     assert got["ok"] is False
     assert "diff" in got["error"]["fix"].lower()
 
@@ -69,7 +69,7 @@ def test_item_biography_born_carried_changed_sequence(flat_history):
     d, slug = flat_history
     _write_bio_sessions(d, slug)
 
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["ok"] is True
 
     kinds = [e["kind"] for e in got["events"]]
@@ -100,7 +100,7 @@ def test_item_biography_no_window_note_when_born_after_oldest_session(flat_histo
     d, slug = flat_history
     _write_bio_sessions(d, slug)
 
-    got = reader.item_biography(d, slug, LATE_BORN_ID)
+    got = scoped(d).item_biography(slug, LATE_BORN_ID)
     assert got["ok"] is True
     assert got["events"][0]["kind"] == "born"
     assert got["events"][0]["session_id"] == "bbbb-2222"
@@ -120,7 +120,7 @@ def test_item_biography_verified_event_folded_in_ts_order(flat_history):
                      "reason": "quote-not-in-transcript"}),
     ]) + '\n')
 
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["ok"] is True
     kinds = [e["kind"] for e in got["events"]]
     # verified sits between "seen" (day two, 08-05T10:00) and "changed" (day three, 08-06T10:00)
@@ -141,7 +141,7 @@ def test_item_biography_resolved_event_from_bucket_events(flat_history):
         "status": "resolved", "note": "root cause confirmed and fixed",
     }) + '\n')
 
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["ok"] is True
     assert got["events"][-1]["kind"] == "resolved"
     assert got["events"][-1]["ts_or_created"] == "2026-08-07T09:00:00Z"
@@ -152,7 +152,7 @@ def test_item_biography_resolved_event_from_bucket_events(flat_history):
 def test_biography_includes_trust_anatomy_block(flat_history):
     d, slug = flat_history
     _write_bio_sessions(d, slug)
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["ok"] is True
     a = got["trust_anatomy"]
     assert a["stored"]["trust"] == "inferred"          # newest sighting wins
@@ -169,7 +169,7 @@ def test_biography_includes_trust_anatomy_block(flat_history):
 def test_biography_origin_on_disk_true_when_first_sighting_file_exists(flat_history):
     d, slug = flat_history
     _write_bio_sessions(d, slug)
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     # no origin_session stored -> falls back to first-sighting session aaaa-1111,
     # whose file exists in the flat dir
     assert got["trust_anatomy"]["checks"]["origin_on_disk"] is True
@@ -181,7 +181,7 @@ def test_biography_origin_on_disk_false_when_stored_origin_missing(flat_history)
     cp = json.loads((d / "rollout-2026-08-06-cccc.json").read_text())
     cp["working_context"]["open_questions"][0]["origin_session"] = "gone-0000"
     (d / "rollout-2026-08-06-cccc.json").write_text(json.dumps(cp))
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["trust_anatomy"]["checks"]["origin_on_disk"] is False
 
 
@@ -195,7 +195,7 @@ def test_biography_origin_on_disk_false_for_path_traversal_origin_session(flat_h
     cp = json.loads((d / "rollout-2026-08-06-cccc.json").read_text())
     cp["working_context"]["open_questions"][0]["origin_session"] = "../secret"
     (d / "rollout-2026-08-06-cccc.json").write_text(json.dumps(cp))
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["ok"] is True
     assert got["trust_anatomy"]["checks"]["origin_on_disk"] is False
 
@@ -211,7 +211,7 @@ def test_biography_receipt_from_quote_provenance(flat_history):
         "binding": {"message_ids": ["m1", "m2"]},
     }
     (d / "rollout-2026-08-06-cccc.json").write_text(json.dumps(cp))
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["trust_anatomy"]["receipt"]["verifier"] == "quote-v2"
     assert got["trust_anatomy"]["receipt"]["message_ids"] == ["m1", "m2"]
 
@@ -219,7 +219,7 @@ def test_biography_receipt_from_quote_provenance(flat_history):
 def test_biography_receipt_none_when_absent(flat_history):
     d, slug = flat_history
     _write_bio_sessions(d, slug)
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["trust_anatomy"]["receipt"] is None
 
 
@@ -237,7 +237,7 @@ def test_biography_quote_check_failures_counted_with_reason_filter(flat_history)
         json.dumps({"ts": "2026-08-06T13:00:00Z", "check": "quote",
                     "item_ref": "o-other0other0", "reason": "x"}),  # other item
     ]) + "\n")
-    got = reader.item_biography(d, slug, BIO_ID)
+    got = scoped(d).item_biography(slug, BIO_ID)
     assert got["trust_anatomy"]["checks"]["quote_check_failures"] == 2
     assert got["trust_anatomy"]["checks"]["last_check_ts"] == "2026-08-06T11:00:00Z"
 
@@ -250,6 +250,6 @@ def test_biography_single_session_chain_length_one(flat_history):
                                           "trust": "verbatim"}])
     cp["project_slug"] = slug
     (d / "aaaa-1111.json").write_text(json.dumps(cp))
-    got = reader.item_biography(d, slug, "o-111111111111")
+    got = scoped(d).item_biography(slug, "o-111111111111")
     assert got["ok"] is True
     assert len(got["trust_anatomy"]["chain"]) == 1

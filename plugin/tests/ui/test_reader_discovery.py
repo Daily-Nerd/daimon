@@ -1,20 +1,21 @@
 import json
 import pytest
-from daimon_ui import reader
+from daimon_briefing import schema
+from tests.ui.scope import scoped
 
 def test_list_recent_orders_and_filters(bucket):
-    got = reader.list_recent(bucket.parent, bucket.name)["checkpoints"]
+    got = scoped(bucket.parent).list_recent(bucket.name)["checkpoints"]
     assert [g["ref"] for g in got] == ["latest", "prev-1", "prev-2"]
     assert got[0]["active_topic"] == "Scoping the inspector"
     assert got[0]["created"] == "2026-08-06T08:05:12Z"
 
 def test_list_recent_empty_bucket(tmp_path):
-    got = reader.list_recent(tmp_path, "nope")
+    got = scoped(tmp_path).list_recent("nope")
     assert got == {"checkpoints": [], "sessions_total": 0, "notes": []}
 
 def test_list_recent_torn_pointer(bucket):
     (bucket / "prev-1.json").write_text("{not json")
-    got = reader.list_recent(bucket.parent, bucket.name)["checkpoints"]
+    got = scoped(bucket.parent).list_recent(bucket.name)["checkpoints"]
     refs = [g["ref"] for g in got]
     assert "prev-1" in refs                       # named, not hidden
     assert got[refs.index("prev-1")]["created"] is None
@@ -59,19 +60,19 @@ def multi_buckets(tmp_path):
 
 
 def test_list_buckets_sorts_by_created_desc_none_last(multi_buckets):
-    got = reader.list_buckets(multi_buckets, "-proj-a")
+    got = scoped(multi_buckets).list_buckets("-proj-a")
     assert [b["slug"] for b in got] == ["-proj-a", "-proj-b", "-proj-torn"]
 
 
 def test_list_buckets_skips_dirs_without_latest_json(multi_buckets):
-    got = reader.list_buckets(multi_buckets, "-proj-a")
+    got = scoped(multi_buckets).list_buckets("-proj-a")
     slugs = {b["slug"] for b in got}
     assert "-proj-missing" not in slugs
     assert ".chunk-cache" not in slugs
 
 
 def test_list_buckets_torn_listed_with_none_fields(multi_buckets):
-    got = reader.list_buckets(multi_buckets, "-proj-a")
+    got = scoped(multi_buckets).list_buckets("-proj-a")
     torn = next(b for b in got if b["slug"] == "-proj-torn")
     assert torn["created"] is None
     assert torn["active_topic"] is None
@@ -79,7 +80,7 @@ def test_list_buckets_torn_listed_with_none_fields(multi_buckets):
 
 
 def test_list_buckets_item_count_correctness(multi_buckets):
-    got = reader.list_buckets(multi_buckets, "-proj-a")
+    got = scoped(multi_buckets).list_buckets("-proj-a")
     a = next(b for b in got if b["slug"] == "-proj-a")
     b = next(b for b in got if b["slug"] == "-proj-b")
     assert a["item_count"] == 3
@@ -87,7 +88,7 @@ def test_list_buckets_item_count_correctness(multi_buckets):
 
 
 def test_list_buckets_empty_data_dir(tmp_path):
-    assert reader.list_buckets(tmp_path / "nope", "-x") == []
+    assert scoped(tmp_path / "nope").list_buckets("-x") == []
 
 
 def test_list_buckets_carries_project_name(tmp_path):
@@ -103,7 +104,33 @@ def test_list_buckets_carries_project_name(tmp_path):
     anon.mkdir()
     (anon / "latest.json").write_text(json.dumps(
         {"session_id": "S2", "created": "2026-08-02T00:00:00Z"}))
-    from daimon_ui import reader
-    by_slug = {b["slug"]: b for b in reader.list_buckets(d, "-p-named")}
+    by_slug = {b["slug"]: b for b in scoped(d).list_buckets("-p-named")}
     assert by_slug["-p-named"]["project_name"] == "My Proj"
     assert by_slug["-p-anon"]["project_name"] is None
+
+LIST_FIELDS = [(f.section, f.key, f.kind) for f in schema.ITEM_FIELDS
+               if not f.singleton]
+
+
+@pytest.mark.parametrize("section,key,kind", LIST_FIELDS,
+                         ids=[k for _s, k, _kd in LIST_FIELDS])
+def test_list_buckets_counts_every_list_field(tmp_path, section, key, kind):
+    bucket = tmp_path / "-proj"
+    bucket.mkdir()
+    checkpoint = {"created": "2026-08-06T10:00:00Z",
+                  "working_context": {}, "epistemic_snapshot": {}}
+    checkpoint[section][key] = [{"text": "one"}]
+    (bucket / "latest.json").write_text(json.dumps(checkpoint))
+    [got] = scoped(tmp_path).list_buckets("-proj")
+    assert got["item_count"] == 1
+
+
+def test_list_buckets_does_not_count_the_singleton(tmp_path):
+    bucket = tmp_path / "-proj"
+    bucket.mkdir()
+    (bucket / "latest.json").write_text(json.dumps({
+        "created": "2026-08-06T10:00:00Z",
+        "working_context": {"active_topic": {"text": "t"}},
+        "epistemic_snapshot": {}}))
+    [got] = scoped(tmp_path).list_buckets("-proj")
+    assert got["item_count"] == 0

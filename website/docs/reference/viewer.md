@@ -35,16 +35,26 @@ the CLI resolves `--project`), `--port` (default 7717), `--no-browser`.
 
 ## What the viewer does not show
 
-The project list, the checkpoint and session lists, a checkpoint and the Diff
-show only what a reader of the project may see. An item you quarantined or
-forgot does not appear in them, and a withheld topic reads as no topic. Counts
-are counts of the items you can see, so a number never tells you that
-something is hidden. If the trust ledger cannot be read, no item is shown and
-the page says which ledger failed.
+The project list, the checkpoint and session lists, a checkpoint, the Diff,
+the activity feed, the ledger, the check strip, a session page and an item's
+Life panel show only what a reader of the project may see. An item you
+quarantined or forgot does not appear in them, and a withheld topic reads as
+no topic. A quarantined value in a note or an event reads as a withheld marker.
+A forgotten value reads as absent, and so does the key that names it: the
+activity feed shows a forget as the bare word `forgotten`. Counts are counts
+of the items you can see, so a number never tells you that something is
+hidden. If the trust ledger cannot be read, no item is shown (notes stay
+readable) and the page says which ledger failed.
 
-The Diff lists an item that left between two checkpoints as resolved when a
-resolution closed it, whatever status closed it (the rule `daimon diff` uses),
-and as dropped otherwise.
+The viewer reads no ledger file itself: every route that shows project content
+asks the same read view the CLI uses (search, why, refutations and relations
+ask their own engines).
+
+The Diff, the ledger and an item's Life panel close an item with the same
+rule: a resolution closes it, whatever status closed it (the rule `daimon
+diff` uses), unless a later event reopened it. The Diff lists an item that
+left between two checkpoints as resolved in that case, and as dropped
+otherwise.
 
 ## Read-only as a commitment
 

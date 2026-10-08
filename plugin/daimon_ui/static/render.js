@@ -144,7 +144,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       ": " + parts + ".</span></div>";
   }
   export function renderActivityView(data) {
-    var partial = data.partial || [];
+    var partial = (data.partial || []).concat(data.notes || []);
     var partialHtml = partial.map(function (p) {
       return '<p class="life-note">' + escapeHtml(p) + "</p>";
     }).join("");
@@ -456,9 +456,10 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   export function renderBioPanel(data, highlightSid) {
     var anatomyHtml = renderTrustAnatomy(data);
     var events = compressBioEvents(data.events || []);
-    var noteHtml = data.window_note
-      ? '<p class="life-note">' + escapeHtml(data.window_note) + "</p>"
-      : "";
+    var noteHtml = (data.window_note ? [data.window_note] : [])
+      .concat(data.notes || []).map(function (n) {
+        return '<p class="life-note">' + escapeHtml(n) + "</p>";
+      }).join("");
     if (events.length === 0) {
       return anatomyHtml + noteHtml +
         '<div class="state-card"><p class="state-title">No history recorded</p>' +
@@ -665,7 +666,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '<span class="brief-sub">' + escapeHtml(
         (totals.objects || 0) + " object(s) · " + (totals.events || 0) + " event(s)" + head) +
       "</span></div>";
-    (data.partial || []).forEach(function (p) {
+    (data.partial || []).concat(data.notes || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(p) + "</span></div>";
     });
@@ -718,7 +719,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '<span class="brief-sub">' + escapeHtml(counts ? "wrote " + counts : "wrote no recorded events") +
       "</span></div>";
     html += '<p class="page-meta">' + metaParts.map(escapeHtml).join(" · ") + "</p>";
-    (data.partial || []).forEach(function (p) {
+    (data.partial || []).concat(data.notes || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(p) + "</span></div>";
     });
@@ -790,7 +791,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var columns = data.columns || [];
     var html = '<div class="brief-head"><h1 class="page-heading">Check strip</h1>' +
       '<span class="brief-sub">one column per checkpoint · click a mark to open that event</span></div>';
-    (data.partial || []).forEach(function (p) {
+    (data.partial || []).concat(data.notes || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(p) + "</span></div>";
     });
@@ -1123,7 +1124,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var html = '<div class="why-crumb"><button type="button" class="back-link" data-print-back>' +
       "← entry</button><span class=\"crumb-sep\">/</span>" +
       '<span class="print-sub">print view · one checkpoint, set as a printed record</span></div>';
-    (data.partial || []).forEach(function (p) {
+    (data.partial || []).concat(data.notes || []).forEach(function (p) {
       html += '<div class="banner banner-partial"><span class="banner-icon" aria-hidden="true">ⓘ</span><span>' +
         escapeHtml(p) + "</span></div>";
     });

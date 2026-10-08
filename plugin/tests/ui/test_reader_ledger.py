@@ -8,7 +8,8 @@ check (which carry their own ts but no session attribution) postdates the walk.
 """
 import json
 import pytest
-from daimon_ui import reader
+from daimon_briefing import view
+from tests.ui.scope import scoped
 
 def _cp(sid, created, slug, items, topic="t"):
     return {
@@ -71,7 +72,7 @@ def _row(group, iid):
 
 def test_groups_are_newest_first_and_carry_counts(ledger_history):
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     assert result["ok"] is True
     assert [g["session_id"] for g in result["groups"]] == ["s3-cccc", "s2-bbbb"]
     assert _group(result, "s3-cccc")["counts"] == {"first_seen": 1, "changed": 0, "last_seen": 1}
@@ -82,7 +83,7 @@ def test_groups_are_newest_first_and_carry_counts(ledger_history):
 
 def test_object_rows_sit_under_their_latest_transition(ledger_history):
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     s3 = _group(result, "s3-cccc")
     assert {r["id"] for r in s3["rows"]} == {"o-ddd444ddd444", "o-bbb222bbb222"}
     s2 = _group(result, "s2-bbbb")
@@ -90,7 +91,7 @@ def test_object_rows_sit_under_their_latest_transition(ledger_history):
 
 def test_last_event_prefers_later_resolution_and_quote_check(ledger_history):
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     # o-bbb vanished at the s3 transition but was then resolved: resolution wins.
     bbb = _row(_group(result, "s3-cccc"), "o-bbb222bbb222")
     assert bbb["last_event"]["kind"] == "resolved"
@@ -108,14 +109,14 @@ def test_last_seen_event_names_the_last_sighting_not_the_transition(ledger_histo
     d, slug = ledger_history
     # o-bbb without the resolution: last_seen ts = created of its final sighting (s2).
     (d / slug / "events.jsonl").write_text("")
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     bbb = _row(_group(result, "s3-cccc"), "o-bbb222bbb222")
     assert bbb["last_event"]["kind"] == "last_seen"
     assert bbb["last_event"]["ts"] == "2026-08-05T10:00:00Z"
 
 def test_totals_count_objects_and_recorded_events(ledger_history):
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     assert result["totals"]["objects"] == 4
     # 2 born@s1 + 1 born@s2 + 1 changed@s2 + 1 born@s3 + 1 last_seen@s3
     # + 1 resolution + 1 quote check
@@ -123,13 +124,13 @@ def test_totals_count_objects_and_recorded_events(ledger_history):
 
 def test_head_is_the_newest_session(ledger_history):
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     assert result["head"]["session_id"] == "s3-cccc"
     assert result["head"]["created"] == "2026-08-06T10:00:00Z"
 
 def test_rows_carry_text_and_trust_for_rendering(ledger_history):
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     aaa = _row(_group(result, "s2-bbbb"), "o-aaa111aaa111")
     assert aaa["text"] == "build gates on bundle"
     assert aaa["trust"] == "verbatim"
@@ -139,37 +140,38 @@ def test_rows_carry_the_recall_kind_word(ledger_history):
     uncertainty/contradiction — never a viewer-coined section name. Fixture
     items live in open_questions, so every row here is a question."""
     d, slug = ledger_history
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     aaa = _row(_group(result, "s2-bbbb"), "o-aaa111aaa111")
     assert aaa["kind"] == "question"
 
 def test_empty_project_is_ok_and_empty(tmp_path):
     d = tmp_path / "checkpoints"
     d.mkdir()
-    result = reader.project_ledger(d, "-nope")
+    result = scoped(d).project_ledger("-nope")
     assert result == {"ok": True, "groups": [], "head": None,
-                      "totals": {"objects": 0, "events": 0}, "partial": []}
+                      "totals": {"objects": 0, "events": 0}, "partial": [],
+                      "notes": []}
 
 def test_unreadable_session_files_land_in_partial(ledger_history):
     d, slug = ledger_history
     (d / "torn.json").write_text("{nope")
-    result = reader.project_ledger(d, slug)
+    result = scoped(d).project_ledger(slug)
     assert result["ok"] is True
     assert any("read" in p for p in result["partial"])
 
-def test_walk_skips_a_session_that_tears_between_listing_and_reading(ledger_history, monkeypatch):
-    """project_history lists from filenames; a file torn (or deleted) between
-    that listing and the walk's read must be skipped, not abort the ledger."""
+def test_walk_skips_a_session_that_vanishes_between_listing_and_opening(ledger_history, monkeypatch):
+    """The listing names the sessions; one that is gone (or torn) by the time
+    the walk opens it must be skipped, not abort the ledger."""
     d, slug = ledger_history
-    real = reader._load_session
+    real = view.open_sessions
 
-    def flaky(data_dir, sid):
-        if sid == "s2-bbbb":
-            return None, {"what": "torn", "why": "torn", "fix": "heal"}
-        return real(data_dir, sid)
+    def without_s2(project, sids, *, live):
+        got = real(project, sids, live=live)
+        got.pop("s2-bbbb")
+        return got
 
-    monkeypatch.setattr(reader, "_load_session", flaky)
-    result = reader.project_ledger(d, slug)
+    monkeypatch.setattr(view, "open_sessions", without_s2)
+    result = scoped(d).project_ledger(slug)
     assert result["ok"] is True
     # s2 never scanned: o-ccc is first seen at s3 instead, and no changed
     # event for o-aaa exists anywhere.

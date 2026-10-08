@@ -20,7 +20,6 @@ on-demand `daimon verify-receipt`, which shells out to the vitni CLI.
 """
 
 import base64
-import hashlib
 import json
 import logging
 import os
@@ -28,7 +27,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import config, multihash
 
 log = logging.getLogger(__name__)  # child of `daimon_briefing` → serialize.log
 
@@ -37,7 +36,6 @@ _PROTOCOL = "vitni/0.2"
 _BINDING = "local"
 METHOD = "local:daimon.serialize"
 KID = "daimon-1"                     # fixed key id for v1
-_MULTIHASH_SHA256 = bytes([0x12, 0x20])  # multicodec sha2-256 + 32-byte length
 
 # The fixed 16-byte ASN.1/PKCS8 prefix for a raw Ed25519 seed (RFC 8410) — the
 # same trick vitni's sign.ts documents: prepend it to the 32-byte seed to get a
@@ -63,16 +61,8 @@ _keygen_probe_cache: dict[str, bool] = {}
 # ---- hashes (pure stdlib) --------------------------------------------------
 
 
-def _multibase_wrap(raw32: bytes) -> str:
-    """vitni hash/nonce encoding: multibase base64url (`u`) of a multihash
-    sha2-256 wrapper (0x12 0x20) around 32 bytes. Confirmed byte-for-byte
-    against the receipt-id-local conformance vector."""
-    return "u" + base64.urlsafe_b64encode(
-        _MULTIHASH_SHA256 + raw32).decode("ascii").rstrip("=")
-
-
-def _multibase_sha256(data: bytes) -> str:
-    return _multibase_wrap(hashlib.sha256(data).digest())
+_multibase_wrap = multihash.wrap
+_multibase_sha256 = multihash.sha256
 
 
 def _wrap_hex_sha256(hex_digest) -> str | None:

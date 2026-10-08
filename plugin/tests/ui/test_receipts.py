@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from daimon_ui import reader
+from daimon_briefing import api, config, receipts, view
+
+from .scope import scoped
+
+
+def _state(root, data):
+    """The cheap receipt check as the viewer asks for it, over `root`."""
+    with config.checkpoint_dir_override(root):
+        return api.receipt_state(data)
 
 def test_multihash_matches_the_vitni_format():
     """outputs_hash is multibase base64url-nopad ("u") over multihash sha2-256
@@ -15,10 +23,10 @@ def test_multihash_matches_the_vitni_format():
     want = "u" + base64.urlsafe_b64encode(
         bytes([0x12, 0x20]) + hashlib.sha256(raw).digest()
     ).decode().rstrip("=")
-    assert reader._multihash_b64(raw) == want
+    assert receipts._multibase_sha256(raw) == want
 
 def test_multihash_has_no_padding_and_the_u_prefix():
-    got = reader._multihash_b64(b"x")
+    got = receipts._multibase_sha256(b"x")
     assert got.startswith("u")
     assert "=" not in got
 
@@ -36,7 +44,7 @@ def _write_pair(root: Path, sid: str, claims: bool, sidecar: str | None):
     elif sidecar == "nokey":
         (root / f"{sid}.receipt").write_text(json.dumps({"receipt": {}}), encoding="utf-8")
     elif sidecar in ("match", "wrong"):
-        h = reader._multihash_b64(p.read_bytes()) if sidecar == "match" else "uEiAwrongwrongwrong"
+        h = receipts._multibase_sha256(p.read_bytes()) if sidecar == "match" else "uEiAwrongwrongwrong"
         (root / f"{sid}.receipt").write_text(
             json.dumps({"receipt": {"outputs_hash": h}}), encoding="utf-8")
     return p
@@ -53,30 +61,30 @@ def _write_pair(root: Path, sid: str, claims: bool, sidecar: str | None):
 def test_receipt_state_table(tmp_path, claims, sidecar, expected):
     p = _write_pair(tmp_path, "aaaa-bbbb", claims, sidecar)
     data = json.loads(p.read_text())
-    assert reader.receipt_state(tmp_path, data)["state"] == expected
+    assert _state(tmp_path, data)["state"] == expected
 
 def test_sidecar_missing_only_the_hash_key_is_not_called_unreadable(tmp_path):
     """A sidecar that parses as JSON fine but lacks outputs_hash IS readable — the
     detail must not claim otherwise. Only genuine parse failures get that wording."""
     p = _write_pair(tmp_path, "aaaa-bbbb", True, "nokey")
-    got = reader.receipt_state(tmp_path, json.loads(p.read_text()))
+    got = _state(tmp_path, json.loads(p.read_text()))
     assert got["state"] == "missing"
     assert got["detail"] is None
 
 def test_non_dict_data_is_unsigned_not_a_crash(tmp_path):
     """Docstring says 'Never raises.' A non-dict data payload used to reach
     data.get() unguarded; it must degrade to the quiet 'unsigned' state instead."""
-    assert reader.receipt_state(tmp_path, "not a dict")["state"] == "unsigned"
-    assert reader.receipt_state(tmp_path, None)["state"] == "unsigned"
-    assert reader.receipt_state(tmp_path, [])["state"] == "unsigned"
+    assert _state(tmp_path, "not a dict")["state"] == "unsigned"
+    assert _state(tmp_path, None)["state"] == "unsigned"
+    assert _state(tmp_path, [])["state"] == "unsigned"
 
 def test_tampering_one_byte_turns_match_into_mismatch(tmp_path):
     """Injection proof: build a genuinely matching pair, then edit the checkpoint.
     A state machine that reported "match" from the claim alone would stay green."""
     p = _write_pair(tmp_path, "aaaa-bbbb", True, "match")
-    assert reader.receipt_state(tmp_path, json.loads(p.read_text()))["state"] == "match"
+    assert _state(tmp_path, json.loads(p.read_text()))["state"] == "match"
     p.write_text(p.read_text().replace("D-019", "D-020"), encoding="utf-8")
-    assert reader.receipt_state(tmp_path, json.loads(p.read_text()))["state"] == "mismatch"
+    assert _state(tmp_path, json.loads(p.read_text()))["state"] == "mismatch"
 
 def test_root_session_file_governs_even_when_a_pointer_copy_differs(tmp_path):
     """Real-world shape: daimon writes several pointer snapshots during one session
@@ -93,7 +101,7 @@ def test_root_session_file_governs_even_when_a_pointer_copy_differs(tmp_path):
                  "working_context": {}, "epistemic_snapshot": {}}
     root = tmp_path / f"{sid}.json"
     root.write_text(json.dumps(root_data), encoding="utf-8")
-    h = reader._multihash_b64(root.read_bytes())
+    h = receipts._multibase_sha256(root.read_bytes())
     (tmp_path / f"{sid}.receipt").write_text(
         json.dumps({"receipt": {"outputs_hash": h}}), encoding="utf-8")
 
@@ -101,13 +109,13 @@ def test_root_session_file_governs_even_when_a_pointer_copy_differs(tmp_path):
     pointer_data = dict(root_data, active_topic_marker="pointer-snapshot-differs")
     (bucket / "latest.json").write_text(json.dumps(pointer_data), encoding="utf-8")
 
-    got = reader.load_checkpoint(tmp_path, slug, "latest")
+    got = scoped(tmp_path).load_checkpoint(slug, "latest")
     assert got["ok"] is True
     assert got["meta"]["receipt"]["state"] == "match"
 
 def test_session_id_cannot_escape_the_data_dir(tmp_path):
     """session_id comes from file content and is joined into a path — twice now
-    (sidecar AND root session file). Prove the SESSION_ID_RE guard actually does
+    (sidecar AND root session file). Prove the session id guard actually does
     something: point a traversal at files that genuinely EXIST outside data_dir
     and would resolve to a false "match" if the guard were removed. (Verified by
     injection: temporarily deleting the guard makes this test fail; restoring it
@@ -117,16 +125,16 @@ def test_session_id_cannot_escape_the_data_dir(tmp_path):
 
     secret = tmp_path / "secret.json"
     secret.write_text(json.dumps({"top": "secret"}), encoding="utf-8")
-    h = reader._multihash_b64(secret.read_bytes())
+    h = receipts._multibase_sha256(secret.read_bytes())
     (tmp_path / "secret.receipt").write_text(
         json.dumps({"receipt": {"outputs_hash": h}}), encoding="utf-8")
 
     data = {"session_id": "../secret", "receipts": True}
-    assert reader.receipt_state(data_dir, data)["state"] != "match"
+    assert _state(data_dir, data)["state"] != "match"
 
 def test_unreadable_sidecar_names_the_file_in_detail(tmp_path):
     p = _write_pair(tmp_path, "aaaa-bbbb", True, "garbage")
-    got = reader.receipt_state(tmp_path, json.loads(p.read_text()))
+    got = _state(tmp_path, json.loads(p.read_text()))
     assert got["state"] == "missing"
     assert "aaaa-bbbb.receipt" in got["detail"]
 
@@ -141,28 +149,33 @@ def _bucket_with(root: Path, slug: str, claims_by_ref: dict):
         (b / f"{ref}.json").write_text(json.dumps(cp), encoding="utf-8")
     return b
 
+def _gate(tmp_path, claims_by_ref):
+    _bucket_with(tmp_path, "-proj", claims_by_ref)
+    got = scoped(tmp_path).load_checkpoint("-proj", "latest")
+    assert got["ok"] is True
+    return "receipt" in got["meta"]
+
 def test_gate_opens_when_any_pointer_claims_receipts(tmp_path):
-    b = _bucket_with(tmp_path, "-proj", {"latest": False, "prev-1": True})
-    assert reader.receipts_enabled(b) is True
+    assert _gate(tmp_path, {"latest": False, "prev-1": True}) is True
 
 def test_gate_stays_shut_when_no_pointer_claims_receipts(tmp_path):
-    b = _bucket_with(tmp_path, "-proj", {"latest": False, "prev-1": False})
-    assert reader.receipts_enabled(b) is False
+    assert _gate(tmp_path, {"latest": False, "prev-1": False}) is False
 
 def test_gate_ignores_an_unreadable_pointer(tmp_path):
     b = _bucket_with(tmp_path, "-proj", {"latest": True})
     (b / "prev-1.json").write_text("{torn", encoding="utf-8")
-    assert reader.receipts_enabled(b) is True
+    got = scoped(tmp_path).load_checkpoint("-proj", "latest")
+    assert got["meta"]["receipt"]["state"] == "missing"
 
 def test_closed_gate_omits_the_receipt_key_entirely(tmp_path):
     _bucket_with(tmp_path, "-proj", {"latest": False})
-    got = reader.load_checkpoint(tmp_path, "-proj", "latest")
+    got = scoped(tmp_path).load_checkpoint("-proj", "latest")
     assert got["ok"] is True
     assert "receipt" not in got["meta"]
 
 def test_open_gate_reports_state_in_meta(tmp_path):
     _bucket_with(tmp_path, "-proj", {"latest": True})
-    got = reader.load_checkpoint(tmp_path, "-proj", "latest")
+    got = scoped(tmp_path).load_checkpoint("-proj", "latest")
     assert got["meta"]["receipt"]["state"] == "missing"
 
 def test_gate_survives_a_non_dict_pointer_string(tmp_path):
@@ -172,7 +185,8 @@ def test_gate_survives_a_non_dict_pointer_string(tmp_path):
     b.mkdir()
     (b / "latest.json").write_text(json.dumps({"session_id": "a"}), encoding="utf-8")
     (b / "prev-1.json").write_text(json.dumps("just a string"), encoding="utf-8")
-    assert reader.receipts_enabled(b) is False
+    got = scoped(tmp_path).load_checkpoint("-proj", "latest")
+    assert got["ok"] is True and "receipt" not in got["meta"]
 
 def test_gate_survives_a_non_dict_pointer_list(tmp_path):
     """Same as above but for a JSON list, the other common non-object shape."""
@@ -180,4 +194,8 @@ def test_gate_survives_a_non_dict_pointer_list(tmp_path):
     b.mkdir()
     (b / "latest.json").write_text(json.dumps({"session_id": "a"}), encoding="utf-8")
     (b / "prev-1.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
-    assert reader.receipts_enabled(b) is False
+    got = scoped(tmp_path).load_checkpoint("-proj", "latest")
+    assert got["ok"] is True and "receipt" not in got["meta"]
+
+def test_the_check_is_the_views_and_its_hash_is_the_receipts():
+    assert api.receipt_state is view.receipt_state

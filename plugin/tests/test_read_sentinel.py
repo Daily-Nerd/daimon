@@ -554,12 +554,9 @@ KNOWN_LEAKS: set = {
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("cli:why", k) for k in ("question",)},
-    *{("http:/api/activity", k) for k in ("contradiction", "question", "topic",)},
-    *{("http:/api/ledger", k) for k in ("topic",)},
     *{("http:/api/recall", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/relations", k) for k in ("question",)},
-    *{("http:/api/session", k) for k in ("topic",)},
     *{("http:/api/why", k) for k in ("question",)},
     *{("mcp:daimon_recall", k) for k in ("contradiction", "question", "topic",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
@@ -730,7 +727,8 @@ def test_llm_briefing_is_an_exemption_not_an_axis_we_drive():
 # Surfaces that read through the view: the module whose code makes the call,
 # and the names that call may take. `prepare` opens the checkpoint through
 # `view.open`; `open`, `suppressed`, `projects` (with `peek` under it),
-# `pointers`, `sessions` and `open_sessions` are the view's own projections.
+# `pointers`, `sessions`, `open_sessions`, `events` and `verifications` are
+# the view's own projections.
 # The MCP projects tool reaches `projects` through `cli.projects_rows`, so the
 # module that calls it is cli/projects.py; the viewer's routes reach theirs
 # through `daimon_ui/reader.py`.
@@ -750,6 +748,11 @@ CONVERTED = {
     "http:/api/checkpoint/": (VIEWER, frozenset({"pointers"})),
     "http:/api/history": (VIEWER, frozenset({"sessions"})),
     "http:/api/diff": (VIEWER, frozenset({"sessions", "open_sessions"})),
+    "http:/api/biography": (VIEWER, frozenset({"sessions", "open_sessions"})),
+    "http:/api/grid": (VIEWER, frozenset({"sessions", "open_sessions"})),
+    "http:/api/ledger": (VIEWER, frozenset({"sessions", "open_sessions"})),
+    "http:/api/session": (VIEWER, frozenset({"sessions", "open_sessions"})),
+    "http:/api/activity": (VIEWER, frozenset({"sessions", "events"})),
 }
 
 # Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
@@ -797,7 +800,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         raise RuntimeError("view.open failed")
 
     for name in ("open", "peek", "projects", "pointers", "sessions",
-                 "open_sessions"):
+                 "open_sessions", "events", "verifications"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket

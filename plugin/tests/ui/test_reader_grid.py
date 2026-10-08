@@ -7,6 +7,7 @@ claim a session wrote them."""
 import json
 
 from daimon_ui import reader
+from tests.ui.scope import scoped
 from tests.ui.conftest import make_checkpoint
 
 
@@ -40,7 +41,7 @@ def _grid_project(tmp_path):
 
 def test_grid_columns_are_the_session_window_oldest_first(tmp_path):
     d, slug = _grid_project(tmp_path)
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     assert got["ok"] is True
     assert [c["session_id"] for c in got["columns"]] == ["grid-s1", "grid-s2", "grid-s3"]
     assert [c["is_head"] for c in got["columns"]] == [False, False, True]
@@ -48,7 +49,7 @@ def test_grid_columns_are_the_session_window_oldest_first(tmp_path):
 
 def test_grid_cells_carry_kind_and_trust_at_that_session(tmp_path):
     d, slug = _grid_project(tmp_path)
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     rows = {r["id"]: r for r in got["rows"]}
     a = rows["o-aaa111aaa111"]["cells"]
     assert a["grid-s1"]["kind"] == "first_seen"
@@ -61,7 +62,7 @@ def test_grid_marks_the_departure_at_the_transition_column(tmp_path):
     """A vanished object marks the session whose absence recorded it — the
     same attribution the ledger makes — and the lane is dashed after it."""
     d, slug = _grid_project(tmp_path)
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     b = {r["id"]: r for r in got["rows"]}["o-bbb222bbb222"]
     assert b["cells"]["grid-s3"]["kind"] == "last_seen"
     assert b["gone_after"] == "grid-s3"
@@ -72,7 +73,7 @@ def test_grid_buckets_quote_checks_by_ts_without_naming_a_session(tmp_path):
     (d / slug / "verification.jsonl").write_text(json.dumps({
         "ts": "2026-08-02T23:00:00Z", "check": "quote", "reason": "compacted",
         "item_ref": "o-aaa111aaa111"}) + "\n")
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     a = {r["id"]: r for r in got["rows"]}["o-aaa111aaa111"]
     assert len(a["checks"]) == 1
     check = a["checks"][0]
@@ -89,7 +90,7 @@ def test_grid_windows_columns_and_reports_what_lies_beyond(tmp_path):
             {"text": "the build gates on the bundle", "id": "o-aaa111aaa111",
              "trust": "verbatim", "quote": "gates on the bundle"},
         ])
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     assert len(got["columns"]) == reader.GRID_COLUMNS
     assert got["older_columns"] == 11 - reader.GRID_COLUMNS
     assert any("older checkpoint" in p for p in got["partial"])
@@ -100,7 +101,7 @@ def test_grid_skips_check_rows_for_unknown_items(tmp_path):
     (d / slug / "verification.jsonl").write_text(json.dumps({
         "ts": "2026-08-02T23:00:00Z", "check": "quote", "reason": "compacted",
         "item_ref": "o-feedfeedfeed"}) + "\n")
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     assert all(not r["checks"] for r in got["rows"])
 
 
@@ -109,7 +110,7 @@ def test_grid_folds_checks_after_head_into_the_head_column(tmp_path):
     (d / slug / "verification.jsonl").write_text(json.dumps({
         "ts": "2026-08-09T23:00:00Z", "check": "quote", "reason": "compacted",
         "item_ref": "o-aaa111aaa111"}) + "\n")
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     a = {r["id"]: r for r in got["rows"]}["o-aaa111aaa111"]
     assert a["checks"][0]["column"] == "grid-s3"  # head
 
@@ -124,7 +125,7 @@ def test_grid_counts_checks_that_predate_the_window(tmp_path):
     (d / slug / "verification.jsonl").write_text(json.dumps({
         "ts": "2026-08-02T23:00:00Z", "check": "quote", "reason": "compacted",
         "item_ref": "o-aaa111aaa111"}) + "\n")
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     a = {r["id"]: r for r in got["rows"]}["o-aaa111aaa111"]
     assert a["checks"] == []
     assert any("quote check(s) predate this window" in p for p in got["partial"])
@@ -135,7 +136,7 @@ def test_grid_windows_rows_and_reports_what_lies_beyond(tmp_path):
     many = [{"text": f"object number {i}", "id": f"o-{i:012x}"}
             for i in range(reader.GRID_ROWS + 5)]
     _write_session(d, slug, "grid-s4", "2026-08-04T10:00:00Z", many)
-    got = reader.project_grid(d, slug)
+    got = scoped(d).project_grid(slug)
     assert len(got["rows"]) == reader.GRID_ROWS
     assert any("further object(s) beyond this window" in p for p in got["partial"])
 
@@ -143,7 +144,7 @@ def test_grid_windows_rows_and_reports_what_lies_beyond(tmp_path):
 def test_grid_unknown_project_is_empty_not_an_error(tmp_path):
     d = tmp_path / "checkpoints"
     d.mkdir()
-    got = reader.project_grid(d, "-nothing-here")
+    got = scoped(d).project_grid("-nothing-here")
     assert got["ok"] is True
     assert got["columns"] == []
     assert got["rows"] == []
