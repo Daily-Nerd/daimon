@@ -235,13 +235,16 @@ def append(row: dict, project_dir=None) -> bool:
         return False
 
 
-def events(project_dir=None) -> list[dict]:
-    """Read valid ledger rows best-effort; malformed lines never sink reads."""
+def events(project_dir=None, *, read=None) -> list[dict]:
+    """Read valid ledger rows best-effort; malformed lines never sink reads.
+    `read` is a `jsonl.read` of this ledger the caller already holds, so a
+    caller that judges the file's health reads it once."""
     path = _path(project_dir)
     if path is None:
         return []
     rows = []
-    for index, row in enumerate(jsonl.read(path).rows):
+    for index, row in enumerate(
+            (read if read is not None else jsonl.read(path)).rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _TRUST_ID_RE.fullmatch(
@@ -349,8 +352,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def records(project_dir=None) -> dict[str, dict]:
-    return fold(events(project_dir=project_dir))
+def records(project_dir=None, *, read=None) -> dict[str, dict]:
+    return fold(events(project_dir=project_dir, read=read))
 
 
 def get(quarantine_id: str, project_dir=None) -> dict | None:

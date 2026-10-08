@@ -157,12 +157,13 @@ def test_ledger_totals_count_one_resolution_per_resolved_ref(base):
 
 
 def test_a_forget_is_counted_nowhere_in_the_ledger(base):
-    """A forgotten value is in no list and no count: a tombstone, even one
-    whose ref is a visible item, adds nothing to the event total and does not
-    become that item's last event."""
+    """A forgotten value is in no list and no count: a tombstone adds nothing
+    to the event total and does not become an item's last event. (A tombstone
+    whose ref IS a visible item's id withholds that item, by id; see
+    `test_view_judge`.)"""
     before = _get(base, "/api/ledger")
     key = normalize.content_key("some unrelated forgotten value")
-    for ref in ("i-gone", B):
+    for ref in ("i-gone", "i-gone-too"):
         store.append_event(ref, f"forgotten:{key}", kind="tombstone",
                            tombstone=True, project_dir=PROJECT)
     after = _get(base, "/api/ledger")

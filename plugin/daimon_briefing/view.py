@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -54,7 +55,9 @@ class Snapshot:
     there is no foreign source yet. `health` maps a ledger file name to what
     `jsonl.read` judged it, or UNREADABLE when its fold raised, and `closed`
     is True when the trust ledger is UNREADABLE: nothing can then be proven
-    not quarantined."""
+    not quarantined. `forgotten_ids` are this bucket's item ids whose latest
+    event is a `forgotten*` status (a later reopen lifts it): `classify`
+    withholds those by id as well as by value. Never machine-wide."""
 
     forgotten: frozenset
     quarantined: frozenset
@@ -67,6 +70,7 @@ class Snapshot:
     health: Mapping
     closed: bool
     details: Mapping = field(default_factory=dict)
+    forgotten_ids: frozenset = frozenset()
 
     @classmethod
     def empty(cls) -> "Snapshot":
@@ -258,6 +262,16 @@ def forgotten_keys() -> frozenset:
                      | store.foreign_forgotten_content_keys())
 
 
+def forgotten_ids(resolutions) -> frozenset:
+    """The refs of a `store.fold_resolutions` result whose latest event is a
+    `forgotten*` status that still stands (`store.is_resolved`: a later reopen
+    lifts it). The one id rule, shared by `snapshot` and `judge`."""
+    return frozenset(
+        ref for ref, evt in resolutions.items()
+        if store.is_resolved(evt)
+        and str(evt.get("status") or "").lower().startswith("forgotten"))
+
+
 def _trust_index(project, read: jsonl.Read) -> tuple:
     """`(quarantine_ids, health, detail)` for one bucket's trust ledger: the
     active quarantines as `{(kind, value_key): quarantine_id}`, and what the
@@ -267,7 +281,7 @@ def _trust_index(project, read: jsonl.Read) -> tuple:
     fold is `trust.records`, never a copy of it."""
     health, detail = read.health, read.detail
     try:
-        records = trust.records(project_dir=project)
+        records = trust.records(project_dir=project, read=read)
     except Exception as exc:  # noqa: BLE001 — a fold's raise is a health state
         records = {}
         health, detail = Health.UNREADABLE, f"fold raised {type(exc).__name__}"
@@ -324,6 +338,8 @@ def snapshot(project) -> Snapshot:
 
     rulings = folded("refutations.jsonl", read_rulings, None)
     forgotten = folded("events.jsonl", forgotten_keys, frozenset())
+    ids = folded("events.jsonl", lambda: forgotten_ids(resolutions),
+                 frozenset())
     return Snapshot(
         forgotten=forgotten, quarantined=frozenset(quarantine_ids),
         quarantine_ids=_frozen(quarantine_ids),
@@ -331,21 +347,100 @@ def snapshot(project) -> Snapshot:
         corroborations=_frozen(corroborations), rulings=rulings,
         requests=_frozen(asks), health=_frozen(health),
         closed=health["trust.jsonl"] is Health.UNREADABLE,
-        details=_frozen(details))
+        details=_frozen(details), forgotten_ids=ids)
+
+
+def _stat_key(path) -> tuple | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+@dataclass(frozen=True)
+class Judge:
+    """What one bucket's reader may see, as data a caller holds across many
+    rows: the same `Snapshot` fields `classify` reads (the machine forgotten
+    set, this bucket's forgotten ids and active quarantines, `closed`) and
+    nothing else. `empty` is the fast path: when True no row of the bucket
+    can be withheld, so a caller skips the per-row work."""
+
+    snap: Snapshot
+
+    @property
+    def empty(self) -> bool:
+        snap = self.snap
+        return not (snap.closed or snap.forgotten or snap.forgotten_ids
+                    or snap.quarantined)
+
+    @property
+    def closed(self) -> bool:
+        return self.snap.closed
+
+    def verdict(self, fld: schema.ItemField, item) -> Visible | Withheld:
+        return classify(fld, item, self.snap)
+
+
+# (checkpoint root, slug) -> (memo key, Judge). Only OK or ABSENT ledgers are
+# kept: a ledger that is unreadable or still failing is read again on the next
+# call, so a repair or a retry shows at once.
+_judge_memo: dict[tuple, tuple] = {}
+
+
+def _read_judge(slug) -> tuple[Judge, bool]:
+    """`(judge, memoizable)` for a bucket slug, read fresh."""
+    bucket = _bucket(slug) if slug else None
+    forgotten = forgotten_keys()
+    if bucket is None:
+        return Judge(dataclasses.replace(Snapshot.empty(),
+                                         forgotten=forgotten)), True
+    trust_read = jsonl.read(bucket / "trust.jsonl")
+    events_read = jsonl.read(bucket / "events.jsonl")
+    ids, health, _detail = _trust_index(slug, trust_read)
+    try:
+        folded = forgotten_ids(store.fold_resolutions(events_read.rows))
+    except Exception:  # noqa: BLE001 — a fold's raise is a health state
+        folded = frozenset()
+        events_health = Health.UNREADABLE
+    else:
+        events_health = events_read.health
+    snap = dataclasses.replace(
+        Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
+        quarantine_ids=_frozen(ids), forgotten_ids=folded,
+        closed=health is Health.UNREADABLE)
+    steady = (Health.OK, Health.ABSENT)
+    return Judge(snap), health in steady and events_health in steady
+
+
+def judge(slug) -> Judge:
+    """The verdict source for one bucket (`slug`; None or a name with no
+    bucket judges the forgotten set alone). Memoized on the stat of the
+    bucket's `trust.jsonl` and `events.jsonl` and of everything that feeds the
+    machine-wide forgotten set, so a warm call is a handful of `stat`s. An
+    UNREADABLE or transient result is never memoized."""
+    bucket = _bucket(slug) if slug else None
+    if bucket is None:
+        return _read_judge(slug)[0]
+    memo_slot = (str(config.checkpoint_dir()), slug)
+    key = (_stat_key(bucket / "trust.jsonl"), _stat_key(bucket / "events.jsonl"),
+           store.forgotten_stamp())
+    hit = _judge_memo.get(memo_slot)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    got, memoizable = _read_judge(slug)
+    if memoizable:
+        _judge_memo[memo_slot] = (key, got)
+    else:
+        _judge_memo.pop(memo_slot, None)
+    return got
 
 
 def _light(slug, forgotten) -> Snapshot:
     """A snapshot with only what `classify` reads: the forgotten set the
-    caller holds, this bucket's active quarantines and `closed`, from the same
-    `_trust_index` step `snapshot` uses."""
-    bucket = _bucket(slug)
-    if bucket is None:
-        return dataclasses.replace(Snapshot.empty(), forgotten=forgotten)
-    ids, health, _detail = _trust_index(
-        slug, jsonl.read(bucket / "trust.jsonl"))
-    return dataclasses.replace(
-        Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
-        quarantine_ids=_frozen(ids), closed=health is Health.UNREADABLE)
+    caller holds and the bucket's judgement (`judge`): its forgotten ids, its
+    active quarantines and `closed`."""
+    return dataclasses.replace(judge(slug).snap, forgotten=forgotten)
 
 
 def _topic_text(checkpoint: dict, snap: Snapshot) -> str | None:
@@ -455,8 +550,10 @@ def classify(field: schema.ItemField, item, snap: Snapshot) -> Visible | Withhel
 
     Precedence: a closed snapshot withholds everything, then a forgotten
     value (value-only, any field), then a quarantine (scoped to the field's
-    kind). A value that is both forgotten and quarantined is reported as
-    forgotten: a forgotten item must stay indistinguishable from absent."""
+    kind). An item whose id is in `snap.forgotten_ids` is forgotten too, even
+    when its value is no longer the one that was tombstoned. A value that is
+    both forgotten and quarantined is reported as forgotten: a forgotten item
+    must stay indistinguishable from absent."""
     entry = _entry(item)
     raw_id = entry.get("id")
     item_id = str(raw_id) if raw_id else None
@@ -467,6 +564,9 @@ def classify(field: schema.ItemField, item, snap: Snapshot) -> Visible | Withhel
     for key in keys:
         if key in snap.forgotten:
             return Withheld(item_id, field.kind, "forgotten", None, key)
+    if item_id is not None and item_id in snap.forgotten_ids:
+        return Withheld(item_id, field.kind, "forgotten", None,
+                        keys[0] if keys else "")
     for key in keys:
         if (field.kind, key) in snap.quarantined:
             return Withheld(item_id, field.kind, "quarantine",
