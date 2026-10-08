@@ -406,6 +406,13 @@ SURFACES: tuple[Surface, ...] = (
     Surface("recall.db.{pid}.tmp*", "recall.rebuild",
             True, "reap", "reaper"),
     Surface("recall.db", "recall.rebuild", True, "lazy-rebuild", "recall"),
+    # -- per-store indexes (D9.6): any store but the default keeps its index
+    #    at `recall/<hash>.db`, and its staging twins follow the same shapes.
+    #    The audit scans every cache whose meta.store is the audited store;
+    #    heal reaps the ones whose store is gone or untouched for 30 days. --
+    Surface("recall/{hash}.db.{pid}.tmp*", "recall.rebuild",
+            True, "reap", "reaper"),
+    Surface("recall/*.db", "recall.rebuild", True, "lazy-rebuild", "recall"),
     Surface("recall_seen/*.json", "cli._save_seen",
             False, "exempt-no-plaintext", "none"),
     # -- the crash sink: RAW child stderr, so its contents are whatever the

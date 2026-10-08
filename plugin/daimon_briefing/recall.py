@@ -647,25 +647,169 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     --dry-run). Best-effort per file; returns the paths reaped (or
     would-reap)."""
     from . import surfaces
-    db = config.recall_db()
     if now is None:
         now = time.time()
     reaped: list = []
+    seen: set[Path] = set()
+    for directory, pattern in _snapshot_scopes():
+        # The registry shape of a name depends on its directory: the per-store
+        # ones are declared as `recall/<name>`.
+        prefix = "recall/" if directory == _cache_roots()[1] else ""
+        try:
+            candidates = sorted(directory.glob(pattern))
+        except OSError:
+            continue
+        for p in candidates:
+            if p in seen:
+                continue
+            seen.add(p)
+            entry = surfaces.match(prefix + p.name)
+            if entry is None or entry.delete != "reap":
+                continue
+            try:
+                if not p.is_file():
+                    continue
+                if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+                    continue
+                if apply:
+                    p.unlink()
+            except OSError:
+                continue
+            reaped.append(p)
+    return reaped
+
+
+def _snapshot_scopes() -> list[tuple[Path, str]]:
+    """Where a crashed rebuild can strand a snapshot: (directory, glob). The live index's own directory
+    always; with no explicit DAIMON_RECALL_DB also the legacy default index
+    and the per-store `recall/` directory, whose strands outlive the cache
+    they were staged for."""
+    db = config.recall_db()
+    scopes = [(db.parent, db.name + ".*")]
+    if not config.explicit_recall_db():
+        root = Path.home() / ".daimon"
+        scopes.append((root, "recall.db.*"))
+        scopes.append((root / "recall", "*.db.*"))
+    return scopes
+
+
+def _cache_roots() -> tuple[Path, Path]:
+    root = Path.home() / ".daimon"
+    return root / "recall.db", root / "recall"
+
+
+def _meta_value(path: Path, key: str) -> str | None:
+    """One value of an index's meta table, read-only; None when the file is
+    not a readable index or holds no such key."""
     try:
-        candidates = sorted(db.parent.glob(db.name + ".*"))
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?",
+                               (key,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return None if row is None else str(row[0])
+
+
+def _cache_files() -> list[Path]:
+    """Every recall index file this user could own: the live one, the legacy
+    default and the per-store directory. With an explicit DAIMON_RECALL_DB the
+    live index is the whole answer (a test must never read the real home)."""
+    live = config.recall_db()
+    out = [live]
+    if config.explicit_recall_db():
+        return out
+    legacy, directory = _cache_roots()
+    try:
+        extra = [legacy] + sorted(directory.glob("*.db"))
+    except OSError:
+        extra = [legacy]
+    for p in extra:
+        if p != live and p.is_file():
+            out.append(p)
+    return out
+
+
+def store_caches() -> list[Path]:
+    """The indexes built from the CURRENT store, whatever their team dir: the
+    live one, plus every other file whose `meta.store` resolves to the
+    checkpoint dir in force. The legacy `~/.daimon/recall.db` predates the
+    meta key, so without one it is the default store's. The privacy audit
+    scans all of them and forget rebuilds them."""
+    ckpt = config.recall_store()[0]
+    live = config.recall_db()
+    legacy = _cache_roots()[0]
+    default_ckpt = str((Path.home() / ".daimon" / "checkpoints")
+                       .resolve(strict=False))
+    out = []
+    for p in _cache_files():
+        if p == live:
+            out.append(p)
+            continue
+        recorded = _meta_value(p, "store")
+        if recorded is None and p == legacy:
+            recorded = default_ckpt
+        if recorded and str(Path(recorded).resolve(strict=False)) == ckpt:
+            out.append(p)
+    return out
+
+
+def refresh_store_caches() -> None:
+    """After a forget: the live index is rebuilt now and every sibling cache
+    of the same store (another team dir) is dropped, so no cache of the store
+    keeps the value until its next read. Best-effort per file."""
+    live = config.recall_db()
+    for p in store_caches():
+        if p == live:
+            continue
+        for stray in (p, p.with_name(p.name + "-journal")):
+            try:
+                stray.unlink(missing_ok=True)
+            except OSError:
+                pass
+    try:
+        rebuild()
+    except Exception as exc:  # noqa: BLE001 - lazily rebuilt on the next read
+        _note_error("refresh-store-caches", exc)
+
+
+_CACHE_STALE_SECONDS = 30 * 86400
+
+
+def reap_stale_caches(now: float | None = None, apply: bool = True) -> list:
+    """Per-store caches nobody can use any more (heal): the store the cache
+    records is gone, or the file has not been touched for 30 days. Only files
+    under `~/.daimon/recall/`; the legacy default index and the live one are
+    never reaped, and an explicit DAIMON_RECALL_DB means nothing here is
+    ours. A cache that cannot be read as an index but is old is reaped by age
+    alone. `apply=False` only lists."""
+    if config.explicit_recall_db():
+        return []
+    if now is None:
+        now = time.time()
+    live = config.recall_db()
+    reaped: list = []
+    directory = _cache_roots()[1]
+    try:
+        candidates = sorted(directory.glob("*.db"))
     except OSError:
         return reaped
     for p in candidates:
-        entry = surfaces.match(p.name)
-        if entry is None or entry.delete != "reap":
+        if p == live:
             continue
         try:
             if not p.is_file():
                 continue
-            if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+            recorded = _meta_value(p, "store")
+            gone = recorded is not None and not Path(recorded).exists()
+            old = now - p.stat().st_mtime > _CACHE_STALE_SECONDS
+            if not (gone or old):
                 continue
             if apply:
                 p.unlink()
+                p.with_name(p.name + "-journal").unlink(missing_ok=True)
         except OSError:
             continue
         reaped.append(p)
@@ -1092,6 +1236,11 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                  (_SCHEMA_VERSION,))
     conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
+    # Which store this index was built from (D9.6): the privacy audit, forget
+    # and heal find every cache of a store by this, not by its file name.
+    ckpt, team = config.recall_store()
+    conn.execute("INSERT INTO meta VALUES ('store', ?)", (ckpt,))
+    conn.execute("INSERT INTO meta VALUES ('team', ?)", (team,))
     # Buckets whose trust ledger could not be read at build time hold no rows
     # (nothing can be proven not quarantined). A query touching one re-judges
     # it and rebuilds when it reads again.

@@ -235,12 +235,12 @@ def _team_segments(root: Path, path: Path) -> tuple[str, ...] | None:
     return parts[2:-3] or None
 
 
-def _orphan_index_files() -> list[Path]:
-    """Crashed rebuilds leave `recall.db.<pid>.tmp` (+`-journal`) beside the
+def _orphan_index_files(db: Path | None = None) -> list[Path]:
+    """Crashed rebuilds leave `<index>.<pid>.tmp` (+`-journal`) beside the
     index — near-complete plaintext snapshots (four live multi-MB examples
     existed on the dev machine the day this was specced). They are the same
     sqlite shape, so they get the same scan, not a hand-wave."""
-    db = config.recall_db()
+    db = db or config.recall_db()
     try:
         return sorted(p for p in db.parent.glob(db.name + ".*") if p.is_file())
     except OSError:
@@ -417,21 +417,23 @@ def audit_project(project_dir=None) -> dict:
     result["zero_surfaces"] = members == 0
     result["findings"].extend(_scan_team_dir(slug, keys, project_dir,
                                              result["unscannable"]))
-    res, info, readable = _scan_recall_db(config.recall_db(), slug, keys)
-    if readable is None:
-        result["unscannable"].append(str(config.recall_db()))
-    else:
-        result["findings"].extend(res)
-        result["informational"].extend(info)
-    for orphan in _orphan_index_files():
-        res, info, readable = _scan_recall_db(orphan, slug, keys,
-                                              immutable=True)
+    from . import recall  # local: recall imports this package's readers
+    for cache in recall.store_caches():
+        res, info, readable = _scan_recall_db(cache, slug, keys)
         if readable is None:
-            result["unscannable"].append(str(orphan))
-            continue
-        for f in res + info:
-            f["surface"] = "orphan-tmp"
-            result["findings"].append(f)
+            result["unscannable"].append(str(cache))
+        else:
+            result["findings"].extend(res)
+            result["informational"].extend(info)
+        for orphan in _orphan_index_files(cache):
+            res, info, readable = _scan_recall_db(orphan, slug, keys,
+                                                  immutable=True)
+            if readable is None:
+                result["unscannable"].append(str(orphan))
+                continue
+            for f in res + info:
+                f["surface"] = "orphan-tmp"
+                result["findings"].append(f)
     # Event ledger: every free-text field hashed WHOLE — catches a field that
     # IS the value verbatim; one merely containing it is undetectable by hash
     # (stated report limitation). `status` on the tombstone row is

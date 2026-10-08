@@ -433,6 +433,11 @@ def _cmd_heal(args) -> int:
     for p in recall.reap_dead_snapshots(apply=not dry_run):
         print(f"{'would reap' if dry_run else 'reaped'} "
               f"dead index snapshot: {p.name}")
+    # D9.6: a per-store index whose store is gone, or that nobody opened in
+    # 30 days, is dead weight holding a plaintext copy.
+    for p in recall.reap_stale_caches(apply=not dry_run):
+        print(f"{'would reap' if dry_run else 'reaped'} "
+              f"stale recall cache: {p.name}")
     # #607: same repair charter — bound how long daimon-authored Windsurf
     # conversation text lingers between forgets.
     for p in store.reap_windsurf_state(apply=not dry_run):
