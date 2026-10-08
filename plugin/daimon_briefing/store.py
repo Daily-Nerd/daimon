@@ -1487,6 +1487,20 @@ def admission_state(project_dir) -> tuple[str, str] | None:
     return refusal.state, refusal.hint
 
 
+def emitters_open(project_dir) -> bool:
+    """May a machine row be written to this project's events ledger? One
+    judgement for the EMITTER class (D10.4): False when the ledger is not
+    proven, where every emitted row would be SKIPPED anyway. Capture asks once
+    before it emits instead of every row paying for its own read, and, on a
+    transient ledger, for its own retries. An unknown project has no ledger
+    and answers True, as it never blocked anything."""
+    path = _events_path(_resolved(project_dir))
+    if path is None:
+        return True
+    return jsonl.posture(path, "events.jsonl", Writer.EMITTER).write is (
+        surfaces.WritePosture.PROCEED)
+
+
 def admission_preflight(project_dir) -> None:
     """Refuse an admission BEFORE the model is called when this project's
     events ledger is not proven (D10.4). The ledger is judged once more by

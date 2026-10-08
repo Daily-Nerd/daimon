@@ -600,17 +600,22 @@ def carry_forward(checkpoint: dict, project) -> dict:
         # checkpoint — the fail-safe direction either emitter would take
         # on its own.
         forgotten = store.forgotten_content_keys(project_dir=project)
-        _emit_supersede_candidates(pairs, events, project,
-                                   forgotten=forgotten)
-        # Corroboration rows land AFTER the candidates, deliberately: the
-        # same capture can suggest a supersession and record an agreement
-        # about the same item, and the corroboration reader measures its
-        # count against the LATEST contradiction — so the candidate has to
-        # be on the log first for that comparison to be honest.
-        _emit_corroborations(
-            observed, events,
-            _forgotten_item_ids(forgotten, checkpoint, prev),
-            project, str(checkpoint.get("session_id") or ""))
+        # D10.4: ONE judgement of the events ledger for both emitters. An
+        # unproven ledger SKIPS every machine row written to it, so there is
+        # nothing to emit and nothing to pay a read for per row.
+        if store.emitters_open(project):
+            _emit_supersede_candidates(pairs, events, project,
+                                       forgotten=forgotten)
+            # Corroboration rows land AFTER the candidates, deliberately:
+            # the same capture can suggest a supersession and record an
+            # agreement about the same item, and the corroboration reader
+            # measures its count against the LATEST contradiction, so the
+            # candidate has to be on the log first for that comparison to
+            # be honest.
+            _emit_corroborations(
+                observed, events,
+                _forgotten_item_ids(forgotten, checkpoint, prev),
+                project, str(checkpoint.get("session_id") or ""))
     except Exception:  # keep the unmerged checkpoint, proceed to write
         pass
     return checkpoint
