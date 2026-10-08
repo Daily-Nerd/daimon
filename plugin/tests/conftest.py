@@ -243,3 +243,14 @@ def make_messages(n):
         role = "user" if i % 2 == 0 else "assistant"
         out.append({"role": role, "content": f"line {i} from {role}"})
     return out
+
+
+@pytest.fixture
+def use_clock():
+    """`use_clock(clock)` makes `clock` the active ledger clock for the rest
+    of the test, then restores the previous one."""
+    import contextlib
+
+    from daimon_briefing import clock as _clock
+    with contextlib.ExitStack() as stack:
+        yield lambda active: stack.enter_context(_clock.use(active))

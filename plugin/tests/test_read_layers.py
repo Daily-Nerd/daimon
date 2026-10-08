@@ -77,6 +77,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/capture.py": "write",  # the serialize-time capture pipeline
     "daimon_briefing/carry.py": "write",  # merges unresolved items forward at write time
     "daimon_briefing/channels.py": "write",  # authority of each write channel
+    "daimon_briefing/clock.py": "write",  # the one clock and id source every ledger stamp reads
     "daimon_briefing/checks_host.py": "write",  # host adapter of the check runtime
     "daimon_briefing/checks_runtime.py": "write",  # standalone check runtime, mirrored into the hooks
     "daimon_briefing/codex_hooks.py": "write",  # edits Codex hook config
@@ -102,6 +103,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/store.py": "write",  # owns the checkpoint store; its read primitives are the readers the layers above must stop calling
     "daimon_briefing/teamproject.py": "write",  # logical project paths for the team mirror
     "daimon_briefing/teamsync.py": "write",  # git sync of the team mirror
+    "daimon_briefing/testing.py": "write",  # supported test helpers for hosts (deterministic clock)
     "daimon_briefing/tool_context.py": "write",  # tool-call context capture for extraction
     "daimon_briefing/transcript.py": "write",  # host transcript loaders
     "daimon_briefing/cli/__init__.py": "entry",  # parser, dispatch and shared helpers

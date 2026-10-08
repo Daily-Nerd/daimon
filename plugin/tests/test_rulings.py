@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import config, redact, refutations, store, surfaces
+import time as _time
+
+from daimon_briefing import clock, config, redact, refutations, store, surfaces
 
 
 PROJECT = "/p/rulings"
@@ -572,14 +574,11 @@ def test_module_overturn_refuses_a_ruling_id(tmp_checkpoint_dir):
 
 
 def test_age_and_order_survive_proposals_across_real_seconds(
-        tmp_checkpoint_dir, monkeypatch):
+        tmp_checkpoint_dir, use_clock):
     # The earlier assertions all wrote inside one second, so they compared
     # X == X regardless of the code. Step the clock so they bite.
-    base = refutations.time.time_ns()
-    ticks = iter(range(1, 50))
-    monkeypatch.setattr(
-        refutations.time, "time_ns",
-        lambda: base + next(ticks) * 2_000_000_000)
+    base = _time.time_ns()
+    use_clock(clock.StepClock(base + 2_000_000_000, step_ns=2_000_000_000))
     ruling_id = _rule(channel="cli-tty", ratified=True)
     record = refutations.get(ruling_id, project_dir=PROJECT)
     before_updated, before_activated = (

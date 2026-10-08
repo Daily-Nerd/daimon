@@ -7,7 +7,7 @@ this file drives briefing.request_panel_lines/render directly.
 
 import json
 
-from daimon_briefing import briefing, config, requests, store
+from daimon_briefing import briefing, clock, config, requests, store
 
 RECIPIENT = "/p/req-brief-recipient"
 SENDER = "/p/req-brief-sender"
@@ -78,19 +78,13 @@ def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
 
 
 def test_panel_excludes_info_before_the_cap_so_a_work_ask_is_not_hidden(
-        tmp_checkpoint_dir, monkeypatch):
+        tmp_checkpoint_dir, use_clock):
     """The exclusion must run BEFORE `RENDER_CAP`, not after: RENDER_CAP
     newer `info` asks must never consume every slot and push a real `work`
     ask out of the panel. Timestamps controlled directly so ordering is
     deterministic — the sort is newest-first."""
     sender = _seed_sender()
-    counter = [1_700_000_000 * 10 ** 9]
-
-    def _next_ns():
-        counter[0] += 10 ** 9
-        return counter[0]
-
-    monkeypatch.setattr(requests.time, "time_ns", _next_ns)
+    use_clock(clock.StepClock(1_700_000_001 * 10 ** 9))
     requests.open_request(
         to=store.project_slug(RECIPIENT), ask="a real work ask",
         why="the client needs it", channel="cli-agent", project_dir=sender)

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from ._prepared import FrozenClock
 from daimon_briefing import (amendments, briefing, cli, config, pending,
                              privacy, recall, refutations, relations,
                              requests, store)
@@ -175,15 +176,14 @@ def test_a_bucket_slug_still_addresses_that_bucket_directly(
 
 
 def test_a_request_id_names_the_project_not_the_directory_it_was_typed_in(
-        repo_and_subdir, tmp_checkpoint_dir, monkeypatch):
+        repo_and_subdir, tmp_checkpoint_dir, use_clock):
     """`make_id` hashes the SENDER SLUG, and `from_label` is the directory
     basename. Unresolved, one ask opened from a subdir and the same ask opened
     from the repo root mint two ids for one request, and the recipient reads a
     label naming a directory instead of the project."""
     repo, subdir = repo_and_subdir
     order = 1_700_000_000_000_000_000
-    monkeypatch.setattr("daimon_briefing.requests.time.time_ns",
-                        lambda: order)
+    use_clock(FrozenClock(order))
 
     q_id = _write_request(subdir)
 

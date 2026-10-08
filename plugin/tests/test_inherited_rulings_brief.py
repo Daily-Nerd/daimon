@@ -14,9 +14,11 @@ every test here sets HOME itself, same as test_config_layer_scopes.py.
 import hashlib
 import json
 import subprocess
+import time
 from pathlib import Path
 
-from daimon_briefing import briefing, checks, config, refutations, store
+from daimon_briefing import (briefing, checks, clock, config, refutations,
+                             store)
 
 
 def _init_git_repo(path: Path) -> None:
@@ -45,18 +47,15 @@ def _rule_at(directory, verdict, *, subject=None, scope="tests", channel="cli-tt
         ratified=ratified, project_dir=str(directory), **kw)
 
 
-def _tick_seconds(monkeypatch, n=50):
-    """Steps `refutations.time.time_ns()` forward by 2 real seconds per call
-    (the pattern test_rulings.py's
-    test_age_and_order_survive_proposals_across_real_seconds uses) —
-    `activated_at` is second-precision (`_stamp`'s `ts`), so rulings written
-    inside one wall-clock second tie on it and the cap test's "oldest own row
-    is hidden" assertion would depend on refutation_id order instead of
-    insertion order."""
-    base = refutations.time.time_ns()
-    ticks = iter(range(1, n))
-    monkeypatch.setattr(refutations.time, "time_ns",
-                        lambda: base + next(ticks) * 2_000_000_000)
+def _tick_seconds(use_clock):
+    """Steps the ledger clock forward by 2 real seconds per stamp (the
+    pattern test_rulings.py's test_age_and_order_survive_proposals_across_real_seconds
+    uses), `activated_at` is second-precision (`_stamp`'s `ts`), so rulings
+    written inside one wall-clock second tie on it and the cap test's
+    "oldest own row is hidden" assertion would depend on refutation_id order
+    instead of insertion order."""
+    base = time.time_ns()
+    use_clock(clock.StepClock(base + 2_000_000_000, step_ns=2_000_000_000))
 
 
 # ---- Group 2: brief read — order, tagging, unreadable, cap, dedup ----------
@@ -119,9 +118,9 @@ def test_unreadable_layer_ledger_keeps_own_rows_plus_note(tmp_path, monkeypatch)
 
 
 def test_cap_three_inherited_five_own_shows_seven_hides_oldest_own(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, use_clock):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
-    _tick_seconds(monkeypatch)
+    _tick_seconds(use_clock)
     # Own rulings FIRST, then the layer's: #1094's child cap guard counts
     # inherited rulings against the child, so ratifying the 5th own AFTER
     # the layer already holds 3 active (3 inherited + 4 own = 7) would be

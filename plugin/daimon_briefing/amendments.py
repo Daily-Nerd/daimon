@@ -36,11 +36,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-import time
-import uuid
 from datetime import datetime, timezone
 
-from . import config, jsonl, normalize, policy, redact, store, surfaces
+from . import clock, config, jsonl, normalize, policy, redact, store, surfaces
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself (see the refutations table for the
 # full argument). Importing the table keeps a future channel tier ("ui",
@@ -158,14 +156,14 @@ def _stamp(event: str, amendment_id: str, channel: str,
     # Derived, never accepted: no way to name one channel and claim another's
     # authority.
     authority = CHANNEL_AUTHORITY[channel]
-    order = time.time_ns() if now_ns is None else int(now_ns)
+    order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     return {
         "version": VERSION,
         "ts": ts,
         "order": order,
-        "event_id": event_id or uuid.uuid4().hex,
+        "event_id": event_id,
         "event": event,
         "amendment_id": amendment_id,
         "channel": channel,
