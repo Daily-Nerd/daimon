@@ -721,3 +721,125 @@ def test_a_panel_drops_a_warning_that_an_earlier_block_already_said():
         ["Requests:", note], ["Decisions:", note], [note], notes=())
     assert req == ["Requests:", note]
     assert ver == ["Decisions:"] and owed == []
+
+
+# ---- 15. recall sees a teammate's tombstone ledger break --------------------
+
+
+def _rows(text="teammate"):
+    import sqlite3
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        return [r[0] for r in conn.execute(
+            "SELECT author FROM items WHERE text LIKE ?", (f"%{text}%",))]
+    finally:
+        conn.close()
+
+
+def _meta(key):
+    import sqlite3
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        return json.loads(dict(conn.execute("SELECT key, value FROM meta"))[key])
+    finally:
+        conn.close()
+
+
+_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@pytest.fixture
+def _fresh_limiter():
+    recall._forced_at.clear()
+    yield
+    recall._forced_at.clear()
+
+
+@pytest.mark.skipif(_ROOT, reason="root reads a 000 file")
+def test_a_chmod_alone_changes_the_recall_fingerprint(tmp_checkpoint_dir,
+                                                      monkeypatch):
+    adir = _teammate(monkeypatch)
+    ledger = adir / "tombstones.jsonl"
+    ledger.write_bytes(b"")
+    before = recall._fingerprint()
+    time.sleep(0.01)
+    ledger.chmod(0)
+    try:
+        assert recall._fingerprint() != before
+    finally:
+        ledger.chmod(0o644)
+
+
+@pytest.mark.skipif(_ROOT, reason="root reads a 000 file")
+def test_chmod_on_a_teammates_ledger_drops_their_rows_and_notes_it(
+        tmp_checkpoint_dir, monkeypatch, _fresh_limiter):
+    adir = _teammate(monkeypatch)
+    ledger = adir / "tombstones.jsonl"
+    ledger.write_bytes(b"")
+    recall.rebuild()
+    assert _rows() == ["grace"] and _meta("unproven_authors") == []
+    ledger.chmod(0)
+    try:
+        got = recall.query("teammate", all_projects=True)
+        assert got.rows == []
+        assert "author-skipped" in got.notes
+        assert _rows() == [] and _meta("unproven_authors") == ["grace"]
+    finally:
+        ledger.chmod(0o644)
+
+
+def test_a_cleared_read_error_rebuilds_without_a_file_change(
+        tmp_checkpoint_dir, monkeypatch, _fresh_limiter):
+    adir = _teammate(monkeypatch)
+    ledger = adir / "tombstones.jsonl"
+    ledger.write_bytes(b"")
+    real = jsonl.read
+    _seam(monkeypatch, ledger, jsonl.Read(Health.UNREADABLE, [], detail="EIO"))
+    recall.rebuild()
+    assert _rows() == [] and _meta("unproven_authors") == ["grace"]
+    monkeypatch.setattr(jsonl, "read", real)       # the error cleared; no stat moved
+    got = recall.query("teammate", all_projects=True)
+    assert [r["author"] for r in got.rows] == ["grace"]
+    assert "author-skipped" not in got.notes
+    assert _meta("unproven_authors") == []
+
+
+def test_a_newly_unproven_author_is_dropped_by_a_forced_rebuild(
+        tmp_checkpoint_dir, monkeypatch, _fresh_limiter):
+    adir = _teammate(monkeypatch)
+    ledger = adir / "tombstones.jsonl"
+    ledger.write_bytes(b"")
+    recall.rebuild()
+    _seam(monkeypatch, ledger, jsonl.Read(Health.UNREADABLE, [], detail="EIO"))
+    got = recall.query("teammate", all_projects=True)   # no stat moved
+    assert got.rows == [] and "author-skipped" in got.notes
+    assert _meta("unproven_authors") == ["grace"]
+
+
+def test_with_the_window_spent_the_query_says_stale(tmp_checkpoint_dir,
+                                                    monkeypatch,
+                                                    _fresh_limiter):
+    adir = _teammate(monkeypatch)
+    ledger = adir / "tombstones.jsonl"
+    ledger.write_bytes(b"")
+    recall.rebuild()
+    _seam(monkeypatch, ledger, jsonl.Read(Health.UNREADABLE, [], detail="EIO"))
+    recall._forced_at[str(config.recall_db())] = recall._monotonic()
+    got = recall.query("teammate", all_projects=True)
+    assert "stale" in got.notes and "author-skipped" in got.notes
+    assert _rows() == ["grace"]          # the old index, said to be behind
+
+
+def test_an_index_without_the_authors_meta_key_is_left_to_the_fingerprint(
+        tmp_checkpoint_dir, monkeypatch, _fresh_limiter):
+    import sqlite3
+    adir = _teammate(monkeypatch)
+    (adir / "tombstones.jsonl").write_bytes(b"")
+    recall.rebuild()
+    conn = sqlite3.connect(str(config.recall_db()))
+    conn.execute("DELETE FROM meta WHERE key = 'unproven_authors'")
+    conn.commit()
+    conn.close()
+    got = recall.query("teammate", all_projects=True)
+    assert [r["author"] for r in got.rows] == ["grace"]
+    assert "stale" not in got.notes

@@ -385,7 +385,10 @@ def _fingerprint() -> str:
             st = p.stat()
         except OSError:
             continue
-        entries.append(f"{p}\0{st.st_mtime_ns}\0{st.st_size}")
+        # ctime too: a chmod that makes a source unreadable (or readable
+        # again) moves it and nothing else about the file.
+        entries.append(
+            f"{p}\0{st.st_mtime_ns}\0{st.st_ctime_ns}\0{st.st_size}")
     entries.sort()
     # Retention (#120) changes index CONTENT without touching any file: a team
     # file ages past the cutoff, or the knob changes. Fold the knob + current
@@ -1306,6 +1309,10 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     # never rendered.
     conn.execute("INSERT INTO meta VALUES ('incomplete', ?)",
                  (json.dumps(sorted(incomplete)),))
+    # The teammates whose published tombstone ledger could not be proven at
+    # build (their rows were left out): a query compares this with now.
+    conn.execute("INSERT INTO meta VALUES ('unproven_authors', ?)",
+                 (json.dumps(sorted(store.foreign_tombstones().unproven)),))
     conn.commit()
     return count
 
@@ -1528,6 +1535,31 @@ def _incomplete_cleared(path: Path, notes: list) -> None:
         _note(notes, "stale")
 
 
+def _authors_changed(path: Path, notes: list) -> None:
+    """Rebuild (once per window) when the teammates whose tombstone ledger is
+    unproven now differ from the ones the index was built with
+    (`meta.unproven_authors`): an author newly unproven still has rows in
+    the index, and one proven again has none. The stat fingerprint cannot
+    see a read error clear, so this compares the health itself. When the
+    rebuild is skipped or fails the index is behind, so the read says
+    `stale`."""
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute("SELECT value FROM meta"
+                               " WHERE key = 'unproven_authors'").fetchone()
+        finally:
+            conn.close()
+        built = sorted(json.loads(row[0])) if row else None
+    except (sqlite3.Error, ValueError, TypeError):
+        return
+    if built is None:
+        return    # an index from before this meta key: the fingerprint rebuilds
+    if built != sorted(store.foreign_tombstones().unproven) \
+            and not _rebuild_forced(path, notes):
+        _note(notes, "stale")
+
+
 def _withheld(row: dict, judge) -> "view.Withheld | None":
     """The judge's verdict on one index row when it withholds it, else None.
     The row's hidden `_scene` column is removed here: it is read for the
@@ -1639,6 +1671,7 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     if _closed_still(scopes, path, notes):
         _note(notes, "closed")
     _incomplete_cleared(path, notes)
+    _authors_changed(path, notes)
     if store.forgotten_incomplete():
         _note(notes, "forget-incomplete")
     tombs = store.foreign_tombstones()
