@@ -844,10 +844,25 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
                 assert res.chunks == ["None"], (surface, tag, label)
 
 
-def test_a_recall_surface_shows_nothing_when_the_judge_raises(
+def _drive_recall_surfaces(world, monkeypatch):
+    """Every case of every recall surface, run on the world's own store."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    tmp = world.root
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
+    for surface, tag in CASES:
+        if surface in CONVERTED_RECALL:
+            _found, results = drive_case(surface, tag, world, pristine)
+            for label, res in results:
+                yield surface, tag, label, res
+
+
+def test_a_recall_surface_fails_closed_and_uniformly_when_the_judge_raises(
         world_run, monkeypatch):
-    """The recall surfaces ask `view.judge` for every bucket they touch: a
-    judge that fails shows no sentinel and no visible control text."""
+    """The recall surfaces ask `view.judge` for every bucket they touch. A
+    judge that fails shows no sentinel and no visible control text, and each
+    host fails the way the converted readers do: the CLI rc 2 and one line,
+    the MCP tool a ToolError, the viewer a 500. The two prompt hooks print
+    nothing."""
     from daimon_briefing import view
     world, _l, _d = world_run
 
@@ -855,19 +870,42 @@ def test_a_recall_surface_shows_nothing_when_the_judge_raises(
         raise RuntimeError("view.judge failed")
 
     monkeypatch.setattr(view, "judge", boom)
-    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
-    tmp = world.root
-    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
     ran = 0
-    for surface, tag in CASES:
-        if surface not in CONVERTED_RECALL:
-            continue
-        _found, results = drive_case(surface, tag, world, pristine)
-        for label, res in results:
-            ran += 1
-            text = res.text()
-            for shown in (VISIBLE, OTHER, "unrelated", "SENTINEL"):
-                assert shown not in text, (surface, tag, label)
+    for surface, tag, label, res in _drive_recall_surfaces(world, monkeypatch):
+        ran += 1
+        text = res.text()
+        for shown in (VISIBLE, OTHER, "unrelated", "SENTINEL"):
+            assert shown not in text, (surface, tag, label)
+        where = (surface, tag, label, res.rc, text[:80])
+        if surface == "cli:recall":
+            assert res.rc == 2, where
+            assert text.strip().count("\n") == 0, where
+        elif surface.startswith("mcp:"):
+            assert res.rc == "raised", where
+            assert "ToolError" in res.error or "could not be read" in text, where
+        elif surface.startswith("http:"):
+            assert res.rc == 500, where
+        else:   # recall-inject, action-recall: hook backends print nothing
+            assert text.strip() == "", where
+    assert ran >= 10
+
+
+def test_a_recall_surface_shows_nothing_when_the_judge_withholds_everything(
+        world_run, monkeypatch):
+    """Behavior, not names: with a judge that withholds every row, no recall
+    surface shows an item, the visible control included."""
+    import dataclasses
+
+    from daimon_briefing import view
+    world, _l, _d = world_run
+    closed = view.Judge(dataclasses.replace(view.Snapshot.empty(), closed=True))
+    monkeypatch.setattr(view, "judge", lambda slug, **_k: closed)
+    ran = 0
+    for surface, tag, label, res in _drive_recall_surfaces(world, monkeypatch):
+        ran += 1
+        text = res.text()
+        for shown in (VISIBLE, OTHER, "unrelated decision", "SENTINEL"):
+            assert shown not in text, (surface, tag, label)
     assert ran >= 10
 
 

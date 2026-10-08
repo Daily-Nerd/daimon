@@ -44,6 +44,10 @@ def _cmd_recall(args) -> int:
     except recall.RecallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except Exception as exc:  # noqa: BLE001 - reported, never shown around
+        print("error: recall could not be read "
+              f"({type(exc).__name__}); nothing was shown", file=sys.stderr)
+        return 2
     results = recalled.rows
     note = display.recall_note(recalled.notes)
     recall_telemetry.record(
@@ -71,7 +75,7 @@ def _cmd_recall(args) -> int:
         if not args.all_projects and not slug and not config.tenant_scoped():
             try:
                 wide = recall.query(query, all_projects=True, limit=50).rows
-            except recall.RecallError:
+            except Exception:  # noqa: BLE001 - the probe is best-effort
                 wide = []
             counts: dict = {}
             here = store.project_slug(project)

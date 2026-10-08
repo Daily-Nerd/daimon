@@ -73,6 +73,9 @@ def _recall(arguments: dict, fx) -> str:
                                 all_projects=all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
+    except Exception as e:  # noqa: BLE001 - a failed judge shows nothing
+        raise ToolError("recall could not be read "
+                        f"({type(e).__name__})") from e
     rows = recalled.rows
     # Best-effort (#1053): the row is committed after the payload is built,
     # and a telemetry failure must never take the tool call down with it —

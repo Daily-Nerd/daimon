@@ -578,8 +578,10 @@ def _resolution_marks(entries: list, withheld_ids: set) -> dict:
     "resolved" also when that id is withheld, so a label never names a value
     the reader may not see.
 
-    A forgotten ref is skipped: its rows are withheld by `view.judge` (by
-    value and by id) before they are ever inserted."""
+    A forgotten ref (a real tombstone, `store.is_tombstone_status`) is
+    skipped: its rows are withheld by `view.judge` (by value and by id)
+    before they are ever inserted. A free-form status that only starts with
+    the word is an ordinary resolution."""
     by_ref: dict = {}
     for entry in entries:
         if entry.rowid is not None and entry.item_id:
@@ -598,7 +600,7 @@ def _resolution_marks(entries: list, withheld_ids: set) -> dict:
             if not store.is_resolved(evt):
                 continue
             status = str(evt.get("status") or "")
-            if status.lower().startswith("forgotten"):
+            if store.is_tombstone_status(status):
                 continue
             value = _GENERIC_LABEL
             if status.lower().startswith("superseded-by:"):
@@ -913,6 +915,11 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
+def _note(notes: list, code: str) -> None:
+    if code not in notes:
+        notes.append(code)
+
+
 def _rebuild_forced(path: Path, notes: list) -> bool:
     """Rebuild because a query judged the index wrong. False when the window
     has not passed or the rebuild failed (the latter adds the `stale` note:
@@ -928,7 +935,7 @@ def _rebuild_forced(path: Path, notes: list) -> bool:
             rebuild()
         except (OSError, sqlite3.Error, RecallError) as exc:
             _note_error("forced-rebuild", exc)
-            notes.append("stale")
+            _note(notes, "stale")
             return False
     return True
 
@@ -951,17 +958,22 @@ def _rebuild_locked(path: Path) -> int:
     fingerprint = _fingerprint()  # before the scan: race-safe direction
     tmp = path.with_name(
         f"{path.name}.{os.getpid()}.tmp.{secrets.token_hex(6)}")
+    # 0600 from the first byte, and it is the mode of the finished index too:
+    # os.replace keeps the file, so recall.db is private to the user.
     os.close(os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-    conn = sqlite3.connect(str(tmp))
+    conn = None
     try:
+        conn = sqlite3.connect(str(tmp))
         conn.execute(_SECURE_DELETE_PRAGMA)
         count = _build(conn, fingerprint)
-    except BaseException:
         conn.close()
+        conn = None
+    except BaseException:
+        if conn is not None:
+            conn.close()
         tmp.unlink(missing_ok=True)
         tmp.with_name(tmp.name + "-journal").unlink(missing_ok=True)
         raise
-    conn.close()
     os.replace(tmp, path)
     return count
 
@@ -1244,13 +1256,15 @@ def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
     return f" AND {column} IN ({', '.join('?' for _ in scopes)})"
 
 
-def _closed_still(scopes, path: Path) -> bool:
+def _closed_still(scopes, path: Path, notes: list) -> bool:
     """Whether a bucket this read touches is still closed (#1132 PR 9a).
 
     The index records the buckets whose trust ledger was unreadable when it
     was built (`meta.closed`); they hold no rows. Each one in scope is judged
     again now, and when any reads again the index is rebuilt (once per window)
-    so its history comes back. True when a touched bucket is still closed."""
+    so its history comes back. True when a touched bucket is still closed.
+    When that rebuild is skipped (inside the window) or fails, the rows of the
+    reopened bucket are still missing, so the read says `stale`."""
     try:
         conn = sqlite3.connect(str(path))
         try:
@@ -1267,8 +1281,8 @@ def _closed_still(scopes, path: Path) -> bool:
         return False
     stamp = store.forgotten_stamp()
     still = [slug for slug in closed if view.judge(slug, stamp=stamp).closed]
-    if len(still) < len(closed):
-        _rebuild_forced(path, [])
+    if len(still) < len(closed) and not _rebuild_forced(path, notes):
+        _note(notes, "stale")
     return bool(still)
 
 
@@ -1371,8 +1385,8 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     scopes = ([slug] if slug else
               None if all_projects else _ambient_scopes(project_dir))
     path = config.recall_db()
-    if _closed_still(scopes, path):
-        notes.append("closed")
+    if _closed_still(scopes, path, notes):
+        _note(notes, "closed")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
@@ -1437,6 +1451,10 @@ def query(text: str, project_dir=None, all_projects: bool = False,
         kept, dropped = _attempt()
         if dropped and _rebuild_forced(path, notes):
             kept, _dropped = _attempt()
+            # The rebuild may have closed a bucket the first check found
+            # open (its trust ledger went bad), so the notes are recomputed.
+            if _closed_still(scopes, path, notes):
+                _note(notes, "closed")
     except sqlite3.OperationalError as exc:
         if "fts5" in str(exc).lower() and "no such module" in str(exc).lower():
             raise RecallError(_FTS5_MISSING_MSG) from exc
@@ -1507,7 +1525,7 @@ def find(item_id: str, project_dir=None,
     except (OSError, sqlite3.Error, RecallError) as exc:
         _note_error("lookup_item.refresh", exc)
     path = config.recall_db()
-    _closed_still(scopes, path)
+    _closed_still(scopes, path, [])
     try:
         rows = _select(
             "SELECT text, quote, trust, kind, author, project_slug,"
@@ -1697,7 +1715,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     )
     path = config.recall_db()
     try:
-        _closed_still(scopes, path)
+        _closed_still(scopes, path, [])
         # Judged BEFORE the coverage pass below: a withheld row's terms must
         # never count toward _MIN_OVERLAP, or a value the reader may not see
         # would still decide that its session is worth surfacing.
