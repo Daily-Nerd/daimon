@@ -1172,7 +1172,8 @@ def test_pre_llm_call_injects_the_badge(tmp_checkpoint_dir, monkeypatch):
 
 def test_the_mcp_brief_surfaces_the_badge(tmp_checkpoint_dir):
     _corroborated_checkpoint()
-    out = mcp_tools.HANDLERS["daimon_brief"]({"slug": store.project_slug(PROJECT)})
+    out = mcp_tools.HANDLERS["daimon_brief"](
+        {"slug": store.project_slug(PROJECT)}).text
     assert BADGE_2 in out
 
 

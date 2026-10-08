@@ -138,12 +138,14 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     assert _S not in rows and _T in rows
 
     # --- Block 4: scope control --------------------------------------------
-    # Project B has forgotten nothing; it must retrieve its own S, and A's
-    # denial must survive B's write (forget is scoped per project).
+    # Project B has forgotten nothing and keeps S on disk, and A's denial
+    # survives B's write. A reader of B no longer sees S: the judge withholds
+    # a value forgotten in ANY local project, the same set the briefing's view
+    # uses (#1132 PR 9a), so recall and brief agree.
     store.write_checkpoint("SB", _cp("SB", "2026-07-05T00:00:00Z", [_S]),
                            project_dir=_B)
     recall.rebuild()
-    assert _S in [h["text"] for h in recall.search(_HOT, project_dir=_B)]
+    assert _S not in [h["text"] for h in recall.search(_HOT, project_dir=_B)]
     assert _S in _latest_raw(_B)                      # B keeps it on disk
     assert _S not in [h["text"] for h in recall.search(_HOT, project_dir=_A)]
 

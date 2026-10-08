@@ -135,7 +135,7 @@ def test_recall_engine_failure_is_an_error_shape(engine_srv, monkeypatch):
     def boom(*a, **k):
         raise recall_mod.RecallError("no FTS5")
 
-    monkeypatch.setattr(recall_mod, "search", boom)
+    monkeypatch.setattr(recall_mod, "query", boom)
     out = _get(engine_srv, "/api/recall?q=sqlite")
     assert out["ok"] is False
     assert "FTS5" in out["error"]["fix"]

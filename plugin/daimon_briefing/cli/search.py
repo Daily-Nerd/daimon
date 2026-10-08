@@ -1,7 +1,7 @@
 """`daimon recall`, `why` and `serve` (moved out of cli/__init__.py, #1132 PR 5).
 
 Named `search` because `cli.recall` is the library module the CLI reaches
-through its namespace (tests patch `cli.recall.search`). Every name is
+through its namespace (tests patch `cli.recall.query`). Every name is
 re-exported from `cli`.
 """
 
@@ -11,13 +11,15 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import config, inspector, recall, recall_telemetry, render, store
+from .. import (config, display, inspector, recall, recall_telemetry, render,
+               store)
+from ..terms import salient_terms
 from ..ledger import _format_age
 
 
 def _cmd_recall(args) -> int:
     """Lexical search over the derived recall index. The index is disposable —
-    recall.search auto-(re)builds it — so the only hard failure surfaced here is
+    recall.query auto-(re)builds it — so the only hard failure surfaced here is
     an FTS5-less sqlite3 (rc 1, named); everything else degrades to no matches."""
     _cli._note_usage("recall")
     query = " ".join(args.query)
@@ -37,19 +39,27 @@ def _cmd_recall(args) -> int:
         return 2
     project = _cli._resolve_project(args.project)
     try:
-        results = recall.search(query, project_dir=project, slug=slug,
+        recalled = recall.query(query, project_dir=project, slug=slug,
                                 all_projects=args.all_projects, limit=args.limit)
     except recall.RecallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except Exception as exc:  # noqa: BLE001 - reported, never shown around
+        print("error: recall could not be read "
+              f"({type(exc).__name__}); nothing was shown", file=sys.stderr)
+        return 2
+    results = recalled.rows
+    note = display.recall_note(recalled.notes)
     recall_telemetry.record(
         results,
-        query_terms=recall.salient_terms(query),
+        query_terms=salient_terms(query),
         surface="recall-search",
         via="cli",
     )
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
+        if note:
+            print(note, file=sys.stderr)
         return 0
     if not results:
         # #259: a zero-match SCOPED search is a signpost, not a dead end —
@@ -64,8 +74,8 @@ def _cmd_recall(args) -> int:
         # signpost names is the refused flag.
         if not args.all_projects and not slug and not config.tenant_scoped():
             try:
-                wide = recall.search(query, all_projects=True, limit=50)
-            except recall.RecallError:
+                wide = recall.query(query, all_projects=True, limit=50).rows
+            except Exception:  # noqa: BLE001 - the probe is best-effort
                 wide = []
             counts: dict = {}
             here = store.project_slug(project)
@@ -80,9 +90,9 @@ def _cmd_recall(args) -> int:
                           sorted(counts.items(), key=lambda kv: -kv[1])]
                 lines.append("rerun with --all-projects, or --slug <slug> "
                              "for one project")
-                render.render_recall_lines(lines)
+                render.render_recall_lines(lines + ([note] if note else []))
                 return 0
-        render.render_recall_lines(["no matches"])
+        render.render_recall_lines(["no matches"] + ([note] if note else []))
         return 0
     now = time.time()
     lines = []
@@ -124,7 +134,7 @@ def _cmd_recall(args) -> int:
         lines.append(f"[{r['author']}] [{trust}] [{r['kind']}]{item_id} {r['text']} "
                      f"({r['session_id']}, {age} ago){stated_mark}{scope_mark}"
                      f"{superseded}{contradicted}")
-    render.render_recall_lines(lines)
+    render.render_recall_lines(lines + ([note] if note else []))
     return 0
 
 

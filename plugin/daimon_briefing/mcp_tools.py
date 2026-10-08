@@ -16,14 +16,28 @@ handler raises a ToolError (every attempt counts); a handler's own effects
 import functools
 import json
 import time
+from dataclasses import dataclass
 
-from . import (briefing, config, effects_commit, recall, recall_telemetry,
-               requests, store)
+from . import (briefing, config, display, effects_commit, recall,
+               recall_telemetry, requests, store)
 from .effects import Effects, Telemetry
+from .terms import salient_terms
 
 
 class ToolError(Exception):
     """A tool-level failure the calling agent should read, not a crash."""
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """What every handler returns: `text` is the payload (a recall's JSON, a
+    briefing, a status object) and `notes` are advisory lines that ride after
+    it as blocks of their own, so the payload stays exactly what its format
+    says it is. Only recall's degraded notes use `notes`; the briefing format
+    keeps its warnings inline because daimon owns it and hosts parse it."""
+
+    text: str
+    notes: tuple[str, ...] = ()
 
 
 def _tool(name: str):
@@ -32,10 +46,11 @@ def _tool(name: str):
     handler raised; whatever the handler adds to `fx` commits with it."""
     def deco(fn):
         @functools.wraps(fn)
-        def run(arguments: dict) -> str:
+        def run(arguments: dict) -> ToolResult:
             fx = effects_commit.Pending(f"mcp:{name}")
             try:
-                return fn(arguments, fx)
+                got = fn(arguments, fx)
+                return got if isinstance(got, ToolResult) else ToolResult(got)
             finally:
                 effects_commit.commit(fx.effects)
         return run
@@ -43,7 +58,7 @@ def _tool(name: str):
 
 
 @_tool("recall")
-def _recall(arguments: dict, fx) -> str:
+def _recall(arguments: dict, fx) -> ToolResult:
     query = str(arguments.get("query") or "").strip()
     if not query:
         raise ToolError("query is required")
@@ -68,10 +83,14 @@ def _recall(arguments: dict, fx) -> str:
     from . import cli
     project = cli._resolve_project(None)
     try:
-        rows = recall.search(query, project_dir=project, slug=slug,
-                             all_projects=all_projects, limit=limit)
+        recalled = recall.query(query, project_dir=project, slug=slug,
+                                all_projects=all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
+    except Exception as e:  # noqa: BLE001 - a failed judge shows nothing
+        raise ToolError("recall could not be read "
+                        f"({type(e).__name__})") from e
+    rows = recalled.rows
     # Best-effort (#1053): the row is committed after the payload is built,
     # and a telemetry failure must never take the tool call down with it —
     # the agent still gets its rows back. The rows are copied now, before
@@ -79,7 +98,7 @@ def _recall(arguments: dict, fx) -> str:
     # untouched.
     try:
         fx.add(Effects(telemetry=(Telemetry([dict(r) for r in rows], {
-            "query_terms": recall.salient_terms(query),
+            "query_terms": salient_terms(query),
             "surface": "recall-search", "via": "mcp",
             "injected_into": session}),)))
     except Exception:  # noqa: BLE001 — see comment above
@@ -89,7 +108,11 @@ def _recall(arguments: dict, fx) -> str:
     # the agent reading this result, not a measurement.
     for row in rows:
         row["status"] = recall.describe_status(row)
-    return json.dumps(rows, ensure_ascii=False, indent=2)
+    out = json.dumps(rows, ensure_ascii=False, indent=2)
+    # A degraded read says so in a block of its own after the rows, so the
+    # JSON above stays pure JSON.
+    note = display.recall_note(recalled.notes)
+    return ToolResult(out, (note,) if note else ())
 
 
 @_tool("brief")

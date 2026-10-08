@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import daimon_briefing.cli as _cli
 
 from .. import briefing, config, normalize, recall, recall_telemetry, store
+from ..terms import is_machine_prompt, salient_terms
 from ..ledger import _format_age
 
 
@@ -519,7 +520,7 @@ def _cmd_recall_inject(args) -> int:
         # Its own try: a classifier failure must cost nothing, so it falls back
         # to today's behavior (suggest) rather than to the outer silent return.
         try:
-            machine = recall.is_machine_prompt(prompt)
+            machine = is_machine_prompt(prompt)
         except Exception:  # noqa: BLE001 — fail toward suggesting, never skip on a bug
             machine = False
         if machine:
@@ -554,7 +555,7 @@ def _cmd_recall_inject(args) -> int:
         chosen, chosen_keys = _choose_recall_rows(
             matches, seen_keys, now, budget=_INJECT_BUDGET,
             usage_prefix="recall-inject")
-        terms = recall.salient_terms(prompt)
+        terms = salient_terms(prompt)
         # #1036: resolved once per injection, not per line — one delivery
         # renders one hint form, and the flag is the plugin's own hook
         # telling the truth about itself, never inferred here. Read before

@@ -4,7 +4,7 @@ surface against the fixture world and report what came back.
 Four kinds of surface, one result shape:
   cli   `cli.main(argv)` in-process, stdout/stderr captured, stdin and the
         stdout TTY answer chosen by the case
-  mcp   `mcp_tools.HANDLERS[name](arguments)`, the returned string
+  mcp   `mcp_tools.HANDLERS[name](arguments)`, the returned ToolResult (text, then notes)
   http  a `daimon_ui.server._Handler` built without a socket (no port, no
         thread, no flake), `do_GET()` with `_send` captured
   hook  the callbacks `daimon_briefing.register(FakeCtx)` registers
@@ -147,7 +147,8 @@ def run_mcp(name, arguments, *, env=()):
     result = Result()
     with environment(env):
         try:
-            result.chunks = [str(mcp_tools.HANDLERS[name](dict(arguments)))]
+            got = mcp_tools.HANDLERS[name](dict(arguments))
+            result.chunks = [got.text, *got.notes]
             result.rc = 0
         except Exception as exc:  # noqa: BLE001
             result.rc = "raised"

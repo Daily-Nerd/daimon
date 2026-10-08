@@ -228,7 +228,7 @@ def test_the_mcp_tool_output_parses(tmp_checkpoint_dir):
     _seed()
     _ruling()
     out = mcp_tools.HANDLERS["daimon_brief"](
-        {"slug": store.project_slug(PROJECT)})
+        {"slug": store.project_slug(PROJECT)}).text
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
     assert got.standing_rulings and got.items
@@ -238,7 +238,7 @@ def test_the_mcp_closed_view_parses(tmp_checkpoint_dir):
     _seed()
     _plant("trust.jsonl", b"<<<<<<< HEAD\n")
     out = mcp_tools.HANDLERS["daimon_brief"](
-        {"slug": store.project_slug(PROJECT)})
+        {"slug": store.project_slug(PROJECT)}).text
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING and got.items == ()
 

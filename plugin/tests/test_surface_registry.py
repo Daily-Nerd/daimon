@@ -89,6 +89,11 @@ def test_pid_placeholder_matches_digits_only():
     reap = surfaces.match("recall.db.44594.tmp")
     assert reap is not None and reap.delete == "reap"
     assert surfaces.match("recall.db.44594.tmp-journal").delete == "reap"
+    # the staging name of a current rebuild: pid, then a random token
+    staged = surfaces.match("recall.db.44594.tmp.a1b2c3d4e5f6")
+    assert staged is not None and staged.delete == "reap"
+    assert surfaces.match(
+        "recall.db.44594.tmp.a1b2c3d4e5f6-journal").delete == "reap"
     assert surfaces.match("recall.db.bak.tmp") is None
     assert surfaces.match("recall.db.tmp") is None
     assert surfaces.match("recall.db.tmpfoo") is None
@@ -194,6 +199,22 @@ def test_reap_removes_dead_snapshots_and_spares_fresh_ones(tmp_path):
     assert sorted(p.name for p in reaped) == [dead.name, journal.name]
     assert not dead.exists() and not journal.exists()
     assert fresh.exists(), "a fresh in-flight rebuild tmp must survive"
+
+
+def test_reap_takes_the_token_named_staging_files_of_a_crashed_rebuild():
+    db = config.recall_db()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    staged = db.parent / f"{db.name}.44594.tmp.a1b2c3d4e5f6"
+    journal = db.parent / f"{db.name}.44594.tmp.a1b2c3d4e5f6-journal"
+    live = db.parent / f"{db.name}.{os.getpid()}.tmp.0f0f0f0f0f0f"
+    for p in (staged, journal, live):
+        p.write_text("staging bytes")
+    old = time.time() - 2 * 3600
+    os.utime(staged, (old, old))
+    os.utime(journal, (old, old))
+    assert sorted(p.name for p in recall.reap_dead_snapshots()) == [
+        staged.name, journal.name]
+    assert live.exists(), "a fresh in-flight rebuild file must survive"
 
 
 def test_reap_skips_non_tmp_siblings_directories_and_glob_errors(

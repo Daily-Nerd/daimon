@@ -39,9 +39,9 @@ def test_agent_claim_none_is_empty_and_multiline_is_one_line():
 
 
 def _loop_with(monkeypatch, text):
-    monkeypatch.setattr(pending.recall, "lookup_item",
+    monkeypatch.setattr(pending.recall, "find",
                         lambda item_id, project_dir=None, slug=None:
-                        {"text": text})
+                        pending.recall.Found({"text": text}))
     return pending._loop_text("item-1", "slug-x")
 
 

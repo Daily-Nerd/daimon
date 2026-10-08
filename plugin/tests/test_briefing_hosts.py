@@ -157,7 +157,7 @@ def test_the_mcp_tool_masks_a_quarantined_ruling(tmp_checkpoint_dir):
     _seed()
     _ruling(Q)
     _quarantine()
-    out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT})
+    out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT}).text
     assert Q not in out and f"§ {MARKER_Q}" in out
 
 
@@ -228,7 +228,7 @@ def test_a_closed_brief_keeps_the_panels(tmp_checkpoint_dir, monkeypatch,
 
 def test_a_closed_mcp_brief_says_why_and_shows_no_item(tmp_checkpoint_dir):
     _closed_world()
-    out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT})
+    out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT}).text
     assert out.startswith(briefing.GREETING)
     assert "⚠ trust.jsonl is unreadable" in out
     assert "§ never ship a Friday deploy" in out

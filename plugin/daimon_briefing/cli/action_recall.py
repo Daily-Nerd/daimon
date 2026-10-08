@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import daimon_briefing.cli as _cli
 
 from .. import briefing, config, recall, recall_telemetry, store
+from ..terms import salient_terms
 
 
 # ---- #1031: action-keyed recall, in front of a shell action ----------------
@@ -137,7 +138,7 @@ def _cmd_action_recall(args) -> int:
         chosen, chosen_keys = _cli._choose_recall_rows(
             matches, own_keys | prompt_keys, now, budget=_cli._ACTION_BUDGET,
             usage_prefix="action-recall")
-        terms = recall.salient_terms(query)
+        terms = salient_terms(query)
         if not chosen:
             _cli._note_usage("action-recall:no-match")
             # #1073: same honest-empty placeholder as recall-inject — see

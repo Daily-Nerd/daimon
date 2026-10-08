@@ -12,7 +12,7 @@ import copy
 import re
 from collections import Counter
 
-from . import provenance, recall, schema, scoring, store
+from . import provenance, schema, scoring, store, terms
 
 # An item id already looks like this (store._stamp_item_ids: kind-initial +
 # >=6 hex chars, optional -N collision suffix) — never treat it as free text
@@ -131,7 +131,7 @@ def _generic_terms(texts, k: int = _GENERIC_DF) -> frozenset:
     it."""
     df: Counter = Counter()
     for t in texts:
-        df.update(set(recall.salient_terms(t)))
+        df.update(set(terms.salient_terms(t)))
     return frozenset(term for term, n in df.items() if n >= k)
 
 
@@ -163,8 +163,8 @@ def _match_path(a_text: str, b_text: str, generic=frozenset()) -> str:
     reported as absolute regardless of the fraction it also happens to pass."""
     if _quantity_conflict(a_text, b_text):
         return ""
-    a = set(recall.salient_terms(a_text)) - generic
-    b = set(recall.salient_terms(b_text)) - generic
+    a = set(terms.salient_terms(a_text)) - generic
+    b = set(terms.salient_terms(b_text)) - generic
     if len(a) < 2 or len(b) < 2:
         return ""
     shared = len(a & b)
@@ -184,8 +184,8 @@ def _restates(a_text: str, b_text: str, generic=frozenset()) -> bool:
     (that floor lives in `_match_path`; repeating it here would be dead
     code). A threshold shift, not a proof: a pair at five shared terms and a
     low ratio still passes, which is why the caller also stamps the record."""
-    a = set(recall.salient_terms(a_text)) - generic
-    b = set(recall.salient_terms(b_text)) - generic
+    a = set(terms.salient_terms(a_text)) - generic
+    b = set(terms.salient_terms(b_text)) - generic
     shared = len(a & b)
     return (shared >= _INHERIT_SHARED
             or shared / min(len(a), len(b)) >= _INHERIT_RATIO)
@@ -669,8 +669,8 @@ def bind_links(merged_cp: dict, prev_cp: dict | None) -> list[tuple[str, str, st
                     # Zero matches only: pass 1 finding SEVERAL is a verdict
                     # (ambiguous), not a miss.
                     matches = [p for p in prev_items
-                               if len(set(recall.salient_terms(target))
-                                      & set(recall.salient_terms(str(p["text"]))))
+                               if len(set(terms.salient_terms(target))
+                                      & set(terms.salient_terms(str(p["text"]))))
                                >= _MIN_SHARED]
                 if len(matches) != 1:
                     continue  # unbound or ambiguous — leave as text

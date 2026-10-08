@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import (amendments, cli, config, refutations, relations,
-                             requests, schema, store, trust)
+from daimon_briefing import (amendments, cli, config, normalize, refutations,
+                             relations, requests, schema, store, trust)
 
 KINDS = tuple(f.kind for f in schema.ITEM_FIELDS)
 QUARANTINED = ("topic", "question", "contradiction")
@@ -34,6 +34,19 @@ def token(kind: str) -> str:
 
 TOKENS = {kind: token(kind) for kind in KINDS}
 TEXTS = {kind: f"{TOKENS[kind]} the {kind} sentinel text" for kind in KINDS}
+
+
+# A seventh sentinel that is not a schema kind: a decision whose ID is
+# tombstoned while no tombstone key matches its VALUE (a sibling id, or a
+# value redacted differently at capture). Only the id rule withholds it.
+ID_TOKEN = token("idforgot")
+ID_TEXT = f"{ID_TOKEN} the id-forgotten sentinel text"
+
+
+def leaked_id(blob) -> bool:
+    if isinstance(blob, bytes):
+        blob = blob.decode("utf-8", errors="replace")
+    return ID_TOKEN.lower() in blob.lower()
 
 
 def leaked_kinds(blob) -> set[str]:
@@ -68,6 +81,7 @@ def checkpoint(sid, created):
                  "trust": "inferred"}],
             "recent_decisions": [
                 {"text": t["decision"], "trust": "inferred"},
+                {"text": ID_TEXT, "trust": "inferred"},
                 {"text": "an unrelated decision stays visible",
                  "trust": "inferred"}]},
         "epistemic_snapshot": {
@@ -156,6 +170,15 @@ def build_world(tmp_path, monkeypatch) -> World:
     for kind in FORGOTTEN:
         assert cli.main(["forget", world.ids[kind], "--reason", "stale",
                          "--project", project]) == 0
+
+    # tombstone one more ID, whose value no tombstone key names
+    for (k, text), item_id in by_text.items():
+        if k == "decision" and text == ID_TEXT:
+            store.append_event(
+                item_id,
+                "forgotten:" + normalize.content_key("a different value"),
+                kind="tombstone", tombstone=True, project_dir=project)
+            world.ids["idforgot"] = item_id
 
     # quarantine three, by a human
     for kind in QUARANTINED:

@@ -53,14 +53,21 @@ import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
+import threading
 import time
-import unicodedata
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (buckets, config, normalize, policy, redact, schema, scoring,
-               store, surfaces, teamproject, trust)
+from . import (buckets, config, policy, redact, schema, scoring, store,
+               surfaces, teamproject, view)
+# The term functions moved to `terms` so `view` can sit under both `carry` and
+# `recall`. The three public names stay importable from here for one release.
+from .terms import (  # noqa: F401
+    _match_units, _term_variants, credited_terms, is_machine_prompt,
+    salient_terms)
 
 log = logging.getLogger("daimon.recall")
 
@@ -96,7 +103,11 @@ def _note_error(where: str, exc: BaseException) -> None:
 # ledger folds bind through — purely a performance object, but the bump
 # rolls every existing db onto it deterministically instead of waiting for
 # an unrelated fingerprint change.
-_SCHEMA_VERSION = "9"   # #890 added items.stated_by
+# v10 (#1132 PR 9a): the index never holds a row a reader may not see (every
+# row is judged by its bucket before insert), and `meta.closed` names the
+# buckets with an unreadable trust ledger. An older index may hold a withheld
+# row, so the bump rebuilds it on first use.
+_SCHEMA_VERSION = "10"   # v9: #890 added items.stated_by
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "
@@ -454,8 +465,35 @@ _MIN_LINK_SHARED = 3
 _ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,}(-\d+)?")
 
 
-def _apply_typed_supersession(conn: sqlite3.Connection, links: list) -> None:
-    """Mark link targets superseded (#234). Two target shapes:
+# What a mark reads when its cause is a withheld value: the superseding
+# session or item id is itself something the reader may not see.
+_GENERIC_LABEL = "resolved"
+
+
+class _Entry:
+    """One scanned item, kept in memory for the whole build (#1132 PR 9a).
+    `rowid` is None for a withheld row: it was judged before insert and is
+    never in the index, but it still takes part in supersession (an ambiguity
+    count over fewer rows would let a visible row be marked by a match the
+    withheld twin makes ambiguous)."""
+
+    __slots__ = ("rowid", "author", "slug", "kind", "sid", "created",
+                 "item_id", "text")
+
+    def __init__(self, rowid, author, slug, kind, sid, created, item_id, text):
+        self.rowid = rowid
+        self.author = author
+        self.slug = slug
+        self.kind = kind
+        self.sid = sid
+        self.created = created
+        self.item_id = item_id
+        self.text = text
+
+
+def _supersession_marks(entries: list, links: list) -> dict:
+    """Mark link targets superseded (#234); returns `{rowid: (value, 'link')}`.
+    Two target shapes:
 
     id-shape — direct item_id match (bind_links already resolved it).
     free text — field reality: carry-time binding rarely lands, so the
@@ -466,49 +504,67 @@ def _apply_typed_supersession(conn: sqlite3.Connection, links: list) -> None:
       logical item, so uniqueness is by text, and every row of the matched
       text is marked. Zero or several distinct matches -> leave unmarked
       (a wrong supersession fabricates staleness; a missed one just stays
-      quiet, same bias as carry.bind_links)."""
-    for (author, slug, kind, owner_sid, owner_recency,
-         owner_item_id, owner_text, target) in links:
+      quiet, same bias as carry.bind_links).
+
+    The walk is over EVERY scanned item, withheld ones included, so the
+    ambiguity count does not depend on what the reader may see; only a
+    visible row (one with a rowid) is ever marked. A mark whose superseding
+    item is withheld carries the generic label, never its session id. Later
+    links overwrite earlier marks on the same row, as the sequential UPDATEs
+    they replace did."""
+    marks: dict = {}
+    by_id: dict = {}
+    by_scope: dict = {}
+    for entry in entries:
+        if entry.item_id:
+            by_id.setdefault(entry.item_id, []).append(entry)
+        by_scope.setdefault((entry.author, entry.slug, entry.kind),
+                            []).append(entry)
+    salient: dict = {}
+
+    def terms_of(text: str) -> set:
+        got = salient.get(text)
+        if got is None:
+            got = salient[text] = set(salient_terms(text))
+        return got
+
+    for (author, slug, kind, owner_sid, owner_recency, owner_item_id,
+         owner_text, owner_visible, target) in links:
+        label = owner_sid if owner_visible else _GENERIC_LABEL
         if _ID_SHAPE.fullmatch(target):
-            conn.execute(
-                "UPDATE items SET superseded_by = ?, superseded_source = 'link'"
-                " WHERE item_id = ? AND author = ? AND project_slug IS ?"
-                " AND session_id != ?",
-                (owner_sid, target, author, slug, owner_sid),
-            )
+            for entry in by_id.get(target, ()):
+                if (entry.rowid is not None and entry.author == author
+                        and entry.slug == slug and entry.sid != owner_sid):
+                    marks[entry.rowid] = (label, "link")
             continue
         want = set(salient_terms(target))
         if not want:
             continue
-        rows = conn.execute(
-            "SELECT id, text, item_id FROM items"
-            " WHERE author = ? AND project_slug IS ? AND kind = ?"
-            " AND session_id != ? AND created < ?",
-            (author, slug, kind, owner_sid, owner_recency),
-        ).fetchall()
-        by_text: dict[str, list] = {}
-        for rowid, text, item_id in rows:
+        by_text: dict = {}
+        for entry in by_scope.get((author, slug, kind), ()):
+            if entry.sid == owner_sid or not entry.created < owner_recency:
+                continue
             # Self/twin guard (mirrors bind_links): carried copies of the
             # superseding item itself must never match its own target.
-            if (owner_item_id and item_id == owner_item_id) \
-                    or text == owner_text:
+            if (owner_item_id and entry.item_id == owner_item_id) \
+                    or entry.text == owner_text:
                 continue
-            if len(want & set(salient_terms(text))) >= _MIN_LINK_SHARED:
-                by_text.setdefault(text, []).append(rowid)
+            if len(want & terms_of(entry.text)) >= _MIN_LINK_SHARED:
+                by_text.setdefault(entry.text, []).append(entry)
         if len(by_text) != 1:
             continue  # unbound or ambiguous — never guess
-        (rowids,) = by_text.values()
-        conn.executemany(
-            # Free-text branch of the SAME model-authored link, so it
-            # records the same mechanism as the id-shape branch above (#865).
-            "UPDATE items SET superseded_by = ?, superseded_source = 'link'"
-            " WHERE id = ?",
-            [(owner_sid, rid) for rid in rowids],
-        )
+        (group,) = by_text.values()
+        for entry in group:
+            if entry.rowid is not None:
+                # Free-text branch of the SAME model-authored link, so it
+                # records the same mechanism as the id-shape branch (#865).
+                marks[entry.rowid] = (label, "link")
+    return marks
 
 
-def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
-    """Fold each project bucket's events.jsonl into superseded_by (#234).
+def _resolution_marks(entries: list, withheld_ids: set) -> dict:
+    """Fold each project bucket's events.jsonl into `{rowid: (value,
+    'resolution')}` (#234).
 
     The liveness rule is store.is_resolved over the store.resolutions fold —
     the SAME rule and fold brief/withhold/carry use, not a re-implementation
@@ -518,125 +574,46 @@ def _apply_event_resolutions(conn: sqlite3.Connection) -> None:
     (case-insensitive), supersede-candidate:* never marks (a machine guess
     must never suppress, #111), and same-second ties break on content (#143;
     reopen wins a tie → unmarked, never-guess). The stored value is the
-    superseding item id when the status names one, else "resolved"."""
+    superseding item id when the status names one, else "resolved", and
+    "resolved" also when that id is withheld, so a label never names a value
+    the reader may not see.
+
+    A forgotten ref (a real tombstone, `store.is_tombstone_status`) is
+    skipped: its rows are withheld by `view.judge` (by value and by id)
+    before they are ever inserted. A free-form status that only starts with
+    the word is an ordinary resolution."""
+    by_ref: dict = {}
+    for entry in entries:
+        if entry.rowid is not None and entry.item_id:
+            by_ref.setdefault((entry.item_id, entry.slug), []).append(
+                entry.rowid)
+    out: dict = {}
     try:
-        buckets = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
+        dirs = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
     except OSError:
-        return
-    for bucket in buckets:
+        return out
+    for bucket in dirs:
         # The bucket dir NAME is the slug, and slug munging is idempotent
         # (guarded by test_project_slug_is_idempotent_on_slugs), so it routes
         # store.resolutions exactly like a project dir.
-        forgotten_ids: set[str] = set()
         for ref, evt in store.resolutions(project_dir=bucket.name).items():
             if not store.is_resolved(evt):
                 continue
             status = str(evt.get("status") or "")
-            # #321: forgotten is removal, not resolution — the content must
-            # leave the index entirely, historical checkpoint copies included.
-            # Prefix-match like every other status reader; only the LATEST
-            # event counts (a later reopen un-hides history by design).
-            if status.lower().startswith("forgotten"):
-                forgotten_ids.add(ref)
+            if store.is_tombstone_status(status):
                 continue
-            value = "resolved"
+            value = _GENERIC_LABEL
             if status.lower().startswith("superseded-by:"):
-                value = status.split(":", 1)[1].strip() or "resolved"
-            # Runs AFTER the link fold and overwrites it, which is the
-            # right precedence: a person's recorded action outranks a
-            # model's claim. #865 makes the surviving writer visible, so a
-            # reader can tell the value came from the person.
-            conn.execute(
-                "UPDATE items SET superseded_by = ?,"
-                " superseded_source = 'resolution'"
-                " WHERE item_id = ? AND project_slug IS ?",
-                (value, ref, bucket.name),
-            )
-        if not forgotten_ids:
-            continue
-        # #427: the scrub is VALUE-keyed, not only id-keyed. One value can
-        # live under sibling ids (same sentence in two sections, widened hash
-        # within one — store._stamp_item_ids), and forget rewrites only the
-        # LATEST session file: an older per-session checkpoint still holds the
-        # value under an id the ledger never tombstoned, and rebuild indexes
-        # it. The tombstone status embeds the canonical content key
-        # (`forgotten:<content_key>`, same ledger the write gate reads), so
-        # any row whose text canonicalizes into the forgotten set goes too.
-        # The id-keyed delete stays: it covers rows whose stored text was
-        # redacted into a different key at capture. Canonicalization runs only
-        # when a tombstone exists for the bucket (rows are scanned here, not
-        # per-event, so the common no-forget rebuild pays nothing).
-        forgotten_keys = store.forgotten_content_keys(project_dir=bucket.name)
-        rows = conn.execute(
-            "SELECT id, text, quote, scene, item_id FROM items"
-            " WHERE project_slug IS ?", (bucket.name,)).fetchall()
-        for rowid, text, quote, scene, item_id in rows:
-            # #599: the value can also sit in a row's quote/scene column
-            # (indexed verbatim). Whole-row delete is the fail-safe: the
-            # rebuilt row from the scrubbed checkpoint re-inserts the
-            # survivor without the field; a row only reachable here (its
-            # surface was unwritable) over-suppresses rather than serves
-            # forgotten plaintext.
-            if item_id not in forgotten_ids and not (
-                    forgotten_keys
-                    and (normalize.content_key(text or "") in forgotten_keys
-                         or (quote and normalize.content_key(quote)
-                             in forgotten_keys)
-                         or (scene and normalize.content_key(scene)
-                             in forgotten_keys))):
-                continue
-            # contentless fts5: deletion is the special 'delete'
-            # INSERT and must repeat the original column values
-            conn.execute(
-                "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
-                " VALUES('delete', ?, ?, ?, ?)",
-                (rowid, text, quote, scene))
-            conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
-
-
-def _apply_quarantine_withholding(conn: sqlite3.Connection) -> None:
-    """#1109 PR 2: drop every row a human-confirmed quarantine (`trust.py`)
-    covers, scoped by (kind, value). Same shape as the forgotten-value scrub
-    above and the same reason: `trust.active_value_keys` is value-keyed, not
-    id-keyed (design §2), so a carried or re-extracted copy of a quarantined
-    value under a different item id is still caught here. Unlike forget, this
-    reads a SEPARATE ledger that never rewrites the source checkpoint — only
-    this derived index drops the row; the checkpoint on disk (and carry's copy
-    of it) is untouched, same "withhold, don't drop" posture the view
-    uses. `trust.active_value_keys` already fails open (an unreadable or
-    missing trust.jsonl is the empty set), so a broken ledger withholds
-    nothing here either, rather than blanking a whole project's index."""
-    try:
-        buckets_ = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
-    except OSError:
-        return
-    for bucket in buckets_:
-        quarantined = trust.active_value_keys(project_dir=bucket.name)
-        if not quarantined:
-            continue
-        by_kind: dict[str, set] = {}
-        for kind, key in quarantined:
-            by_kind.setdefault(kind, set()).add(key)
-        rows = conn.execute(
-            "SELECT id, text, quote, scene, kind FROM items"
-            " WHERE project_slug IS ?", (bucket.name,)).fetchall()
-        for rowid, text, quote, scene, kind in rows:
-            keys = by_kind.get(kind)
-            if not keys:
-                continue
-            if not (
-                    (text and normalize.content_key(text) in keys)
-                    or (quote and normalize.content_key(quote) in keys)
-                    or (scene and normalize.content_key(scene) in keys)):
-                continue
-            # contentless fts5: deletion is the special 'delete' INSERT and
-            # must repeat the original column values (same idiom as the
-            # forgotten-value scrub above).
-            conn.execute(
-                "INSERT INTO items_fts(items_fts, rowid, text, quote, scene)"
-                " VALUES('delete', ?, ?, ?, ?)",
-                (rowid, text, quote, scene))
-            conn.execute("DELETE FROM items WHERE id = ?", (rowid,))
+                named = status.split(":", 1)[1].strip()
+                if named and named not in withheld_ids:
+                    value = named
+            # Overwrites the link fold, which is the right precedence: a
+            # person's recorded action outranks a model's claim. #865 makes
+            # the surviving writer visible, so a reader can tell the value
+            # came from the person.
+            for rowid in by_ref.get((ref, bucket.name), ()):
+                out[rowid] = (value, "resolution")
+    return out
 
 
 # A dead snapshot is unambiguous after this long: a live rebuild holds its
@@ -648,9 +625,9 @@ _SNAPSHOT_REAP_SECONDS = 3600
 def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     """Delete index snapshots left by crashed rebuilds (#601).
 
-    rebuild() stages into `recall.db.<pid>.tmp` and only unlinks ITS OWN
-    pid's leftover — a crash under any other pid strands the snapshot (plus
-    sqlite's `-journal` sidecar) forever: store._reap_stale_tmps never visits
+    rebuild() stages into `recall.db.<pid>.tmp.<token>` (older builds: a bare
+    `recall.db.<pid>.tmp`) and unlinks its own file on failure; a crash
+    strands the snapshot (plus sqlite's `-journal` sidecar) forever: store._reap_stale_tmps never visits
     this directory and its filter is `.endswith(".tmp")`, which the sidecars
     fail. The strands are full plaintext copies, and the unopenable sidecars
     pinned real installs at `daimon audit privacy` exit 3 (cannot-prove).
@@ -909,54 +886,163 @@ def describe_status(row) -> str | None:
     return "; ".join(parts) if parts else None
 
 
+_SECURE_DELETE_PRAGMA = "PRAGMA secure_delete=ON"
+
+# One lock per index path (guarded by its own): single-flight for rebuilds in
+# this process. Cross-process behaviour is unchanged, two processes may each
+# build and the last os.replace wins.
+_locks_guard = threading.Lock()
+_locks: dict[str, threading.RLock] = {}
+
+
+def _lock_for(path: Path) -> threading.RLock:
+    key = str(path)
+    with _locks_guard:
+        lock = _locks.get(key)
+        if lock is None:
+            lock = _locks[key] = threading.RLock()
+        return lock
+
+
+# A query that finds the index disagreeing with the judge rebuilds it, but no
+# more than once per window per index path, so a flapping ledger cannot turn
+# every prompt into a rebuild.
+_FORCED_REBUILD_SECONDS = 30.0
+_forced_at: dict[str, float] = {}
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _note(notes: list, code: str) -> None:
+    if code not in notes:
+        notes.append(code)
+
+
+def _rebuild_forced(path: Path, notes: list) -> bool:
+    """Rebuild because a query judged the index wrong. False when the window
+    has not passed or the rebuild failed (the latter adds the `stale` note:
+    what is served is the old index, still behind the judge)."""
+    key = str(path)
+    with _lock_for(path):
+        last = _forced_at.get(key)
+        now = _monotonic()
+        if last is not None and now - last < _FORCED_REBUILD_SECONDS:
+            return False
+        _forced_at[key] = now
+        try:
+            rebuild()
+        except (OSError, sqlite3.Error, RecallError) as exc:
+            _note_error("forced-rebuild", exc)
+            _note(notes, "stale")
+            return False
+    return True
+
+
 def rebuild() -> int:
     """Drop + rebuild the whole index by scanning local + team checkpoints.
     Atomic: builds into a sibling temp file, then os.replace — a concurrent
-    reader never opens a half-built db. Returns the number of items indexed."""
+    reader never opens a half-built db. One rebuild at a time per index path
+    in this process. Returns the number of items indexed.
+
+    Every scanned row is judged by its bucket (`view.judge`) BEFORE it is
+    inserted, so the file never holds a value a reader may not see."""
     path = config.recall_db()
     path.parent.mkdir(parents=True, exist_ok=True)
+    with _lock_for(path):
+        return _rebuild_locked(path)
+
+
+def _rebuild_locked(path: Path) -> int:
     fingerprint = _fingerprint()  # before the scan: race-safe direction
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.unlink(missing_ok=True)
-    conn = sqlite3.connect(str(tmp))
+    tmp = path.with_name(
+        f"{path.name}.{os.getpid()}.tmp.{secrets.token_hex(6)}")
+    # 0600 from the first byte, and it is the mode of the finished index too:
+    # os.replace keeps the file, so recall.db is private to the user.
+    os.close(os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    conn = None
     try:
-        _init_schema(conn)
-        count = 0
-        # (author, project_slug) -> (stamped, recency, session_id) of the newest
-        # checkpoint. `stamped` leads the tuple (#240): a stampless legacy file's
-        # recency is its mtime — when the file was last TOUCHED (migration,
-        # copy, GC), not when the session happened — so letting it compete with
-        # real `created` stamps inverts the frontier and flags the true latest
-        # as superseded by an older session. A stamped checkpoint always
-        # outranks a stampless one; mtime ordering applies among stampless
-        # peers only. session_id is the same-second tie-break (#31 item 7):
-        # scan order is readdir order, which is unspecified — without a stable
-        # secondary key the superseded flags flip across rebuilds.
-        newest: dict[tuple, tuple[int, float, str]] = {}
-        # (author, slug, kind, owner_sid, owner_recency, owner_item_id,
-        #  owner_text, target) per supersedes link (#234).
-        links: list[tuple] = []
-        # #963: a checkpoint written before 0.42.0 carries the LITERAL-path
-        # slug, and `daimon bucket migrate` cannot restamp it — the flat file
-        # is receipt-signed over its exact bytes. Mapped HERE instead, once
-        # per rebuild, so the migrated project searches its own history and
-        # `describe_scope` does not render it as somebody else's. Applied to
-        # both scan sources: a team copy of the same session carries the same
-        # stamp. Empty when no migration has ever run, which is the common
-        # case and costs one absent-file read.
-        aliases = buckets.alias_map()
-        for sid, author, slug, recency, cp in _scan_sources():
-            slug = aliases.get(slug, slug)
-            # Unattributed sessions never supersede each other (#31 item 6):
-            # NULL slugs are UNRELATED projects sharing a non-identity, not
-            # one project's history — they stay out of the newest map entirely.
-            if slug is not None:
-                key = (author, slug)
-                stamped = int(store._created_epoch(cp.get("created")) is not None)
-                if key not in newest or (stamped, recency, sid) > newest[key]:
-                    newest[key] = (stamped, recency, sid)
-            for (kind, text, trust, quote, scene, importance, first_seen,
-                 item_id, pinned, targets, stated_by) in _items(cp):
+        conn = sqlite3.connect(str(tmp))
+        conn.execute(_SECURE_DELETE_PRAGMA)
+        count = _build(conn, fingerprint)
+        conn.close()
+        conn = None
+    except BaseException:
+        if conn is not None:
+            conn.close()
+        tmp.unlink(missing_ok=True)
+        tmp.with_name(tmp.name + "-journal").unlink(missing_ok=True)
+        raise
+    os.replace(tmp, path)
+    return count
+
+
+def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
+    _init_schema(conn)
+    count = 0
+    # (author, project_slug) -> (stamped, recency, session_id) of the newest
+    # checkpoint. `stamped` leads the tuple (#240): a stampless legacy file's
+    # recency is its mtime — when the file was last TOUCHED (migration,
+    # copy, GC), not when the session happened — so letting it compete with
+    # real `created` stamps inverts the frontier and flags the true latest
+    # as superseded by an older session. A stamped checkpoint always
+    # outranks a stampless one; mtime ordering applies among stampless
+    # peers only. session_id is the same-second tie-break (#31 item 7):
+    # scan order is readdir order, which is unspecified — without a stable
+    # secondary key the superseded flags flip across rebuilds.
+    newest: dict[tuple, tuple[int, float, str]] = {}
+    # (author, slug, kind, owner_sid, owner_recency, owner_item_id,
+    #  owner_text, owner_visible, target) per supersedes link (#234).
+    links: list[tuple] = []
+    entries: list[_Entry] = []
+    # #963: a checkpoint written before 0.42.0 carries the LITERAL-path
+    # slug, and `daimon bucket migrate` cannot restamp it — the flat file
+    # is receipt-signed over its exact bytes. Mapped HERE instead, once
+    # per rebuild, so the migrated project searches its own history and
+    # `describe_scope` does not render it as somebody else's. Applied to
+    # both scan sources: a team copy of the same session carries the same
+    # stamp. Empty when no migration has ever run, which is the common
+    # case and costs one absent-file read.
+    aliases = buckets.alias_map()
+    # Judged once per bucket per build. A foreign row whose slug is a local
+    # bucket takes that bucket's judge; a NULL-slug or otherwise foreign row
+    # is judged by the forgotten set alone (the judge of a bucket that does
+    # not exist).
+    judges: dict = {}
+    # The forgotten-set stamp is read once for the whole build, not per bucket.
+    stamp = store.forgotten_stamp()
+    # One verdict per distinct value, because a carried item is one row per
+    # checkpoint that carries it and canonicalizing it is the cost.
+    verdicts: dict = {}
+    for sid, author, slug, recency, cp in _scan_sources():
+        slug = aliases.get(slug, slug)
+        # Unattributed sessions never supersede each other (#31 item 6):
+        # NULL slugs are UNRELATED projects sharing a non-identity, not
+        # one project's history — they stay out of the newest map entirely.
+        if slug is not None:
+            key = (author, slug)
+            stamped = int(store._created_epoch(cp.get("created")) is not None)
+            if key not in newest or (stamped, recency, sid) > newest[key]:
+                newest[key] = (stamped, recency, sid)
+        judge = judges.get(slug)
+        if judge is None:
+            judge = judges[slug] = view.judge(slug, stamp=stamp)
+        for (kind, text, _trust, quote, scene, importance, first_seen,
+             item_id, pinned, targets, stated_by) in _items(cp):
+            visible = True
+            if not judge.empty:
+                vkey = (slug, kind, item_id, text, quote, scene)
+                seen = verdicts.get(vkey)
+                if seen is None:
+                    verdict = judge.verdict(
+                        _field_for(kind),
+                        {"id": item_id, "text": text, "quote": quote,
+                         "scene": scene})
+                    seen = verdicts[vkey] = isinstance(verdict, view.Visible)
+                visible = seen
+            rowid = None
+            if visible:
                 cur = conn.execute(
                     "INSERT INTO items"
                     " (text, quote, scene, trust, kind, author, stated_by,"
@@ -964,52 +1050,81 @@ def rebuild() -> int:
                     "  session_id, created, importance, first_seen, item_id,"
                     "  pinned)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (text, quote, scene, trust, kind, author, stated_by, slug,
-                     sid, recency,
-                     importance, first_seen, item_id, pinned),
+                    (text, quote, scene, _trust, kind, author, stated_by,
+                     slug, sid, recency, importance, first_seen, item_id,
+                     pinned),
                 )
+                rowid = cur.lastrowid
                 conn.execute(
                     "INSERT INTO items_fts(rowid, text, quote, scene)"
                     " VALUES (?, ?, ?, ?)",
-                    (cur.lastrowid, text, quote, scene),
+                    (rowid, text, quote, scene),
                 )
                 count += 1
-                if slug is not None:
-                    for target in targets:
-                        links.append((author, slug, kind, sid, recency,
-                                      item_id, text, target))
-        # Whole-checkpoint recency (#234 v3): a silent rank input, NEVER a
-        # label. Measured precision of the old recency-derived flag was
-        # indistinguishable from a coin flip; only item-level evidence below
-        # may set superseded_by. #240's stamped-over-stampless ordering is
-        # preserved in the newest map above.
-        for (author, slug), (_stamped, _recency, sid) in newest.items():
-            conn.execute(
-                "UPDATE items SET frontier = 1"
-                " WHERE author = ? AND project_slug IS ? AND session_id = ?",
-                (author, slug, sid),
-            )
-        _apply_typed_supersession(conn, links)
-        _apply_event_resolutions(conn)
-        _apply_quarantine_withholding(conn)
-        _apply_verification_invalidations(conn)
-        conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
-                     (_SCHEMA_VERSION,))
-        conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
-        conn.commit()
-    finally:
-        conn.close()
-    os.replace(tmp, path)
+            entries.append(_Entry(rowid, author, slug, kind, sid, recency,
+                                  item_id, text))
+            if slug is not None:
+                for target in targets:
+                    links.append((author, slug, kind, sid, recency,
+                                  item_id, text, visible, target))
+    # Whole-checkpoint recency (#234 v3): a silent rank input, NEVER a
+    # label. Measured precision of the old recency-derived flag was
+    # indistinguishable from a coin flip; only item-level evidence below
+    # may set superseded_by. #240's stamped-over-stampless ordering is
+    # preserved in the newest map above.
+    for (author, slug), (_stamped, _recency, sid) in newest.items():
+        conn.execute(
+            "UPDATE items SET frontier = 1"
+            " WHERE author = ? AND project_slug IS ? AND session_id = ?",
+            (author, slug, sid),
+        )
+    marks = _supersession_marks(entries, links)
+    withheld_ids = {e.item_id for e in entries
+                    if e.rowid is None and e.item_id}
+    for judge in judges.values():
+        withheld_ids |= judge.snap.forgotten_ids
+    marks.update(_resolution_marks(entries, withheld_ids))
+    conn.executemany(
+        "UPDATE items SET superseded_by = ?, superseded_source = ?"
+        " WHERE id = ?",
+        [(value, source, rowid) for rowid, (value, source) in marks.items()])
+    _apply_verification_invalidations(conn)
+    conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
+                 (_SCHEMA_VERSION,))
+    conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
+    # Buckets whose trust ledger could not be read at build time hold no rows
+    # (nothing can be proven not quarantined). A query touching one re-judges
+    # it and rebuilds when it reads again.
+    conn.execute("INSERT INTO meta VALUES ('closed', ?)",
+                 (json.dumps(_closed_buckets(stamp)),))
+    conn.commit()
     return count
 
 
-def _ensure_fresh() -> None:
-    """Rebuild whenever the db is missing, unreadable, foreign, or stale.
-    Derived index: EVERY failure mode funnels into rebuild, silently."""
-    path = config.recall_db()
+def _closed_buckets(stamp) -> list[str]:
+    try:
+        names = sorted(d.name for d in config.checkpoint_dir().iterdir()
+                       if d.is_dir())
+    except OSError:
+        return []
+    return [name for name in names if view.judge(name, stamp=stamp).closed]
+
+
+def _field_for(kind) -> schema.ItemField:
+    got = _FIELD_BY_KIND.get(kind)
+    if got is not None:
+        return got
+    # A kind the table does not know is judged by value alone (no quarantine
+    # is scoped to it), never skipped.
+    return schema.ItemField("", "", False, str(kind), None, False, False)
+
+
+_FIELD_BY_KIND = {f.kind: f for f in schema.ITEM_FIELDS}
+
+
+def _is_fresh(path: Path) -> bool:
     if not path.exists():
-        rebuild()
-        return
+        return False
     try:
         conn = sqlite3.connect(str(path))
         try:
@@ -1017,11 +1132,21 @@ def _ensure_fresh() -> None:
         finally:
             conn.close()
     except sqlite3.DatabaseError:
-        rebuild()
-        return
-    if (meta.get("schema_version") != _SCHEMA_VERSION
-            or meta.get("fingerprint") != _fingerprint()):
-        rebuild()
+        return False
+    return (meta.get("schema_version") == _SCHEMA_VERSION
+            and meta.get("fingerprint") == _fingerprint())
+
+
+def _ensure_fresh() -> None:
+    """Rebuild whenever the db is missing, unreadable, foreign, or stale.
+    Derived index: EVERY failure mode funnels into rebuild, silently. Under
+    the per-path lock the check is repeated, so two threads on a stale index
+    build once and both read the finished, judged file. A caller may wait
+    behind a rebuild; an async host calls recall from a thread executor."""
+    path = config.recall_db()
+    with _lock_for(path):
+        if not _is_fresh(path):
+            rebuild()
 
 
 def warm() -> None:
@@ -1131,10 +1256,103 @@ def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
     return f" AND {column} IN ({', '.join('?' for _ in scopes)})"
 
 
-def search(query: str, project_dir=None, all_projects: bool = False,
-           limit: int = 20, slug: str | None = None) -> list[dict]:
-    """FTS5 MATCH over the (auto-refreshed) index. Live items first, then by
-    descending ``match_score`` (the sign-normalized bm25 rank), newest
+def _closed_still(scopes, path: Path, notes: list) -> bool:
+    """Whether a bucket this read touches is still closed (#1132 PR 9a).
+
+    The index records the buckets whose trust ledger was unreadable when it
+    was built (`meta.closed`); they hold no rows. Each one in scope is judged
+    again now, and when any reads again the index is rebuilt (once per window)
+    so its history comes back. True when a touched bucket is still closed.
+    When that rebuild is skipped (inside the window) or fails, the rows of the
+    reopened bucket are still missing, so the read says `stale`."""
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'closed'").fetchone()
+        finally:
+            conn.close()
+        closed = json.loads(row[0]) if row else []
+    except (sqlite3.Error, ValueError, TypeError):
+        return False
+    if scopes is not None:
+        closed = [slug for slug in closed if slug in scopes]
+    if not closed:
+        return False
+    stamp = store.forgotten_stamp()
+    still = [slug for slug in closed if view.judge(slug, stamp=stamp).closed]
+    if len(still) < len(closed) and not _rebuild_forced(path, notes):
+        _note(notes, "stale")
+    return bool(still)
+
+
+def _withheld(row: dict, judge) -> "view.Withheld | None":
+    """The judge's verdict on one index row when it withholds it, else None.
+    The row's hidden `_scene` column is removed here: it is read for the
+    verdict only and is no part of any returned row."""
+    scene = row.pop("_scene", "")
+    if judge.empty:
+        return None
+    verdict = judge.verdict(
+        _field_for(row.get("kind")),
+        {"id": row.get("item_id"), "text": row.get("text"),
+         "quote": row.get("quote"), "scene": scene})
+    return verdict if isinstance(verdict, view.Withheld) else None
+
+
+def _judge_rows(rows: list[dict]) -> tuple[list[dict], bool]:
+    """The rows a reader may see, and whether any was dropped. A drop means
+    the index held a value it must not, so the caller rebuilds it."""
+    kept: list[dict] = []
+    dropped = False
+    judges: dict = {}
+    stamp = store.forgotten_stamp()
+    for row in rows:
+        slug = row.get("project_slug")
+        if slug not in judges:
+            judges[slug] = view.judge(slug, stamp=stamp)
+        if _withheld(row, judges[slug]) is None:
+            kept.append(row)
+        else:
+            dropped = True
+    return kept, dropped
+
+
+@dataclass(frozen=True)
+class Recalled:
+    """`query`'s answer: the judged, ranked rows and the notes a presenter may
+    show (`display.recall_note`). A note is a code, never a count: `stale`
+    (the index could not be refreshed and the last one was served) and
+    `closed` (a bucket in scope has an unreadable trust ledger, so its history
+    is not shown)."""
+
+    rows: list
+    notes: tuple = ()
+
+
+@dataclass(frozen=True)
+class Found:
+    row: dict
+
+
+@dataclass(frozen=True)
+class Withheld:
+    """The id names an item the reader may not see. Identity and reason only,
+    never a value."""
+
+    item_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class Absent:
+    pass
+
+
+def query(text: str, project_dir=None, all_projects: bool = False,
+          limit: int = 20, slug: str | None = None) -> Recalled:
+    """FTS5 MATCH over the (auto-refreshed) index, judged. Live items first,
+    then by descending ``match_score`` (the sign-normalized bm25 rank), newest
     checkpoint first within equal score. Scope: project_dir's
     slug unless all_projects (or the project is unknown — no filter then,
     matching read_team's semantics). An explicit `slug` IS the scope (#243):
@@ -1147,18 +1365,28 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     AND is primary; when a multi-term query matches nothing, the same quoted
     tokens retry joined by OR (#25) — bm25 ranks items covering more terms
     first, so a richer cue degrades to partial matches instead of zeroing out
-    (encoding specificity: more cue must never mean less recall)."""
-    expr = _match_expr(query)
+    (encoding specificity: more cue must never mean less recall).
+
+    Every returned row passed `view.judge` for its bucket. The index is built
+    without withheld rows, so a row the judge drops means the index is behind
+    the ledgers: it is rebuilt once (at most once per window) and the query
+    runs again. The 4x headroom below is the only over-fetch."""
+    expr = _match_expr(text)
     if expr is None:
-        return []
+        return Recalled([], ())
+    notes: list[str] = []
     try:
         _ensure_fresh()
     except (OSError, sqlite3.Error) as exc:
         _note_error("search.refresh", exc)  # then try the query on what exists
+        notes.append("stale")
     # #899: an unaddressed read fans across own + host-allowlisted scopes;
     # an explicit slug or all_projects is exactly what it says.
     scopes = ([slug] if slug else
               None if all_projects else _ambient_scopes(project_dir))
+    path = config.recall_db()
+    if _closed_still(scopes, path, notes):
+        _note(notes, "closed")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
@@ -1166,6 +1394,7 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         " i.session_id, i.created, i.superseded_by, i.superseded_source,"
         " i.invalidated_by, i.cured_by,"
         " i.importance, i.first_seen, i.item_id, i.frontier,"
+        " i.scene AS _scene,"
         " -bm25(items_fts) AS match_score"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"
@@ -1201,18 +1430,12 @@ def search(query: str, project_dir=None, all_projects: bool = False,
         # carry depth; pathological fan-out may under-fill, which reads as
         # "fewer results", never as duplicates.
         params.append(want_n * 4)
-        conn = sqlite3.connect(str(config.recall_db()))
-        try:
-            cur = conn.execute(sql, params)
-            cols = [c[0] for c in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
-        finally:
-            conn.close()
+        return _select(sql, params)
 
-    def _query() -> list[dict]:
-        rows = _run(expr)
-        if not rows:
-            or_expr = _match_expr(query, " OR ")
+    def _attempt() -> tuple[list[dict], bool]:
+        kept, dropped = _judge_rows(_run(expr))
+        if not kept:
+            or_expr = _match_expr(text, " OR ")
             # Truthiness, not just inequality (#842): _match_expr answers None
             # when nothing searchable remains, and `or_expr != expr` is true
             # for None as well, so the old guard would have handed None to the
@@ -1220,30 +1443,60 @@ def search(query: str, project_dir=None, all_projects: bool = False,
             # rather than the join and the AND form above already answered
             # non-None for this same query, but the guard never said so.
             if or_expr and or_expr != expr:  # differs only when >=2 tokens
-                rows = _run(or_expr)
-        return _dedupe_rows(rows, want_n)
+                kept, more = _judge_rows(_run(or_expr))
+                dropped = dropped or more
+        return kept, dropped
 
     try:
-        return _query()
+        kept, dropped = _attempt()
+        if dropped and _rebuild_forced(path, notes):
+            kept, _dropped = _attempt()
+            # The rebuild may have closed a bucket the first check found
+            # open (its trust ledger went bad), so the notes are recomputed.
+            if _closed_still(scopes, path, notes):
+                _note(notes, "closed")
     except sqlite3.OperationalError as exc:
         if "fts5" in str(exc).lower() and "no such module" in str(exc).lower():
             raise RecallError(_FTS5_MISSING_MSG) from exc
         # Residual FTS5 syntax edge (e.g. a token that tokenizes to an empty
         # phrase): a weird query yields no matches, never a traceback.
-        return []
+        return Recalled([], tuple(notes))
     except sqlite3.DatabaseError:
         # Corrupted between _ensure_fresh and the query (or mid-read): the
         # index is derived — rebuild once and retry; give up empty, not loud.
         # OSError here too: disk-full mid-rebuild must not escape search().
         try:
             rebuild()
-            return _query()
+            kept, _dropped = _attempt()
         except (OSError, sqlite3.DatabaseError) as exc:
             _note_error("search", exc)
-            return []
+            return Recalled([], tuple(notes))
+    return Recalled(_dedupe_rows(kept, want_n), tuple(notes))
 
 
-def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict | None:
+def _select(sql: str, params) -> list[dict]:
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        cur = conn.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+_query_core = query
+
+
+def search(query: str, project_dir=None, all_projects: bool = False,
+           limit: int = 20, slug: str | None = None) -> list[dict]:
+    """`query(...).rows`: the public list-of-dicts shape (anamnesis iterates
+    it), with the notes dropped. See `query` for scope and ranking."""
+    return _query_core(query, project_dir=project_dir,
+                       all_projects=all_projects, limit=limit, slug=slug).rows
+
+
+def find(item_id: str, project_dir=None,
+         slug: str | None = None) -> "Found | Withheld | Absent":
     """Single-id read against the (auto-refreshed) index (#674).
 
     `why`'s own walk (store.project_surfaces) only ever sees this project's
@@ -1255,249 +1508,60 @@ def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict
 
     This is a companion to search(), never a substitute for its scoping:
     same project_slug equality (never team_project/granted-segments), same
-    fail-open posture (any index trouble degrades to None, not a raise —
+    fail-open posture (any index trouble degrades to Absent, not a raise;
     the caller's own "not found" refusal is the safe default already).
     Read-only. Callers must never treat a hit here as license to widen what
     forget/project_surfaces/the privacy audit consider this project's own
     surfaces — this only ever feeds a DISPLAY fallback.
 
-    Returns the newest matching row (ties broken by `created`), or None."""
+    Found is the newest matching row (ties broken by `created`). Withheld
+    says the newest copy may not be shown (reason only, no value) and, like a
+    dropped query row, rebuilds the index once."""
     scopes = [slug] if slug else _ambient_scopes(project_dir)
     if scopes is None:
-        return None
+        return Absent()
     try:
         _ensure_fresh()
     except (OSError, sqlite3.Error, RecallError) as exc:
         _note_error("lookup_item.refresh", exc)
+    path = config.recall_db()
+    _closed_still(scopes, path, [])
     try:
-        conn = sqlite3.connect(str(config.recall_db()))
-        try:
-            cur = conn.execute(
-                "SELECT text, quote, trust, kind, author, project_slug,"
-                " session_id, created, superseded_by, item_id, frontier"
-                " FROM items WHERE item_id = ?"
-                + _scope_clause(scopes, "project_slug")
-                + " ORDER BY created DESC LIMIT 1",
-                (item_id, *scopes),
-            )
-            cols = [c[0] for c in cur.description]
-            row = cur.fetchone()
-        finally:
-            conn.close()
+        rows = _select(
+            "SELECT text, quote, trust, kind, author, project_slug,"
+            " session_id, created, superseded_by, item_id, frontier,"
+            " scene AS _scene"
+            " FROM items WHERE item_id = ?"
+            + _scope_clause(scopes, "project_slug")
+            + " ORDER BY created DESC LIMIT 1",
+            (item_id, *scopes))
     except sqlite3.Error as exc:
         _note_error("lookup_item", exc)
-        return None
-    return dict(zip(cols, row)) if row is not None else None
+        return Absent()
+    if not rows:
+        return Absent()
+    row = rows[0]
+    verdict = _withheld(row, view.judge(row.get("project_slug")))
+    if verdict is None:
+        return Found(row)
+    _rebuild_forced(path, [])
+    return Withheld(item_id, verdict.reason)
+
+
+def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict | None:
+    """`find(...)`'s row when it is Found, else None: the public shape. A
+    withheld item reads as an absent one."""
+    got = find(item_id, project_dir=project_dir, slug=slug)
+    return got.row if isinstance(got, Found) else None
 
 
 # ---- #125: proactive suggestion — "you worked on this before" ----
 
-# Words that carry no retrieval signal in a work prompt: English function words
-# plus the request-noise vocabulary of talking to an agent. Salience = what's
-# LEFT after these; a prompt reduced to nothing stays silent.
-_STOPWORDS = frozenset("""
-a about after again all also and any are because been before being but can
-cant come could did didnt does doesnt doing dont down each few for from had
-has have having her here him his how into its itself just let lets like make
-more most much must new not now off once only other our out over own same
-she should side some still such than that the their them then there these
-they this those through too under until very was way well were what when
-where which while who why will with would you your yours
-please help want need fix add use using used code file files run running
-work working thing things stuff issue problem question trying still
-algo antes aqui asi aun bien cada casi como con cual cuando del desde donde
-ella ellos entre era ese esa eso esta estas este esto estos hace hacer hacia
-hasta hay las les los mas menos mientras misma mismo mucho muy nada nos
-nosotros otra otro para pero poco por porque pues que quien ser sin sobre
-son soy sus tal tambien tanto tener tiene toda todo todos una uno unos
-usted vamos
-favor ayuda ayudame necesito quiero puedes puedo podes dale arregla arreglar
-agrega agregar usa usar usando corre correr corriendo funciona funcionar
-codigo archivo archivos cosa cosas problema problemas pregunta preguntas
-tratando todavia entonces ahora gracias quizas intenta intentar
-""".split())
-# Spanish entries are stored diacritic-folded (tambien, not también) because
-# salient_terms folds tokens before the stopword check — one entry covers both
-# spellings. Both language bands mirror each other: function words plus the
-# imperative/filler band (favor/ayuda/necesito = please/help/need); scar #18
-# rule — do not drop beyond the frequency band the English list established.
-
-_TERM_CAP = 24          # bounded query cost; 12 dropped real cue terms on long
-                        # prompts (#31 item 5, encoding-specificity inversion)
-_MIN_TERMS = 2          # a one-word prompt is never a retrieval request
 _MIN_OVERLAP = 2        # matched SESSION must share >=2 distinct salient terms
                         # across its items: one shared word is coincidence, not
                         # prior work (noise budget). Session-level, not per-item
                         # — a multi-topic prompt splits its terms across items
                         # (first field miss, 2026-07-02)
-
-# recall index `kind` -> scoring TYPE_RULES key (#78 composition), from the
-# shared schema (#146). `contradiction` has no dedicated rules and is absent —
-# the .get() below keeps its default fallback.
-
-
-def _fold(tok: str) -> str:
-    """Strip combining marks so terms align with what FTS5 stored: the index
-    uses unicode61 with its remove_diacritics default, so it holds "sesion"
-    for "sesión" — folded prompt terms match, raw accents never would."""
-    return "".join(
-        c for c in unicodedata.normalize("NFD", tok) if not unicodedata.combining(c))
-
-
-_TOKEN_RE = re.compile(r"\w[\w\-]*")
-# Identifier separators + camelCase: `auth_token`, `session-start`, `parseJSON`.
-_SUBTOKEN_SPLIT_RE = re.compile(r"[_\-./:]+")
-_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-# Cheap pre-check: does this token have any boundary worth splitting on?
-_SPLITTABLE_RE = re.compile(r"[_\-./:]|[a-z0-9][A-Z]")
-# Longest first so `-ies` is tried before `-s`.
-_INFLECTIONS = ("ings", "edly", "ing", "ies", "ers", "est", "ed", "es", "er",
-                "ly", "s", "d")
-_STEM_MIN = 3   # never stem down to a stub shorter than a salient term
-
-
-def _match_units(text: str) -> set:
-    """Every whole word-unit a salient term may legitimately match (#490).
-
-    Retrieval is FTS5 `MATCH` under unicode61 — strict token equality — while
-    the gates that judge it (`_MIN_OVERLAP` here, cli's `_STALE_MIN_HITS` via
-    `term_hits`) used substring containment. Substring hits are a strict
-    superset of token hits, so every threshold stated in "distinct salient
-    terms" was evaluated on an inflated statistic, one-sided and always
-    permissive: `port` was credited against `transport`, `one` against
-    `honest`, `cli` against `client`.
-
-    Raw token equality is the wrong correction. `salient_terms` tokenizes on
-    `\\w[\\w-]*`, so compound identifiers are SINGLE tokens and substring
-    matching was the only reason a query for `token` reached `auth_token` — in
-    a code corpus that is the vocabulary, not noise. Measured on the real
-    corpus, only ~14% of substring-only credits were genuine mid-word false
-    positives; the rest were compounds (~72%) and inflections (~15%).
-
-    So: split each token on identifier separators and camelCase, add cheap
-    inflection stems, and credit a term only when it equals a whole unit. A
-    term is never credited for matching the middle of a word.
-    """
-    units = set()
-    for m in _TOKEN_RE.finditer(text):
-        raw = m.group(0)
-        # Fast path: this runs over every candidate row on the per-prompt
-        # critical path, and _fold's NFD normalize dominates. Almost every
-        # token is plain ASCII with no identifier boundary, so check for both
-        # before paying for either.
-        low = raw.lower() if raw.isascii() else _fold(raw).lower()
-        units.add(low)
-        if not _SPLITTABLE_RE.search(raw):
-            continue
-        for part in _SUBTOKEN_SPLIT_RE.split(_CAMEL_RE.sub("-", raw)):
-            if part:
-                units.add(part.lower() if part.isascii()
-                          else _fold(part).lower())
-    return units
-
-
-def _term_variants(term: str) -> set:
-    """Inflected forms of ONE salient term.
-
-    Morphology is folded on the QUERY side, not the haystack side, and that is
-    a performance decision with teeth: `suggest` compares <=24 terms against up
-    to 256 candidate rows, so expanding the terms once per prompt costs ~24
-    small sets while stemming every haystack token costs thousands. Measured on
-    real rows, haystack-side stemming ran ~7x slower than the substring
-    matching it replaced; this direction is ~1.4x.
-
-    Over-generous in one direction only: a form that is not a real word can be
-    generated (`statuss`), which at worst credits a term a stemmer would also
-    credit. It never removes a form.
-    """
-    forms = {term}
-    for suf in _INFLECTIONS:
-        forms.add(term + suf)
-        if term.endswith(suf) and len(term) - len(suf) >= _STEM_MIN:
-            base = term[:-len(suf)]
-            forms.add(base)
-            if suf == "ies":
-                forms.add(base + "y")
-            elif suf in ("es", "ed", "er", "est", "ing"):
-                forms.add(base + "e")
-    if term.endswith("y") and len(term) > _STEM_MIN:
-        forms.add(term[:-1] + "ies")
-    if not term.endswith("e"):
-        forms.add(term + "es")
-    else:
-        forms.add(term + "s")
-    return forms
-
-
-def credited_terms(terms, text: str) -> set:
-    """Which of `terms` the text legitimately answers, on word boundaries."""
-    units = _match_units(text)
-    return {t for t in terms if _term_variants(t) & units}
-
-
-def salient_terms(prompt: str) -> list[str]:
-    """Prompt -> deduped lowercase retrieval terms, prompt order preserved.
-    Tokens are word runs (unicode: "sesión" stays one token, never "sesi"+"n";
-    code identifiers survive: auth_token stays whole), diacritic-folded to
-    match the FTS5 index; <3 chars and stopwords drop. Fewer than _MIN_TERMS
-    remaining -> [] (callers stay silent)."""
-    out: list[str] = []
-    seen = set()
-    for m in re.finditer(r"\w[\w\-]*", prompt):
-        tok = _fold(m.group(0)).lower()
-        if len(tok) < 3 or tok in _STOPWORDS or tok in seen:
-            continue
-        seen.add(tok)
-        out.append(tok)
-        if len(out) >= _TERM_CAP:
-            break
-    return out if len(out) >= _MIN_TERMS else []
-
-
-# #450: literal openings of the host-emitted blocks that reach the prompt hook
-# as if they were user input — background-task notifications, teammate/agent
-# messages, slash-command output. Measured on the maintainer's transcripts,
-# 37.9% of injections landed on these, at the same rate as on real prompts:
-# nothing consumes those suggestions, so they are pure token cost. Literal and
-# case-sensitive on purpose — the hosts emit exactly one casing, and loosening
-# the match only buys false skips.
-_MACHINE_MARKERS = (
-    "[SYSTEM NOTIFICATION",
-    "<task-notification>",
-    "<teammate-message",
-    "<agent-message",
-    "<local-command-stdout>",
-)
-
-_MACHINE_SCAN_CHARS = 400   # opening region only — see is_machine_prompt
-
-
-def is_machine_prompt(prompt: str) -> bool:
-    """True when the prompt is structurally a host-emitted block rather than a
-    person asking for work (#450). Deliberately conservative: a missed skip is
-    the status quo, a wrong skip costs one suggestion.
-
-    Boundary — a marker counts only when it OPENS A LINE inside the first
-    _MACHINE_SCAN_CHARS characters (after leading whitespace):
-
-      - Line-start, because a machine block's marker is the block's opening;
-        a human quoting one does it mid-sentence ("why does the hook fire on
-        <task-notification> blocks?"). A plain substring scan would silence
-        recall on exactly the prompts that discuss recall. Indented markers
-        (a pasted code sample) are left ambiguous and still get suggestions.
-      - Windowed, because a genuine prompt may paste a whole block far below
-        its own question; only the opening region can carry the block that IS
-        the prompt. Observed shape: the notification wrapper opens with
-        `[SYSTEM NOTIFICATION` at offset 0 and carries `<task-notification>`
-        ~490 chars in, past this window — the marker list is redundant for
-        that reason, so the window never has to be widened to catch it.
-
-    Truncation at the window can only split a marker, i.e. only ever miss a
-    skip, which is the safe direction.
-    """
-    head = prompt.lstrip()[:_MACHINE_SCAN_CHARS]
-    return any(line.startswith(_MACHINE_MARKERS) for line in head.split("\n"))
-
 
 # Interval-slot demotions for the auto-inject path. Multiplicative and
 # INDEPENDENT, because the two facts are (#836): "replaced by later work" and
@@ -1625,6 +1689,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # pinned rides out for the #452 age gate (standing rules are
         # age-independent); it is NOT a rank input here.
         " i.pinned,"
+        " i.scene AS _scene,"
         " -bm25(items_fts) AS match_score"
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         # Best-ranked candidates first (#31 item 4): without ORDER BY the LIMIT
@@ -1648,14 +1713,15 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         " (i.superseded_by IS NOT NULL) ASC, match_score DESC"
         f" LIMIT {_SUGGEST_CANDIDATE_LIMIT}"
     )
+    path = config.recall_db()
     try:
-        conn = sqlite3.connect(str(config.recall_db()))
-        try:
-            cur = conn.execute(sql, (expr, *scopes))
-            cols = [c[0] for c in cur.description]
-            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-        finally:
-            conn.close()
+        _closed_still(scopes, path, [])
+        # Judged BEFORE the coverage pass below: a withheld row's terms must
+        # never count toward _MIN_OVERLAP, or a value the reader may not see
+        # would still decide that its session is worth surfacing.
+        rows, dropped = _judge_rows(_select(sql, (expr, *scopes)))
+        if dropped and _rebuild_forced(path, []):
+            rows, _dropped = _judge_rows(_select(sql, (expr, *scopes)))
     except sqlite3.Error as exc:
         _note_error("suggest", exc)
         return []  # suggestion is opportunistic — any db trouble means silence

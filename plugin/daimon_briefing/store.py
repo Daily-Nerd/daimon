@@ -989,25 +989,64 @@ def foreign_forgotten_content_keys() -> set[str]:
     ledger is capped — a teammate cannot make every briefing pay for an
     unbounded file. Never raises."""
     keys: set[str] = set()
+    for path in _foreign_tombstone_paths():
+        keys |= _tombstone_keys(path)
+    return keys
+
+
+def _foreign_tombstone_paths(include_own: bool = False) -> list:
+    """Every tombstone ledger another author published in a synced sidecar:
+    the files `foreign_forgotten_content_keys` reads. `include_own` adds this
+    author's own ledgers and skips resolving the author, which can fork
+    `git config`: `forgotten_stamp` only needs to notice a change, so it
+    stats a superset and never pays that."""
+    out: list = []
     try:
         remotes = [d for d in config.team_dir().iterdir()
                    if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
     except OSError:
-        return keys
+        return out
     if not remotes:
-        return keys
+        return out
     # After the cheap exits: `config.author()` may fork `git config`, and a
     # machine with no sidecar must not pay that on every briefing.
-    own = project_slug(config.author()) or "unknown"
+    own = None if include_own else (project_slug(config.author()) or "unknown")
     for remote in remotes:
         try:
-            paths = [p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
-                     if p.parent.name != own]
+            out.extend(p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
+                       if own is None or p.parent.name != own)
         except OSError:
             continue
-        for path in paths:
-            keys |= _tombstone_keys(path)
-    return keys
+    return out
+
+
+def forgotten_stamp() -> tuple:
+    """A cheap key that changes whenever the machine-wide forgotten set can:
+    each local bucket's `events.jsonl` (inode, mtime, size) and each foreign
+    tombstone ledger's. A reader that memoizes a judgement of the set keys on
+    this, so a forget in ANOTHER bucket or a pulled tombstone drops its memo.
+    Plain `os` calls: a build asks for it once per bucket it judges."""
+    root = config.checkpoint_dir()
+    base = str(root)
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        names = []
+    local: list[tuple] = []
+    for name in names:
+        try:
+            st = os.stat(os.path.join(base, name, "events.jsonl"))
+            local.append((name, st.st_ino, st.st_mtime_ns, st.st_size))
+        except OSError:
+            local.append((name, None, None, None))
+    foreign: list[tuple] = []
+    for path in _foreign_tombstone_paths(include_own=True):
+        try:
+            st = os.stat(path)
+            foreign.append((str(path), st.st_mtime_ns, st.st_size))
+        except OSError:
+            foreign.append((str(path), None, None))
+    return (base, tuple(local), tuple(sorted(foreign)))
 
 
 def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
