@@ -151,6 +151,12 @@ def scrub_forgotten_key(content_key: str, *, item_id: str = "",
     Each deleter is best-effort and never raises, so one unwritable ledger
     does not stop the rest."""
     events = store.scrub_event_fields(content_key, project_dir=project_dir)
+    # events.jsonl carries plaintext too (item_text, note and free-form
+    # status, #599) and `rewrite` writes a torn line back verbatim, so it is
+    # judged for reach like every other plaintext ledger.
+    events_reach = jsonl.judge_reach(
+        store._events_path(store._resolved(project_dir)), [],
+        lambda row: _event_holds(row, content_key))
     refuted = refutations.forget_content_key(content_key,
                                              project_dir=project_dir)
     related = relations.forget_item_id(item_id, project_dir=project_dir)
@@ -169,6 +175,7 @@ def scrub_forgotten_key(content_key: str, *, item_id: str = "",
     lines = forget_quarantined_lines(content_key, text=text,
                                      project_dir=project_dir)
     unreached = [u for u in (
+        _unreached("events.jsonl", [events_reach], True),
         _unreached("refutations.jsonl", [refuted], True),
         _unreached("relations.jsonl", [related], False),
         _unreached("amendments.jsonl", amend_parts, True),
@@ -178,6 +185,15 @@ def scrub_forgotten_key(content_key: str, *, item_id: str = "",
                     tuple(sorted(amended)), tuple(requested),
                     tuple(quarantined), lines,
                     tuple(unreached) + tuple(lines.unreached))
+
+
+def _event_holds(row, content_key: str) -> bool:
+    """Does an events row still carry the forgotten value in a prose field
+    (the fields `store.scrub_event_fields` redacts)."""
+    return any(
+        isinstance(row.get(field), str) and row[field]
+        and normalize.content_key(row[field]) == content_key
+        for field in surfaces.scalar_prose_fields("events.jsonl"))
 
 
 def _unreached(name: str, parts, plaintext: bool) -> Unreached | None:

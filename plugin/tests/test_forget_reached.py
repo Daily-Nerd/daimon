@@ -15,6 +15,7 @@ from daimon_briefing import (amendments, cli, config, jsonl, ledger_repair,
                              normalize, refutations, relations, requests,
                              store, trust)
 from daimon_briefing.jsonl import Health, Reached
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/forget-reached"
 VALUE = "zqxreachcanary5530 rotate the staging credentials on fridays"
@@ -308,3 +309,44 @@ def test_the_forget_dry_run_writes_nothing_and_needs_no_proven_events(
     events.write_bytes(b"<<<<<<< conflict\n")
     rc, out = _forget(capsys, "--dry-run")
     assert rc == 0 and "would forget" in out.out
+
+
+# ---- events.jsonl is plaintext for forget's reach ------------------------------
+
+def _event_with_the_value():
+    store.append_event(ITEM, "resolved", item_text=VALUE, project_dir=PROJECT,
+                       writer=Writer.HUMAN)
+    return store._events_path(PROJECT)
+
+
+def test_a_torn_events_row_is_not_reached_and_forget_exits_4(
+        tmp_checkpoint_dir, capsys):
+    _seed_refutations()  # something for forget to bind to
+    path = _event_with_the_value()
+    _plant(path, b'{"item_ref": "x", "item_text": "' + VALUE.encode()[:10])
+    rc, out = _forget_cli(capsys)
+    assert rc == 4
+    assert ("events.jsonl has 1 torn line(s) that forget cannot read; "
+            "run: daimon ledger repair events") in out.out
+    # The rows it could read were redacted.
+    assert VALUE not in "".join(path.read_text().splitlines()[:1])
+
+
+def test_scrubbed_judges_events_like_every_plaintext_ledger(tmp_checkpoint_dir):
+    _plant(_event_with_the_value(), b'{"torn": ')
+    done = ledger_repair.scrub_forgotten_key(
+        KEY, item_id=ITEM, sibling_ids=(), text=VALUE, project_dir=PROJECT)
+    [u] = [u for u in done.unreached if u.name == "events.jsonl"]
+    assert (u.state, u.torn, u.plaintext) == (Health.DEGRADED, 1, True)
+
+
+def test_a_clean_events_ledger_is_reached(tmp_checkpoint_dir):
+    _event_with_the_value()
+    done = ledger_repair.scrub_forgotten_key(
+        KEY, item_id=ITEM, sibling_ids=(), text=VALUE, project_dir=PROJECT)
+    assert done.events == 1 and done.unreached == ()
+
+
+def _forget_cli(capsys):
+    rc = cli.main(["forget", VALUE, "--project", PROJECT])
+    return rc, capsys.readouterr()
