@@ -76,17 +76,20 @@ def _note_error(where: str, exc: BaseException) -> None:
     """Breadcrumb for a swallowed index error (#28). Recall is fail-open by
     design — a broken index degrades to [] — but silently, a broken recall is
     indistinguishable from \"no prior work\". One line to recall-error.log
-    (read back by `daimon status`) plus a log.warning. Best-effort: the
-    breadcrumb itself must never break the swallow."""
+    (read back by `daimon status`) plus a log.warning. The line is recorded as
+    an `ErrorLog` record and written by the committer's narrow writer (no stdout
+    flush, no `cli` import), which redacts and caps it; best-effort: the breadcrumb itself must never break the swallow."""
     log.warning("recall.%s swallowed %s: %s", where, type(exc).__name__, exc)
     try:
-        d = config.log_dir()
-        d.mkdir(parents=True, exist_ok=True)
+        from . import effects_commit
+        from .effects import ErrorLog
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with (d / "recall-error.log").open("a", encoding="utf-8") as f:
-            f.write(f"{stamp} {where}: {type(exc).__name__}: {exc}\n")
-    except OSError:
+        effects_commit.commit_error_log(ErrorLog(
+            "recall-error.log", stamp, where,
+            f"{type(exc).__name__}: {exc}"))
+    except Exception:  # noqa: BLE001 - see the docstring
         pass
+
 
 # v2 (#125): items grew importance + first_seen for suggest()'s ranking.
 # v3 (#234): items grew item_id + frontier, and superseded_by changed MEANING —
@@ -647,25 +650,209 @@ def reap_dead_snapshots(now: float | None = None, apply: bool = True) -> list:
     --dry-run). Best-effort per file; returns the paths reaped (or
     would-reap)."""
     from . import surfaces
-    db = config.recall_db()
     if now is None:
         now = time.time()
     reaped: list = []
+    seen: set[Path] = set()
+    for directory, pattern in _snapshot_scopes():
+        # The registry shape of a name depends on its directory: the per-store
+        # ones are declared as `recall/<name>`.
+        prefix = "recall/" if directory == _cache_roots()[1] else ""
+        try:
+            candidates = sorted(directory.glob(pattern))
+        except OSError:
+            continue
+        for p in candidates:
+            if p in seen:
+                continue
+            seen.add(p)
+            entry = surfaces.match(prefix + p.name)
+            if entry is None or entry.delete != "reap":
+                continue
+            try:
+                if not p.is_file():
+                    continue
+                if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+                    continue
+                if apply:
+                    p.unlink()
+            except OSError:
+                continue
+            reaped.append(p)
+    return reaped
+
+
+def _snapshot_scopes() -> list[tuple[Path, str]]:
+    """Where a crashed rebuild can strand a snapshot: (directory, glob). The live index's own directory
+    always; with no explicit DAIMON_RECALL_DB also the legacy default index
+    and the per-store `recall/` directory, whose strands outlive the cache
+    they were staged for."""
+    db = config.recall_db()
+    scopes = [(db.parent, db.name + ".*")]
+    if not config.explicit_recall_db():
+        root = Path.home() / ".daimon"
+        scopes.append((root, "recall.db.*"))
+        scopes.append((root / "recall", "*.db.*"))
+    return scopes
+
+
+def _cache_roots() -> tuple[Path, Path]:
+    root = Path.home() / ".daimon"
+    return root / "recall.db", root / "recall"
+
+
+def _meta_value(path: Path, key: str) -> str | None:
+    """One value of an index's meta table, read-only; None when the file is
+    not a readable index or holds no such key."""
     try:
-        candidates = sorted(db.parent.glob(db.name + ".*"))
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?",
+                               (key,)).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return None if row is None else str(row[0])
+
+
+def _cache_files() -> list[Path]:
+    """Every recall index file this user could own: the live one, the legacy
+    default and the per-store directory. With an explicit DAIMON_RECALL_DB the
+    live index is the whole answer (a test must never read the real home)."""
+    live = config.recall_db()
+    out = [live]
+    if config.explicit_recall_db():
+        return out
+    legacy, directory = _cache_roots()
+    try:
+        extra = [legacy] + sorted(directory.glob("*.db"))
+    except OSError:
+        extra = [legacy]
+    for p in extra:
+        if p != live and p.is_file():
+            out.append(p)
+    return out
+
+
+def store_caches() -> list[Path]:
+    """The indexes built from the CURRENT store, whatever their team dir: the
+    live one, plus every other file whose `meta.store` resolves to the
+    checkpoint dir in force. The legacy `~/.daimon/recall.db` predates the
+    meta key, so without one it is the default store's. The privacy audit
+    scans all of them and forget rebuilds them."""
+    ckpt = config.recall_store()[0]
+    live = config.recall_db()
+    legacy = _cache_roots()[0]
+    default_ckpt = str((Path.home() / ".daimon" / "checkpoints")
+                       .resolve(strict=False))
+    out = []
+    for p in _cache_files():
+        if p == live:
+            out.append(p)
+            continue
+        recorded = _meta_value(p, "store")
+        if recorded is None and p == legacy:
+            recorded = default_ckpt
+        if recorded and str(Path(recorded).resolve(strict=False)) == ckpt:
+            out.append(p)
+    return out
+
+
+def unclaimed_caches() -> list[tuple[Path, str]]:
+    """Index files under ~/.daimon that no store claims as the current one,
+    each with the surface name an audit reports them under: "unclaimed-cache"
+    when `meta.store` cannot be read, "foreign-cache" when it resolves to
+    another store. The forgotten set is machine-wide, so plaintext of a
+    forgotten key in ANY of them is residue. Empty under an explicit
+    DAIMON_RECALL_DB (the pinned file is the whole world)."""
+    claimed = set(store_caches())
+    legacy = _cache_roots()[0]
+    default_ckpt = str((Path.home() / ".daimon" / "checkpoints")
+                       .resolve(strict=False))
+    out = []
+    for p in _cache_files():
+        if p in claimed:
+            continue
+        recorded = _meta_value(p, "store")
+        if recorded is None and p == legacy:
+            recorded = default_ckpt
+        out.append((p, "unclaimed-cache" if recorded is None
+                    else "foreign-cache"))
+    return out
+
+
+def index_strays() -> list[Path]:
+    """Every staging strand a crashed rebuild may have left, whatever cache it
+    was staged for: `recall.db.*` beside the legacy index and `*.db.*` under
+    `~/.daimon/recall/`, or only the strands beside the pinned file when
+    DAIMON_RECALL_DB is set. Scanned by directory, so a strand outlives the
+    cache it belonged to and is still found."""
+    out: list[Path] = []
+    for directory, pattern in _snapshot_scopes():
+        try:
+            out.extend(p for p in sorted(directory.glob(pattern))
+                       if p.is_file())
+        except OSError:
+            continue
+    return list(dict.fromkeys(out))
+
+
+def refresh_store_caches() -> None:
+    """After a forget: the live index is rebuilt now and every sibling cache
+    of the same store (another team dir) is dropped, so no cache of the store
+    keeps the value until its next read. Best-effort per file."""
+    live = config.recall_db()
+    for p in store_caches():
+        if p == live:
+            continue
+        for stray in (p, p.with_name(p.name + "-journal")):
+            try:
+                stray.unlink(missing_ok=True)
+            except OSError:
+                pass
+    try:
+        rebuild()
+    except Exception as exc:  # noqa: BLE001 - lazily rebuilt on the next read
+        _note_error("refresh-store-caches", exc)
+
+
+_CACHE_STALE_SECONDS = 30 * 86400
+
+
+def reap_stale_caches(now: float | None = None, apply: bool = True) -> list:
+    """Per-store caches nobody can use any more (heal): the store the cache
+    records is gone, or the file has not been READ for 30 days (a query
+    refreshes its mtime, see `_touch_once`). Only files
+    under `~/.daimon/recall/`; the legacy default index and the live one are
+    never reaped, and an explicit DAIMON_RECALL_DB means nothing here is
+    ours. A cache that cannot be read as an index but is old is reaped by age
+    alone. `apply=False` only lists."""
+    if config.explicit_recall_db():
+        return []
+    if now is None:
+        now = time.time()
+    live = config.recall_db()
+    reaped: list = []
+    directory = _cache_roots()[1]
+    try:
+        candidates = sorted(directory.glob("*.db"))
     except OSError:
         return reaped
     for p in candidates:
-        entry = surfaces.match(p.name)
-        if entry is None or entry.delete != "reap":
+        if p == live:
             continue
         try:
             if not p.is_file():
                 continue
-            if now - p.stat().st_mtime < _SNAPSHOT_REAP_SECONDS:
+            recorded = _meta_value(p, "store")
+            gone = recorded is not None and not Path(recorded).exists()
+            old = now - p.stat().st_mtime > _CACHE_STALE_SECONDS
+            if not (gone or old):
                 continue
             if apply:
                 p.unlink()
+                p.with_name(p.name + "-journal").unlink(missing_ok=True)
         except OSError:
             continue
         reaped.append(p)
@@ -1092,6 +1279,11 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     conn.execute("INSERT INTO meta VALUES ('schema_version', ?)",
                  (_SCHEMA_VERSION,))
     conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)", (fingerprint,))
+    # Which store this index was built from (D9.6): the privacy audit, forget
+    # and heal find every cache of a store by this, not by its file name.
+    ckpt, team = config.recall_store()
+    conn.execute("INSERT INTO meta VALUES ('store', ?)", (ckpt,))
+    conn.execute("INSERT INTO meta VALUES ('team', ?)", (team,))
     # Buckets whose trust ledger could not be read at build time hold no rows
     # (nothing can be proven not quarantined). A query touching one re-judges
     # it and rebuilds when it reads again.
@@ -1147,6 +1339,26 @@ def _ensure_fresh() -> None:
     with _lock_for(path):
         if not _is_fresh(path):
             rebuild()
+    _touch_once(path)
+
+
+# Paths whose mtime this process already refreshed on a read.
+_touched: set[str] = set()
+
+
+def _touch_once(path: Path) -> None:
+    """Stamp the index as READ, at most once per process per path, so that
+    `reap_stale_caches` ("untouched for 30 days") means unread for 30 days and
+    not just not rebuilt. Nothing else reads the index file's mtime. Best
+    effort: a read-only volume costs the stamp, never the read."""
+    key = str(path)
+    if key in _touched:
+        return
+    _touched.add(key)
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
 
 
 def warm() -> None:
@@ -1231,25 +1443,6 @@ def _dedupe_rows(rows: list[dict], want_n: int) -> list[dict]:
     for row in out:
         row["rank_score"] = row.get("match_score")
     return out
-
-
-def _ambient_scopes(project_dir) -> list[str] | None:
-    """The slugs an UNADDRESSED read may see (#899): this project's own plus
-    whatever the host declared in DAIMON_EXTRA_READ_SLUGS, own first. None
-    when the project is unknown, so each caller keeps its own "unknown"
-    rule (search: no filter; lookup_item: None; suggest: silence) and the
-    allowlist can never turn an unscoped read into a read of the listed
-    buckets. Explicit addressing (`slug`, `all_projects`) never comes here:
-    an explicit slug IS the scope (#243) and all_projects is already
-    everything."""
-    own = store.project_slug(config.resolve_project_dir(project_dir))
-    if own is None:
-        return None
-    scopes = [own]
-    for extra in config.extra_read_slugs():
-        if extra not in scopes:
-            scopes.append(extra)
-    return scopes
 
 
 def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
@@ -1383,7 +1576,7 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     # #899: an unaddressed read fans across own + host-allowlisted scopes;
     # an explicit slug or all_projects is exactly what it says.
     scopes = ([slug] if slug else
-              None if all_projects else _ambient_scopes(project_dir))
+              view.read_scopes(project_dir, all_projects=all_projects))
     path = config.recall_db()
     if _closed_still(scopes, path, notes):
         _note(notes, "closed")
@@ -1517,7 +1710,8 @@ def find(item_id: str, project_dir=None,
     Found is the newest matching row (ties broken by `created`). Withheld
     says the newest copy may not be shown (reason only, no value) and, like a
     dropped query row, rebuilds the index once."""
-    scopes = [slug] if slug else _ambient_scopes(project_dir)
+    scopes = ([slug] if slug
+              else view.read_scopes(project_dir, all_projects=False))
     if scopes is None:
         return Absent()
     try:
@@ -1649,7 +1843,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     # #899: the auto-inject path fans across own + host-allowlisted scopes
     # too; a shared scope reached by `recall` but not here would exist when
     # asked for and vanish when it would have helped.
-    scopes = _ambient_scopes(project_dir)
+    scopes = view.read_scopes(project_dir, all_projects=False)
     if scopes is None:
         return []
     terms = salient_terms(prompt)

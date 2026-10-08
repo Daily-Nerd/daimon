@@ -9,6 +9,7 @@ lines, and `#` comments are tolerated. Keep it chmod 600 — it holds API keys.
 """
 
 import getpass
+import hashlib
 import logging
 import os
 import subprocess
@@ -329,17 +330,61 @@ def windsurf_state_days() -> int:
         return 7
 
 
+_RECALL_DB_MEMO: dict[tuple[str, str, str], Path] = {}
+
+
+def recall_store() -> tuple[str, str]:
+    """The (checkpoint dir, team dir) a recall index is built from, resolved
+    (`strict=False`, so a store that does not exist yet still has an identity).
+    Read at call time, so the `checkpoint_dir_override` context counts."""
+    return (str(checkpoint_dir().resolve(strict=False)),
+            str(team_dir().resolve(strict=False)))
+
+
+def explicit_recall_db() -> bool:
+    """Whether DAIMON_RECALL_DB pins the index (test-only, see `recall_db`)."""
+    return bool(_get("DAIMON_RECALL_DB"))
+
+
 def recall_db() -> Path:
     """Location of the derived recall index (#112). NEVER source of truth —
-    safe to delete at any time; recall rebuilds it by scanning the local flat
-    store + team dir. Lives BESIDE the checkpoint dir under ~/.daimon, not
-    inside it: the flat store's GC / pointer scans own that namespace, and a
-    foreign file there is one landmine nobody needs. DAIMON_RECALL_DB overrides
-    (tests point it under tmp so no test can clobber the real index)."""
+    safe to delete at any time; recall rebuilds it by scanning the store's
+    checkpoint and team dirs. Lives under the user's own ~/.daimon, not inside
+    the checkpoint dir: the flat store's GC / pointer scans own that
+    namespace, and a foreign file there is one landmine nobody needs.
+
+    The DEFAULT store (checkpoint and team dir both at their defaults,
+    compared resolved) keeps `~/.daimon/recall.db`, unchanged. Any other
+    store (`--data-dir`, DAIMON_CHECKPOINT_DIR, a `checkpoint_dir_override`
+    context) gets `~/.daimon/recall/<sha256(checkpoint, team)[:16]>.db`, so two
+    stores never share one index. The store is read at call time and the
+    answer is memoized on the RESOLVED pair (a relative path follows the
+    working directory, so the raw string cannot be the key).
+
+    DAIMON_RECALL_DB pins one explicit index and is TEST-ONLY (the suite
+    points it under tmp so no test can touch the real index); a user has no
+    reason to set it, and it bypasses the per-store naming above."""
     raw = _get("DAIMON_RECALL_DB")
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".daimon" / "recall.db"
+    home = Path.home()
+    ckpt, team = recall_store()
+    key = (ckpt, team, str(home))
+    hit = _RECALL_DB_MEMO.get(key)
+    if hit is not None:
+        return hit
+    root = home / ".daimon"
+    if (ckpt == str((root / "checkpoints").resolve(strict=False))
+            and team == str((root / "team").resolve(strict=False))):
+        path = root / "recall.db"
+    else:
+        digest = hashlib.sha256(
+            f"{ckpt}\0{team}".encode("utf-8")).hexdigest()[:16]
+        path = root / "recall" / f"{digest}.db"
+    if len(_RECALL_DB_MEMO) >= 64:
+        _RECALL_DB_MEMO.clear()
+    _RECALL_DB_MEMO[key] = path
+    return path
 
 
 def ruling_cap() -> int:

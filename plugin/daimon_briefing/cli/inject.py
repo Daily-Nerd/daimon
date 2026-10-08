@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 
 import daimon_briefing.cli as _cli
 
-from .. import briefing, config, normalize, recall, recall_telemetry, store
+from .. import (briefing, config, effects_commit, normalize, recall,
+                recall_telemetry, store)
+from ..effects import Effects, Seen, Telemetry
 from ..terms import is_machine_prompt, salient_terms
 from ..ledger import _format_age
 
@@ -441,7 +443,7 @@ def _suggest_line(r: dict, terms, now: float, own_slug=None, *,
 
 
 def _choose_recall_rows(matches, seen_keys: set, now: float, *, budget: int,
-                        usage_prefix: str) -> tuple[list[dict], set]:
+                        usage_prefix: str, fx) -> tuple[list[dict], set]:
     """Rows from `suggest` that actually earn a slot, plus their content keys.
 
     ONE definition, shared by every injection surface (#1031 added the second).
@@ -461,7 +463,7 @@ def _choose_recall_rows(matches, seen_keys: set, now: float, *, budget: int,
     `usage_prefix` names the SURFACE in every counter this writes, so the rates
     stay separable: the action surface fires per shell action and the prompt
     surface per prompt, and pooling them would make either denominator a
-    fiction.
+    fiction. The counters are recorded into `fx`, never written here.
     """
     chosen: list[dict] = []
     chosen_keys: set[str] = set()
@@ -492,26 +494,28 @@ def _choose_recall_rows(matches, seen_keys: set, now: float, *, budget: int,
         chosen.append(m)
         # #452 re-measurement: every CHOSEN row records its age bucket, so
         # the before/after precision read by age stays a stats query.
-        _cli._note_usage(f"{usage_prefix}:age:{_inject_age_bucket(age_days)}")
+        fx.add(Effects(usage=(
+            f"{usage_prefix}:age:{_inject_age_bucket(age_days)}",)))
         if len(chosen) >= budget:
             break
     if suppressed:
         # Counted apart from the surface's own key, which still counts every
         # fire: the issue's claim is a RATE, so the pair has to be readable
         # from `daimon stats` the way #450's machine skip is.
-        _cli._note_usage(f"{usage_prefix}:dedup-content")
+        fx.add(Effects(usage=(f"{usage_prefix}:dedup-content",)))
     if age_gated:
         # Same convention as dedup-content above: once per injection run
         # where >=1 candidate was age-gated (#452) — a rate, not a tally.
-        _cli._note_usage(f"{usage_prefix}:age-gate")
+        fx.add(Effects(usage=(f"{usage_prefix}:age-gate",)))
     return chosen, chosen_keys
 
 
-def _cmd_recall_inject(args) -> int:
+@effects_commit.committing
+def _cmd_recall_inject(args, fx) -> int:
     """Print 0-2 'you worked on this before' lines for the prompt on stdin, or
     nothing. rc 0 ALWAYS — this sits on the user's per-prompt critical path and
     a suggestion is never worth blocking a prompt (fail-open, like the hooks)."""
-    _cli._note_usage("recall-inject")
+    fx.add(Effects(usage=("recall-inject",)))
     try:
         prompt = sys.stdin.read()
         # #450: host-emitted blocks (task notifications, teammate/agent
@@ -526,7 +530,7 @@ def _cmd_recall_inject(args) -> int:
         if machine:
             # Counted apart from `recall-inject`, which still counts every fire:
             # the pair is the before/after measure of the noise removed (#450).
-            _cli._note_usage("recall-inject:skip-machine")
+            fx.add(Effects(usage=("recall-inject:skip-machine",)))
             return 0
         project = _cli._resolve_project(args.project)
         session = str(args.session or "")
@@ -554,7 +558,7 @@ def _cmd_recall_inject(args) -> int:
         now = time.time()
         chosen, chosen_keys = _choose_recall_rows(
             matches, seen_keys, now, budget=_INJECT_BUDGET,
-            usage_prefix="recall-inject")
+            usage_prefix="recall-inject", fx=fx)
         terms = salient_terms(prompt)
         # #1036: resolved once per injection, not per line — one delivery
         # renders one hint form, and the flag is the plugin's own hook
@@ -570,15 +574,13 @@ def _cmd_recall_inject(args) -> int:
             # None when suggest() itself matched nothing.
             numeric = [m["match_score"] for m in matches
                       if isinstance(m.get("match_score"), (int, float))]
-            recall_telemetry.record(
-                [],
-                query_terms=terms,
-                surface="recall-inject",
-                hint_form="tool" if mcp_available else "shell",
-                injected_into=session or None,
-                now=datetime.fromtimestamp(now, tz=timezone.utc),
-                best_refused=max(numeric) if numeric else None,
-            )
+            fx.add(Effects(telemetry=(Telemetry([], {
+                "query_terms": terms,
+                "surface": "recall-inject",
+                "hint_form": "tool" if mcp_available else "shell",
+                "injected_into": session or None,
+                "now": datetime.fromtimestamp(now, tz=timezone.utc),
+                "best_refused": max(numeric) if numeric else None}),)))
             return 0
         own_slug = store.project_slug(project)
         # #1062: same posture, same call site, the sibling value the hook
@@ -598,16 +600,14 @@ def _cmd_recall_inject(args) -> int:
             rendered, truncated = _fit_item_text(m["text"], width)
             delivered.append({**m, "rendered_chars": len(rendered),
                               "truncated": truncated})
-        recall_telemetry.record(
-            delivered,
-            query_terms=terms,
-            surface="recall-inject",
-            hint_form="tool" if mcp_available else "shell",
+        fx.add(Effects(telemetry=(Telemetry(delivered, {
+            "query_terms": terms,
+            "surface": "recall-inject",
+            "hint_form": "tool" if mcp_available else "shell",
             # #1043: the live session this suggestion is printing into, not
             # the (possibly different) session that captured each item.
-            injected_into=session or None,
-            now=datetime.fromtimestamp(now, tz=timezone.utc),
-        )
+            "injected_into": session or None,
+            "now": datetime.fromtimestamp(now, tz=timezone.utc)}),)))
         if seen_file:
             # #500: count what each origin supplied instead of retiring it
             # outright, so a later, stronger row from the same session stays
@@ -616,7 +616,9 @@ def _cmd_recall_inject(args) -> int:
             for m in chosen:
                 sid = str(m["session_id"])
                 spent[sid] = spent.get(sid, 0) + 1
-            _save_seen(seen_file, spent, seen_keys | chosen_keys)
+            fx.add(Effects(seen=(Seen(
+                seen_file, spent, frozenset(seen_keys | chosen_keys),
+                False),)))
     except Exception:  # noqa: BLE001 — see docstring: fail-open, always rc 0
         pass
     return 0

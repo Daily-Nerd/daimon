@@ -165,7 +165,7 @@ briefing CLI used by host integrations, not by the renderer.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_RECALL_DB` | `~/.daimon/recall.db` | Location of the derived recall index (SQLite FTS). Never a source of truth — safe to delete at any time; recall rebuilds it by scanning the checkpoint and team dirs. |
+| `DAIMON_RECALL_DB` | per store (see right) | Test-only: pins one explicit recall index file and skips the per-store naming. Leave it unset. The derived recall index (SQLite FTS) is never a source of truth, so it is safe to delete at any time. The default store keeps `~/.daimon/recall.db`; any other store (`DAIMON_CHECKPOINT_DIR`, `--data-dir`) gets its own `~/.daimon/recall/<hash>.db`. `daimon heal` removes per-store indexes whose store is gone or that went 30 days unused. |
 | `DAIMON_RECALL_SEEN_DIR` | `~/.daimon/recall_seen` | Per-session suggestion-cooldown state so a repeated topic never re-injects. Disposable — deleting it only resets cooldowns. |
 
 ## Tenant scope

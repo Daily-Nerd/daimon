@@ -59,7 +59,9 @@ def test_the_load_bearing_shapes_are_registered():
                   "checkpoints/{slug}/forget-hits.jsonl",
                   "checkpoints/.chunk-cache/*",
                   "recall.db",
-                  "recall.db.{pid}.tmp*"):
+                  "recall.db.{pid}.tmp*",
+                  "recall/{hash}.db",
+                  "recall/{hash}.db.{pid}.tmp*"):
         assert surfaces.match(shape) is not None, f"unregistered: {shape}"
 
 
@@ -578,3 +580,17 @@ def test_the_audit_does_not_classify_policy_tombstones_as_unknown(
     path.write_text(json.dumps(_TOMBSTONE_ROW) + "\n", encoding="utf-8")
     result = privacy.audit_project(project_dir=_P)
     assert not any(path.name in u for u in result["unscannable"])
+
+
+def test_per_store_recall_indexes_are_declared():
+    """D9.6: a non-default store keeps `recall/<hash>.db`; its cache is
+    lazily rebuilt and its staging twins are reaped like the legacy ones."""
+    cache = surfaces.match("recall/0123456789abcdef.db")
+    assert cache is not None and cache.delete == "lazy-rebuild"
+    staged = surfaces.match("recall/0123456789abcdef.db.44594.tmp.a1b2c3d4e5f6")
+    assert staged is not None and staged.delete == "reap"
+    assert surfaces.match(
+        "recall/0123456789abcdef.db.44594.tmp-journal").delete == "reap"
+    # a user's own file beside it stays undeclared
+    assert surfaces.match("recall/0123456789abcdef.db.bak.tmp") is None
+    assert surfaces.match("recall/notes.txt") is None

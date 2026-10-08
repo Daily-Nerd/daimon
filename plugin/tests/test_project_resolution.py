@@ -19,8 +19,8 @@ import pytest
 
 from ._prepared import FrozenClock
 from daimon_briefing import (amendments, briefing, cli, config, pending,
-                             privacy, recall, refutations, relations,
-                             requests, store)
+                             privacy, refutations, relations,
+                             requests, store, view)
 
 
 def _init_git_repo(path: Path) -> None:
@@ -219,7 +219,7 @@ def test_an_ambient_recall_scope_from_a_subdir_is_the_project_bucket(
     """#899 scoping reads this project's own slug. A subdir would scope an
     unaddressed read to a bucket nothing was ever written to."""
     repo, subdir = repo_and_subdir
-    assert recall._ambient_scopes(subdir) == [store.project_slug(repo)]
+    assert view.read_scopes(subdir) == [store.project_slug(repo)]
 
 
 # ---- bucket_exists degrades to "no bucket", never to an exception ----

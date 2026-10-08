@@ -22,6 +22,7 @@ from .. import (
     ledger_repair,
     normalize,
     pending,
+    recall,
     refutations,
     render,
     requests,
@@ -606,6 +607,8 @@ def _cmd_forget(args) -> int:
         scrubbed_lines, scrub_err = store.scrub_serialize_log()
     except Exception as e:  # belt: scrub_serialize_log never raises
         scrubbed_lines, scrub_err = 0, str(e)
+    # Every cache of this store leaves the index now, not at the next read.
+    recall.refresh_store_caches()
     _cli._note_usage("forget")
     surfaces = []
     if isinstance(checkpoint, dict):
