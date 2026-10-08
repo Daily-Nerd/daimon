@@ -337,6 +337,7 @@ def _public_entry_points(sub: str):
          lambda: store.append_event("i-1", "resolved", project_dir=sub, writer=Writer.HUMAN)),
         ("admission_state", lambda: store.admission_state(sub)),
         ("emitters_open", lambda: store.emitters_open(sub)),
+        ("ledger_file", lambda: store.ledger_file(sub, "events.jsonl")),
         ("republish_tombstones",
          lambda: store.republish_tombstones(project_dir=sub)),
         ("admission_preflight", lambda: store.admission_preflight(sub)),
