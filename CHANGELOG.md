@@ -5,6 +5,16 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.0](https://github.com/Daily-Nerd/daimon/compare/v0.53.0...v0.54.0) (2026-10-08)
+
+
+### Features
+
+* **clock:** one clock and id source for every ledger stamp ([#1160](https://github.com/Daily-Nerd/daimon/issues/1160)) ([9f319d8](https://github.com/Daily-Nerd/daimon/commit/9f319d87e7692bb75e1d14be30eb9bd6f79d35a0))
+* **ui:** viewer activity, ledger, grid, session and biography routes read through the view ([#1158](https://github.com/Daily-Nerd/daimon/issues/1158)) ([76b787f](https://github.com/Daily-Nerd/daimon/commit/76b787f46fffd7c10e275436a7e3aa4840e852f7))
+* **ui:** viewer project, checkpoint, history and diff routes read through the view ([#1157](https://github.com/Daily-Nerd/daimon/issues/1157)) ([f8f5f87](https://github.com/Daily-Nerd/daimon/commit/f8f5f878cba654113afdb2f616da4feda819d30b))
+* **ui:** viewer routes table, one runner, and one store, project and tenant rule ([#1155](https://github.com/Daily-Nerd/daimon/issues/1155)) ([d466339](https://github.com/Daily-Nerd/daimon/commit/d4663397acd69c887131445439782f513c7c5b83))
+
 ## [0.53.0](https://github.com/Daily-Nerd/daimon/compare/v0.52.0...v0.53.0) (2026-10-07)
 
 
