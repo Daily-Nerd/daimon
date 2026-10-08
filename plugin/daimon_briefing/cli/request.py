@@ -461,6 +461,7 @@ def _is_bare_word(raw) -> bool:
 
 def _cmd_request_open(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "requests.jsonl")
     to = _resolve_to(args.to)
     known = {b["slug"] for b in store.list_buckets()}
     names: set = set()
@@ -522,6 +523,7 @@ def _cmd_request_open(args) -> int:
 
 def _cmd_request_revise(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "requests.jsonl")
     try:
         requests.revise(args.request_id, channel=_request_channel(args),
                         ask=args.ask, why=args.why, evidence=args.evidence,
@@ -554,6 +556,7 @@ def _cmd_request_verdict(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
+    _cli.require_ledger(project, "requests.jsonl")
     verb = args.request_cmd
     try:
         channel = _request_channel(args, human_only=True)
@@ -602,6 +605,7 @@ def _report(request_id: str, project, verb: str) -> None:
 
 def _cmd_request_done(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "requests.jsonl")
     try:
         requests.done(args.request_id, channel=_request_channel(args),
                       evidence=args.evidence, project_dir=project)
@@ -639,6 +643,7 @@ def _cmd_request_reply(args) -> int:
     # #1117: routed like `done` (`_resolve_project`), NOT the human-only
     # verdict verbs' `_slug_route`. No `--slug`.
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "requests.jsonl")
     try:
         requests.reply(args.request_id, args.note, args.evidence,
                        channel=_request_channel(args), project_dir=project)

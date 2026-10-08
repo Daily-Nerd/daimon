@@ -52,6 +52,7 @@ def _amend_channel(args) -> str:
 
 def _cmd_amend_propose(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "amendments.jsonl")
     item_id = str(args.item_id or "").strip()
     # Exact-id binding against the LIVE checkpoint only — an amendment
     # describes an open item's state, so unlike forget it never reaches into
@@ -127,6 +128,7 @@ def _cmd_amend_verdict(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
+    _cli.require_ledger(project, "amendments.jsonl")
     verb = args.amend_cmd
     # #1087 fix: dedupe here too, not just inside ratify_many/reject_many —
     # otherwise a repeated positional id ratifies/rejects once (the ledger

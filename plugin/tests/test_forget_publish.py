@@ -204,3 +204,16 @@ def test_forget_with_neither_a_target_nor_republish_is_a_usage_error(
         tmp_checkpoint_dir, capsys):
     assert cli.main(["forget", "--project", PROJECT]) == 2
     assert "needs a target" in capsys.readouterr().err
+
+
+def test_republish_refuses_an_unproven_events_ledger_instead_of_reporting_zero(
+        tmp_checkpoint_dir, capsys):
+    _forget_locally(KEY, "o-1")
+    events = store._events_path(PROJECT)
+    events.write_bytes(events.read_bytes() + b"<<<<<<< conflict\n")
+    rc = cli.main(["forget", "--republish", "--project", PROJECT])
+    out = capsys.readouterr()
+    assert rc == 2
+    assert "events.jsonl is unreadable" in out.err
+    assert "republished" not in out.out
+    assert not _sidecar().exists()

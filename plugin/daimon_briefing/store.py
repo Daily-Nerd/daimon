@@ -1487,6 +1487,14 @@ def admission_state(project_dir) -> tuple[str, str] | None:
     return refusal.state, refusal.hint
 
 
+def ledger_file(project_dir, name: str):
+    """The path of the bucket ledger `name` ("amendments.jsonl") of this
+    project, or None when the project names no bucket. The one place a verb
+    resolves a ledger path from a project directory."""
+    slug = project_slug(_resolved(project_dir))
+    return config.checkpoint_dir() / slug / name if slug else None
+
+
 def emitters_open(project_dir) -> bool:
     """May a machine row be written to this project's events ledger? One
     judgement for the EMITTER class (D10.4): False when the ledger is not

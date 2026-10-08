@@ -35,6 +35,7 @@ from .. import amendments, anchor, briefing, buckets, capture, carry, config, co
 # name stays here because tests reach it as `cli.trust_lib`.
 from .. import trust as trust_lib  # noqa: F401
 from .. import __version__
+from ..surfaces import Writer
 
 # The serialize.log ledger subsystem lives in ledger.py (#147 + #162, pure
 # moves). EVERY moved name is re-imported here — including the ones cli.py no
@@ -123,6 +124,16 @@ def _resolve_project(arg, *, for_write: bool = False) -> str:
     if for_write:
         return config.resolve_project_dir_for_write(project, allow_slug=False)
     return config.resolve_project_dir(project, allow_slug=False)
+
+
+def require_ledger(project, name: str) -> None:
+    """Refuse, before a verb looks a record up, when the bucket ledger `name`
+    is not proven (D10.3): a ledger that cannot be read must not answer
+    "unknown id". Raises `jsonl.Refused`, which `main` prints and turns into
+    exit 2."""
+    path = store.ledger_file(project, name)
+    if path is not None:
+        jsonl.require_writable(path, Writer.HUMAN)
 
 
 def loops_lists_project(project: str) -> bool:

@@ -210,6 +210,9 @@ def _cmd_forget_republish(args) -> int:
     the own team sidecar is missing, the cure for a failed publish. No heal
     does this on its own."""
     project = _cli._resolve_project(args.project)
+    # The keys come from the events ledger. Unproven, its forgotten fold is
+    # empty, and "republished 0" would be a claim about a ledger nobody read.
+    _cli.require_ledger(project, "events.jsonl")
     if not config.team_enabled():
         print("no team is enabled; nothing to republish")
         return 0
