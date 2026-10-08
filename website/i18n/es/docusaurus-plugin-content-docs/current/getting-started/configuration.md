@@ -260,6 +260,25 @@ serialización por defecto de fin de sesión nunca escala, con o sin el flag.
 |---|---|---|
 | `DAIMON_HEAL_ESCALATION` | off | Cuando es verdadero, `daimon heal` serializa de nuevo desde varias perspectivas en vez de reintentar la misma forma de extracción. Solo en la ruta de heal. |
 
+## Captura mientras un ledger no se puede leer
+
+Cuando el `events.jsonl` de un proyecto no se puede leer (un marcador de
+conflicto, un byte malo, un error del sistema), daimon no escribe un checkpoint
+para él: la compuerta de olvidos tendría que adivinar, y un valor olvidado
+podría volver. La sesión se rechaza antes de llamar al modelo, lo que no cuesta
+nada. El rechazo es un serialize fallido común. `daimon status` lo cuenta desde
+todo el log y nombra el remedio, el próximo briefing del proyecto dice cuántas
+sesiones esperan, y `daimon heal` las reintenta de a una por inicio de sesión
+cuando el ledger vuelve a leerse, sin gastar el único reintento. Un rechazo solo
+se pierde cuando su transcript ya no está.
+
+| Host | Captura rechazada |
+|---|---|
+| Claude Code, Codex, Gemini CLI, Kimi Code | Soportado: se cuenta, se avisa en el briefing y `daimon heal` lo reintenta mientras el host conserve el transcript. |
+| Windsurf | Soportado, con un límite: sigue aplicando la limpieza propia de daimon a los transcripts de Windsurf a los 7 días (`DAIMON_WINDSURF_STATE_DAYS`), así que una sesión rechazada por más tiempo se pierde y se cuenta como irrecuperable. |
+| Captura en proceso de Hermes | Soportado solo cuando el host pasa una ruta de transcript que existe. Sin ella se cuenta como irrecuperable y no se puede reintentar. |
+| Pods de anamnesis | Soportado, por el mismo CLI. |
+
 ## Scene traces
 
 Experimento opt-in (#317): el serializador pide un `scene` por ítem, una o

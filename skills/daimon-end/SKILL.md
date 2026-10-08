@@ -129,6 +129,10 @@ a `prev` pointer. So it does not need to be perfect to be useful.
 
    It prints `wrote checkpoint: <path> (source: introspection)`. If it reports a
    schema-validation error, fix the JSON and retry — do not store garbage.
+   If it exits with code 2 and says `admission refused`, the ledger that guards
+   admissions cannot be read right now; retrying changes nothing. Do not retry:
+   the session-end serialize will capture this session later, once the ledger
+   is repaired, and the next briefing will say so.
 
 6. **Confirm** to the user with the printed checkpoint path.
 
