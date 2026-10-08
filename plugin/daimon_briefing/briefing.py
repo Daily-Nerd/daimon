@@ -33,7 +33,8 @@ from . import (capture, checks_host, checks_runtime, config, display,
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
 from .amendments import found_label as _amend_found_label
-from .marks import GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE
+from .marks import (GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE,
+                    WARNING_MARK)
 
 log = logging.getLogger("daimon.briefing")
 
@@ -748,11 +749,22 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         except Exception:
             wc_stats = None
             ledger_rows = []
+    notes = snap.notes()
+    if worldcheck_project and not opened.fell_back:
+        # The request panels of this brief read the same joins; their notes
+        # (a sender left out, or read around) join the snapshot's here, so
+        # the brief caps its notes once. Fail-open like the panels.
+        try:
+            notes = display.merge_notes(
+                notes, (*requests.join(worldcheck_project).notes,
+                        *requests.sent(worldcheck_project).notes))
+        except Exception:  # noqa: BLE001
+            pass
     return Annotated(
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
-        snap.notes(), opened.fell_back)
+        notes, opened.fell_back)
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -861,7 +873,7 @@ class RulingsRead(NamedTuple):
     path: Path | None
 
 
-def rulings_read(project_dir=None) -> RulingsRead:
+def rulings_read(project_dir=None, *, read=None) -> RulingsRead:
     """The pinned in-process read for standing rulings, sub-0.1ms against
     100ms+ for a `daimon ruling list --json` subprocess (#962). Every row
     matches `active_rulings`'s order: newest-activated first, ties broken on
@@ -878,15 +890,20 @@ def rulings_read(project_dir=None) -> RulingsRead:
       downstream is attempted once this fires.
     - "no-bucket": the path resolved, but the project's bucket directory
       does not exist — a mis-resolved `--project`, never written from.
-    - "unreadable": the path resolved and the bucket exists, but the ledger
-      could not be read (permissions, a symlink loop, refutations.jsonl
-      replaced by a directory), or the fold/sort raised over hand-edited
+    - "unreadable": the path resolved and the bucket exists, but the read
+      could not be vouched for (`jsonl.Read.cannot_scan`: an OS error such as
+      permissions, a symlink loop or a directory in the ledger's place, a
+      transient failure that outlasted the retries, an undecodable byte), or
+      the fold/sort raised over hand-edited
       rows (a stray non-list `anchors`/`evidence` on a hand-built row is one
       way to land here — known, not fixed by this function). `rows` is [].
     - "read": a successful read, including a bucket that simply carries no
       ledger yet (a clean empty read per `bucket_exists`'s own docstring)
       and a ledger whose malformed lines stay skipped and invisible, same
       as always.
+
+    `read` is the `jsonl.read` result of this ledger when the caller (the
+    view's snapshot) already holds it, so the file is read once.
     """
     try:
         path = refutations._path(project_dir)
@@ -897,8 +914,10 @@ def rulings_read(project_dir=None) -> RulingsRead:
     try:
         if not refutations.bucket_exists(project_dir):
             return RulingsRead(rows=[], state="no-bucket", path=path)
-        records = refutations.fold(
-            refutations.events(project_dir, strict=True))
+        got = refutations.read_events(project_dir, read=read)
+        if got.unscannable:
+            return RulingsRead(rows=[], state="unreadable", path=path)
+        records = refutations.fold(got.rows)
         rows = [r for r in records.values()
                 if r.get("state") == "active" and r.get("polarity") == "ruling"]
         rows.sort(key=lambda r: (str(r.get("activated_at") or ""),
@@ -1416,18 +1435,21 @@ def decision_count_line(project_dir=None) -> str | None:
     except Exception:
         return None
     elsewhere = 0
+    notes: tuple = ()
     if not config.tenant_scoped():
         try:
-            elsewhere = sum(pending.foreign_counts(project_dir=project_dir)
-                            .values())
+            got = pending.foreign_counts_typed(project_dir=project_dir)
+            elsewhere, notes = sum(got.counts.values()), got.notes
         except Exception:
             elsewhere = 0
     if here == 0 and elsewhere == 0:
-        return None
+        # #1132 PR 10a: other projects left out are said even when nothing
+        # was counted (the note stands alone).
+        return "\n".join(notes) or None
     suffix = f" ({elsewhere} elsewhere)" if elsewhere else ""
     template = (_DECISION_COUNT_LINE_SINGULAR if here == 1
                 else _DECISION_COUNT_LINE_PLURAL)
-    return template.format(n=here, elsewhere=suffix)
+    return "\n".join([template.format(n=here, elsewhere=suffix), *notes])
 
 
 # ---- #694 PR 2: the recipient-side request panel ---------------------------
@@ -1496,8 +1518,11 @@ def request_panel(project_dir=None, *, mask=None):
     except Exception:
         return [], ()
     rows = entry.get("rows") or []
+    # #1132 PR 10a: `sender-skipped`, the one note of the join, ends this
+    # panel (and stands alone when every sender was left out).
+    notes = list(entry.get("notes") or ())
     if not rows:
-        return [], ()
+        return notes, ()
     mask = mask or (lambda text: text)
     lines = [_REQUEST_PANEL_HEADER]
     cards = []
@@ -1521,6 +1546,7 @@ def request_panel(project_dir=None, *, mask=None):
         plural = "s" if overflow != 1 else ""
         lines.append(f"  (+{overflow} more waiting{plural} — "
                      "daimon request inbox)")
+    lines.extend(notes)
     return lines, tuple(cards)
 
 
@@ -1549,8 +1575,9 @@ def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     except Exception:
         return []
     rows = entry.get("rows") or []
+    notes = list(entry.get("notes") or ())
     if not rows:
-        return []
+        return notes
     mask = mask or (lambda text: text)
     lines = [_OWED_PANEL_HEADER]
     for row in rows:
@@ -1566,6 +1593,7 @@ def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
         lines.append(f"  (+{overflow} more owed — "
                      "daimon request inbox)")
     lines.append("  Close one with: daimon request done <id> --evidence …")
+    lines.extend(notes)
     return lines
 
 
@@ -1615,8 +1643,9 @@ def verdict_panel(project_dir=None, *, mask=None):
     except Exception:
         return [], ()
     rows = entry.get("rows") or []
+    notes = list(entry.get("notes") or ())
     if not rows:
-        return [], ()
+        return notes, ()
     mask = mask or (lambda text: text)
     lines = [_VERDICT_PANEL_HEADER]
     cards = []
@@ -1657,7 +1686,28 @@ def verdict_panel(project_dir=None, *, mask=None):
         plural = "s" if overflow != 1 else ""
         lines.append(f"  (+{overflow} more decided{plural} — "
                      "daimon request list)")
+    lines.extend(notes)
     return lines, tuple(cards)
+
+
+def drop_repeated_notes(*blocks, notes=()) -> list:
+    """The panel blocks with each warning line kept once, at its first
+    appearance: the three request panels read the same joins, so a sender
+    left out would otherwise be said up to three times in one brief. A
+    warning the brief's own `notes` already carry (`prepare` merges the
+    joins' notes into them) is dropped from the panels too."""
+    seen: set = set(display.all_notes(notes)) | set(notes)
+    out = []
+    for block in blocks:
+        kept = []
+        for line in block:
+            if line.startswith(WARNING_MARK):
+                if line in seen:
+                    continue
+                seen.add(line)
+            kept.append(line)
+        out.append(kept)
+    return out
 
 
 def render_plain(b: dict, degraded: bool = False, rulings=(),
@@ -2369,6 +2419,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     verdict_lines, verdict_cards = verdict_panel(worldcheck_project, mask=mask)
     owed_lines = (owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
+    request_lines, verdict_lines, owed_lines = drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines, notes=notes)
     if cards_out is not None:
         # Both panels print whole on this path: the caller stamps from these.
         cards_out.update(request=request_cards, verdict=verdict_cards)

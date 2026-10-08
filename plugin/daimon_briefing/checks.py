@@ -391,9 +391,16 @@ def _firing_summary(project_dir) -> FiringSummary:
         return FiringSummary("absent", {}, {}, _empty_fold(), where)
 
     try:
+        # One read of the ruling ledger, and its health with it: a read that
+        # cannot be vouched for (an OS error, a transient failure, an
+        # undecodable byte) must not count as "this project has no rulings",
+        # which would fold every firing away as foreign (#1132 PR 10a).
+        got = refutations.read_events(project_dir)
+        if got.unscannable:
+            return FiringSummary("unreadable", {}, {}, _empty_fold(), where)
         mine = {str(record.get("refutation_id") or "")
-                for record in refutations.listing(polarity="ruling",
-                                                  project_dir=project_dir)}
+                for record in refutations.fold(got.rows).values()
+                if record.get("polarity") == "ruling"}
     except Exception:  # noqa: BLE001
         mine = set()
     # #1095: a layer's active check arms here too (`sync_layers`, and

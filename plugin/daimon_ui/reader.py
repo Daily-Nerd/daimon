@@ -18,19 +18,26 @@ def _receipts_gate(slug: str) -> bool:
     return any(p.meta is not None and p.meta.receipts is True
                for p in view.pointers(slug))
 
-def list_buckets(own: str | None) -> list[dict]:
-    """The sidebar: every project bucket the caller may list (`view.projects`,
-    the tenant rule included), newest first, a torn pointer last with its
-    fields None. `active_topic` and `item_count` are what a reader may see: a
+def list_projects(own: str | None) -> dict:
+    """The sidebar and its notes: every project bucket the caller may list
+    (`view.projects`, the tenant rule included), newest first, a torn pointer
+    last with its fields None, and the listing's notes (`view.projects_notes`:
+    a bucket whose trust ledger cannot be read, a forget set that may be
+    incomplete). `active_topic` and `item_count` are what a reader may see: a
     withheld topic is None and withheld items are not counted."""
+    listed = view.projects(own)
     out = [{"slug": b.slug,
             "project_name": b.name if isinstance(b.name, str) and b.name else None,
             "created": b.created if isinstance(b.created, str) else None,
             "active_topic": b.peek.topic,
             "item_count": b.peek.visible_items if b.readable else None}
-           for b in view.projects(own)]
+           for b in listed]
     out.sort(key=lambda b: b["created"] or "", reverse=True)  # "" sorts lowest, so None lands last
-    return out
+    return {"projects": out, "notes": list(view.projects_notes(own, listed))}
+
+def list_buckets(own: str | None) -> list[dict]:
+    """`list_projects(own)["projects"]`: the sidebar rows alone."""
+    return list_projects(own)["projects"]
 
 def list_recent(slug: str) -> dict:
     """The sidebar window of one project: its pointers (ref, created, visible

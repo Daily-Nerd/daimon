@@ -246,8 +246,8 @@ def _scan_sources():
     # #600 slice B: teammates' published tombstones gate the index too — an
     # inbound row is suppressed by ANY tombstone this machine can see, local
     # or foreign (over-suppression is this path's documented posture).
-    forgotten = (store.all_forgotten_content_keys()
-                 | store.foreign_forgotten_content_keys())
+    tombs = store.foreign_tombstones()
+    forgotten = store.all_forgotten_content_keys() | tombs.keys
     try:
         remotes = list(root.iterdir())
     except OSError:
@@ -267,6 +267,10 @@ def _scan_sources():
         # projects/**/authors/* — same walker read_team's fan-in rests on.
         author_dirs = store._team_author_dirs(remote)
         for adir in author_dirs:
+            if foreign and adir.name in tombs.unproven:
+                # O3: a teammate whose published forgets cannot be read is
+                # not indexed; "no tombstone found" would prove nothing.
+                continue
             try:
                 files = [p for p in adir.iterdir()
                          if p.is_file() and p.suffix == ".json"]
@@ -381,7 +385,10 @@ def _fingerprint() -> str:
             st = p.stat()
         except OSError:
             continue
-        entries.append(f"{p}\0{st.st_mtime_ns}\0{st.st_size}")
+        # ctime too: a chmod that makes a source unreadable (or readable
+        # again) moves it and nothing else about the file.
+        entries.append(
+            f"{p}\0{st.st_mtime_ns}\0{st.st_ctime_ns}\0{st.st_size}")
     entries.sort()
     # Retention (#120) changes index CONTENT without touching any file: a team
     # file ages past the cutoff, or the knob changes. Fold the knob + current
@@ -1199,6 +1206,7 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     judges: dict = {}
     # The forgotten-set stamp is read once for the whole build, not per bucket.
     stamp = store.forgotten_stamp()
+    incomplete = store.forgotten_incomplete()   # once for the whole build
     # One verdict per distinct value, because a carried item is one row per
     # checkpoint that carries it and canonicalizing it is the cost.
     verdicts: dict = {}
@@ -1214,11 +1222,18 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
                 newest[key] = (stamped, recency, sid)
         judge = judges.get(slug)
         if judge is None:
-            judge = judges[slug] = view.judge(slug, stamp=stamp)
+            judge = judges[slug] = view.judge(slug, stamp=stamp,
+                                              incomplete=incomplete)
         for (kind, text, _trust, quote, scene, importance, first_seen,
              item_id, pinned, targets, stated_by) in _items(cp):
             visible = True
-            if not judge.empty:
+            if judge.index_closed:
+                # This bucket's own events ledger cannot be read, so its
+                # tombstones cannot all be known: the index holds no rows for
+                # it (D10.2). Only the index closes; `why`, the viewer and the
+                # briefing read the bucket through its good lines.
+                visible = False
+            elif not judge.empty:
                 vkey = (slug, kind, item_id, text, quote, scene)
                 seen = verdicts.get(vkey)
                 if seen is None:
@@ -1288,18 +1303,32 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
     # (nothing can be proven not quarantined). A query touching one re-judges
     # it and rebuilds when it reads again.
     conn.execute("INSERT INTO meta VALUES ('closed', ?)",
-                 (json.dumps(_closed_buckets(stamp)),))
+                 (json.dumps(_closed_buckets(stamp, incomplete)),))
+    # The buckets whose events ledger could not be read at build: the forget
+    # set was incomplete. Slugs for the next query's "has one cleared?" test,
+    # never rendered.
+    conn.execute("INSERT INTO meta VALUES ('incomplete', ?)",
+                 (json.dumps(sorted(incomplete)),))
+    # The teammates whose published tombstone ledger could not be proven at
+    # build (their rows were left out): a query compares this with now.
+    conn.execute("INSERT INTO meta VALUES ('unproven_authors', ?)",
+                 (json.dumps(sorted(store.foreign_tombstones().unproven)),))
     conn.commit()
     return count
 
 
-def _closed_buckets(stamp) -> list[str]:
+def _closed_buckets(stamp, incomplete) -> list[str]:
     try:
         names = sorted(d.name for d in config.checkpoint_dir().iterdir()
                        if d.is_dir())
     except OSError:
         return []
-    return [name for name in names if view.judge(name, stamp=stamp).closed]
+    out = []
+    for name in names:
+        judge = view.judge(name, stamp=stamp, incomplete=incomplete)
+        if judge.closed or judge.index_closed:
+            out.append(name)
+    return out
 
 
 def _field_for(kind) -> schema.ItemField:
@@ -1473,10 +1502,62 @@ def _closed_still(scopes, path: Path, notes: list) -> bool:
     if not closed:
         return False
     stamp = store.forgotten_stamp()
-    still = [slug for slug in closed if view.judge(slug, stamp=stamp).closed]
+    incomplete = store.forgotten_incomplete()
+    still = []
+    for slug in closed:
+        judge = view.judge(slug, stamp=stamp, incomplete=incomplete)
+        if judge.closed or judge.index_closed:
+            still.append(slug)
     if len(still) < len(closed) and not _rebuild_forced(path, notes):
         _note(notes, "stale")
     return bool(still)
+
+
+def _incomplete_cleared(path: Path, notes: list) -> None:
+    """Rebuild (once per window) when a bucket the index was built without
+    knowing the tombstones of (`meta.incomplete`) reads again: until then the
+    index may hold a value that bucket forgot. When the rebuild is skipped or
+    fails the index is behind, so the read says `stale`."""
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'incomplete'").fetchone()
+        finally:
+            conn.close()
+        listed = json.loads(row[0]) if row else []
+    except (sqlite3.Error, ValueError, TypeError):
+        return
+    if not listed:
+        return
+    cleared = set(listed) - store.forgotten_incomplete()
+    if cleared and not _rebuild_forced(path, notes):
+        _note(notes, "stale")
+
+
+def _authors_changed(path: Path, notes: list) -> None:
+    """Rebuild (once per window) when the teammates whose tombstone ledger is
+    unproven now differ from the ones the index was built with
+    (`meta.unproven_authors`): an author newly unproven still has rows in
+    the index, and one proven again has none. The stat fingerprint cannot
+    see a read error clear, so this compares the health itself. When the
+    rebuild is skipped or fails the index is behind, so the read says
+    `stale`."""
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            row = conn.execute("SELECT value FROM meta"
+                               " WHERE key = 'unproven_authors'").fetchone()
+        finally:
+            conn.close()
+        built = sorted(json.loads(row[0])) if row else None
+    except (sqlite3.Error, ValueError, TypeError):
+        return
+    if built is None:
+        return    # an index from before this meta key: the fingerprint rebuilds
+    if built != sorted(store.foreign_tombstones().unproven) \
+            and not _rebuild_forced(path, notes):
+        _note(notes, "stale")
 
 
 def _withheld(row: dict, judge) -> "view.Withheld | None":
@@ -1500,11 +1581,18 @@ def _judge_rows(rows: list[dict]) -> tuple[list[dict], bool]:
     dropped = False
     judges: dict = {}
     stamp = store.forgotten_stamp()
+    incomplete = store.forgotten_incomplete()
     for row in rows:
         slug = row.get("project_slug")
         if slug not in judges:
-            judges[slug] = view.judge(slug, stamp=stamp)
-        if _withheld(row, judges[slug]) is None:
+            judges[slug] = view.judge(slug, stamp=stamp,
+                                      incomplete=incomplete)
+        if judges[slug].index_closed:
+            # The bucket's own events ledger cannot be read (D10.2): the
+            # index must hold no rows for it, so a row here is behind.
+            row.pop("_scene", None)
+            dropped = True
+        elif _withheld(row, judges[slug]) is None:
             kept.append(row)
         else:
             dropped = True
@@ -1516,8 +1604,10 @@ class Recalled:
     """`query`'s answer: the judged, ranked rows and the notes a presenter may
     show (`display.recall_note`). A note is a code, never a count: `stale`
     (the index could not be refreshed and the last one was served) and
-    `closed` (a bucket in scope has an unreadable trust ledger, so its history
-    is not shown)."""
+    `closed` (a bucket in scope has an unreadable trust ledger, or an events
+    ledger of its own that cannot be read, so its history is not shown) and
+    `forget-incomplete` (some bucket's events ledger cannot be read, so the
+    forget set may be missing a tombstone)."""
 
     rows: list
     notes: tuple = ()
@@ -1580,6 +1670,15 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     path = config.recall_db()
     if _closed_still(scopes, path, notes):
         _note(notes, "closed")
+    _incomplete_cleared(path, notes)
+    _authors_changed(path, notes)
+    if store.forgotten_incomplete():
+        _note(notes, "forget-incomplete")
+    tombs = store.foreign_tombstones()
+    if tombs.unproven:
+        _note(notes, "author-skipped")    # the index left that author out
+    if tombs.degraded:
+        _note(notes, "author-degraded")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"

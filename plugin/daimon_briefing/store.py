@@ -925,7 +925,7 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
     for adir in _own_team_dirs(project_dir):
         path = adir / _TOMBSTONE_NAME
         try:
-            if path.exists() and content_hash in _tombstone_keys(path):
+            if path.exists() and content_hash in _tombstone_keys(path).keys:
                 continue
             adir.mkdir(parents=True, exist_ok=True)
             # lock=False: this dir is committed by teamsync._commit_own, and a
@@ -943,31 +943,110 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
 _MAX_TOMBSTONE_BYTES = 1_000_000
 
 
-def _tombstone_keys(path) -> set[str]:
-    # Not on jsonl.read: this read is capped at _MAX_TOMBSTONE_BYTES, and
-    # jsonl.read has no bounded mode (it loads the whole file).
+class TombstoneRead(NamedTuple):
+    """The capped read of one tombstone ledger: the keys of its good rows and
+    what the file is. `unproven` is the state a reader must not trust the
+    keys of as COMPLETE: the file was not read (TRANSIENT or an OS error),
+    holds a garbage line, or is over the cap so only its head was read."""
+
+    keys: set
+    health: jsonl.Health
+    over_cap: bool = False
+
+    @property
+    def unproven(self) -> bool:
+        return self.over_cap or self.health in (jsonl.Health.TRANSIENT,
+                                                jsonl.Health.UNREADABLE)
+
+
+def _row_keys(rows) -> set[str]:
     keys: set[str] = set()
-    try:
-        if path.stat().st_size > _MAX_TOMBSTONE_BYTES:
-            log.warning("daimon team: %s exceeds %d bytes — reading the "
-                        "first %d only", path.name, _MAX_TOMBSTONE_BYTES,
-                        _MAX_TOMBSTONE_BYTES)
-            with path.open("r", encoding="utf-8", errors="replace") as f:
-                raw = f.read(_MAX_TOMBSTONE_BYTES)
-        else:
-            raw = path.read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return keys
-    for line in raw.splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue          # a corrupt row must not hide the rest
+    for row in rows:
         if isinstance(row, dict):
             key = row.get("key")
             if isinstance(key, str) and key.strip():
                 keys.add(key.strip())
     return keys
+
+
+def _tombstone_keys(path) -> TombstoneRead:
+    """The keys of one tombstone ledger and its health. Capped at
+    `_MAX_TOMBSTONE_BYTES`: `jsonl.read` has no bounded mode (it loads the
+    whole file), so an over-cap file is read for its head only and reported
+    `over_cap`. A corrupt row never hides the rest. Never raises."""
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return TombstoneRead(set(), jsonl.Health.ABSENT)
+    except OSError:
+        return TombstoneRead(set(), jsonl.Health.UNREADABLE)
+    if size <= _MAX_TOMBSTONE_BYTES:
+        got = jsonl.read(path)
+        return TombstoneRead(_row_keys(got.rows), got.health)
+    log.warning("daimon team: %s exceeds %d bytes — reading the first %d "
+                "only", path.name, _MAX_TOMBSTONE_BYTES, _MAX_TOMBSTONE_BYTES)
+    try:
+        with path.open("rb") as f:
+            head = f.read(_MAX_TOMBSTONE_BYTES)
+    except OSError:
+        return TombstoneRead(set(), jsonl.Health.UNREADABLE, True)
+    rows = []
+    for line in head.decode("utf-8", errors="surrogateescape").splitlines():
+        kind, row = jsonl.classify_line(line)
+        if kind == jsonl.ROW:
+            rows.append(row)
+    return TombstoneRead(_row_keys(rows), jsonl.Health.DEGRADED, True)
+
+
+class ForeignLedger(NamedTuple):
+    """Another bucket's ledger read across the boundary: the `jsonl.Read`,
+    whether the registry's foreign column says to leave the source out
+    (`skip`), and whether it is read around with a note (`degraded`)."""
+
+    read: "jsonl.Read"
+    skip: bool
+    degraded: bool
+
+
+def foreign_ledger(slug: str, name: str) -> ForeignLedger:
+    """The one seam through which another bucket's ledger is read: the
+    registry's foreign column decides, so the inbox, the decide counts and
+    the listings cannot disagree about what a torn or unreadable foreign
+    ledger means. Never raises."""
+    read = jsonl.read(config.checkpoint_dir() / slug / name)
+    posture = surfaces.read_posture(surfaces.bucket_ledger(name),
+                                    read.health.value, foreign=True)
+    return ForeignLedger(
+        read, posture is surfaces.ReadPosture.SKIP_SOURCE,
+        read.health is jsonl.Health.DEGRADED
+        and posture is surfaces.ReadPosture.NOTE)
+
+
+class ForeignTombstones(NamedTuple):
+    """Every other author's published tombstones, read once: the union of
+    their keys, the author directory names whose ledger is not proven (their
+    keys may be incomplete: O3, their checkpoints are not admitted) and those
+    whose ledger only has torn lines (keys used, a note)."""
+
+    keys: set
+    unproven: frozenset
+    degraded: frozenset
+
+
+def foreign_tombstones() -> ForeignTombstones:
+    """The foreign tombstone ledgers, one capped read each. Author directory
+    names are `project_slug(author)`. Never raises."""
+    keys: set[str] = set()
+    unproven: set[str] = set()
+    degraded: set[str] = set()
+    for path in _foreign_tombstone_paths():
+        got = _tombstone_keys(path)
+        keys |= got.keys
+        if got.unproven:
+            unproven.add(path.parent.name)
+        elif got.health is jsonl.Health.DEGRADED:
+            degraded.add(path.parent.name)
+    return ForeignTombstones(keys, frozenset(unproven), frozenset(degraded))
 
 
 def foreign_forgotten_content_keys() -> set[str]:
@@ -988,10 +1067,7 @@ def foreign_forgotten_content_keys() -> set[str]:
     are walked, so a clone's .git object store is never traversed, and each
     ledger is capped — a teammate cannot make every briefing pay for an
     unbounded file. Never raises."""
-    keys: set[str] = set()
-    for path in _foreign_tombstone_paths():
-        keys |= _tombstone_keys(path)
-    return keys
+    return foreign_tombstones().keys
 
 
 def _foreign_tombstone_paths(include_own: bool = False) -> list:
@@ -1036,16 +1112,18 @@ def forgotten_stamp() -> tuple:
     for name in names:
         try:
             st = os.stat(os.path.join(base, name, "events.jsonl"))
-            local.append((name, st.st_ino, st.st_mtime_ns, st.st_size))
+            local.append((name, st.st_ino, st.st_mtime_ns, st.st_ctime_ns,
+                          st.st_size))
         except OSError:
-            local.append((name, None, None, None))
+            local.append((name, None, None, None, None))
     foreign: list[tuple] = []
     for path in _foreign_tombstone_paths(include_own=True):
         try:
             st = os.stat(path)
-            foreign.append((str(path), st.st_mtime_ns, st.st_size))
+            foreign.append((str(path), st.st_mtime_ns, st.st_ctime_ns,
+                            st.st_size))
         except OSError:
-            foreign.append((str(path), None, None))
+            foreign.append((str(path), None, None, None))
     return (base, tuple(local), tuple(sorted(foreign)))
 
 
@@ -1930,6 +2008,13 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
 
     Pure file-ops, never raises — a missing/broken/torn team dir yields []."""
     project_dir = _resolved(project_dir)
+    own_events = _events_path(project_dir)
+    if own_events is not None and jsonl.read(own_events).health in (
+            jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
+        # This project's own tombstones cannot all be known, so a teammate's
+        # copy of a value it forgot could not be told from any other: no
+        # foreign checkpoint is admitted (the mirror of an unproven author).
+        return []
     root = config.team_dir()
     want_slug = project_slug(project_dir)
     cutoff = team_retention_cutoff()
@@ -1938,12 +2023,17 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     # here too. Always on — suppression is not deletion, it costs a teammate
     # nothing but the sight of a value they asked to be forgotten, and their
     # own scrubbed file may not have reached this clone yet.
-    forgotten = forgotten_content_keys(project_dir) | foreign_forgotten_content_keys()
+    foreign_tombs = foreign_tombstones()
+    forgotten = forgotten_content_keys(project_dir) | foreign_tombs.keys
     self_author = project_slug(config.author())
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}
 
     def _consider(adir: Path, check_stamp: bool, member) -> None:
+        if member is not None and adir.name in foreign_tombs.unproven:
+            # O3: a teammate whose published forgets cannot be read is not
+            # admitted; "no tombstone found" would prove nothing.
+            return
         try:
             files = [p for p in adir.iterdir()
                      if p.is_file() and p.suffix == ".json"]
@@ -2946,8 +3036,14 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     under a different framing. Only the LATEST event per ref counts, so a later
     `reopen` lifts the tombstone (same fold recall and the view use). Fails open to
     an empty set (missing/corrupt log, unknown project)."""
+    return _tombstoned_keys(resolutions(project_dir=project_dir))
+
+
+def _tombstoned_keys(resolved: dict) -> set[str]:
+    """The canonical keys of the `forgotten:` statuses in a
+    `fold_resolutions` result."""
     keys: set[str] = set()
-    for evt in resolutions(project_dir=project_dir).values():
+    for evt in resolved.values():
         status = str(evt.get("status") or "")
         if status.lower().startswith(_FORGOTTEN_PREFIX):
             key = status[len(_FORGOTTEN_PREFIX):].strip()
@@ -2956,8 +3052,48 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     return keys
 
 
-# (checkpoint root) -> (stamp, keys): see all_forgotten_content_keys.
+# (checkpoint root) -> (stamp, keys): see all_forgotten_content_keys. Only a
+# walk that found every events ledger proven is kept.
 _all_forgotten_cache: dict = {}
+
+
+def _forgotten_walk() -> tuple[frozenset, frozenset]:
+    """`(keys, incomplete)`: the union of every local project's tombstones and
+    the slugs whose `events.jsonl` is not proven (TRANSIENT or any UNREADABLE
+    state). A DEGRADED ledger is proven: its good lines are the set (decision
+    3). The walk is memoized on each events ledger's stat only while every
+    ledger read proven, so a repair or a retry shows at once."""
+    root = config.checkpoint_dir()
+    try:
+        children = sorted(root.iterdir())
+    except OSError:
+        return frozenset(), frozenset()
+    stamp: list[tuple] = []
+    for child in children:
+        try:
+            st = (child / "events.jsonl").stat()
+            stamp.append((child.name, st.st_ino, st.st_mtime_ns,
+                          st.st_ctime_ns, st.st_size))
+        except OSError:
+            stamp.append((child.name, None, None, None, None))
+    key = tuple(stamp)
+    cached = _all_forgotten_cache.get(root)
+    if cached is not None and cached[0] == key:
+        return cached[1], frozenset()
+    keys: set[str] = set()
+    incomplete: set[str] = set()
+    for child in children:
+        # Bucket dirs are named by slug; project_slug is idempotent on slugs,
+        # so the name rides through the project_dir-shaped ledger API.
+        if not child.is_dir():
+            continue
+        read = jsonl.read(child / "events.jsonl")
+        if read.health in (jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
+            incomplete.add(child.name)
+        keys |= _tombstoned_keys(fold_resolutions(read.rows))
+    if not incomplete:
+        _all_forgotten_cache[root] = (key, frozenset(keys))
+    return frozenset(keys), frozenset(incomplete)
 
 
 def all_forgotten_content_keys() -> set[str]:
@@ -2967,38 +3103,24 @@ def all_forgotten_content_keys() -> set[str]:
     suppresses a value forgotten in ANY local project. Over-suppression is
     the fail-safe direction (drop_forgotten's documented posture) — a
     forgotten value re-surfacing via a teammate is the worse failure.
-    Never raises; degrades to the empty set.
+    Never raises; degrades to the empty set. A bucket whose events ledger
+    cannot be read contributes the keys of its good lines and is named by
+    `forgotten_incomplete`, so no caller reads the gap as "nothing forgotten".
 
     Memoized per process, because every briefing reads this set through the
-    view and the walk folds one events ledger per bucket (about 25 ms for 50
+    view and the walk reads one events ledger per bucket (about 25 ms for 50
     buckets of 200 events). The memo key is the checkpoint root plus each
     bucket's name and its `events.jsonl` (inode, mtime_ns, size), so a write
-    to any ledger, or a bucket appearing or going, recomputes. The caller gets
-    a copy."""
-    root = config.checkpoint_dir()
-    try:
-        children = sorted(root.iterdir())
-    except OSError:
-        return set()
-    stamp: list[tuple] = []
-    for child in children:
-        try:
-            st = (child / "events.jsonl").stat()
-            stamp.append((child.name, st.st_ino, st.st_mtime_ns, st.st_size))
-        except OSError:
-            stamp.append((child.name, None, None, None))
-    key = tuple(stamp)
-    cached = _all_forgotten_cache.get(root)
-    if cached is not None and cached[0] == key:
-        return set(cached[1])
-    keys: set[str] = set()
-    for child in children:
-        # Bucket dirs are named by slug; project_slug is idempotent on slugs,
-        # so the name rides through the project_dir-shaped ledger API.
-        if child.is_dir():
-            keys |= forgotten_content_keys(child.name)
-    _all_forgotten_cache[root] = (key, frozenset(keys))
-    return keys
+    to any ledger, or a bucket appearing or going, recomputes; it is never
+    kept while a ledger is unproven. The caller gets a copy."""
+    return set(_forgotten_walk()[0])
+
+
+def forgotten_incomplete() -> frozenset:
+    """The bucket slugs whose `events.jsonl` is not proven, so the
+    machine-wide forget set may be missing a tombstone. Empty on a healthy
+    store. Never memoized while non-empty (a repair shows at once)."""
+    return _forgotten_walk()[1]
 
 
 # #421: the pure splice half of the gate moved to policy.drop_forgotten;

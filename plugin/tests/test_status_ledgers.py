@@ -36,7 +36,8 @@ def test_payload_gains_ledgers_at_the_tail_and_keeps_every_field(proj):
         assert key in payload
     ledgers = payload["ledgers"]
     assert set(ledgers) == {"ledgers", "undeclared", "forgotten_check",
-                           "checkpoints", "other"}
+                           "checkpoints", "other", "repair",
+                            "forget_incomplete"}
     assert ledgers["ledgers"]["trust.jsonl"] == {
         "state": "absent", "torn": 0, "split": 0, "garbage": 0,
         "tombstoned_present": 0}

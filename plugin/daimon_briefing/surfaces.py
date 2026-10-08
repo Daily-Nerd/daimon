@@ -23,6 +23,7 @@ specific shapes come before the generic ones they would otherwise shadow.
 """
 from __future__ import annotations
 
+import enum
 import fnmatch
 import re
 from typing import NamedTuple
@@ -50,6 +51,24 @@ DELETE_STRATEGIES = frozenset({
 })
 
 
+class ReadPosture(str, enum.Enum):
+    """What a reader does with a ledger in one health state (#1132 PR 10).
+
+    OPEN reads the rows as if nothing happened. NOTE reads the rows and says
+    so with a code. CLOSED withholds everything the ledger decides about.
+    SKIP_SOURCE leaves one foreign source out and says so. `str` so a table
+    prints as the words it holds."""
+    OPEN = "open"
+    NOTE = "note"
+    CLOSED = "closed"
+    SKIP_SOURCE = "skip-source"
+
+
+# The four states a ledger can be in and not be OK, in the order a `read`
+# column lists them. OK is OPEN on every row and is not a column.
+READ_STATES = ("absent", "degraded", "transient", "unreadable")
+
+
 class FieldPath(NamedTuple):
     """One prose field of a ledger row: a key path into the row dict.
     `is_list` marks a top-level key holding a list of strings."""
@@ -70,8 +89,12 @@ class Surface(NamedTuple):
     #    read, write, deleter and phase stay empty until theirs do. --
     fold: str = ""                    # dotted pure fold, e.g. "trust.fold"
     prose: tuple[FieldPath, ...] = ()  # plaintext row fields
-    read: tuple[str, ...] = ()        # health read policy (later PR)
+    # Read posture per state, in READ_STATES order (absent, degraded,
+    # transient, unreadable); `foreign_read` is the same for a ledger read
+    # across buckets or authors. `write` stays empty until the write side.
+    read: tuple[ReadPosture, ...] = ()
     write: tuple[str, ...] = ()       # health write policy (later PR)
+    foreign_read: tuple[ReadPosture, ...] = ()
     index_content: bool = False       # recall._fingerprint input (scar 0107)
     mergeable: bool = False           # a legacy-bucket migration moves it
     deleter: str = ""                 # forget registry (later PR)
@@ -105,12 +128,19 @@ def _scalars(*names: str) -> tuple[FieldPath, ...]:
     return tuple(FieldPath((n,)) for n in names)
 
 
+_RP = ReadPosture
+# R2.3, the human copy lives in tests/test_read_posture_registry.py.
+_READ_NOTED = (_RP.OPEN, _RP.NOTE, _RP.NOTE, _RP.NOTE)
+_READ_TRUST = (_RP.OPEN, _RP.NOTE, _RP.CLOSED, _RP.CLOSED)
+_READ_COUNTERS = (_RP.OPEN, _RP.OPEN, _RP.OPEN, _RP.NOTE)
+_READ_FOREIGN = (_RP.OPEN, _RP.NOTE, _RP.SKIP_SOURCE, _RP.SKIP_SOURCE)
+
 SURFACES: tuple[Surface, ...] = (
     # -- per-project bucket ledgers (specific before the *.json generics) --
     Surface("checkpoints/{slug}/events.jsonl", "store.append_event",
             True, "append-tombstone", "forget",
             prose=_scalars("note", "item_text", "status"),
-            index_content=True, mergeable=True),
+            index_content=True, mergeable=True, read=_READ_NOTED),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
     #    carries item PLAINTEXT by design (subject, verdict, scope, note,
     #    revisit_when, anchors, evidence), so it sits in the checkpoint's
@@ -166,7 +196,7 @@ SURFACES: tuple[Surface, ...] = (
                            "note") + (
                 FieldPath(("anchors",), True), FieldPath(("evidence",), True),
                 FieldPath(("check", "match")), FieldPath(("check", "body"))),
-            mergeable=True),
+            mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN),
     # -- the amendment ledger (#691): the fourth bucket ledger — evidence
     #    quotes and human-channel notes, both length-capped, both plaintext
     #    by design, so it sits in the checkpoint's deletion category with
@@ -188,7 +218,8 @@ SURFACES: tuple[Surface, ...] = (
     #    (render_privacy_audit) so growth is measured, never silent. --
     Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
             True, "rewrite", "forget", fold="amendments.fold",
-            prose=_scalars("evidence", "note"), mergeable=True),
+            prose=_scalars("evidence", "note"), mergeable=True,
+            read=_READ_NOTED, foreign_read=_READ_FOREIGN),
     # -- the request ledger (#694): the fifth bucket ledger — one project's
     #    ask of another, so its rows carry the ask, its rationale, a human
     #    verdict note, and a completion quote: plaintext by design, in the
@@ -215,17 +246,20 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/requests.jsonl", "requests.append",
             True, "rewrite", "forget", fold="requests.fold",
             prose=_scalars("ask", "why", "note", "evidence", "from_label",
-                           "act_author"), mergeable=True),
+                           "act_author"), mergeable=True, read=_READ_NOTED,
+            foreign_read=_READ_FOREIGN),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",
             "store.append_verification", False, "exempt-no-plaintext",
-            "none", audit_exempt=True, index_content=True, mergeable=True),
+            "none", audit_exempt=True, index_content=True, mergeable=True,
+            read=_READ_COUNTERS),
     # store.record_forget_hits: {ts, key, reason?} — "NEVER the text or any
     # prefix"; reason (#693) is a closed-vocabulary code ("ruling-echo").
     Surface("checkpoints/{slug}/forget-hits.jsonl",
             "store.record_forget_hits", False, "exempt-no-plaintext",
-            "none", audit_exempt=True, mergeable=True),
+            "none", audit_exempt=True, mergeable=True,
+            read=_READ_COUNTERS),
     # -- the bucket root record (#1092): one line, the absolute resolved
     #    directory that FIRST wrote to this bucket. store.record_bucket_root
     #    stamps it once, on the first ledger/checkpoint write, and never
@@ -259,7 +293,7 @@ SURFACES: tuple[Surface, ...] = (
     #    files by suffix. --
     Surface("checkpoints/{slug}/*" + QUARANTINE_SIDECAR_SUFFIX,
             "ledger_repair.quarantine_lines", True, "rewrite", "forget",
-            prose=_scalars("text"), mergeable=True,
+            prose=_scalars("text"), mergeable=True, read=_READ_NOTED,
             deleter="ledger_repair.forget_quarantined_lines"),
     # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
     #    only — no field can carry item text (relations.py refuses at the
@@ -276,7 +310,7 @@ SURFACES: tuple[Surface, ...] = (
     #    growth is measured, never silent. --
     Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
             True, "rewrite", "forget", fold="relations.fold",
-            mergeable=True),
+            mergeable=True, read=_READ_NOTED),
     # -- the trust ledger (#1109 Slice 1): a human-only quarantine verdict on
     #    a checkpoint value, append-only like refutations.jsonl, and in the
     #    same category — it carries item PLAINTEXT by design (`reason`,
@@ -296,7 +330,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/trust.jsonl", "trust.append",
             True, "rewrite", "forget", fold="trust.fold",
             prose=(FieldPath(("reason",)), FieldPath(("evidence",), True)),
-            index_content=True, mergeable=True),
+            index_content=True, mergeable=True, read=_READ_TRUST),
     # -- the request-policy tombstones (#961 slice 5): one row per activation
     #    interval of a ruling that forget has since removed, so a forgotten
     #    ruling's `info` asks do not silently flip to `work` (refutations.
@@ -313,7 +347,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/request_policy_tombstones.jsonl",
             "refutations._write_policy_tombstones", False,
             "exempt-no-plaintext", "none", audit_exempt=True,
-            mergeable=True),
+            mergeable=True, read=_READ_NOTED),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,
@@ -393,7 +427,8 @@ SURFACES: tuple[Surface, ...] = (
     # forget-hits.jsonl takes locally. Deliberately BEFORE the json entry
     # and named `.jsonl` so no `*.json` walk claims it.
     Surface("team/{remote}/**/tombstones.jsonl", "store.publish_tombstone",
-            False, "exempt-no-plaintext", "none"),
+            False, "exempt-no-plaintext", "none",
+            foreign_read=_READ_FOREIGN),
     Surface("team/{remote}/**/*.json", "store._dual_write_team",
             True, "known-gap", "audit", issue="#600"),
     Surface("team/{remote}/.git/**", "git (teamsync subprocess)",
@@ -580,6 +615,17 @@ def foreign_apply_gap() -> tuple[str, ...]:
     return tuple(sorted(
         s.shape for s in SURFACES
         if s.plaintext and s.shape not in FOREIGN_APPLY_SHAPES))
+
+
+def read_posture(row: Surface, state: str, *,
+                 foreign: bool = False) -> ReadPosture:
+    """The read posture of `row` in `state` (a `jsonl.Health` value, as a
+    word). OK is OPEN on every row and is not a column; `foreign` asks the
+    column for a ledger read across buckets or authors."""
+    if state == "ok":
+        return ReadPosture.OPEN
+    column = row.foreign_read if foreign else row.read
+    return column[READ_STATES.index(state)]
 
 
 def match(pattern: str) -> Surface | None:

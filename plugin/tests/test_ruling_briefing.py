@@ -123,9 +123,9 @@ def test_ruling_loader_fails_open(tmp_checkpoint_dir, sample_checkpoint,
         raise OSError("ledger unreadable")
 
     # #962: active_rulings now reads through briefing.rulings_read, which
-    # reads events() (strict) + fold() directly rather than
+    # reads refutations.read_events() + fold() directly rather than
     # refutations.listing() — this is the seam that must still fail open.
-    monkeypatch.setattr(briefing.refutations, "events", boom)
+    monkeypatch.setattr(briefing.refutations, "read_events", boom)
     out = briefing.render(sample_checkpoint, project_dir=PROJECT)
     assert out  # the briefing still renders
     assert "Standing rulings" not in out

@@ -160,7 +160,8 @@ def test_a_degraded_ledger_adds_a_note(tmp_checkpoint_dir):
     got = view.suppressed(PROJECT, NOW)
     snap = view.snapshot(PROJECT)
     assert snap.health["events.jsonl"] is Health.DEGRADED
-    assert got.notes == snap.notes() == ("⚠ events.jsonl is degraded (torn)",)
+    assert got.notes == snap.notes() == (
+        "⚠ events.jsonl is degraded (torn); run: daimon ledger repair events",)
 
 
 def test_suppressed_reads_the_own_bucket_only(tmp_checkpoint_dir):

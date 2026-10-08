@@ -7,8 +7,8 @@ from pathlib import Path
 from daimon_briefing import api, display, pending, requests, store, view
 
 REEXPORTS = ("lookup", "match", "read_meta", "withheld_marker",
-             "withheld_json", "queue", "listing", "inbox_listing",
-             "project_slug", "receipt_state")
+             "withheld_json", "queue", "listing", "inbox_listing", "inbox",
+             "join", "ledger_health", "project_slug", "receipt_state")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -27,6 +27,9 @@ def test_every_name_is_the_source_object():
     assert api.queue is pending.queue
     assert api.listing is requests.listing
     assert api.inbox_listing is requests.inbox_listing
+    assert api.inbox is requests.inbox
+    assert api.join is requests.join
+    assert api.ledger_health is view.ledger_health
     assert api.project_slug is store.project_slug
     assert api.receipt_state is view.receipt_state
 

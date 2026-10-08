@@ -221,7 +221,7 @@ def test_the_forgotten_stamp_follows_a_foreign_tombstone(tmp_checkpoint_dir,
     assert store.forgotten_stamp() != before
     monkeypatch.setattr(store, "_foreign_tombstone_paths",
                         lambda include_own=False: [config.team_dir() / "gone.jsonl"])
-    assert store.forgotten_stamp()[2][0][1:] == (None, None)
+    assert store.forgotten_stamp()[2][0][1:] == (None, None, None)
 
 
 def test_a_stamp_that_is_not_a_bucket_name_never_reaches_a_bucket(

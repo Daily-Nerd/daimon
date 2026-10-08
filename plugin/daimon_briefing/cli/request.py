@@ -246,16 +246,29 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
 
 def _cmd_request_inbox(args) -> int:
     project = _cli._resolve_project(args.project)
-    rows = requests.inbox_listing(project_dir=project)
+    got = requests.inbox(project)
+    rows = got.rows
     _cli._note_usage("request:inbox")
+    return _print_listing(args, rows, got.notes,
+                          "no requests addressed to this project",
+                          lambda row: _inbox_lines(row, project_dir=project))
+
+
+def _print_listing(args, rows, notes, empty_line, lines_of) -> int:
+    """A request listing and the notes of the read behind it. `--json` keeps
+    stdout a JSON array and sends every note to stderr (the `recall --json`
+    precedent); the text form ends with the notes."""
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
+        for note in notes:
+            print(note, file=sys.stderr)
         return 0
     if not rows:
-        render.render_ledger_lines(["no requests addressed to this project"])
-        return 0
-    render.render_ledger_records(
-        [_inbox_lines(row, project_dir=project) for row in rows])
+        render.render_ledger_lines([empty_line])
+    else:
+        render.render_ledger_records([lines_of(row) for row in rows])
+    for note in notes:
+        print(note)
     return 0
 
 
@@ -640,17 +653,11 @@ def _cmd_request_reply(args) -> int:
 
 def _cmd_request_list(args) -> int:
     project = _cli._resolve_project(args.project)
-    rows = requests.listing(project_dir=project)
+    got = requests.listed(project)
     _cli._note_usage("request:list")
-    if args.json:
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
-        return 0
-    if not rows:
-        render.render_ledger_lines(["no requests for this project"])
-        return 0
-    render.render_ledger_records(
-        [_request_lines(row, project_dir=project) for row in rows])
-    return 0
+    return _print_listing(args, got.rows, got.notes,
+                          "no requests for this project",
+                          lambda row: _request_lines(row, project_dir=project))
 
 
 def register(sub, fmt) -> None:

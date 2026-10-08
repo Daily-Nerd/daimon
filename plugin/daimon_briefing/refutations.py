@@ -297,19 +297,22 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
         pass
 
 
-def _read_policy_tombstones(project_dir=None) -> frozenset:
+def _read_policy_tombstones(project_dir=None, *, rows=None) -> frozenset:
     """#961 slice 5: every tombstoned interval for this project's forgotten
     rulings, as the SAME 9-field tuples `request_policy_history` returns.
     Merged into that function's result there — a plain union, since the
     ledger fold can never produce an entry for a ruling id `forget` has
     already removed every row of. Fail-open to the empty set on any read
     error, the same posture every reader in this module holds for the
-    ledger it belongs to."""
-    path = _tombstone_path(project_dir)
-    if path is None or not path.exists():
-        return frozenset()
+    ledger it belongs to. `rows` hands in the rows of a read the caller
+    already did (the snapshot's), so the file is not read twice."""
+    if rows is None:
+        path = _tombstone_path(project_dir)
+        if path is None or not path.exists():
+            return frozenset()
+        rows = jsonl.read(path).rows
     out = set()
-    for row in jsonl.read(path).rows:
+    for row in rows:
         active_from_raw = row.get("active_from")
         active_until_raw = row.get("active_until")
         try:
@@ -863,33 +866,18 @@ def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     return sorted(doomed)
 
 
-def events(project_dir=None, *, strict: bool = False) -> list[dict]:
-    """Read valid ledger rows best-effort; malformed lines never sink reads.
+class Events(NamedTuple):
+    """`read_events`'s answer: the valid lifecycle rows and why a scan cannot
+    vouch for the file ("" when it can; `jsonl.Read.cannot_scan`)."""
+    rows: list
+    unscannable: str
 
-    `strict` (#962, default False): every existing caller keeps today's
-    fail-open contract byte for byte — an unreadable ledger reads as no
-    events at all. Passing `strict=True` re-raises the `OSError` (or
-    `UnicodeDecodeError`) instead, for a caller that needs to tell "could not
-    read" apart from "genuinely has none" — `briefing.rulings_read` is the
-    one caller that does.
 
-    The read is attempted directly rather than gated behind `path.exists()`
-    first: `Path.exists()` swallows ENOENT, ENOTDIR, EBADF, *and* ELOOP alike
-    into a bare False, so a ledger stuck in a symlink loop used to read as
-    "genuinely has none" even under `strict=True` — the read never happened,
-    so there was nothing to re-raise. Only `FileNotFoundError` (a legitimately
-    absent ledger, ENOENT) stays unconditionally silent; every other OSError —
-    a directory in the ledger's place (`IsADirectoryError`), permissions
-    denied, a symlink loop — reaches the `strict` check below.
-    """
-    path = _path(project_dir)
-    if path is None:
-        return []
+def _valid_events(raw_rows) -> list[dict]:
+    """The lifecycle rows among the rows `jsonl.read` returned, each with its
+    read-order `_line`. Malformed rows never sink a read."""
     rows = []
-    read = jsonl.read(path)
-    if strict and read.cannot_scan:
-        _raise_unreadable(read)
-    for index, row in enumerate(read.rows):
+    for index, row in enumerate(raw_rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _REF_ID_RE.fullmatch(str(row.get("refutation_id") or ""))):
@@ -914,16 +902,31 @@ def events(project_dir=None, *, strict: bool = False) -> list[dict]:
     return rows
 
 
-def _raise_unreadable(read) -> None:
-    """`events(strict=True)`'s refusal: the exception a failed read raised
-    before `jsonl.read` existed (an OSError for a file that could not be
-    read, a UnicodeDecodeError for an undecodable byte), so `rulings_read`
-    keeps reporting "unreadable" for exactly those conditions."""
-    reason = read.cannot_scan
-    if reason == "undecodable":
-        raise UnicodeDecodeError("utf-8", b"", 0, 1,
-                                 "ledger holds undecodable bytes")
-    raise OSError(reason)
+def read_events(project_dir=None, *, read: jsonl.Read | None = None) -> Events:
+    """The valid ledger rows plus whether the read could be vouched for.
+
+    `read` hands in the `jsonl.read` result a caller (the view's snapshot)
+    already holds, so the file is read once; without it the ledger is read
+    here. An unresolvable project has no events and nothing unscannable.
+    A ledger that is simply ABSENT is no events, never unscannable."""
+    if read is None:
+        path = _path(project_dir)
+        if path is None:
+            return Events([], "")
+        read = jsonl.read(path)
+    return Events(_valid_events(read.rows), read.cannot_scan)
+
+
+def events(project_dir=None, *, rows=None) -> list[dict]:
+    """Read valid ledger rows best-effort; malformed lines never sink reads.
+
+    `rows` hands in the raw rows of a `jsonl.read` the caller already did
+    (the snapshot's single read of this ledger); they are filtered exactly as
+    a fresh read would be. A caller that must tell "could not read" from
+    "genuinely has none" asks `read_events` for `unscannable`."""
+    if rows is not None:
+        return _valid_events(rows)
+    return read_events(project_dir).rows
 
 
 def _fold_row(out: dict, row: dict) -> None:
@@ -1283,8 +1286,8 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def records(project_dir=None) -> dict[str, dict]:
-    return fold(events(project_dir=project_dir))
+def records(project_dir=None, *, rows=None) -> dict[str, dict]:
+    return fold(events(project_dir=project_dir, rows=rows))
 
 
 def get(refutation_id: str, project_dir=None) -> dict | None:
@@ -1355,7 +1358,9 @@ def active_request_policies(project_dir=None) -> frozenset:
     return frozenset(out)
 
 
-def request_policy_history(project_dir=None) -> frozenset:
+def request_policy_history(project_dir=None, *, rows=None,
+                           tombstone_rows=None,
+                           unscannable: str = "") -> frozenset:
     """#961 slice 4: every request-accept grant this project's ruling ledger
     has EVER activated, as `(sender, kind, verb, by, ruling_id, sha256,
     active_from, active_until)` INTERVALS in `order` units — the question
@@ -1442,7 +1447,16 @@ def request_policy_history(project_dir=None) -> frozenset:
             return default
 
     try:
-        rows = events(project_dir=project_dir, strict=True)
+        if rows is None:
+            got = read_events(project_dir)
+            rows, unscannable = got.rows, got.unscannable
+        else:
+            rows = _valid_events(rows)
+        if unscannable:
+            # A ledger that cannot be vouched for (an OS error, a transient
+            # failure, an undecodable byte) grants nothing: fail toward more
+            # scrutiny, never less.
+            return frozenset()
         ordered = sorted(rows, key=lambda row: (
             _integer(row, "order"),
             _EVENT_RANK.get(str(row.get("event") or ""), 99),
@@ -1482,7 +1496,8 @@ def request_policy_history(project_dir=None) -> frozenset:
         # tombstones` (called from `forget_content_key`, before the rewrite)
         # is the only remaining source for it. Tuple-identical, so this is a
         # plain set union, never a special case downstream.
-        return frozenset(out) | _read_policy_tombstones(project_dir=project_dir)
+        return frozenset(out) | _read_policy_tombstones(
+            project_dir=project_dir, rows=tombstone_rows)
     except Exception:
         return frozenset()
 

@@ -205,6 +205,8 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
         worldcheck_project, mask=mask)
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
+    request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines, notes=notes)
     closed = snap is not None and snap.closed
     blocks = [blk for blk in ([briefing.GREETING] if closed else [],
                               list(notes), rulings, decision_count_block,
@@ -222,7 +224,7 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
                              "verdict": verdict_cards}
 
 
-def _panel_lines(project_dir, worldcheck_project, snap=None):
+def _panel_lines(project_dir, worldcheck_project, snap=None, notes=()):
     """The skeleton panels (rulings, decision count, request, verdict, owed)
     computed once, shared by every render path once a checkpoint exists, and
     the request and verdict cards that same read produced. Kept as one seam
@@ -240,6 +242,8 @@ def _panel_lines(project_dir, worldcheck_project, snap=None):
         worldcheck_project, mask=mask)
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
                   if worldcheck_project is not None else [])
+    request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines, notes=notes)
     return (rulings, decision_count, request_lines, verdict_lines, owed_lines,
             {"request": request_cards, "verdict": verdict_cards})
 
@@ -330,7 +334,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             _print_trailer(trailer)
             return _manifest(llm_cards)
         (rulings, decision_count, request_lines, verdict_lines, owed_lines,
-         cards) = _panel_lines(project_dir, worldcheck_project, snap)
+         cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
         # #204: degrade verbatim labels when the receipt can't be locally
         # confirmed. Cheap check (sidecar + byte match).
         degraded = briefing.receipt_degraded(checkpoint)
@@ -377,7 +381,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
              end="")
         return _manifest(cards)
     (rulings, decision_count, request_lines, verdict_lines, owed_lines,
-     cards) = _panel_lines(project_dir, worldcheck_project, snap)
+     cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
     # #204: degrade verbatim labels when the receipt can't be locally
     # confirmed. Cheap check (sidecar + byte match).
     degraded = briefing.receipt_degraded(checkpoint)
@@ -1030,6 +1034,15 @@ def _forget_hits_line(data: dict) -> str | None:
             f"re-assertion{'s' if n != 1 else ''}, most recent {ts}")
 
 
+def _request_notes(data: dict) -> tuple:
+    """#1132 PR 10a: the notes of the joins behind the requests counts (a
+    sender or recipient whose ledger could not be proven), one warning line
+    each, whether or not the counts are zero."""
+    counts = data.get("requests")
+    notes = counts.get("notes") if isinstance(counts, dict) else None
+    return tuple(notes) if notes else ()
+
+
 def _requests_line(data: dict) -> str | None:
     """#694 PR 3: one line summarizing the cross-project ask ledger — open
     sent / awaiting-you counts, read through the composer so the numbers
@@ -1078,10 +1091,18 @@ def _ledger_lines(data: dict) -> list:
         if tombstoned:
             text += ", " + _plural(tombstoned, "row still carries",
                                    "rows still carry") + " a forgotten value"
+        fix = (census.get("repair") or {}).get(name)
+        if fix:
+            text += f"; {fix['hint']} ({fix['path']})"
         lines.append(f"⚠ ledger {name}: {text}")
     for name, entry in (census.get("other") or {}).items():
         if entry["state"] not in ("ok", "absent"):
             lines.append(f"⚠ ledger file {name}: {_ledger_state_text(entry)}")
+    for entry in census.get("forget_incomplete") or []:
+        shown = f" ({entry['detail']})" if entry.get("detail") else ""
+        lines.append(
+            f"⚠ forget set incomplete: {entry['slug']} events.jsonl is "
+            f"{entry['state']}{shown}; {entry['hint']} ({entry['path']})")
     if census.get("forgotten_check") == "unavailable":
         state = (census.get("ledgers") or {}).get(
             "events.jsonl", {}).get("state")
@@ -1244,6 +1265,8 @@ def _plain_status(data: dict) -> None:
     rq_line = _requests_line(data)
     if rq_line:
         print(rq_line)  # #694 PR 3: one line, only when non-zero
+    for note in _request_notes(data):
+        print(note)  # #1132 PR 10a: a sender left out, said
     ho_line = _handoff_line(data)
     if ho_line:
         print(ho_line)  # #662: one line, only when a baton is waiting
@@ -1356,6 +1379,8 @@ def _rich_status(data: dict) -> None:
     rq_line = _requests_line(data)
     if rq_line:
         console.print(rq_line)  # #694 PR 3: one line, only when non-zero
+    for note in _request_notes(data):
+        console.print(note)  # #1132 PR 10a: a sender left out, said
     ho_line = _handoff_line(data)
     if ho_line:
         console.print(ho_line)  # #662: one line, only when a baton is waiting

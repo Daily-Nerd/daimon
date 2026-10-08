@@ -452,6 +452,7 @@ from .projects import (  # noqa: E402
     _migrate_command,  # noqa: F401 — re-exported for compat
     _raw_project,  # noqa: F401 — re-exported for compat
     _topic_teaser,  # noqa: F401 — re-exported for compat
+    projects_listing,  # noqa: F401 — re-exported for compat
     projects_rows,  # noqa: F401 — re-exported for compat
 )
 from .search import (  # noqa: E402

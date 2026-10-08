@@ -18,6 +18,7 @@ from .. import (
     anchor,
     briefing,
     config,
+    display,
     effects_commit,
     ledger,
     recall,
@@ -96,6 +97,7 @@ class _TeamCounts:
     def __init__(self):
         self.resolved = 0
         self.quarantined = 0
+        self.notes: tuple = ()
 
 
 def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
@@ -121,6 +123,10 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     self_slug = store.project_slug(config.author())
     now = time.time()
     out = []
+    if counts is not None:
+        # #1132 PR 10a: a teammate whose tombstones cannot be read is not
+        # shown; the trailer says so instead of a shorter list.
+        counts.notes = view.team_notes(project)
     for author, opened in view.team(project, live=True):
         if store.project_slug(author) == self_slug:
             continue  # never surface your own state as a teammate
@@ -193,6 +199,10 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     except Exception:
         handoff = None
     trailer = _withheld_trailer(annotated, team_counts)
+    # One cap over every note this brief carries: the snapshot's, the request
+    # joins' (merged in `briefing.prepare`) and the teammates' (#1132 PR 10a).
+    notes = display.merge_notes(annotated.notes if annotated else (),
+                                team_counts.notes if team_counts else ())
     # #1128: the note rides INTO render_brief so it is charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the
     # budgeted brief actually showed of each panel.
@@ -202,7 +212,7 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                                   trailer=trailer,
                                   loops_pointer=loops_pointer,
                                   snap=annotated.snapshot if annotated else None,
-                                  notes=annotated.notes if annotated else ())
+                                  notes=notes)
 
     # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare, shared
     # with the MCP tool and the Hermes hook. It is opt-in, budget-bounded and
@@ -335,6 +345,8 @@ def _cmd_brief(args, fx) -> int:
         if getattr(args, "team", False):
             counts = _TeamCounts()
             render.render_teammates(_team_briefings(project, counts))
+            for note in counts.notes:
+                render.render_brief_line([note])
             if counts.resolved:
                 render.render_brief_line([
                     f"{counts.resolved} resolved item(s) withheld "

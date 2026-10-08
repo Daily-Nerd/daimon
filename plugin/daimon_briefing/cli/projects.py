@@ -36,7 +36,15 @@ def _topic_teaser(topic) -> str:
 
 
 def projects_rows(project_arg=None) -> list:
-    """One JSON-ready row per checkpoint bucket, newest first. Single
+    """`projects_listing(project_arg)[0]`: the rows, for the callers that have
+    no use for the notes. See `projects_listing`."""
+    return projects_listing(project_arg)[0]
+
+
+def projects_listing(project_arg=None) -> tuple:
+    """`(rows, notes)`: one JSON-ready row per checkpoint bucket, newest
+    first, and the notes of the listing (`view.projects_notes`: a bucket whose
+    trust ledger cannot be read, a forget set that may be incomplete). Single
     assembler for `daimon projects --json` AND the MCP projects tool (#261) —
     two consumers, one shape. Torn buckets show with unknown fields rather
     than vanish: hiding one would read as "no such project". The topic is the
@@ -46,7 +54,8 @@ def projects_rows(project_arg=None) -> list:
     own and never opens another."""
     cur_slug = store.project_slug(_cli._resolve_project(project_arg))
     rows = []
-    for b in view.projects(cur_slug):
+    listed = view.projects(cur_slug)
+    for b in listed:
         created = b.created
         rows.append({
             "slug": b.slug,
@@ -65,7 +74,7 @@ def projects_rows(project_arg=None) -> list:
     rows.sort(key=lambda r: r["_epoch"], reverse=True)
     for r in rows:
         del r["_epoch"]
-    return rows
+    return rows, view.projects_notes(cur_slug, listed)
 
 
 def _cmd_slug(args) -> int:
@@ -235,17 +244,22 @@ def _cmd_projects(args, fx) -> int:
     stays explicit (`brief --slug` / `recall --slug`), the #94/#95 lesson."""
     fx.add(Effects(usage=("projects",)))
     try:
-        rows = projects_rows(getattr(args, "project", None))
+        rows, notes = projects_listing(getattr(args, "project", None))
     except Exception as exc:  # noqa: BLE001 — reported, never listed around
         print("error: the projects could not be listed "
               f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
         return 2
     if args.json:
+        # stdout stays the JSON array; every note goes to stderr.
         print(json.dumps(rows, indent=2, ensure_ascii=False))
+        for note in notes:
+            print(note, file=sys.stderr)
         return 0
     if not rows:
         render.render_recall_lines(
             ["no project buckets yet — the first serialized session creates one"])
+        for note in notes:
+            print(note)
         return 0
     now = time.time()
     display = []
@@ -260,6 +274,8 @@ def _cmd_projects(args, fx) -> int:
             "branch": r["git_branch"] or "—", "topic": topic or "?",
         })
     render.render_projects(display)
+    for note in notes:
+        print(note)
     return 0
 
 

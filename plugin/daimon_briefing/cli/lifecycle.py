@@ -1103,15 +1103,25 @@ def _cmd_decide(args) -> int:
     if everywhere and _cli._refuses_caller_scope(all_projects=True):
         return 2
     project = _cli._resolve_project(args.project)
-    result = pending.queue(project_dir=project)
+    result, lane_notes = pending.queue_with_notes(project_dir=project)
     rows = result.get("rows") or []
     suppressed = (result.get("excluded") or {}).get("suppressed") or 0
+    # #1132 PR 10a: a lane whose ledger cannot be read is omitted from the
+    # rows; the notes say so, in the words every other surface uses.
+    for note in lane_notes:
+        print(note)
     # With the text itself on screen the counts footer is redundant.
     foreign = {} if everywhere else pending.foreign_counts(project_dir=project)
-    abroad = pending.foreign_queues(project_dir=project) if everywhere else []
+    abroad_notes: tuple = ()
+    abroad: list = []
+    if everywhere:
+        typed = pending.foreign_queues_typed(project_dir=project)
+        abroad, abroad_notes = typed.queues, typed.notes
     if not rows:
         if everywhere and not abroad and not suppressed:
             render.render_ledger_lines(["nothing waiting on you in any project"])
+            for note in abroad_notes:
+                print(note)
             return 0
         # "nothing waiting" would be a false claim while records sit
         # suppressed: the human set those aside, they did not go away.
@@ -1144,6 +1154,9 @@ def _cmd_decide(args) -> int:
         if bucket_suppressed:
             render.render_ledger_lines(
                 [f"  ({bucket_suppressed} suppressed there)"])
+    # #1132 PR 10a: other projects left out or read around, said last.
+    for note in abroad_notes:
+        print(note)
     return 0
 
 

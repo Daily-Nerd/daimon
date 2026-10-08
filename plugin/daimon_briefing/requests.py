@@ -42,6 +42,7 @@ import hashlib
 import os
 import re
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from . import (buckets, clock, config, display, jsonl, normalize, policy,
                redact, refutations, store, surfaces)
@@ -379,13 +380,17 @@ def append(row: dict, project_dir=None) -> bool:
         return False
 
 
-def events(project_dir=None) -> list[dict]:
-    """Read valid ledger rows best-effort; malformed lines never sink reads."""
-    path = _path(project_dir)
-    if path is None or not path.exists():
-        return []
-    rows = []
-    for index, row in enumerate(jsonl.read(path).rows):
+def events(project_dir=None, *, rows=None) -> list[dict]:
+    """Read valid ledger rows best-effort; malformed lines never sink reads.
+    `rows` hands in the raw rows of a `jsonl.read` the caller already did
+    (the snapshot's single read), filtered exactly as a fresh read is."""
+    if rows is None:
+        path = _path(project_dir)
+        if path is None or not path.exists():
+            return []
+        rows = jsonl.read(path).rows
+    out = []
+    for index, row in enumerate(rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
                 or not _REQUEST_ID_RE.fullmatch(str(row.get("request_id") or ""))):
@@ -395,8 +400,8 @@ def events(project_dir=None) -> list[dict]:
         # (torn and garbage lines do not count); it is only a read-order
         # tie-break, so its absolute value is not part of any contract.
         copy["_line"] = index
-        rows.append(copy)
-    return rows
+        out.append(copy)
+    return out
 
 
 def _covered_by_open_policy(row: dict, policies) -> bool:
@@ -1355,7 +1360,12 @@ def _open_policies_local(project_dir) -> dict[str, frozenset]:
     return {"": refutations.request_policy_history(project_dir=project_dir)}
 
 
-def records(project_dir=None) -> dict[str, dict]:
+def records(project_dir=None, *, rows=None, policy=None) -> dict[str, dict]:
+    # `rows` hands in the raw rows of a `jsonl.read` of this bucket's ledger
+    # and `policy` the `request_policy_history` of its ruling ledger, both
+    # from the view's single read of the bucket (#1132 PR 10a). Without them
+    # each is read here.
+    #
     # #1083: a local, per-bucket fold — every founder here has no
     # cross-bucket sender to name, so every row is stamped "" (`_stamped`),
     # overwriting whatever a planted `_origin_slug` a disk row might
@@ -1370,9 +1380,11 @@ def records(project_dir=None) -> dict[str, dict]:
     # fold IS the self-addressed case (a genuinely foreign accept never
     # lands in this project's own file at all), so there is no legitimate
     # use for the fallback here at all.
-    rows = _stamped(events(project_dir=project_dir), "")
-    return fold(rows, policies_by_to=_policies_by_to(rows),
-               open_policies=_open_policies_local(project_dir))
+    stamped = _stamped(events(project_dir=project_dir, rows=rows), "")
+    open_policies = ({"": policy} if policy is not None
+                     else _open_policies_local(project_dir))
+    return fold(stamped, policies_by_to=_policies_by_to(stamped),
+               open_policies=open_policies)
 
 
 def get(request_id: str, project_dir=None) -> dict | None:
@@ -1380,8 +1392,14 @@ def get(request_id: str, project_dir=None) -> dict | None:
 
 
 def listing(project_dir=None) -> list[dict]:
+    """`listed(project_dir).rows`: the listing for the callers that have no
+    use for the notes. See `listed`."""
+    return listed(project_dir).rows
+
+
+def listed(project_dir=None) -> "Inbox":
     """Every record in this bucket, undecided first — the `request list`
-    order. Suppressed records are HERE by construction (D5): suppression
+    order, and the notes of the cross-bucket read behind it. Suppressed records are HERE by construction (D5): suppression
     takes away panel placement, never visibility.
 
     #798: read through the sender join, not the bucket-local fold. A request's
@@ -1405,14 +1423,16 @@ def listing(project_dir=None) -> list[dict]:
     policy`'s fallback — never a self-addressed record (`to == own_slug`),
     which `fold`'s own gate excludes regardless: that must stay human-only,
     the same rule `accept()`'s write boundary already holds for it."""
-    rows = [row for group in _sender_rows(project_dir).values() for row in group]
+    grouped = _sender_group(project_dir)
+    rows = [row for group in grouped.by_id.values() for row in group]
     own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return sorted(
+    return Inbox(sorted(
         fold(rows, policies_by_to=_policies_by_to(rows),
             own_slug=own_slug,
             open_policies=_open_policies_local(project_dir)).values(),
         key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       r.get("updated_at") or "", r["request_id"]))
+                       r.get("updated_at") or "", r["request_id"])),
+        grouped.notes)
 
 
 def renderable(project_dir=None) -> dict:
@@ -2026,7 +2046,21 @@ def _without_suppression(rows: list[dict]) -> list[dict]:
     return [row for row in rows if row.get("event") != "suppressed"]
 
 
+def _foreign_requests(slug: str):
+    """`(read, skip, degraded)` for another bucket's requests ledger, through
+    the one foreign seam (`store.foreign_ledger`): the registry's foreign
+    column leaves out a ledger that cannot be proven and reads around one
+    with only torn lines, saying so."""
+    got = store.foreign_ledger(slug, "requests.jsonl")
+    return got.read, got.skip, got.degraded
+
+
 def _sender_rows(project_dir) -> dict[str, list]:
+    """`_sender_group(project_dir).by_id`; see it."""
+    return _sender_group(project_dir).by_id
+
+
+def _sender_group(project_dir) -> Join:
     """This bucket's rows, plus the recipient's rows for every request it SENT,
     grouped by request id. The traversal both sender-side surfaces share (#798).
 
@@ -2052,7 +2086,7 @@ def _sender_rows(project_dir) -> dict[str, list]:
     # for a bucket of its own.
     sender_slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not sender_slug:
-        return {}
+        return Join({}, ())
     by_id: dict[str, list] = {}
     abroad: set[str] = set()
     for row in _stamped(events(project_dir=sender_slug), ""):
@@ -2063,18 +2097,31 @@ def _sender_rows(project_dir) -> dict[str, list]:
             if to_slug and to_slug != sender_slug:
                 abroad.add(rid)
     if not abroad:
-        return by_id
+        return Join(by_id, ())
+    skipped = degraded = 0
     for slug in _bucket_slugs():
         if slug == sender_slug:
             continue  # already covered by this bucket's own rows above
-        foreign = [row for row in _stamped(events(project_dir=slug), slug)
+        read, skip, torn = _foreign_requests(slug)
+        if skip:
+            skipped += 1   # #1132 PR 10a: said, never read as "decided nothing"
+            continue
+        degraded += torn
+        foreign = [row for row in _stamped(events(project_dir=slug,
+                                                  rows=read.rows), slug)
                    if str(row.get("request_id") or "") in abroad]
         for row in _without_suppression(foreign):
             by_id[str(row.get("request_id") or "")].append(row)
-    return by_id
+    return Join(by_id, _skipped_notes(skipped, degraded))
 
 
 def sender_join(project_dir=None) -> dict[str, dict]:
+    """`sent(project_dir).by_id`: the records, for the callers that have no
+    use for the notes. See `sent`."""
+    return sent(project_dir).by_id
+
+
+def sent(project_dir=None) -> Join:
     """Every request this project SENT, joined with whatever its recipient
     decided (D0) — the per-bucket `records()` above only ever sees this
     project's OWN rows, and a verdict lives in the recipient's bucket.
@@ -2085,11 +2132,14 @@ def sender_join(project_dir=None) -> dict[str, dict]:
     `listing()` now uses (its own docstring has the full reasoning) — this
     composer shares `_sender_rows`'s traversal and can fold requests
     addressed to several different recipients in one call."""
+    grouped = _sender_group(project_dir)
     rows = _without_suppression(
-        [row for group in _sender_rows(project_dir).values() for row in group])
+        [row for group in grouped.by_id.values() for row in group])
     own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return fold(rows, policies_by_to=_policies_by_to(rows), own_slug=own_slug,
-               open_policies=_open_policies_local(project_dir))
+    return Join(fold(rows, policies_by_to=_policies_by_to(rows),
+                     own_slug=own_slug,
+                     open_policies=_open_policies_local(project_dir)),
+                grouped.notes)
 
 
 def _bucket_slugs() -> list[str]:
@@ -2108,7 +2158,38 @@ def _bucket_slugs() -> list[str]:
             if (child / "requests.jsonl").exists()]
 
 
+def _skipped_notes(skipped: int, degraded: int = 0) -> tuple:
+    """`sender-skipped` for `skipped` buckets left out of a cross-bucket
+    read and `sender-degraded` for `degraded` ones read around, or nothing."""
+    scoped = config.tenant_scoped()
+    out = []
+    if skipped:
+        out.append(display.sender_skipped_note(skipped, scoped))
+    if degraded:
+        out.append(display.sender_degraded_note(degraded, scoped))
+    return tuple(out)
+
+
+class Join(NamedTuple):
+    """`join`'s answer: the folded records addressed to this project and the
+    notes the read carries (`sender-skipped`, worded by `display`)."""
+    by_id: dict
+    notes: tuple
+
+
+class Inbox(NamedTuple):
+    """`inbox`'s answer: the records in `request inbox` order and the notes."""
+    rows: list
+    notes: tuple
+
+
 def recipient_join(project_dir=None) -> dict[str, dict]:
+    """`join(project_dir).by_id`: the records addressed TO this project, for
+    the callers that have no use for the notes. See `join`."""
+    return join(project_dir).by_id
+
+
+def join(project_dir=None) -> Join:
     """Every request addressed TO this project, joined across every bucket
     that might hold its origin (D0) — this project's own bucket holds only
     the verdict/attention rows it wrote, orphaned in its own per-bucket fold
@@ -2139,7 +2220,7 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     # for a bucket of its own.
     my_slug = store.project_slug(config.resolve_project_dir(project_dir))
     if not my_slug:
-        return {}
+        return Join({}, ())
     # #963: an ask minted before 0.42.0 is addressed to the LITERAL-path slug
     # this project used to have, and `to` is the whole recipient join. Without
     # the alias every such ask silently leaves the inbox the day the bucket
@@ -2164,12 +2245,22 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
         by_id[rid] = rows
     origin_of: dict[str, str] = {}
     orphans: list[tuple[str, list]] = []
+    skipped = degraded = 0
     for slug in _bucket_slugs():
         # A bucket this project MOVED OUT OF is not a foreign sender. Left
         # standing by a merge that could not empty it, its rows would
         # otherwise come back labeled as asks from a stranger.
         if slug in mine:
             continue
+        # #1132 PR 10a: a sender whose ledger cannot be proven is SKIPPED with
+        # a code, never read as "sent nothing". The registry's foreign column
+        # decides (a torn ledger is read around, an unreadable one is left
+        # out), so the verb and the panel cannot disagree.
+        foreign, skip, torn = _foreign_requests(slug)
+        if skip:
+            skipped += 1
+            continue
+        degraded += torn
         # #961 slice 4, widened by #1083: stamp the origin bucket onto every
         # row read from THIS foreign bucket, at read time — covers both the
         # `elif` branch below and an orphan row (a verdict recorded in a
@@ -2179,7 +2270,7 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
         # part of what `append`/`events` persist or read), the same posture
         # `events()` already gives `_line`.
         grouped: dict[str, list] = {}
-        for row in _stamped(events(project_dir=slug), slug):
+        for row in _stamped(events(project_dir=slug, rows=foreign.rows), slug):
             grouped.setdefault(str(row.get("request_id") or ""), []).append(row)
         for rid, rows in grouped.items():
             opened = next((r for r in rows if r.get("event") == "opened"),
@@ -2235,18 +2326,27 @@ def recipient_join(project_dir=None) -> dict[str, dict]:
     for origin_slug in set(origin_of.values()):
         open_policies[origin_slug] = refutations.request_policy_history(
             project_dir=origin_slug)
-    return fold(all_rows, policies=_request_policy_history(project_dir),
-               open_policies=open_policies)
+    return Join(fold(all_rows, policies=_request_policy_history(project_dir),
+                     open_policies=open_policies), _skipped_notes(skipped, degraded))
+
+
+def inbox(project_dir=None) -> Inbox:
+    """Every request addressed to this project, undecided first — the
+    `request inbox` order, and the notes of the join that produced it.
+    Suppressed records are HERE by construction (D3/D5): suppression takes
+    away panel placement, never visibility."""
+    got = join(project_dir)
+    return Inbox(sorted(
+        got.by_id.values(),
+        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
+                       r.get("updated_at") or "", r["request_id"])),
+        got.notes)
 
 
 def inbox_listing(project_dir=None) -> list[dict]:
-    """Every request addressed to this project, undecided first — the
-    `request inbox` order. Suppressed records are HERE by construction
-    (D3/D5): suppression takes away panel placement, never visibility."""
-    return sorted(
-        recipient_join(project_dir=project_dir).values(),
-        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       r.get("updated_at") or "", r["request_id"]))
+    """`inbox(project_dir).rows`: the listing for the callers that have no use
+    for the notes (anamnesis iterates it in-process)."""
+    return inbox(project_dir).rows
 
 
 def _deserves_attention(record: dict, project_dir=None) -> bool:
@@ -2287,11 +2387,23 @@ def owed_renderable(project_dir=None) -> dict:
     and the verb differs. An undecided ask offers accept and reject; an
     accepted one offers `done`. Mixing them would ask the reader to sort out
     which is which from the state glyph alone."""
-    rows = [r for r in recipient_join(project_dir=project_dir).values()
+    got = join(project_dir)
+    rows = [r for r in got.by_id.values()
             if _is_owed(r, project_dir=project_dir)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
+
+
+def _with_notes(entry: dict, notes: tuple) -> dict:
+    """A renderable's entry with the join's notes, present only when there
+    is something to say (a sender left out is said, never a silently shorter
+    list)."""
+    if notes:
+        entry["notes"] = notes
+    return entry
 
 
 def needs_owed_delivered_stamp(record: dict, session: str) -> bool:
@@ -2379,12 +2491,15 @@ def decision_renderable(project_dir=None) -> dict:
     silently hide it — exactly the failure `renderable`'s own docstring
     calls the one this feature cannot have. Filtering first means the cap
     only ever counts rows that could actually appear."""
-    rows = [r for r in recipient_join(project_dir=project_dir).values()
+    got = join(project_dir)
+    rows = [r for r in got.by_id.values()
             if _deserves_attention(r, project_dir=project_dir)
             and r.get("kind") != "info"]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
 
 
 def deliverable(session: str, project_dir=None) -> dict:
@@ -2634,13 +2749,16 @@ def verdict_renderable(project_dir=None) -> dict:
     newest first, capped at RENDER_CAP with the remainder COUNTED. Expired
     verdicts (D3) are filtered here and only here — the record stays fully
     readable through `sender_join`, only ambient panel attention decays."""
-    rows = [r for r in sender_join(project_dir=project_dir).values()
+    got = sent(project_dir)
+    rows = [r for r in got.by_id.values()
             if r["state"] in _VERDICT_STATES
             and (not verdict_panel_expired(r, project_dir=project_dir)
                  or unseen_reply_id(r))]  # #1117: expiry measures the decision
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
-    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
 
 
 def needs_surfaced_stamp(record: dict) -> bool:
@@ -2715,11 +2833,14 @@ def status_counts(project_dir=None) -> dict:
     A full honest count, not an attention-filtered one: suppressed and
     stale records still await a decision, so they count here even though
     neither panel renders them."""
-    sent = sum(1 for r in sender_join(project_dir=project_dir).values()
-              if r["state"] in _SENDER_MOVABLE)
-    awaiting = sum(1 for r in recipient_join(project_dir=project_dir).values()
-                  if r["state"] in _SENDER_MOVABLE)
-    return {"open_sent": sent, "awaiting_you": awaiting}
+    out_join, in_join = sent(project_dir), join(project_dir)
+    open_sent = sum(1 for r in out_join.by_id.values()
+                    if r["state"] in _SENDER_MOVABLE)
+    awaiting = sum(1 for r in in_join.by_id.values()
+                   if r["state"] in _SENDER_MOVABLE)
+    # `notes`: what the two joins left out or read around, once each.
+    notes = tuple(dict.fromkeys([*out_join.notes, *in_join.notes]))
+    return {"open_sent": open_sent, "awaiting_you": awaiting, "notes": notes}
 
 
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:

@@ -4765,17 +4765,17 @@ def test_status_counts_open_sent_and_awaiting_you(project):
                           why="because", channel="cli-agent",
                           project_dir=sender_slug)
     counts = requests.status_counts(project_dir=project)
-    assert counts == {"open_sent": 1, "awaiting_you": 1}
+    assert counts == {"open_sent": 1, "awaiting_you": 1, "notes": ()}
 
 
 def test_status_counts_zero_with_nothing_recorded(project):
     assert requests.status_counts(project_dir=project) == \
-        {"open_sent": 0, "awaiting_you": 0}
+        {"open_sent": 0, "awaiting_you": 0, "notes": ()}
 
 
 def test_status_counts_unknown_project_is_zero():
     assert requests.status_counts(project_dir=None) == \
-        {"open_sent": 0, "awaiting_you": 0}
+        {"open_sent": 0, "awaiting_you": 0, "notes": ()}
 
 
 def test_status_counts_include_suppressed_and_stale(project):
@@ -4785,7 +4785,7 @@ def test_status_counts_include_suppressed_and_stale(project):
     q_id = _open(project, to=recipient_slug)
     requests.suppress(q_id, channel="cli-tty", project_dir=recipient_slug)
     assert requests.status_counts(project_dir=project) == \
-        {"open_sent": 1, "awaiting_you": 0}
+        {"open_sent": 1, "awaiting_you": 0, "notes": ()}
 
 
 # ---- PR 2: `request inbox` -------------------------------------------------

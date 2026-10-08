@@ -1746,7 +1746,9 @@ def test_typed_link_never_matches_own_carried_copy(tmp_checkpoint_dir, monkeypat
 
 def test_event_fold_tolerates_hostile_lines(tmp_checkpoint_dir, monkeypatch):
     # The events fold must skip torn JSON, note-kind lines, and ref-less
-    # resolutions without dropping the valid mark that follows them.
+    # resolutions without dropping the valid mark that follows them. (A plain
+    # garbage line is a different state: UNREADABLE, so the bucket's index
+    # closes; tests/test_read_health_matrix.py pins that.)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-old", _cp(
         "S-old", questions=[{"text": "does the skua poller need jitter",
@@ -1756,7 +1758,7 @@ def test_event_fold_tolerates_hostile_lines(tmp_checkpoint_dir, monkeypatch):
     ev = config.checkpoint_dir() / slug / "events.jsonl"
     ev.parent.mkdir(parents=True, exist_ok=True)
     ev.write_text(
-        'not json at all{{{\n'
+        '{"ts": "2026-01-01T00:00:00Z", "kind": "resol\n'
         '{"ts": "2026-01-01T00:00:00Z", "kind": "note", "note": "hi"}\n'
         '{"ts": "2026-01-01T00:00:00Z", "kind": "resolution",'
         ' "item_ref": "", "status": "resolved"}\n'

@@ -976,7 +976,7 @@ def _break_ledger_by_permission():
 def _break_ledger_with_a_symlink_loop():
     """#962 F2: `Path.exists()` swallows ELOOP into a bare False the same
     way it swallows ENOENT, so a ledger stuck in a symlink loop used to read
-    as "no ledger yet" even under `strict=True` — the read never happened,
+    as "no ledger yet" even when asked for `unscannable` — the read never happened,
     so there was nothing to re-raise."""
     path = refutations._path(PROJECT)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1021,19 +1021,18 @@ def test_active_rulings_still_fails_open_on_an_unreadable_ledger(
 @pytest.mark.parametrize("break_ledger", _LEDGER_BREAKERS)
 def test_events_default_still_swallows_an_unreadable_ledger(
         break_ledger, tmp_checkpoint_dir):
-    """#962 gives `events()` a `strict=True` escape hatch; every existing
-    caller that never asks for it keeps today's fail-open contract exactly,
-    byte for byte."""
+    """`events()` is the fail-open reader: a caller that must tell "could not
+    read" from "has none" asks `read_events` for `unscannable` instead."""
     break_ledger()
     assert refutations.events(PROJECT) == []
 
 
 @pytest.mark.parametrize("break_ledger", _LEDGER_BREAKERS)
-def test_events_strict_reraises_instead_of_swallowing(
+def test_read_events_reports_unscannable_instead_of_swallowing(
         break_ledger, tmp_checkpoint_dir):
     break_ledger()
-    with pytest.raises(OSError):
-        refutations.events(PROJECT, strict=True)
+    got = refutations.read_events(PROJECT)
+    assert got.rows == [] and got.unscannable
 
 
 # ---- #962 F1/F3: "unresolved" is its own fourth state, never "no-bucket" ----
@@ -2880,7 +2879,7 @@ def test_a_row_with_a_scalar_anchors_or_evidence_is_skipped_not_fatal(
     kept = _rule(subject="second", verdict="second verdict", channel="cli-tty",
                  ratified=True)
     _hand_edit_first_row(field, 1)
-    rows = refutations.events(PROJECT, strict=True)
+    rows = refutations.read_events(PROJECT).rows
     assert [r["refutation_id"] for r in rows] == [kept]
     read = briefing.rulings_read(PROJECT)
     assert read.state == "read"

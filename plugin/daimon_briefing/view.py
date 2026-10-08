@@ -24,16 +24,13 @@ import re
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
-from typing import Any, Iterator, Literal, Mapping
+from typing import Any, Iterator, Literal, Mapping, NamedTuple
 
-from . import (amendments, carry, config, display, jsonl, marks, multihash,
-               normalize, requests, schema, store, trust)
+from . import (amendments, carry, config, display, jsonl, multihash,
+               normalize, refutations, requests, schema, store, surfaces,
+               trust)
 from .jsonl import Health
-
-# The bucket ledgers a snapshot reports health for, by file name (declared in
-# `surfaces`; a test pins that each name is a registered bucket ledger).
-LEDGERS = ("events.jsonl", "trust.jsonl", "amendments.jsonl",
-           "requests.jsonl", "refutations.jsonl")
+from .surfaces import ReadPosture
 
 Reason = Literal["forgotten", "quarantine", "closed"]
 
@@ -53,9 +50,16 @@ class Snapshot:
     fold that raises there empties it and marks events.jsonl UNREADABLE. `quarantined` is this project's own active
     `(kind, value_key)` pairs and `quarantine_ids` names each one's record;
     there is no foreign source yet. `health` maps a ledger file name to what
-    `jsonl.read` judged it, or UNREADABLE when its fold raised, and `closed`
-    is True when the trust ledger is UNREADABLE: nothing can then be proven
-    not quarantined. `forgotten_ids` are this bucket's item ids whose latest
+    `jsonl.read` judged it, or UNREADABLE when its fold raised, for EVERY
+    bucket ledger the registry declares (`surfaces.bucket_ledger_names`).
+    `unscannable` holds, for a ledger the read could not vouch for, why
+    (`jsonl.Read.cannot_scan`: an errno name, `undecodable`). `closed` is True
+    when any ledger's registry read posture is CLOSED: today the trust ledger
+    UNREADABLE or TRANSIENT, where nothing can be proven not quarantined.
+    `forgotten_incomplete` holds the slugs whose events ledger cannot be read
+    (the machine-wide forget set may miss a tombstone); notes name no slug.
+    `index_closed` is True when this bucket's OWN events ledger is unproven:
+    only the recall index consults it. `forgotten_ids` are this bucket's item ids whose latest
     event is a `forgotten*` status (a later reopen lifts it): `classify`
     withholds those by id as well as by value. Never machine-wide."""
 
@@ -71,6 +75,9 @@ class Snapshot:
     closed: bool
     details: Mapping = field(default_factory=dict)
     forgotten_ids: frozenset = frozenset()
+    unscannable: Mapping = field(default_factory=dict)
+    forgotten_incomplete: frozenset = frozenset()
+    index_closed: bool = False
 
     @classmethod
     def empty(cls) -> "Snapshot":
@@ -80,23 +87,28 @@ class Snapshot:
             quarantine_ids=_frozen({}), resolutions=_frozen({}),
             amendments=_frozen({}), corroborations=_frozen({}),
             rulings=None, requests=_frozen({}),
-            health=_frozen({name: Health.ABSENT for name in LEDGERS}),
+            health=_frozen({name: Health.ABSENT
+                            for name in surfaces.bucket_ledger_names()}),
             closed=False)
 
     def notes(self) -> tuple[str, ...]:
-        """One advisory line per ledger whose health is neither OK nor ABSENT,
-        prefixed with a warning sign so a machine parser keeps it as a
-        warning. Never carries content: the ledger name, the health word and
-        the detail (an errno name or a short reason)."""
+        """One advisory line per ledger whose registry read posture is not
+        OPEN in its current state (NOTE, CLOSED or SKIP_SOURCE), then the
+        forget-incomplete line, at most `display.NOTE_CAP` lines and a count
+        of the rest. Each line is the ledger's name, its state, the detail (an
+        errno name or a short reason) and what to do. Never carries content,
+        a slug or a path."""
         out = []
-        for name in LEDGERS:
+        for name in surfaces.bucket_ledger_names():
             state = self.health.get(name, Health.ABSENT)
-            if state in (Health.OK, Health.ABSENT):
+            if posture(name, state) is ReadPosture.OPEN:
                 continue
-            detail = self.details.get(name)
-            out.append(marks.warning(f"{name} is {state.value}"
-                                     + (f" ({detail})" if detail else "")))
-        return tuple(out)
+            out.append(display.ledger_note(
+                name, state.value, self.details.get(name, ""),
+                self.unscannable.get(name, "")))
+        if self.forgotten_incomplete:
+            out.append(display.forget_incomplete_note())
+        return display.cap_notes(out)
 
     @cached_property
     def resolved_refs(self) -> frozenset:
@@ -301,6 +313,21 @@ def forgotten_ids(resolutions) -> frozenset:
         and store.is_tombstone_status(evt.get("status")))
 
 
+def posture(name: str, health: Health, *, foreign: bool = False) -> ReadPosture:
+    """What a reader does with bucket ledger `name` in `health`: the registry's
+    read column (`foreign` asks the column for a ledger read across buckets).
+    An OK ledger is OPEN. A name the registry never declared raises
+    LookupError: asking is a bug, not an empty answer."""
+    return surfaces.read_posture(surfaces.bucket_ledger(name), health.value,
+                                 foreign=foreign)
+
+
+def unproven(health: Health) -> bool:
+    """TRANSIENT or any UNREADABLE state: the ledger was not (fully) read, so
+    the absence of a row proves nothing. OK, ABSENT and DEGRADED are proven."""
+    return health in (Health.TRANSIENT, Health.UNREADABLE)
+
+
 def _trust_index(project, read: jsonl.Read) -> tuple:
     """`(quarantine_ids, health, detail)` for one bucket's trust ledger: the
     active quarantines as `{(kind, value_key): quarantine_id}`, and what the
@@ -321,21 +348,20 @@ def _trust_index(project, read: jsonl.Read) -> tuple:
 
 
 def snapshot(project) -> Snapshot:
-    """Read every ledger once and fold it. Each fold runs in its own try: a
-    raise marks that ledger UNREADABLE and empties its result, and the rest of
-    the snapshot is unaffected. Checkpoints are never read here."""
+    """Read every bucket ledger the registry declares once and fold it. Each
+    fold runs in its own try: a raise marks that ledger UNREADABLE and empties
+    its result, and the rest of the snapshot is unaffected. The folds take the
+    rows already read (the ledgers' `rows=` seams), so no file is read twice.
+    Checkpoints are never read here."""
     bucket = _bucket(project)
-    health: dict = {}
-    details: dict = {}
-    reads: dict = {}
-    for name in LEDGERS:
-        if bucket is None:
-            reads[name] = jsonl.Read(Health.ABSENT, [])
-        else:
-            reads[name] = jsonl.read(bucket / name)
-        health[name] = reads[name].health
-        if reads[name].detail:
-            details[name] = reads[name].detail
+    names = surfaces.bucket_ledger_names()
+    reads = {name: (jsonl.Read(Health.ABSENT, []) if bucket is None
+                    else jsonl.read(bucket / name))
+             for name in names}
+    health = {name: read.health for name, read in reads.items()}
+    details = {name: read.detail for name, read in reads.items() if read.detail}
+    unscannable = {name: read.cannot_scan for name, read in reads.items()
+                   if read.cannot_scan}
 
     def folded(name, build, default):
         try:
@@ -354,29 +380,76 @@ def snapshot(project) -> Snapshot:
         project, reads["trust.jsonl"])
     if detail:
         details["trust.jsonl"] = detail
+    refut = reads["refutations.jsonl"]
+    policy = folded(
+        "refutations.jsonl",
+        lambda: refutations.request_policy_history(
+            project, rows=refut.rows,
+            tombstone_rows=reads["request_policy_tombstones.jsonl"].rows,
+            unscannable=refut.cannot_scan), frozenset())
     amend = folded(
         "amendments.jsonl",
-        lambda: amendments.render_groups(
-            amendments.records(project_dir=project)), {})
-    asks = folded("requests.jsonl",
-                  lambda: requests.records(project_dir=project), {})
+        lambda: amendments.render_groups(amendments.records(
+            project_dir=project, rows=reads["amendments.jsonl"].rows)), {})
+    asks = folded(
+        "requests.jsonl",
+        lambda: requests.records(project_dir=project,
+                                 rows=reads["requests.jsonl"].rows,
+                                 policy=policy), {})
 
     def read_rulings():
         from . import briefing
-        return briefing.rulings_read(project)
+        return briefing.rulings_read(project, read=refut)
 
     rulings = folded("refutations.jsonl", read_rulings, None)
     forgotten = folded("events.jsonl", forgotten_keys, frozenset())
     ids = folded("events.jsonl", lambda: forgotten_ids(resolutions),
                  frozenset())
+    incomplete = folded("events.jsonl", store.forgotten_incomplete,
+                        frozenset())
     return Snapshot(
         forgotten=forgotten, quarantined=frozenset(quarantine_ids),
         quarantine_ids=_frozen(quarantine_ids),
         resolutions=_frozen(resolutions), amendments=_frozen(amend),
         corroborations=_frozen(corroborations), rulings=rulings,
         requests=_frozen(asks), health=_frozen(health),
-        closed=health["trust.jsonl"] is Health.UNREADABLE,
-        details=_frozen(details), forgotten_ids=ids)
+        closed=any(posture(n, h) is ReadPosture.CLOSED
+                   for n, h in health.items()),
+        details=_frozen(details), forgotten_ids=ids,
+        unscannable=_frozen(unscannable),
+        forgotten_incomplete=incomplete,
+        index_closed=unproven(health["events.jsonl"]))
+
+
+class LedgerState(NamedTuple):
+    """What one ledger file is: its health, the detail (an errno name or a
+    short reason) and why a scan could not vouch for it ("" when it can)."""
+    health: Health
+    detail: str
+    unscannable: str
+
+
+def ledger_states(project, names=None) -> dict:
+    """Each bucket ledger file name of `project` (or just `names`) to its
+    `LedgerState`. No fold, no rows: a caller that needs to say what is wrong
+    with a ledger and what to do about it (`status`) asks here, never
+    `jsonl.read`."""
+    bucket = _bucket(project)
+    out = {}
+    for name in (names or surfaces.bucket_ledger_names()):
+        read = (jsonl.Read(Health.ABSENT, []) if bucket is None
+                else jsonl.read(bucket / name))
+        out[name] = LedgerState(read.health, read.detail, read.cannot_scan)
+    return out
+
+
+def ledger_health(project) -> dict:
+    """Each bucket ledger file name of `project` to what `jsonl.read` judges
+    it, as the `Health` value word ("ok", "absent", "degraded", "transient",
+    "unreadable"). A caller (anamnesis) asks before it writes whether the
+    ledger it is about to append to can be trusted."""
+    return {name: state.health.value
+            for name, state in ledger_states(project).items()}
 
 
 def _stat_key(path) -> tuple | None:
@@ -384,7 +457,9 @@ def _stat_key(path) -> tuple | None:
         st = os.stat(path)
     except OSError:
         return None
-    return (st.st_ino, st.st_mtime_ns, st.st_size)
+    # ctime too: a chmod that makes a ledger unreadable (or readable again)
+    # moves it, and nothing else about the file.
+    return (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
 
 
 @dataclass(frozen=True)
@@ -393,7 +468,10 @@ class Judge:
     rows: the same `Snapshot` fields `classify` reads (the machine forgotten
     set, this bucket's forgotten ids and active quarantines, `closed`) and
     nothing else. `empty` is the fast path: when True no row of the bucket
-    can be withheld, so a caller skips the per-row work."""
+    can be withheld, so a caller skips the per-row work. `empty` ignores
+    `index_closed` on purpose: the bucket's own rows are not withheld for the
+    briefing (D3), so a recall caller must check `index_closed` before taking
+    the fast path, as `recall._judge_rows` and `recall._build` do."""
 
     snap: Snapshot
 
@@ -406,6 +484,15 @@ class Judge:
     @property
     def closed(self) -> bool:
         return self.snap.closed
+
+    @property
+    def index_closed(self) -> bool:
+        """This bucket's own events ledger is unproven (TRANSIENT or
+        UNREADABLE): its tombstones cannot all be known. Separate from
+        `closed` on purpose: only recall's build and query consult it (the
+        index holds no rows for the bucket), so `why`, the viewer and the
+        briefing keep reading the bucket through its good lines."""
+        return self.snap.index_closed
 
     def verdict(self, fld: schema.ItemField, item) -> Visible | Withheld:
         return classify(fld, item, self.snap)
@@ -443,22 +530,32 @@ def _read_judge(slug, forgotten=None) -> tuple[Judge, bool]:
                                           closed=not proven)), proven)
     trust_read = jsonl.read(bucket / "trust.jsonl")
     events_read = jsonl.read(bucket / "events.jsonl")
-    ids, health, _detail = _trust_index(slug, trust_read)
+    ids, health, detail = _trust_index(slug, trust_read)
     try:
         folded = forgotten_ids(store.fold_resolutions(events_read.rows))
     except Exception:  # noqa: BLE001
         folded, proven = frozenset(), False
+    # The light snapshot carries the two ledgers it reads: their health,
+    # detail and why a scan could not vouch for them.
+    reads = {"trust.jsonl": (health, detail, trust_read.cannot_scan),
+             "events.jsonl": (events_read.health, events_read.detail,
+                              events_read.cannot_scan)}
     snap = dataclasses.replace(
         Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
         quarantine_ids=_frozen(ids), forgotten_ids=folded,
-        closed=(health in (Health.UNREADABLE, Health.TRANSIENT)
+        health=_frozen({**Snapshot.empty().health,
+                        **{n: r[0] for n, r in reads.items()}}),
+        details=_frozen({n: r[1] for n, r in reads.items() if r[1]}),
+        unscannable=_frozen({n: r[2] for n, r in reads.items() if r[2]}),
+        index_closed=unproven(events_read.health),
+        closed=(posture("trust.jsonl", health) is ReadPosture.CLOSED
                 or not proven))
     steady = (Health.OK, Health.ABSENT)
     return Judge(snap), (proven and health in steady
                          and events_read.health in steady)
 
 
-def judge(slug, *, stamp=None, forgotten=None) -> Judge:
+def judge(slug, *, stamp=None, forgotten=None, incomplete=None) -> Judge:
     """The verdict source for one bucket (`slug`; None or a name with no
     bucket judges the forgotten set alone). Memoized on the stat of the
     bucket's `trust.jsonl` and `events.jsonl` and of everything that feeds the
@@ -468,7 +565,10 @@ def judge(slug, *, stamp=None, forgotten=None) -> Judge:
     one pass (a build, a query, a listing), so it is computed once for the
     pass; `forgotten` is `forgotten_keys()` taken the same way. A trust ledger
     that is UNREADABLE or still failing after the retries (TRANSIENT, no rows)
-    closes the judge: nothing can be proven not quarantined."""
+    closes the judge: nothing can be proven not quarantined. `incomplete` is
+    `store.forgotten_incomplete()` taken by the same caller for the same pass
+    (a build, a query, a listing), so a judge does not walk every bucket's
+    events ledger again to learn it."""
     if not _is_bare_slug(slug):
         slug = None   # a stamp that is not a bucket name routes nowhere
     bucket = _bucket(slug) if slug else None
@@ -481,19 +581,26 @@ def judge(slug, *, stamp=None, forgotten=None) -> Judge:
     if hit is not None and hit[0] == key:
         return hit[1]
     got, memoizable = _read_judge(slug, forgotten)
-    if memoizable:
+    # A judge built while some bucket's events ledger could not be read holds
+    # a forget set that may be short; the stat key cannot see that ledger
+    # become readable again (a permission fix changes no mtime or size), so it
+    # is not kept (D10.2).
+    still = (incomplete if incomplete is not None
+             else store.forgotten_incomplete())
+    if memoizable and not still:
         _judge_memo[memo_slot] = (key, got)
     else:
         _judge_memo.pop(memo_slot, None)
     return got
 
 
-def _light(slug, forgotten, stamp=None) -> Snapshot:
+def _light(slug, forgotten, stamp=None, incomplete=None) -> Snapshot:
     """A snapshot with only what `classify` reads: the forgotten set the
     caller holds and the bucket's judgement (`judge`): its forgotten ids, its
     active quarantines and `closed`."""
     return dataclasses.replace(
-        judge(slug, stamp=stamp, forgotten=forgotten).snap,
+        judge(slug, stamp=stamp, forgotten=forgotten,
+              incomplete=incomplete).snap,
         forgotten=forgotten)
 
 
@@ -520,7 +627,16 @@ class Peek:
     visible_items: int
 
 
-def peek(checkpoint, slug, *, forgotten, stamp=None) -> Peek:
+def _peek_under(checkpoint: dict, snap: Snapshot) -> Peek:
+    text = _topic_text(checkpoint, snap)
+    count = sum(
+        1 for fld, item in schema.iter_items(checkpoint, dicts_only=False)
+        if not fld.singleton and isinstance(classify(fld, item, snap), Visible))
+    return Peek(text, count)
+
+
+def peek(checkpoint, slug, *, forgotten, stamp=None,
+         snap: Snapshot | None = None) -> Peek:
     """The topic and the visible item count of a checkpoint the caller already
     holds, as a reader of bucket `slug` may see them. A hidden topic reads as
     an absent one (forgotten, quarantined, trust ledger unreadable). `forgotten`
@@ -531,12 +647,8 @@ def peek(checkpoint, slug, *, forgotten, stamp=None) -> Peek:
     checkpoint. Never raises for data health."""
     if not isinstance(checkpoint, dict):
         return Peek(None, 0)
-    snap = _light(slug, forgotten, stamp)
-    text = _topic_text(checkpoint, snap)
-    count = sum(
-        1 for fld, item in schema.iter_items(checkpoint, dicts_only=False)
-        if not fld.singleton and isinstance(classify(fld, item, snap), Visible))
-    return Peek(text, count)
+    return _peek_under(checkpoint, snap if snap is not None
+                       else _light(slug, forgotten, stamp))
 
 
 @dataclass(frozen=True)
@@ -553,6 +665,7 @@ class Listed:
     created: Any
     git_branch: Any
     peek: Peek
+    closed: bool = False
 
 
 def projects(own: str | None) -> tuple[Listed, ...]:
@@ -562,18 +675,65 @@ def projects(own: str | None) -> tuple[Listed, ...]:
     Unsorted; ordering is a display concern."""
     forgotten = forgotten_keys()
     stamp = store.forgotten_stamp()   # once for the listing, not per bucket
+    incomplete = store.forgotten_incomplete()   # likewise
     out = []
     for b in store.list_buckets(only=frozenset(buckets(own))):
         cp = b["checkpoint"]
         data = cp if isinstance(cp, dict) else {}
+        # One light snapshot per bucket serves the peek AND the closed flag
+        # (a torn pointer's bucket can still have a trust ledger that
+        # cannot be read).
+        snap = _light(b["slug"], forgotten, stamp, incomplete)
         out.append(Listed(
             b["slug"], b["mtime"], cp is not None, data.get("project_name"),
             data.get("session_id"), data.get("created"),
             data.get("git_branch"),
-            peek(cp, b["slug"], forgotten=forgotten, stamp=stamp)
-            if cp is not None
-            else Peek(None, 0)))
+            peek(cp, b["slug"], forgotten=forgotten, stamp=stamp, snap=snap)
+            if cp is not None else Peek(None, 0),
+            snap.closed))
     return tuple(out)
+
+
+def forgotten_notes() -> tuple[str, ...]:
+    """`forget-incomplete` when some bucket's events ledger cannot be read, so
+    the machine-wide forget set may be missing a tombstone; else nothing."""
+    return (display.forget_incomplete_note(),) if store.forgotten_incomplete() \
+        else ()
+
+
+def projects_notes(own: str | None, listed=None) -> tuple[str, ...]:
+    """The notes a project listing carries: `projects-closed` for the listed
+    buckets whose trust ledger cannot be read (a count, except under tenant
+    scope, where it would count buckets the caller may not list) and
+    `forget-incomplete`. `listed` is the caller's `projects(own)` when it
+    already holds it."""
+    listed = projects(own) if listed is None else listed
+    closed = sum(1 for b in listed if b.closed)
+    lines = []
+    if closed:
+        lines.append(display.projects_closed_note(
+            closed, config.tenant_scoped()))
+    return display.cap_notes([*lines, *forgotten_notes()])
+
+
+def team_notes(project=None) -> tuple[str, ...]:
+    """`team-closed` when `project`'s own events ledger cannot be read (no
+    teammate is shown), `author-skipped` / `author-degraded` for the
+    teammates' published tombstone ledgers: an author whose ledger cannot be
+    read is not admitted (O3); one whose ledger has torn lines is read
+    around."""
+    tombs = store.foreign_tombstones()
+    lines = []
+    if project is not None:
+        bucket = _bucket(project)
+        if bucket is not None and unproven(
+                jsonl.read(bucket / "events.jsonl").health):
+            lines.append(display.team_closed_note())
+    if tombs.unproven:
+        lines.append(display.author_skipped_note())
+    if tombs.degraded:
+        lines.append(display.author_degraded_note())
+    return tuple(lines)
 
 
 # ---- classify / live ------------------------------------------------------

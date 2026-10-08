@@ -97,20 +97,23 @@ def test_a_missing_ledger_reads_empty(module, build, idf, tmp_checkpoint_dir):
     assert module.events(project_dir=PROJECT) == []
 
 
-# ---- refutations: strict, and the policy tombstones ----------------------
+# ---- refutations: unscannable, and the policy tombstones -------------------
 
-def test_strict_events_raise_for_an_undecodable_byte(tmp_checkpoint_dir):
+def test_read_events_reports_an_undecodable_byte_as_unscannable(
+        tmp_checkpoint_dir):
     _put(refutations, _line(_refutation(1)), BAD)
-    with pytest.raises(ValueError):          # UnicodeDecodeError is one
-        refutations.events(PROJECT, strict=True)
+    got = refutations.read_events(PROJECT)
+    assert got.unscannable == "undecodable"
+    assert len(got.rows) == 1
 
 
-def test_strict_events_skip_a_stray_text_line_and_keep_the_good_rows(
+def test_read_events_skip_a_stray_text_line_and_keep_the_good_rows(
         tmp_checkpoint_dir):
     _put(refutations, b"<<<<<<< HEAD\n", _line(_refutation(1)),
          b"not json at all\n", _line(_refutation(2)))
-    got = refutations.events(PROJECT, strict=True)
-    assert [r["refutation_id"] for r in got] == [
+    got = refutations.read_events(PROJECT)
+    assert got.unscannable == ""
+    assert [r["refutation_id"] for r in got.rows] == [
         "r-000000000001", "r-000000000002"]
 
 
