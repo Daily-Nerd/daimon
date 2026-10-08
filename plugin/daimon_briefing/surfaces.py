@@ -398,8 +398,11 @@ SURFACES: tuple[Surface, ...] = (
             True, "known-gap", "audit", issue="#600"),
     Surface("team/{remote}/.git/**", "git (teamsync subprocess)",
             True, "known-gap", "none", issue="#600"),
-    # -- recall index: derived cache; rows leave at rebuild, dead snapshots
-    #    from crashed rebuilds are reaped on sight. --
+    # -- recall index: derived cache. A withheld row is never inserted (every
+    #    row is judged before it is written), and a rebuild stages into
+    #    `recall.db.<pid>.tmp.<token>` (mode 0600), so the shape below covers
+    #    both that name and the bare `recall.db.<pid>.tmp` an older build left.
+    #    Dead snapshots from crashed rebuilds are reaped on sight. --
     Surface("recall.db.{pid}.tmp*", "recall.rebuild",
             True, "reap", "reaper"),
     Surface("recall.db", "recall.rebuild", True, "lazy-rebuild", "recall"),

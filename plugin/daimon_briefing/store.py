@@ -1022,27 +1022,29 @@ def forgotten_stamp() -> tuple:
     """A cheap key that changes whenever the machine-wide forgotten set can:
     each local bucket's `events.jsonl` (inode, mtime, size) and each foreign
     tombstone ledger's. A reader that memoizes a judgement of the set keys on
-    this, so a forget in ANOTHER bucket or a pulled tombstone drops its memo."""
+    this, so a forget in ANOTHER bucket or a pulled tombstone drops its memo.
+    Plain `os` calls: a build asks for it once per bucket it judges."""
     root = config.checkpoint_dir()
+    base = str(root)
     try:
-        children = sorted(root.iterdir())
+        names = sorted(os.listdir(base))
     except OSError:
-        children = []
+        names = []
     local: list[tuple] = []
-    for child in children:
+    for name in names:
         try:
-            st = (child / "events.jsonl").stat()
-            local.append((child.name, st.st_ino, st.st_mtime_ns, st.st_size))
+            st = os.stat(os.path.join(base, name, "events.jsonl"))
+            local.append((name, st.st_ino, st.st_mtime_ns, st.st_size))
         except OSError:
-            local.append((child.name, None, None, None))
+            local.append((name, None, None, None))
     foreign: list[tuple] = []
     for path in _foreign_tombstone_paths():
         try:
-            st = path.stat()
+            st = os.stat(path)
             foreign.append((str(path), st.st_mtime_ns, st.st_size))
         except OSError:
             foreign.append((str(path), None, None))
-    return (str(root), tuple(local), tuple(sorted(foreign)))
+    return (base, tuple(local), tuple(sorted(foreign)))
 
 
 def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:

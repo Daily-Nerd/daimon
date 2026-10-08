@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+from . import marks
+
 _SPACE_RE = re.compile(r"\s+")
 _MIN_SENTENCE = 20
 _SENTENCE_END_RE = re.compile(r"[.?!](?= [A-Z])")
@@ -109,3 +111,24 @@ def withheld_json(withheld) -> dict:
     if out["reason"] == "quarantine" and withheld.quarantine_id:
         out["quarantine_id"] = withheld.quarantine_id
     return out
+
+
+# ---- #1132 PR 9a: the one recall note ---------------------------------------
+
+_RECALL_NOTES = {
+    "stale": "the recall index could not be refreshed, so these results come "
+             "from the last build and may be out of date",
+    "closed": "part of this history is hidden because a trust ledger cannot "
+              "be read",
+}
+
+
+def recall_note(notes) -> str | None:
+    """One warning line for the notes a recall carries, or None. The CLI, the
+    MCP tool and the viewer all show recall's notes through this, so no
+    surface words them differently. A note is a code; the line names no
+    project, no id and no count, so it cannot say how much is missing."""
+    known = [_RECALL_NOTES[n] for n in ("stale", "closed") if n in notes]
+    if not known:
+        return None
+    return marks.warning("recall: " + "; ".join(known))

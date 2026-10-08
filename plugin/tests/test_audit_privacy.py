@@ -297,6 +297,24 @@ def test_residue_in_orphan_tmp_detected(tmp_checkpoint_dir):
                for f in result["findings"])
 
 
+def test_token_named_orphan_snapshot_is_scanned_like_any_other(
+        tmp_checkpoint_dir):
+    """A rebuild stages into `recall.db.<pid>.tmp.<token>`; a crashed one
+    strands that name, and the audit scans it the same way."""
+    from daimon_briefing import recall
+    _write("S1", KEEPER)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT, tombstone=True)
+    slug = store.project_slug(PROJECT)
+    db = _make_recall_db(tmp_checkpoint_dir, [(CANARY, slug)],
+                         recall._fingerprint())
+    db.rename(db.with_name("recall.db.99999.tmp.a1b2c3d4e5f6"))
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["surface"] == "orphan-tmp" and f["content_hash"] == key
+               for f in result["findings"])
+
+
 def test_corrupt_orphan_is_unscannable_not_crash(tmp_checkpoint_dir):
     _write("S1", KEEPER)
     orphan = config.recall_db().with_name("recall.db.11111.tmp")

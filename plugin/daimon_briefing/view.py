@@ -413,18 +413,20 @@ def _read_judge(slug) -> tuple[Judge, bool]:
     return Judge(snap), health in steady and events_health in steady
 
 
-def judge(slug) -> Judge:
+def judge(slug, *, stamp=None) -> Judge:
     """The verdict source for one bucket (`slug`; None or a name with no
     bucket judges the forgotten set alone). Memoized on the stat of the
     bucket's `trust.jsonl` and `events.jsonl` and of everything that feeds the
     machine-wide forgotten set, so a warm call is a handful of `stat`s. An
-    UNREADABLE or transient result is never memoized."""
+    UNREADABLE or transient result is never memoized. `stamp` is
+    `store.forgotten_stamp()` taken by a caller that judges many buckets in
+    one pass (a build, a query), so it is computed once for the pass."""
     bucket = _bucket(slug) if slug else None
     if bucket is None:
         return _read_judge(slug)[0]
     memo_slot = (str(config.checkpoint_dir()), slug)
     key = (_stat_key(bucket / "trust.jsonl"), _stat_key(bucket / "events.jsonl"),
-           store.forgotten_stamp())
+           stamp if stamp is not None else store.forgotten_stamp())
     hit = _judge_memo.get(memo_slot)
     if hit is not None and hit[0] == key:
         return hit[1]
