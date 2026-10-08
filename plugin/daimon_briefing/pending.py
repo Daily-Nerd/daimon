@@ -288,11 +288,12 @@ def _loop_text(item_id: str, slug: str) -> str:
     if not item_id:
         return unavailable
     try:
-        row = recall.lookup_item(item_id, slug=slug)
+        found = recall.find(item_id, slug=slug)
     except Exception:
         return unavailable
-    if not row:
+    if not isinstance(found, recall.Found):
         return unavailable
+    row = found.row
     text = display.one_line(row.get("text"))
     if not text:
         return unavailable

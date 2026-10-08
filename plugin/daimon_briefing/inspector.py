@@ -389,9 +389,10 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         # forget/project_surfaces/the privacy audit treat as this project's
         # surfaces, and never fires once a local resolution event exists
         # (that branch below already answers, forgotten included).
-        index_row = recall.lookup_item(item_id, project_dir=project_dir)
-        if index_row is None:
-            return None
+        found = recall.find(item_id, project_dir=project_dir)
+        if not isinstance(found, recall.Found):
+            return None  # absent, or withheld, which reads the same
+        index_row = found.row
 
     if occurrences:
         selected = occurrences[0]

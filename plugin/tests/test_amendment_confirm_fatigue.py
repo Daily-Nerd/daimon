@@ -228,22 +228,22 @@ def test_loop_text_lookup_error_is_unavailable(monkeypatch):
     def boom(item_id, project_dir=None, slug=None):
         raise RuntimeError("index corrupt")
 
-    monkeypatch.setattr(pending.recall, "lookup_item", boom)
+    monkeypatch.setattr(pending.recall, "find", boom)
     assert pending._loop_text(ITEM, "slug-x") == "(loop text unavailable)"
 
 
 def test_loop_text_blank_text_field_is_unavailable(monkeypatch):
-    monkeypatch.setattr(pending.recall, "lookup_item",
+    monkeypatch.setattr(pending.recall, "find",
                         lambda item_id, project_dir=None, slug=None:
-                        {"text": "   "})
+                        pending.recall.Found({"text": "   "}))
     assert pending._loop_text(ITEM, "slug-x") == "(loop text unavailable)"
 
 
 def test_loop_text_truncates_over_cap(monkeypatch):
     long_text = "x" * 200
-    monkeypatch.setattr(pending.recall, "lookup_item",
+    monkeypatch.setattr(pending.recall, "find",
                         lambda item_id, project_dir=None, slug=None:
-                        {"text": long_text})
+                        pending.recall.Found({"text": long_text}))
     out = pending._loop_text(ITEM, "slug-x")
     assert len(out) == pending._LOOP_TEXT_CAP
     assert out.endswith("…")
@@ -253,23 +253,23 @@ def test_current_state_unreadable_records_returns_question_mark():
     assert pending._current_state(None, ITEM, "a-exclude") == "?"
 
 
-# ---- lookup_item scoping (#1087 fact 4) -------------------------------------
+# ---- find scoping (#1087 fact 4) -------------------------------------
 
 
-def test_lookup_item_called_with_slug(project, monkeypatch):
+def test_find_called_with_slug(project, monkeypatch):
     a_id = amendments.propose(item_id=ITEM, change="progressed",
                               evidence="the PR merged this morning",
                               channel="cli-agent", project_dir=project)
     amendments.verify(a_id, role="assistant", project_dir=project)
     calls = []
     from daimon_briefing import recall
-    real = recall.lookup_item
+    real = recall.find
 
     def spy(item_id, project_dir=None, slug=None):
         calls.append({"item_id": item_id, "slug": slug})
         return real(item_id, project_dir=project_dir, slug=slug)
 
-    monkeypatch.setattr(pending.recall, "lookup_item", spy)
+    monkeypatch.setattr(pending.recall, "find", spy)
     pending.queue(project_dir=project)
     assert calls
     assert calls[0]["slug"] == store.project_slug(project)

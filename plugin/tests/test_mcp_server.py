@@ -671,7 +671,7 @@ def test_recall_tool_fts5_error_is_tool_error(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import recall
     def boom(*a, **k):
         raise recall.RecallError("sqlite3 lacks FTS5")
-    monkeypatch.setattr(recall, "search", boom)
+    monkeypatch.setattr(recall, "query", boom)
     _, out = rpc(_init(), _call("daimon_recall", {"query": "x"}))
     text, is_err = _result(out)
     assert is_err is True

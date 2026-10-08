@@ -14,7 +14,9 @@ is not classified fails, and a classification of something that no longer
 exists fails. `KNOWN_LEAKS` is the allowlist of leaks the drive finds today;
 it only shrinks: each listed entry must still leak and nothing else may.
 `UNCONVERTED` lists the surfaces that do not yet go through `view`; PR 7
-onward deletes them.
+onward deletes them. The recall surfaces read through the judged core of
+`recall` (`CONVERTED_RECALL`): the index they query is built and queried with
+`view.judge`, the view's one verdict per bucket.
 
 Not captured: output printed from a thread or an atexit handler (no drive
 starts either). The sentinel detector is a token substring test, deliberately
@@ -521,13 +523,10 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 # ===========================================================================
 # {(surface, kind)}: seeded from the run, each must still leak, nothing else may
 KNOWN_LEAKS: set = {
-    *{("cli:action-recall", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:amend list", k) for k in ("question",)},
     *{("cli:blame", k) for k in ("contradiction", "question",)},
     *{("cli:decide", k) for k in ("question", "topic",)},
     *{("cli:forget", k) for k in ("question", "topic",)},
-    *{("cli:recall", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:recall-inject", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:refute list", k) for k in ("topic",)},
     *{("cli:refute overturn", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:refute ratify", k) for k in ("contradiction", "question", "topic",)},
@@ -554,14 +553,11 @@ KNOWN_LEAKS: set = {
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("cli:why", k) for k in ("question",)},
-    *{("http:/api/recall", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/relations", k) for k in ("question",)},
     *{("http:/api/why", k) for k in ("question",)},
-    *{("mcp:daimon_recall", k) for k in ("contradiction", "question", "topic",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
 }
-UNCONVERTED: set = set()      # surfaces that do not yet go through `view`
 
 
 @pytest.fixture(scope="module")
@@ -755,9 +751,20 @@ CONVERTED = {
     "http:/api/activity": (VIEWER, frozenset({"sessions", "events"})),
 }
 
+# The recall surfaces: they do not open a checkpoint, they query the derived
+# index, which `view.judge` keeps free of withheld rows and re-judges per row.
+# The names are the judged core they call (`recall.query`, `recall.suggest`).
+CONVERTED_RECALL = {
+    "cli:recall": ("cli/search.py", frozenset({"query"})),
+    "cli:recall-inject": ("cli/inject.py", frozenset({"suggest"})),
+    "cli:action-recall": ("cli/action_recall.py", frozenset({"suggest"})),
+    "mcp:daimon_recall": ("mcp_tools.py", frozenset({"query"})),
+    "http:/api/recall": ("../daimon_ui/server.py", frozenset({"query"})),
+}
+
 # Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
 # 7a onward deletes entries as readers convert; an empty set is the goal.
-UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED)
+UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED) - set(CONVERTED_RECALL)
 
 
 # Cases of a converted surface that never read a checkpoint item: the status
@@ -781,7 +788,10 @@ def _calls_view(rel, names):
 def test_unconverted_is_a_subset_of_the_registry():
     assert UNCONVERTED <= all_surfaces()
     assert not UNCONVERTED & set(CONVERTED)
-    assert UNCONVERTED | set(CONVERTED) == {s for s, _ in CASES}
+    assert not UNCONVERTED & set(CONVERTED_RECALL)
+    assert not set(CONVERTED) & set(CONVERTED_RECALL)
+    assert (UNCONVERTED | set(CONVERTED) | set(CONVERTED_RECALL)
+            == {s for s, _ in CASES})
 
 
 def test_a_converted_surface_reaches_the_view():
@@ -789,11 +799,16 @@ def test_a_converted_surface_reaches_the_view():
         assert _calls_view(rel, names), (surface, rel)
 
 
+def test_a_recall_surface_reaches_the_judged_core():
+    for surface, (rel, names) in CONVERTED_RECALL.items():
+        assert _calls_view(rel, names), (surface, rel)
+
+
 def test_a_converted_surface_renders_nothing_when_view_open_raises(
         world_run, monkeypatch):
     from daimon_briefing import view
     world, _l, _d = world_run
-    converted = {s for s, _ in CASES} - UNCONVERTED
+    converted = {s for s, _ in CASES} - UNCONVERTED - set(CONVERTED_RECALL)
     assert converted == set(CONVERTED)
 
     def boom(*_a, **_k):
@@ -827,6 +842,106 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
                 assert res.rc == 500, (surface, tag, label, res.rc)
             else:
                 assert res.chunks == ["None"], (surface, tag, label)
+
+
+def test_a_recall_surface_shows_nothing_when_the_judge_raises(
+        world_run, monkeypatch):
+    """The recall surfaces ask `view.judge` for every bucket they touch: a
+    judge that fails shows no sentinel and no visible control text."""
+    from daimon_briefing import view
+    world, _l, _d = world_run
+
+    def boom(*_a, **_k):
+        raise RuntimeError("view.judge failed")
+
+    monkeypatch.setattr(view, "judge", boom)
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    tmp = world.root
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
+    ran = 0
+    for surface, tag in CASES:
+        if surface not in CONVERTED_RECALL:
+            continue
+        _found, results = drive_case(surface, tag, world, pristine)
+        for label, res in results:
+            ran += 1
+            text = res.text()
+            for shown in (VISIBLE, OTHER, "unrelated", "SENTINEL"):
+                assert shown not in text, (surface, tag, label)
+    assert ran >= 10
+
+
+# A forgotten ID whose value no tombstone key names: only the id rule withholds
+# it. It is asserted absent on every surface that reads through the view or the
+# judged recall core. The surfaces that still read the store themselves are
+# listed (shrink-only, like KNOWN_LEAKS): each converts in a later PR.
+# These two print the raw bind candidates of the live checkpoint (the same
+# leak they already carry in KNOWN_LEAKS for the quarantined sentinels); the
+# view.match conversion deletes them.
+KNOWN_ID_LEAKS: set = {"cli:forget", "cli:resolve"}
+
+
+def _id_leaking_surfaces(details):
+    out = set()
+    for (surface, _tag), results in details.items():
+        for _label, res in results:
+            blob = res.text() + "\n" + b"\n".join(res.written).decode(
+                "utf-8", errors="replace")
+            if sw.leaked_id(blob):
+                out.add(surface)
+    return out
+
+
+def test_the_id_forgotten_sentinel_exists_and_is_absent_where_judged(
+        world_run):
+    world, _leaks, details = world_run
+    assert world.ids["idforgot"]
+    raw = b"\n".join(p.read_bytes() for p in world.bucket.parent.rglob("*.json"))
+    assert sw.ID_TOKEN.encode() in raw        # anti-vacuity: it is stored
+    leaking = _id_leaking_surfaces(details)
+    judged = set(CONVERTED) | set(CONVERTED_RECALL)
+    assert leaking & judged == set(), sorted(leaking & judged)
+    assert leaking == KNOWN_ID_LEAKS, sorted(leaking ^ KNOWN_ID_LEAKS)
+
+
+def test_the_built_index_holds_no_sentinel_byte_after_an_upgrade(
+        world_run, monkeypatch, tmp_path):
+    """The recall index file is a byte channel of its own. A schema-9 index
+    holding a quarantined sentinel is replaced on first use, and the rebuilt
+    file carries no sentinel of any kind, the id-forgotten one included."""
+    import sqlite3
+
+    from daimon_briefing import config, recall
+    world, _l, _d = world_run
+    pristine = drive.Pristine.adopt(world.root, world.root.parent
+                                    / (world.root.name + "-keep"))
+    pristine.restore()
+    # scar 0114: pin the world's directories, or the surface finds no bucket
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    monkeypatch.setenv("DAIMON_TEAM_DIR",
+                       str(world.bucket.parent.parent / "team"))
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    db = tmp_path / "seeded.db"
+    monkeypatch.setenv("DAIMON_RECALL_DB", str(db))
+    conn = sqlite3.connect(str(db))
+    recall._init_schema(conn)
+    conn.execute("INSERT INTO items (text, kind, project_slug, session_id,"
+                 " created) VALUES (?, 'question', ?, 'S-1', 1.0)",
+                 (sw.TEXTS["question"], world.bucket.name))
+    conn.execute("INSERT INTO items_fts(rowid, text, quote, scene)"
+                 " VALUES (1, ?, '', '')", (sw.TEXTS["question"],))
+    conn.execute("INSERT INTO meta VALUES ('schema_version', '9')")
+    conn.execute("INSERT INTO meta VALUES ('fingerprint', ?)",
+                 (recall._fingerprint(),))
+    conn.commit()
+    conn.close()
+    assert sw.TOKENS["question"].encode() in db.read_bytes()
+    rows = recall.search("unrelated decision", project_dir=world.project)
+    assert {r["text"] for r in rows} == {"an unrelated decision stays visible"}
+    blob = config.recall_db().read_bytes()
+    assert sw.leaked_kinds(blob) == set()
+    assert not sw.leaked_id(blob)
+    assert b"an unrelated decision stays visible" in blob
 
 
 # ===========================================================================

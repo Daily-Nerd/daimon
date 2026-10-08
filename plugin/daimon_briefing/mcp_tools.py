@@ -17,8 +17,8 @@ import functools
 import json
 import time
 
-from . import (briefing, config, effects_commit, recall, recall_telemetry,
-               requests, store)
+from . import (briefing, config, display, effects_commit, recall,
+               recall_telemetry, requests, store)
 from .effects import Effects, Telemetry
 from .terms import salient_terms
 
@@ -69,10 +69,11 @@ def _recall(arguments: dict, fx) -> str:
     from . import cli
     project = cli._resolve_project(None)
     try:
-        rows = recall.search(query, project_dir=project, slug=slug,
-                             all_projects=all_projects, limit=limit)
+        recalled = recall.query(query, project_dir=project, slug=slug,
+                                all_projects=all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
+    rows = recalled.rows
     # Best-effort (#1053): the row is committed after the payload is built,
     # and a telemetry failure must never take the tool call down with it —
     # the agent still gets its rows back. The rows are copied now, before
@@ -90,7 +91,11 @@ def _recall(arguments: dict, fx) -> str:
     # the agent reading this result, not a measurement.
     for row in rows:
         row["status"] = recall.describe_status(row)
-    return json.dumps(rows, ensure_ascii=False, indent=2)
+    out = json.dumps(rows, ensure_ascii=False, indent=2)
+    # A degraded read says so on a line of its own ahead of the rows, the way
+    # a briefing leads with its warnings; a clean read is the bare list.
+    note = display.recall_note(recalled.notes)
+    return f"{note}\n{out}" if note else out
 
 
 @_tool("brief")

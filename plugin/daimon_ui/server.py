@@ -10,12 +10,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import reader
 
 # Engine imports (#670): search and item inspection are served by daimon's own
-# engines — recall.search is the one matcher (the viewer renders recall, it
+# engines — recall.query is the one matcher (the viewer renders recall, it
 # never grows a second search engine) and inspector.inspect_item is the same
 # read-side receipt `daimon why` prints. reader.py reaches daimon only through
 # the view (`view`, `schema`, `api`, pinned by tests/test_read_layers.py); the
 # engine boundary lives here in dispatch only.
-from daimon_briefing import (config, inspector, recall, refutations,
+from daimon_briefing import (config, display, inspector, recall, refutations,
                              relations, view)
 
 _PAGE = Path(__file__).parent / "page.html"
@@ -225,7 +225,7 @@ def _recall(h, path, params):
         }})
         return
     try:
-        rows = recall.search(q, slug=slug, limit=limit)
+        recalled = recall.query(q, slug=slug, limit=limit)
     except recall.RecallError as exc:
         h._json({"ok": False, "error": {
             "what": "Search is unavailable.",
@@ -233,7 +233,11 @@ def _recall(h, path, params):
             "fix": "Check that this Python's sqlite3 has FTS5.",
         }})
         return
-    h._json({"ok": True, "rows": rows})
+    out = {"ok": True, "rows": recalled.rows}
+    note = display.recall_note(recalled.notes)
+    if note:
+        out["note"] = note
+    h._json(out)
 
 
 def _why(h, path, params):
