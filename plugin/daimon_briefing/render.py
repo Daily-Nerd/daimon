@@ -977,6 +977,12 @@ def _outstanding_lines(outstanding) -> list:
             )
         elif f["class"] == "unrecoverable":
             lines.append(f"  - {f['sid']}  error {age} ago — transcript unavailable, cannot auto-heal")
+        elif f["class"] == "admission-refused":
+            # D10.4: heal holds this back until the ledger reads again, so
+            # "run heal" alone would send the reader in a circle.
+            lines.append(f"  - {f['sid']}  admission refused: events.jsonl is "
+                         f"{f['state']}; {f['hint']}, then `daimon heal`")
+            continue
         else:
             lines.append(f"  - {f['sid']}  error {age} ago — run `daimon heal`")
         # #474: the cause has always been in the record and was never read.

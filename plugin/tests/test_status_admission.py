@@ -156,3 +156,14 @@ def test_status_rc_is_the_documented_existence_test_whatever_is_held(
     _refused_sessions(proj, tmp_path)
     _payload, rc = cli.status_payload(str(proj))
     assert rc == 1  # no checkpoint exists for this project: unchanged
+
+
+def test_the_outstanding_block_names_the_cure_not_heal_alone(
+        proj, tmp_path, capsys):
+    _break_events(proj)
+    _refused_sessions(proj, tmp_path, n=1)
+    cli.main(["status", "--project", str(proj)])
+    out = capsys.readouterr().out
+    line = next(ln for ln in out.splitlines() if ln.startswith("  - s-0"))
+    assert line == ("  - s-0  admission refused: events.jsonl is unreadable; "
+                    f"{HINT}, then `daimon heal`")
