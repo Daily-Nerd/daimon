@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 118
 type: landmine
 title: A ContextVar override set in the main thread does not reach ThreadingHTTPServer request threads
 severity: high
 confidence: 0.9
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_ui/server.py
   - path: plugin/daimon_ui/__main__.py
 evidence:
-  - note: "tests/ui/test_server_routes.py::test_the_request_thread_sees_the_data_dir_as_the_store and test_a_context_override_set_in_the_main_thread_does_not_reach_a_thread"
+  - note: tests/ui/test_server_routes.py::test_the_request_thread_sees_the_data_dir_as_the_store and test_a_context_override_set_in_the_main_thread_does_not_reach_a_thread
 expires:
   condition: "the viewer stops using ThreadingHTTPServer, or config scopes the store by something other than a ContextVar"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 `config.checkpoint_dir_override` is a `ContextVar`. A thread started from the

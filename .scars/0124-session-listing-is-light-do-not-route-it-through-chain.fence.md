@@ -1,20 +1,21 @@
 ---
-id: 0
+id: 124
 type: fence
 title: view.sessions and view.pointers list sessions without copying or classifying bodies; routing a listing through view.chain multiplies its cost
 severity: medium
 confidence: 0.8
 created: 2026-10-07
-authors: []
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/view.py
   - pattern: "def sessions\("
 evidence:
-  - note: "#1132 PR 8b-1 measurement on a 50-bucket tmp store (30 sessions per bucket): view.sessions 8.8 ms, view.chain full 18.3 ms; on a copy of a real 36-bucket store the full chain measured about 4x a plain file listing of the same sessions (568 ms against 143 ms)"
+  - note: #1132 PR 8b-1 measurement on a 50-bucket tmp store (30 sessions per bucket): view.sessions 8.8 ms, view.chain full 18.3 ms; on a copy of a real 36-bucket store the full chain measured about 4x a plain file listing of the same sessions (568 ms against 143 ms)
 expires:
   condition: "view.chain gains a parse cache keyed by (path, st_ino, mtime_ns, size) and a measurement shows the full chain within 1.5x of the listing"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 `view.sessions(project)` returns one row per session file (file stem, `created`,

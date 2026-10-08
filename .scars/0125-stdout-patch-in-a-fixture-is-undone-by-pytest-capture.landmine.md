@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 125
 type: landmine
 title: Patching sys.stdout in a fixture is undone when the test body starts under pytest capture
 severity: low
 confidence: 0.9
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/tests/test_effects_commit.py
 evidence:
-  - note: "an events fixture that replaced sys.stdout recorded no flush; the same test passed under -s"
+  - note: an events fixture that replaced sys.stdout recorded no flush; the same test passed under -s
 expires:
   condition: "the suite stops using pytest default capture"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 A test that must observe the order of writes to stdout against other writes

@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 120
 type: landmine
 title: view.judge must not memoize a judge built while some events ledger was unreadable, because a cleared read error changes no stat
 severity: high
 confidence: 0.85
 created: 2026-10-08
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/view.py
   - pattern: "_judge_memo\[memo_slot\]"
 evidence:
-  - note: "#1132 PR 10a: tests/test_forgotten_incomplete.py::test_recall_rebuilds_once_the_incomplete_bucket_is_proven_again fails if the judge is kept"
+  - note: #1132 PR 10a: tests/test_forgotten_incomplete.py::test_recall_rebuilds_once_the_incomplete_bucket_is_proven_again fails if the judge is kept
 expires:
   condition: "the judge memo key includes the health of every events ledger, not only its stat"
   review_after: 2027-04-08
-status: candidate
+status: active
 ---
 
 `view.judge` memoizes a bucket's judge on the stat (inode, mtime, ctime, size)

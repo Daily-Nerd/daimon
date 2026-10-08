@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 126
 type: landmine
 title: view.judge is memoized on more than the bucket's own ledgers, because the forgotten set it judges by is machine-wide
 severity: high
 confidence: 0.8
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/view.py
   - pattern: "_judge_memo"
 evidence:
-  - note: "#1132 PR 9a: tests/test_view_judge.py::test_a_forget_in_another_bucket_drops_the_memo"
+  - note: #1132 PR 9a: tests/test_view_judge.py::test_a_forget_in_another_bucket_drops_the_memo
 expires:
   condition: "the forgotten set is read per bucket only, or the memo is removed"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 `view.classify` withholds a value forgotten in ANY local project (and any value

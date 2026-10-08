@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 127
 type: landmine
 title: The viewer's default project slug must come from config.resolve_project_dir, not a character transform of the path
 severity: medium
 confidence: 0.85
 created: 2026-10-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_ui/__main__.py
 evidence:
-  - note: "tests/ui/test_main.py::test_the_default_project_is_the_one_the_cli_picks and test_a_slug_shaped_project_dir_is_a_path_not_a_bucket_name"
+  - note: tests/ui/test_main.py::test_the_default_project_is_the_one_the_cli_picks and test_a_slug_shaped_project_dir_is_a_path_not_a_bucket_name
 expires:
   condition: "a single resolver object replaces config.resolve_project_dir plus store.project_slug at every entry point"
   review_after: 2027-04-07
-status: candidate
+status: active
 ---
 
 `store.project_slug` is a pure character transform. The bucket a CLI verb opens
