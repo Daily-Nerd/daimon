@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 
 import daimon_briefing.cli as _cli
 
-from .. import briefing, config, recall, recall_telemetry, store
+from .. import briefing, config, effects_commit, recall, store
+from ..effects import Effects, Seen, Telemetry
 from ..terms import salient_terms
 
 
@@ -73,7 +74,8 @@ def _action_query_text(command: str) -> str:
     return command if cut < 0 else command[:cut]
 
 
-def _cmd_action_recall(args) -> int:
+@effects_commit.committing
+def _cmd_action_recall(args, fx) -> int:
     """Print 0-1 'you worked on this before' lines for the shell command on
     stdin, or nothing.
 
@@ -87,7 +89,7 @@ def _cmd_action_recall(args) -> int:
     way byte-identical to a clean allow. Separate processes make that
     structural rather than tested.
     """
-    _cli._note_usage("action-recall")
+    fx.add(Effects(usage=("action-recall",)))
     try:
         command = sys.stdin.read()
         # The allowlist runs BEFORE anything else, including the session check:
@@ -98,7 +100,7 @@ def _cmd_action_recall(args) -> int:
             # fire: the flip condition is a fire rate per 100 shell actions,
             # and a denominator that only counted the queries it ran would
             # make that rate uninterpretable.
-            _cli._note_usage("action-recall:skip-verb")
+            fx.add(Effects(usage=("action-recall:skip-verb",)))
             return 0
         session = str(args.session or "")
         # The session id keys the cooldown. Without one, every action in a
@@ -137,24 +139,22 @@ def _cmd_action_recall(args) -> int:
         now = time.time()
         chosen, chosen_keys = _cli._choose_recall_rows(
             matches, own_keys | prompt_keys, now, budget=_cli._ACTION_BUDGET,
-            usage_prefix="action-recall")
+            usage_prefix="action-recall", fx=fx)
         terms = salient_terms(query)
         if not chosen:
-            _cli._note_usage("action-recall:no-match")
+            fx.add(Effects(usage=("action-recall:no-match",)))
             # #1073: same honest-empty placeholder as recall-inject — see
             # its call site for the reasoning behind `best_refused`.
             mcp_available = config.mcp_tool_available()
             numeric = [m["match_score"] for m in matches
                       if isinstance(m.get("match_score"), (int, float))]
-            recall_telemetry.record(
-                [],
-                query_terms=terms,
-                surface="action-recall",
-                hint_form="tool" if mcp_available else "shell",
-                injected_into=session or None,
-                now=datetime.fromtimestamp(now, tz=timezone.utc),
-                best_refused=max(numeric) if numeric else None,
-            )
+            fx.add(Effects(telemetry=(Telemetry([], {
+                "query_terms": terms,
+                "surface": "action-recall",
+                "hint_form": "tool" if mcp_available else "shell",
+                "injected_into": session or None,
+                "now": datetime.fromtimestamp(now, tz=timezone.utc),
+                "best_refused": max(numeric) if numeric else None}),)))
             return 0
         row = chosen[0]
         # One slot, and the only slot is the lead, so it renders at the lead
@@ -168,16 +168,17 @@ def _cmd_action_recall(args) -> int:
         mcp_available = config.mcp_tool_available()
         # #1062: same sibling value as recall-inject's own call site.
         mcp_name = config.mcp_tool_name()
-        recall_telemetry.record(
-            [{**row, "rendered_chars": len(rendered), "truncated": truncated}],
-            query_terms=terms,
-            surface="action-recall",
-            hint_form="tool" if mcp_available else "shell",
-            # #1043: the live session running the shell action, not the
-            # (possibly different) session that captured the matched belief.
-            injected_into=session or None,
-            now=datetime.fromtimestamp(now, tz=timezone.utc),
-        )
+        fx.add(Effects(telemetry=(Telemetry(
+            [{**row, "rendered_chars": len(rendered),
+              "truncated": truncated}], {
+                "query_terms": terms,
+                "surface": "action-recall",
+                "hint_form": "tool" if mcp_available else "shell",
+                # #1043: the live session running the shell action, not the
+                # (possibly different) session that captured the matched
+                # belief.
+                "injected_into": session or None,
+                "now": datetime.fromtimestamp(now, tz=timezone.utc)}),)))
         # The ladder's middle rung: the ledger row is written either way, so a
         # record-only soak measures exactly what delivery would have measured.
         if not args.record_only:
@@ -193,7 +194,8 @@ def _cmd_action_recall(args) -> int:
                 spent.get(str(row["session_id"]), 0) + 1
             # Own keys only. The prompt surface's keys were read for
             # suppression and are not this file's to record.
-            _cli._save_seen_atomic(seen_file, spent, own_keys | chosen_keys)
+            fx.add(Effects(seen=(Seen(
+                seen_file, spent, frozenset(own_keys | chosen_keys), True),)))
     except Exception:  # noqa: BLE001 — see docstring: fail-open, always rc 0
         pass
     return 0

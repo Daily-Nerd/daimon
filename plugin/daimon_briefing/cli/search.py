@@ -11,17 +11,19 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import (config, display, inspector, recall, recall_telemetry, render,
+from .. import (config, display, effects_commit, inspector, recall, render,
                store)
+from ..effects import Effects, Telemetry
 from ..terms import salient_terms
 from ..ledger import _format_age
 
 
-def _cmd_recall(args) -> int:
+@effects_commit.committing
+def _cmd_recall(args, fx) -> int:
     """Lexical search over the derived recall index. The index is disposable —
     recall.query auto-(re)builds it — so the only hard failure surfaced here is
     an FTS5-less sqlite3 (rc 1, named); everything else degrades to no matches."""
-    _cli._note_usage("recall")
+    fx.add(Effects(usage=("recall",)))
     query = " ".join(args.query)
     if args.limit < 1:
         print(f"error: --limit must be >= 1 (got {args.limit})", file=sys.stderr)
@@ -50,12 +52,9 @@ def _cmd_recall(args) -> int:
         return 2
     results = recalled.rows
     note = display.recall_note(recalled.notes)
-    recall_telemetry.record(
-        results,
-        query_terms=salient_terms(query),
-        surface="recall-search",
-        via="cli",
-    )
+    fx.add(Effects(telemetry=(Telemetry([dict(r) for r in results], {
+        "query_terms": salient_terms(query),
+        "surface": "recall-search", "via": "cli"}),)))
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
         if note:

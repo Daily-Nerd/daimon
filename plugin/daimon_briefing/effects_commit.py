@@ -96,7 +96,46 @@ def commit(fx: Effects) -> None:
                      project_dir=card.project,
                      reply_event_id=card.reply_event_id)
     for sample in fx.telemetry:
-        _attempt(recall_telemetry.record, sample.rows, **sample.kwargs)
+        _attempt(_commit_telemetry, recall_telemetry, sample)
+    for state in fx.seen:
+        writer = cli._save_seen_atomic if state.atomic else cli._save_seen
+        _attempt(writer, state.path, state.origin_counts, set(state.content_keys))
+    for crumb in fx.error_log:
+        _attempt(_commit_error_log, crumb)
+
+
+# One breadcrumb line is a pointer to what went wrong, not a place to keep a
+# payload: whatever an exception message carried is cut here.
+_ERROR_DETAIL_CAP = 400
+
+
+def _commit_error_log(crumb) -> None:
+    """Append one redacted, capped line to `crumb.log` under the log dir. A
+    line stays one line: the detail is folded onto a single row."""
+    from . import config, redact
+    detail, _ = redact.redact_text(" ".join(str(crumb.detail).split()))
+    where = " ".join(str(crumb.where).split())[:64]
+    d = config.log_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / crumb.log).open("a", encoding="utf-8") as f:
+        f.write(f"{crumb.at} {where}: {detail[:_ERROR_DETAIL_CAP]}\n")
+
+
+def _commit_telemetry(recall_telemetry, sample) -> None:
+    """Record one delivery. A query term whose key is forgotten is dropped
+    first, using the set the view already holds, so a forgotten value never
+    counts as something the reader asked about. An unreadable set costs
+    nothing: the terms are kept."""
+    kwargs = dict(sample.kwargs)
+    try:
+        from . import normalize, view
+        forgotten = view.forgotten_keys()
+        kwargs["query_terms"] = [
+            t for t in kwargs.get("query_terms") or ()
+            if normalize.content_key(str(t)) not in forgotten]
+    except Exception:  # noqa: BLE001 - keep the terms, see the docstring
+        pass
+    recall_telemetry.record(sample.rows, **kwargs)
 
 
 def _commit_worldcheck(cli, record: Verification) -> None:

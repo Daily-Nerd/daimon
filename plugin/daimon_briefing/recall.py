@@ -76,17 +76,20 @@ def _note_error(where: str, exc: BaseException) -> None:
     """Breadcrumb for a swallowed index error (#28). Recall is fail-open by
     design — a broken index degrades to [] — but silently, a broken recall is
     indistinguishable from \"no prior work\". One line to recall-error.log
-    (read back by `daimon status`) plus a log.warning. Best-effort: the
-    breadcrumb itself must never break the swallow."""
+    (read back by `daimon status`) plus a log.warning. The line is recorded as
+    an `Effects.error_log` and written by the committer, which redacts and caps
+    it; best-effort: the breadcrumb itself must never break the swallow."""
     log.warning("recall.%s swallowed %s: %s", where, type(exc).__name__, exc)
     try:
-        d = config.log_dir()
-        d.mkdir(parents=True, exist_ok=True)
+        from . import effects_commit
+        from .effects import Effects, ErrorLog
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with (d / "recall-error.log").open("a", encoding="utf-8") as f:
-            f.write(f"{stamp} {where}: {type(exc).__name__}: {exc}\n")
-    except OSError:
+        effects_commit.commit(Effects(error_log=(ErrorLog(
+            "recall-error.log", stamp, where,
+            f"{type(exc).__name__}: {exc}"),)))
+    except Exception:  # noqa: BLE001 - see the docstring
         pass
+
 
 # v2 (#125): items grew importance + first_seen for suggest()'s ranking.
 # v3 (#234): items grew item_id + frontier, and superseded_by changed MEANING —
@@ -1382,25 +1385,6 @@ def _dedupe_rows(rows: list[dict], want_n: int) -> list[dict]:
     return out
 
 
-def _ambient_scopes(project_dir) -> list[str] | None:
-    """The slugs an UNADDRESSED read may see (#899): this project's own plus
-    whatever the host declared in DAIMON_EXTRA_READ_SLUGS, own first. None
-    when the project is unknown, so each caller keeps its own "unknown"
-    rule (search: no filter; lookup_item: None; suggest: silence) and the
-    allowlist can never turn an unscoped read into a read of the listed
-    buckets. Explicit addressing (`slug`, `all_projects`) never comes here:
-    an explicit slug IS the scope (#243) and all_projects is already
-    everything."""
-    own = store.project_slug(config.resolve_project_dir(project_dir))
-    if own is None:
-        return None
-    scopes = [own]
-    for extra in config.extra_read_slugs():
-        if extra not in scopes:
-            scopes.append(extra)
-    return scopes
-
-
 def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
     return f" AND {column} IN ({', '.join('?' for _ in scopes)})"
 
@@ -1532,7 +1516,7 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     # #899: an unaddressed read fans across own + host-allowlisted scopes;
     # an explicit slug or all_projects is exactly what it says.
     scopes = ([slug] if slug else
-              None if all_projects else _ambient_scopes(project_dir))
+              view.read_scopes(project_dir, all_projects=all_projects))
     path = config.recall_db()
     if _closed_still(scopes, path, notes):
         _note(notes, "closed")
@@ -1666,7 +1650,8 @@ def find(item_id: str, project_dir=None,
     Found is the newest matching row (ties broken by `created`). Withheld
     says the newest copy may not be shown (reason only, no value) and, like a
     dropped query row, rebuilds the index once."""
-    scopes = [slug] if slug else _ambient_scopes(project_dir)
+    scopes = ([slug] if slug
+              else view.read_scopes(project_dir, all_projects=False))
     if scopes is None:
         return Absent()
     try:
@@ -1798,7 +1783,7 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     # #899: the auto-inject path fans across own + host-allowlisted scopes
     # too; a shared scope reached by `recall` but not here would exist when
     # asked for and vanish when it would have helped.
-    scopes = _ambient_scopes(project_dir)
+    scopes = view.read_scopes(project_dir, all_projects=False)
     if scopes is None:
         return []
     terms = salient_terms(prompt)

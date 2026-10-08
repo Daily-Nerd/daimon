@@ -254,6 +254,30 @@ def bucket_exists(slug: str, own: str | None) -> bool:
     return _is_bucket(slug)
 
 
+def read_scopes(project, *, all_projects: bool = False) -> list[str] | None:
+    """The slugs an UNADDRESSED read may see (#899): this project's own plus
+    whatever the host declared in DAIMON_EXTRA_READ_SLUGS, own first. None
+    when the project is unknown, so each caller keeps its own "unknown" rule
+    (search: no filter; lookup: None; suggest: silence) and the allowlist can
+    never turn an unscoped read into a read of the listed buckets.
+
+    `all_projects` asks for no filter at all (None). Under
+    `config.tenant_scoped()` it is ignored: a caller-chosen cross-project
+    address is a cross-tenant read, so the entry points refuse it and this is
+    the same rule one layer down. An explicit `slug` is the scope itself and
+    never comes through here."""
+    if all_projects and not config.tenant_scoped():
+        return None
+    own = store.project_slug(config.resolve_project_dir(project))
+    if own is None:
+        return None
+    scopes = [own]
+    for extra in config.extra_read_slugs():
+        if extra not in scopes:
+            scopes.append(extra)
+    return scopes
+
+
 def forgotten_keys() -> frozenset:
     """The machine-wide forgotten set, the one `snapshot` reads: every local
     project's tombstones plus what teammates published. Memoized in `store`,

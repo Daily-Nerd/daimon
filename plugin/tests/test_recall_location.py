@@ -329,3 +329,55 @@ def test_heal_reaps_stale_caches(home, tmp_path, monkeypatch, capsys):
     assert cli.main(["heal"]) in (0, 1)
     assert not dead.exists()
     assert "stale recall cache" in capsys.readouterr().out
+
+
+def test_the_location_memo_stays_bounded(home, tmp_path, monkeypatch):
+    for n in range(70):
+        monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / f"s{n}"))
+        config.recall_db()
+    assert len(config._RECALL_DB_MEMO) <= 64
+
+
+def test_a_file_that_is_not_an_index_is_not_claimed_by_any_store(
+        home, tmp_path, monkeypatch):
+    junk = home / ".daimon" / "recall" / "0123456789abcdef.db"
+    junk.parent.mkdir(parents=True)
+    junk.write_text("not sqlite at all", encoding="utf-8")
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "x"))
+    assert junk not in recall.store_caches()
+
+
+def test_an_unlistable_recall_directory_still_answers(home, tmp_path,
+                                                     monkeypatch):
+    class Unlistable:
+        def glob(self, _pattern):
+            raise OSError("denied")
+
+    monkeypatch.setattr(recall, "_cache_roots",
+                        lambda: (home / ".daimon" / "recall.db", Unlistable()))
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "x"))
+    assert recall.store_caches() == [config.recall_db()]
+    assert recall.reap_stale_caches() == []
+
+
+def test_refresh_survives_a_sibling_it_cannot_delete_and_a_failed_rebuild(
+        home, tmp_path, monkeypatch):
+    ckpt, _ = _build_in(monkeypatch, tmp_path, "a")
+    sibling = _plant_sibling_cache(ckpt, tmp_path / "t2", [], "fp")
+    real_unlink = type(sibling).unlink
+
+    def deny(self, *a, **k):
+        if self.name.startswith(sibling.stem):
+            raise OSError("denied")
+        return real_unlink(self, *a, **k)
+
+    def boom():
+        raise OSError("disk full")
+
+    crumbs = []
+    monkeypatch.setattr(type(sibling), "unlink", deny)
+    monkeypatch.setattr(recall, "rebuild", boom)
+    monkeypatch.setattr(recall, "_note_error",
+                        lambda where, exc: crumbs.append(where))
+    recall.refresh_store_caches()
+    assert crumbs == ["refresh-store-caches"]
