@@ -380,7 +380,7 @@ def test_every_host_carries_the_stale_mark_and_calls_prepare(
     assert "[? unverified] stale carried claim" in capsys.readouterr().out
     assert len(seen) == 1
     out = mcp_tools.HANDLERS["daimon_brief"](
-        {"slug": store.project_slug(PROJECT)})
+        {"slug": store.project_slug(PROJECT)}).text
     assert "[? unverified] stale carried claim" in out
     assert len(seen) == 2
     ctx = hooks.pre_llm_call(session_id="S-new", user_message="hi",

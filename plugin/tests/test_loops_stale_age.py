@@ -143,11 +143,12 @@ def test_mcp_brief_pointer_only_for_the_own_project(tmp_checkpoint_dir, monkeypa
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _write()
     _write(project=OTHER)
-    own = mcp_tools.HANDLERS["daimon_brief"]({})
+    own = mcp_tools.HANDLERS["daimon_brief"]({}).text
     assert "See: daimon loops --stale" in own
-    slug = mcp_tools.HANDLERS["daimon_brief"]({"slug": store.project_slug(OTHER)})
+    slug = mcp_tools.HANDLERS["daimon_brief"](
+        {"slug": store.project_slug(OTHER)}).text
     assert "unverified over 7d hidden" in slug and "See:" not in slug
-    foreign = mcp_tools.HANDLERS["daimon_brief"]({"project": OTHER})
+    foreign = mcp_tools.HANDLERS["daimon_brief"]({"project": OTHER}).text
     assert "unverified over 7d hidden" in foreign and "See:" not in foreign
 
 

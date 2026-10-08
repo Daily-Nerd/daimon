@@ -16,6 +16,7 @@ handler raises a ToolError (every attempt counts); a handler's own effects
 import functools
 import json
 import time
+from dataclasses import dataclass
 
 from . import (briefing, config, display, effects_commit, recall,
                recall_telemetry, requests, store)
@@ -27,16 +28,29 @@ class ToolError(Exception):
     """A tool-level failure the calling agent should read, not a crash."""
 
 
+@dataclass(frozen=True)
+class ToolResult:
+    """What every handler returns: `text` is the payload (a recall's JSON, a
+    briefing, a status object) and `notes` are advisory lines that ride after
+    it as blocks of their own, so the payload stays exactly what its format
+    says it is. Only recall's degraded notes use `notes`; the briefing format
+    keeps its warnings inline because daimon owns it and hosts parse it."""
+
+    text: str
+    notes: tuple[str, ...] = ()
+
+
 def _tool(name: str):
     """A handler `fn(arguments, fx)` as `fn(arguments)`: `mcp:<name>` usage is
     recorded up front and committed after the payload is built or the
     handler raised; whatever the handler adds to `fx` commits with it."""
     def deco(fn):
         @functools.wraps(fn)
-        def run(arguments: dict) -> str:
+        def run(arguments: dict) -> ToolResult:
             fx = effects_commit.Pending(f"mcp:{name}")
             try:
-                return fn(arguments, fx)
+                got = fn(arguments, fx)
+                return got if isinstance(got, ToolResult) else ToolResult(got)
             finally:
                 effects_commit.commit(fx.effects)
         return run
@@ -44,7 +58,7 @@ def _tool(name: str):
 
 
 @_tool("recall")
-def _recall(arguments: dict, fx) -> str:
+def _recall(arguments: dict, fx) -> ToolResult:
     query = str(arguments.get("query") or "").strip()
     if not query:
         raise ToolError("query is required")
@@ -95,10 +109,10 @@ def _recall(arguments: dict, fx) -> str:
     for row in rows:
         row["status"] = recall.describe_status(row)
     out = json.dumps(rows, ensure_ascii=False, indent=2)
-    # A degraded read says so on a line of its own ahead of the rows, the way
-    # a briefing leads with its warnings; a clean read is the bare list.
+    # A degraded read says so in a block of its own after the rows, so the
+    # JSON above stays pure JSON.
     note = display.recall_note(recalled.notes)
-    return f"{note}\n{out}" if note else out
+    return ToolResult(out, (note,) if note else ())
 
 
 @_tool("brief")

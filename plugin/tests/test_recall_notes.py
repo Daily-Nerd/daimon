@@ -69,11 +69,11 @@ def test_a_clean_recall_prints_no_note(tmp_checkpoint_dir, monkeypatch,
     assert "recall:" not in out.out and out.err == ""
 
 
-def test_mcp_recall_leads_with_the_note_only_when_there_is_one(stale):
-    text = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
-    first, _, rest = text.partition("\n")
-    assert first.startswith("⚠ recall:")
-    assert [r["text"] for r in json.loads(rest)] == [VISIBLE]
+def test_mcp_recall_carries_the_note_beside_pure_json(stale):
+    got = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
+    assert [r["text"] for r in json.loads(got.text)] == [VISIBLE]
+    (note,) = got.notes
+    assert note.startswith("⚠ recall:")
 
 
 def test_mcp_recall_clean_result_is_the_bare_list(tmp_checkpoint_dir,
@@ -84,8 +84,9 @@ def test_mcp_recall_clean_result_is_the_bare_list(tmp_checkpoint_dir,
             {"text": VISIBLE, "trust": "inferred"}]},
         "epistemic_snapshot": {}}, project_dir=PROJECT)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
-    text = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
-    assert [r["text"] for r in json.loads(text)] == [VISIBLE]
+    got = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
+    assert [r["text"] for r in json.loads(got.text)] == [VISIBLE]
+    assert got.notes == ()
 
 
 def test_viewer_recall_carries_the_note_field(stale):
@@ -108,12 +109,12 @@ def test_a_closed_bucket_note_names_no_project_and_no_count(
     ledger = config.checkpoint_dir() / store.project_slug(PROJECT) / "trust.jsonl"
     ledger.write_text("garbage line\n")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
-    text = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
-    first = text.splitlines()[0]
+    got = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
+    (first,) = got.notes
     assert "trust ledger" in first
-    assert store.project_slug(PROJECT) not in text
+    assert store.project_slug(PROJECT) not in got.text + first
     assert not any(ch.isdigit() for ch in first)
-    assert json.loads(text.split("\n", 1)[1]) == []
+    assert json.loads(got.text) == []
 
 
 @pytest.mark.parametrize("rel", ["cli/inject.py", "cli/action_recall.py"])

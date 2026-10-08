@@ -47,7 +47,7 @@ def _cli_slugs(capsys):
 
 def _mcp_slugs():
     return {r["slug"] for r in json.loads(
-        mcp_tools.HANDLERS["daimon_projects"]({}))}
+        mcp_tools.HANDLERS["daimon_projects"]({}).text)}
 
 
 def _viewer_slugs(base):

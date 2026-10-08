@@ -154,11 +154,14 @@ def _handle_tools_call(params):
     if handler is None:
         raise _UnknownTool(name)
     try:
-        payload = handler(arguments)
+        result = handler(arguments)
     except mcp_tools.ToolError as e:
         return {"content": [{"type": "text", "text": str(e)}],
                 "isError": True}
-    return {"content": [{"type": "text", "text": payload}], "isError": False}
+    # The payload is block 1; each note is a block of its own after it.
+    blocks = [{"type": "text", "text": result.text},
+              *({"type": "text", "text": note} for note in result.notes)]
+    return {"content": blocks, "isError": False}
 
 
 class _UnknownTool(Exception):

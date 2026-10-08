@@ -320,7 +320,8 @@ def test_mcp_recall_telemetry_commits_after_the_rows_are_built(
         return real(rows, **kw)
 
     monkeypatch.setattr(recall_telemetry, "record", record)
-    out = json.loads(mcp_tools.HANDLERS["daimon_recall"]({"query": "merge"}))
+    out = json.loads(
+        mcp_tools.HANDLERS["daimon_recall"]({"query": "merge"}).text)
     assert out and seen
     assert all("status" not in r for r in seen[0])
 

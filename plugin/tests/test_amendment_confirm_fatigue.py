@@ -635,6 +635,6 @@ def test_mcp_brief_carries_the_found_line(project, monkeypatch):
                               channel="cli-agent", project_dir=project)
     amendments.verify(a_id, role="user", project_dir=project)
     from daimon_briefing import mcp_tools
-    text = mcp_tools.HANDLERS["daimon_brief"]({})
+    text = mcp_tools.HANDLERS["daimon_brief"]({}).text
     assert "found: in a user turn" in text
     assert "you said" not in text.lower()
