@@ -82,6 +82,21 @@ def _seam(m, target, result):
     m.setattr(jsonl, "read", read)
 
 
+def _refuse_admissions(m, w):
+    """Own events ledger unproven (an OS error) and one session of this
+    project waiting in serialize.log as a refused admission."""
+    _seam(m, _bucket(w.project) / "events.jsonl",
+          jsonl.Read(Health.UNREADABLE, [], detail="EIO"))
+    log_dir = config.log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "serialize.log").write_text(
+        "2026-09-01T00:00:00Z session-end: spawned serialize for S-refused "
+        f"(reason: x, project: {w.project}) (transcript: /t/S-refused.jsonl)\n"
+        "error: admission refused: events.jsonl is unreadable; check "
+        "permissions (EIO); run: daimon status (transcript: "
+        "/t/S-refused.jsonl) after 0s\n")
+
+
 def _grace_sidecar_dir():
     found = [p for p in config.team_dir().rglob("authors/grace") if p.is_dir()]
     assert found, "the world has no teammate sidecar"
@@ -109,6 +124,18 @@ CONDITIONS = {
         {("cli:brief", "default"): "the forget set is incomplete",
          ("cli:projects", "default"): "the forget set is incomplete",
          ("http:/api/projects", "default"): "the forget set is incomplete"}),
+    "admission-refused": (
+        _refuse_admissions,
+        {("cli:brief", "default"):
+             "1 session(s) of this project not serialized: events.jsonl is "
+             "unreadable; check permissions (EIO); run: daimon status, then "
+             "daimon heal",
+         ("cli:loops", "default"): "1 session(s) of this project not "
+                                   "serialized",
+         ("mcp:daimon_brief", "default"): "1 session(s) of this project not "
+                                          "serialized",
+         ("hook:pre_llm_call", "first"): "1 session(s) of this project not "
+                                         "serialized"}),
     "foreign-requests-garbage": (
         lambda m, w: _seam(m, _bucket(w.other) / "requests.jsonl",
                            jsonl.Read(Health.UNREADABLE, [], detail="garbage",

@@ -336,6 +336,8 @@ def _public_entry_points(sub: str):
         ("append_event",
          lambda: store.append_event("i-1", "resolved", project_dir=sub, writer=Writer.HUMAN)),
         ("admission_state", lambda: store.admission_state(sub)),
+        ("republish_tombstones",
+         lambda: store.republish_tombstones(project_dir=sub)),
         ("admission_preflight", lambda: store.admission_preflight(sub)),
         ("admission_gate",
          lambda: store.admission_gate(sub, Writer.ADMISSION)),

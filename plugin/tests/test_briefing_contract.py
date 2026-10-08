@@ -332,3 +332,23 @@ def test_a_ruling_line_starts_with_the_ruling_mark(
     _ruling()
     _, out = _brief(capsys, monkeypatch)
     assert f"{marks.RULING_MARK} {RULING}" in out
+
+
+def test_an_admission_refused_note_is_a_warning_and_never_the_header(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    # #1132 PR 10b: the note a project's briefing carries for sessions its
+    # events ledger refused. A consumer (anamnesis) reads it as a warning.
+    _seed()
+    note = ("⚠ 2 session(s) of this project not serialized: events.jsonl is "
+            "unreadable; run: daimon ledger repair events, then daimon heal")
+    monkeypatch.setattr(ledger, "admission_notes", lambda slug: (note,))
+    rc, out = _brief(capsys, monkeypatch)
+    assert rc == 0
+    got = api.parse_briefing(out)
+    assert got.header == briefing.GREETING
+    assert note in got.warnings
+    assert all(note not in i for i in got.items)
+    # And as the first line of a hand-built text, where a note above the
+    # greeting must not become the header.
+    assert api.parse_briefing(f"{note}\n{marks.GREETING}\n").header == (
+        marks.GREETING)

@@ -90,3 +90,15 @@ def test_a_proven_ledger_says_nothing(tmp_checkpoint_dir, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["brief"]) == 0
     assert "not serialized" not in capsys.readouterr().out
+
+
+def test_a_refusal_beyond_the_200_line_tail_is_still_briefed(refused, capsys):
+    log = config.log_dir() / "serialize.log"
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
+    noise = "".join(
+        f"{stamp} session-end: spawned serialize for n-{i} "
+        f"(reason: x, project: /elsewhere) (transcript: /nope/n-{i}.jsonl)\n"
+        for i in range(300))
+    log.write_text(log.read_text() + noise)
+    assert cli.main(["brief"]) == 0
+    assert NOTE in capsys.readouterr().out

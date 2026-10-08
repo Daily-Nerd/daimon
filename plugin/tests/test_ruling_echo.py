@@ -268,7 +268,8 @@ def test_capture_path_admits(tmp_checkpoint_dir, monkeypatch):
         capture.serializer, "serialize_strict",
         lambda *a, **k: {"session_id": "S-spy", "working_context": {},
                          "epistemic_snapshot": {}})
-    assert capture.run("S-spy", [], project=PROJECT, chat=None,
+    from tests.conftest import make_messages
+    assert capture.run("S-spy", make_messages(24), project=PROJECT, chat=None,
                        deadline=None) is None
     assert seen.get("admit") is True
 

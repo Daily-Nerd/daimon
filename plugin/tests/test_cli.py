@@ -3670,7 +3670,7 @@ def test_cmd_heal_real_serializes_target(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_heal_plan", lambda text, now, force=False: plan)
     monkeypatch.setattr(cli, "_append_retry_log", lambda *a, **k: None)
     seen = {}
-    monkeypatch.setattr(cli, "_run_serialize", lambda path, proj, escalate=False: seen.update(path=path, proj=proj) or 0)
+    monkeypatch.setattr(cli, "_run_serialize", lambda path, proj, escalate=False, session=None: seen.update(path=path, proj=proj, session=session) or 0)
 
     class A:
         dry_run = False

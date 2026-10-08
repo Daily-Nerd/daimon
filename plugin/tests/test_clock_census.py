@@ -50,6 +50,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/ledger.py", "_stats_capture", "datetime.now"):
         "second-resolution ts on a diagnostic or stats log line, no order "
         "or event_id, never folded (the cutoff default of a stats window)",
+    ("daimon_briefing/ledger.py", "admission_notes", "time.time"):
+        "the default `now` of a pure scan; a caller that needs a fixed clock passes one",
+    ("daimon_briefing/ledger.py", "admission_waiting", "time.time"):
+        "the default `now` of a pure scan; a caller that needs a fixed clock passes one",
     ("daimon_briefing/ledger.py", "heartbeat_age", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp",
@@ -101,7 +105,7 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "checkpoint or store-event ts, second resolution, no order or "
         "event_id; the next candidate to move onto the clock if a host "
         "needs byte-identical checkpoints",
-    ("daimon_briefing/store.py", "publish_tombstone", "datetime.now"):
+    ("daimon_briefing/store.py", "_publish_keys", "datetime.now"):
         "checkpoint or store-event ts, second resolution, no order or "
         "event_id; the next candidate to move onto the clock if a host "
         "needs byte-identical checkpoints",
