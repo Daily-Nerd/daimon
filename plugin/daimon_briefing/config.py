@@ -358,7 +358,8 @@ def recall_db() -> Path:
     store (`--data-dir`, DAIMON_CHECKPOINT_DIR, a `checkpoint_dir_override`
     context) gets `~/.daimon/recall/<sha256(checkpoint, team)[:16]>.db`, so two
     stores never share one index. The store is read at call time and the
-    answer is memoized on the raw path strings.
+    answer is memoized on the RESOLVED pair (a relative path follows the
+    working directory, so the raw string cannot be the key).
 
     DAIMON_RECALL_DB pins one explicit index and is TEST-ONLY (the suite
     points it under tmp so no test can touch the real index); a user has no
@@ -367,12 +368,12 @@ def recall_db() -> Path:
     if raw:
         return Path(raw).expanduser()
     home = Path.home()
-    key = (str(checkpoint_dir()), str(team_dir()), str(home))
+    ckpt, team = recall_store()
+    key = (ckpt, team, str(home))
     hit = _RECALL_DB_MEMO.get(key)
     if hit is not None:
         return hit
     root = home / ".daimon"
-    ckpt, team = recall_store()
     if (ckpt == str((root / "checkpoints").resolve(strict=False))
             and team == str((root / "team").resolve(strict=False))):
         path = root / "recall.db"

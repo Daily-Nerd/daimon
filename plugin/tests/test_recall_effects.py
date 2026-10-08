@@ -125,10 +125,10 @@ def test_a_failing_error_log_write_does_not_raise(monkeypatch):
 
 def test_note_error_hands_its_breadcrumb_to_the_committer(monkeypatch):
     got = []
-    monkeypatch.setattr(effects_commit, "commit", got.append)
+    monkeypatch.setattr(effects_commit, "commit_error_log", got.append)
     recall._note_error("search", OSError("disk full"))
     assert len(got) == 1
-    (rec,) = got[0].error_log
+    rec = got[0]
     assert (rec.log, rec.where) == ("recall-error.log", "search")
     assert rec.detail == "OSError: disk full"
     # nothing was written by the producer itself
@@ -285,8 +285,13 @@ def _ledger():
             path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def test_telemetry_drops_query_terms_whose_key_is_forgotten(
+def test_telemetry_count_drops_a_term_whose_key_is_forgotten(
         tmp_checkpoint_dir):
+    """Pins the COUNT drop, nothing more. The ledger stores only
+    `query_term_count`, never the terms, so today the filter only lowers that
+    count. It compares a single term's key with whole-value tombstones, so it
+    fires only when the forgotten value is itself one term. It exists so the
+    shape is right if the ledger ever stores terms."""
     _seed()
     key = normalize.content_key("zebrafish")
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
@@ -354,7 +359,38 @@ def test_a_tenant_scoped_query_cannot_read_another_projects_rows(
 
 
 def test_a_failing_committer_never_breaks_the_swallow(monkeypatch):
-    def boom(_fx):
+    def boom(_crumb):
         raise RuntimeError("committer down")
-    monkeypatch.setattr(effects_commit, "commit", boom)
+    monkeypatch.setattr(effects_commit, "commit_error_log", boom)
     recall._note_error("search", OSError("x"))
+
+
+def test_note_error_does_not_pull_in_the_cli_and_still_redacts(tmp_path):
+    import subprocess
+    import sys
+    code = (
+        "import sys\n"
+        "from daimon_briefing import recall\n"
+        "assert 'daimon_briefing.cli' not in sys.modules, 'precondition'\n"
+        "recall._note_error('search', OSError('bad api_key=sk-abcdefghijklmnop1234'))\n"
+        "assert 'daimon_briefing.cli' not in sys.modules\n")
+    env = {**__import__("os").environ, "DAIMON_LOG_DIR": str(tmp_path / "logs"),
+           "DAIMON_ENV_FILE": str(tmp_path / "none")}
+    done = subprocess.run([sys.executable, "-I", "-c", code], env=env,
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    line = (tmp_path / "logs" / "recall-error.log").read_text(
+        encoding="utf-8")
+    assert "search: OSError: bad" in line
+    assert "sk-abcdefghijklmnop1234" not in line
+
+
+def test_commit_error_log_writes_without_flushing_stdout(monkeypatch):
+    flushed = []
+    monkeypatch.setattr("sys.stdout", type("S", (), {
+        "flush": lambda self: flushed.append(1),
+        "write": lambda self, s: len(s)})())
+    effects_commit.commit_error_log(ErrorLog(
+        "recall-error.log", "2026-01-01T00:00:00Z", "x", "OSError: y"))
+    assert flushed == []
+    assert (config.log_dir() / "recall-error.log").exists()

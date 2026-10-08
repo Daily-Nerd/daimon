@@ -40,13 +40,14 @@ def test_default_store_keeps_the_legacy_path(home):
     assert config.recall_db() == home / ".daimon" / "recall.db"
 
 
-def test_default_store_spelled_through_a_symlink_is_still_default(home, tmp_path):
+def test_default_store_spelled_through_a_symlink_is_still_default(
+        home, tmp_path, monkeypatch):
     real = home / ".daimon" / "checkpoints"
     real.mkdir(parents=True)
     link = tmp_path / "link"
     link.symlink_to(real)
     # Same directory, different spelling: resolves to the default store.
-    os.environ["DAIMON_CHECKPOINT_DIR"] = str(link)
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(link))
     assert config.recall_db() == home / ".daimon" / "recall.db"
 
 
@@ -295,9 +296,10 @@ def test_the_audit_scans_every_cache_of_the_audited_store(home, tmp_path,
                                    tmp_path / "other-team",
                                    [(CANARY, store.project_slug(PROJECT))], fp)
     result = privacy.audit_project(project_dir=PROJECT)
-    paths = {f["path"] for f in result["findings"]}
-    assert str(sibling) in paths
-    assert str(foreign) not in paths
+    surface = {f["path"]: f["surface"] for f in result["findings"]}
+    assert surface[str(sibling)] == "recall-index-residue"
+    # another store's cache is still scanned, but named for what it is
+    assert surface[str(foreign)] == "foreign-cache"
 
 
 def test_forget_leaves_no_cache_of_the_store_holding_the_value(
@@ -381,3 +383,182 @@ def test_refresh_survives_a_sibling_it_cannot_delete_and_a_failed_rebuild(
                         lambda where, exc: crumbs.append(where))
     recall.refresh_store_caches()
     assert crumbs == ["refresh-store-caches"]
+
+
+def test_a_relative_checkpoint_dir_follows_the_working_directory(
+        home, tmp_path, monkeypatch):
+    for name in ("one", "two"):
+        (tmp_path / name).mkdir()
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", "rel-store")
+    monkeypatch.chdir(tmp_path / "one")
+    first = config.recall_db()
+    monkeypatch.chdir(tmp_path / "two")
+    assert config.recall_db() != first
+
+
+def test_a_queried_cache_is_not_reaped_as_unused(home, tmp_path, monkeypatch):
+    monkeypatch.setattr(recall, "_touched", set())
+    old_ckpt, old = _build_in(monkeypatch, tmp_path, "old")
+    _age(old, 31)
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(old_ckpt))
+    recall.query("anything", all_projects=True)
+    assert time.time() - old.stat().st_mtime < 3600
+    _build_in(monkeypatch, tmp_path, "live")
+    assert recall.reap_stale_caches() == []
+
+
+def test_the_read_touch_happens_once_per_process_and_path(home, tmp_path,
+                                                         monkeypatch):
+    monkeypatch.setattr(recall, "_touched", set())
+    ckpt, path = _build_in(monkeypatch, tmp_path, "once")
+    recall.query("anything", all_projects=True)
+    _age(path, 40)
+    recall.query("anything", all_projects=True)
+    assert time.time() - path.stat().st_mtime > 39 * 86400
+
+
+def test_a_failed_touch_is_swallowed(home, tmp_path, monkeypatch):
+    monkeypatch.setattr(recall, "_touched", set())
+    _build_in(monkeypatch, tmp_path, "t")
+    monkeypatch.setattr(recall.os, "utime",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("ro")))
+    assert recall.query("anything", all_projects=True).rows == []
+
+
+def _plant_bare_index(path, rows, meta=False):
+    """An index file with an items table and, unless `meta`, NO meta table."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    if meta:
+        conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO meta VALUES ('fingerprint', 'x')")
+    conn.execute(
+        "CREATE TABLE items(id INTEGER PRIMARY KEY, text TEXT, quote TEXT,"
+        " scene TEXT, project_slug TEXT, author TEXT, item_id TEXT)")
+    for text, slug in rows:
+        conn.execute("INSERT INTO items(text, project_slug, item_id)"
+                     " VALUES (?, ?, 'i-r')", (text, slug))
+    conn.commit()
+    conn.close()
+    return path
+
+
+def _audited_store(monkeypatch, tmp_path):
+    ckpt = tmp_path / "audited"
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(ckpt))
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-08-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT)
+    key = normalize.content_key(CANARY)
+    store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
+                       project_dir=PROJECT, tombstone=True)
+    recall.rebuild()
+    return ckpt, key
+
+
+def test_an_index_with_no_meta_table_is_still_scanned(home, tmp_path,
+                                                     monkeypatch):
+    _, key = _audited_store(monkeypatch, tmp_path)
+    bare = _plant_bare_index(
+        home / ".daimon" / "recall" / "0123456789abcdef.db",
+        [(CANARY, store.project_slug(PROJECT))])
+    result = privacy.audit_project(project_dir=PROJECT)
+    hits = [f for f in result["findings"] if f["path"] == str(bare)]
+    assert hits and hits[0]["surface"] == "unclaimed-cache"
+    assert hits[0]["content_hash"] == key
+
+
+def test_another_stores_cache_is_scanned_as_foreign(home, tmp_path,
+                                                   monkeypatch):
+    _audited_store(monkeypatch, tmp_path)
+    other = _plant_sibling_cache(tmp_path / "elsewhere", tmp_path / "t",
+                                 [(CANARY, store.project_slug(PROJECT))],
+                                 "fp")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["path"] == str(other) and f["surface"] == "foreign-cache"
+               for f in result["findings"])
+
+
+def test_an_unreadable_unclaimed_file_is_unscannable_not_a_crash(
+        home, tmp_path, monkeypatch):
+    _audited_store(monkeypatch, tmp_path)
+    junk = home / ".daimon" / "recall" / "ffffffffffffffff.db"
+    junk.write_text("not sqlite", encoding="utf-8")
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert str(junk) in result["unscannable"]
+
+
+def test_a_stray_of_a_deleted_cache_is_still_scanned(home, tmp_path,
+                                                    monkeypatch):
+    ckpt, key = _audited_store(monkeypatch, tmp_path)
+    sibling = _plant_sibling_cache(ckpt, tmp_path / "t2",
+                                   [(CANARY, store.project_slug(PROJECT))],
+                                   recall._fingerprint())
+    stray = sibling.with_name(sibling.name + ".4242.tmp")
+    sibling.rename(stray)          # the cache itself is gone, its strand stays
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["path"] == str(stray) and f["surface"] == "orphan-tmp"
+               for f in result["findings"])
+
+
+def test_a_stray_beside_the_legacy_index_is_scanned_for_another_store(
+        home, tmp_path, monkeypatch):
+    _audited_store(monkeypatch, tmp_path)
+    stray = _plant_bare_index(home / ".daimon" / "recall.db.777.tmp",
+                              [(CANARY, store.project_slug(PROJECT))],
+                              meta=True)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["path"] == str(stray) and f["surface"] == "orphan-tmp"
+               for f in result["findings"])
+
+
+def test_with_the_pinned_override_only_strays_beside_it_are_scanned(
+        home, tmp_path, monkeypatch):
+    _audited_store(monkeypatch, tmp_path)
+    elsewhere = _plant_bare_index(home / ".daimon" / "recall.db.777.tmp",
+                                  [(CANARY, store.project_slug(PROJECT))],
+                                  meta=True)
+    pinned = tmp_path / "pin" / "pinned.db"
+    monkeypatch.setenv("DAIMON_RECALL_DB", str(pinned))
+    beside = _plant_bare_index(pinned.with_name("pinned.db.5.tmp"),
+                               [(CANARY, store.project_slug(PROJECT))],
+                               meta=True)
+    result = privacy.audit_project(project_dir=PROJECT)
+    paths = {f["path"] for f in result["findings"]}
+    assert str(beside) in paths and str(elsewhere) not in paths
+
+
+def test_forget_under_the_pinned_override_touches_only_the_pinned_file(
+        home, tmp_path, monkeypatch):
+    ckpt = tmp_path / "pinned-store"
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(ckpt))
+    store.write_checkpoint("S1", {
+        "session_id": "S1", "created": "2026-08-01T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": CANARY, "trust": "inferred"}]}}, project_dir=PROJECT)
+    directory = home / ".daimon" / "recall"
+    directory.mkdir(parents=True)
+    bystander = directory / f"{_digest(ckpt, tmp_path / 't2')}.db"
+    conn = sqlite3.connect(str(bystander))
+    conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO meta VALUES ('store', ?)",
+                 (str(ckpt.resolve()),))
+    conn.commit()
+    conn.close()
+    pinned = tmp_path / "pin.db"
+    monkeypatch.setenv("DAIMON_RECALL_DB", str(pinned))
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert bystander.exists()
+    assert pinned.exists()
+
+
+def test_the_legacy_index_without_meta_is_foreign_to_another_store(
+        home, tmp_path, monkeypatch):
+    _audited_store(monkeypatch, tmp_path)
+    legacy = home / ".daimon" / "recall.db"
+    conn = sqlite3.connect(str(legacy))
+    conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+    conn.commit()
+    conn.close()
+    assert (legacy, "foreign-cache") in recall.unclaimed_caches()

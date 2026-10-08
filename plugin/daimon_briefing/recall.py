@@ -77,16 +77,16 @@ def _note_error(where: str, exc: BaseException) -> None:
     design — a broken index degrades to [] — but silently, a broken recall is
     indistinguishable from \"no prior work\". One line to recall-error.log
     (read back by `daimon status`) plus a log.warning. The line is recorded as
-    an `Effects.error_log` and written by the committer, which redacts and caps
-    it; best-effort: the breadcrumb itself must never break the swallow."""
+    an `ErrorLog` record and written by the committer's narrow writer (no stdout
+    flush, no `cli` import), which redacts and caps it; best-effort: the breadcrumb itself must never break the swallow."""
     log.warning("recall.%s swallowed %s: %s", where, type(exc).__name__, exc)
     try:
         from . import effects_commit
-        from .effects import Effects, ErrorLog
+        from .effects import ErrorLog
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        effects_commit.commit(Effects(error_log=(ErrorLog(
+        effects_commit.commit_error_log(ErrorLog(
             "recall-error.log", stamp, where,
-            f"{type(exc).__name__}: {exc}"),)))
+            f"{type(exc).__name__}: {exc}"))
     except Exception:  # noqa: BLE001 - see the docstring
         pass
 
@@ -759,6 +759,45 @@ def store_caches() -> list[Path]:
     return out
 
 
+def unclaimed_caches() -> list[tuple[Path, str]]:
+    """Index files under ~/.daimon that no store claims as the current one,
+    each with the surface name an audit reports them under: "unclaimed-cache"
+    when `meta.store` cannot be read, "foreign-cache" when it resolves to
+    another store. The forgotten set is machine-wide, so plaintext of a
+    forgotten key in ANY of them is residue. Empty under an explicit
+    DAIMON_RECALL_DB (the pinned file is the whole world)."""
+    claimed = set(store_caches())
+    legacy = _cache_roots()[0]
+    default_ckpt = str((Path.home() / ".daimon" / "checkpoints")
+                       .resolve(strict=False))
+    out = []
+    for p in _cache_files():
+        if p in claimed:
+            continue
+        recorded = _meta_value(p, "store")
+        if recorded is None and p == legacy:
+            recorded = default_ckpt
+        out.append((p, "unclaimed-cache" if recorded is None
+                    else "foreign-cache"))
+    return out
+
+
+def index_strays() -> list[Path]:
+    """Every staging strand a crashed rebuild may have left, whatever cache it
+    was staged for: `recall.db.*` beside the legacy index and `*.db.*` under
+    `~/.daimon/recall/`, or only the strands beside the pinned file when
+    DAIMON_RECALL_DB is set. Scanned by directory, so a strand outlives the
+    cache it belonged to and is still found."""
+    out: list[Path] = []
+    for directory, pattern in _snapshot_scopes():
+        try:
+            out.extend(p for p in sorted(directory.glob(pattern))
+                       if p.is_file())
+        except OSError:
+            continue
+    return list(dict.fromkeys(out))
+
+
 def refresh_store_caches() -> None:
     """After a forget: the live index is rebuilt now and every sibling cache
     of the same store (another team dir) is dropped, so no cache of the store
@@ -783,7 +822,8 @@ _CACHE_STALE_SECONDS = 30 * 86400
 
 def reap_stale_caches(now: float | None = None, apply: bool = True) -> list:
     """Per-store caches nobody can use any more (heal): the store the cache
-    records is gone, or the file has not been touched for 30 days. Only files
+    records is gone, or the file has not been READ for 30 days (a query
+    refreshes its mtime, see `_touch_once`). Only files
     under `~/.daimon/recall/`; the legacy default index and the live one are
     never reaped, and an explicit DAIMON_RECALL_DB means nothing here is
     ours. A cache that cannot be read as an index but is old is reaped by age
@@ -1299,6 +1339,26 @@ def _ensure_fresh() -> None:
     with _lock_for(path):
         if not _is_fresh(path):
             rebuild()
+    _touch_once(path)
+
+
+# Paths whose mtime this process already refreshed on a read.
+_touched: set[str] = set()
+
+
+def _touch_once(path: Path) -> None:
+    """Stamp the index as READ, at most once per process per path, so that
+    `reap_stale_caches` ("untouched for 30 days") means unread for 30 days and
+    not just not rebuilt. Nothing else reads the index file's mtime. Best
+    effort: a read-only volume costs the stamp, never the read."""
+    key = str(path)
+    if key in _touched:
+        return
+    _touched.add(key)
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
 
 
 def warm() -> None:

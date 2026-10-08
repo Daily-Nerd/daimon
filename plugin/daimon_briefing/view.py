@@ -264,7 +264,9 @@ def read_scopes(project, *, all_projects: bool = False) -> list[str] | None:
     `all_projects` asks for no filter at all (None). Under
     `config.tenant_scoped()` it is ignored: a caller-chosen cross-project
     address is a cross-tenant read, so the entry points refuse it and this is
-    the same rule one layer down. An explicit `slug` is the scope itself and
+    the same rule one layer down: an in-process caller that passes
+    `all_projects=True` under tenant scope is narrowed to own + extras, where
+    the CLI and MCP entry points refuse out loud. An explicit `slug` is the scope itself and
     never comes through here."""
     if all_projects and not config.tenant_scoped():
         return None
