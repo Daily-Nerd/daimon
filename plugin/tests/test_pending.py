@@ -16,6 +16,7 @@ import json
 
 import pytest
 
+from ._prepared import FrozenClock
 from daimon_briefing import (
     amendments,
     config,
@@ -305,7 +306,7 @@ def test_oldest_waits_first(project):
 
 
 def test_two_foreign_asks_with_identical_timestamps_keep_append_order(
-        project, monkeypatch):
+        project, use_clock):
     """`_order_key`'s append-order tiebreak (pending.py:58) is deliberate:
     `created_at` is second-resolution and ties routinely, so in an
     append-only log the first WRITTEN is first waiting. Sourcing the lane
@@ -313,8 +314,7 @@ def test_two_foreign_asks_with_identical_timestamps_keep_append_order(
     tie has to come from the ORIGIN bucket's event order (via the record's
     `from_slug`), not a local index that does not exist for a foreign ask.
     Two asks from the same foreign sender, same second, pin it."""
-    monkeypatch.setattr(requests.time, "time_ns",
-                        lambda: 1_786_000_000 * 10 ** 9)
+    use_clock(FrozenClock(1_786_000_000 * 10 ** 9))
     first = requests.open_request(
         to=store.project_slug(project), ask="review the first PR",
         why="ready", channel="cli-agent", project_dir="/p/B")

@@ -41,12 +41,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import time
-import uuid
 from datetime import datetime, timezone
 
-from . import (buckets, config, display, jsonl, normalize, policy, redact,
-                refutations, store, surfaces)
+from . import (buckets, clock, config, display, jsonl, normalize, policy,
+               redact, refutations, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. Importing the table keeps a
 # future channel tier ("ui", "signed") consistent across ledgers instead of
@@ -344,12 +342,12 @@ def _stamp(event: str, request_id: str, channel: str,
     # #1026: gated BEFORE the row exists, so a refusal leaves nothing for a
     # caller to append by accident.
     act_author = _act_author(channel, author)
-    order = time.time_ns() if now_ns is None else int(now_ns)
+    order, event_id = clock.stamp_identity(now_ns, event_id)
     row = {
         "version": VERSION,
         "ts": _ts(order),
         "order": order,
-        "event_id": event_id or uuid.uuid4().hex,
+        "event_id": event_id,
         "event": event,
         "request_id": request_id,
         "channel": channel,
@@ -1501,7 +1499,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     ask = _scrub("ask", ask)
     why = _scrub("why", why)
     evidence = _scrub("evidence", evidence, required=False)
-    order = time.time_ns()
+    order = clock.now_ns()
     q_id = make_id(slug, ask, why, _ts(order))
     if get(q_id, project_dir=project_dir) is not None:
         raise RequestError(

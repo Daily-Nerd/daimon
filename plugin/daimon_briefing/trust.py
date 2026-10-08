@@ -38,11 +38,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
-import uuid
 from datetime import datetime, timezone
 
-from . import (channels, config, jsonl, normalize, policy, redact, schema, store,
+from . import (channels, clock, config, jsonl, normalize, policy, redact, schema, store,
                surfaces)
 
 VERSION = 1
@@ -204,14 +202,14 @@ def _stamp(event: str, quarantine_id: str, channel: str,
     # Derived, never accepted: no way to name one channel and claim
     # another's authority.
     authority = CHANNEL_AUTHORITY[channel]
-    order = time.time_ns() if now_ns is None else int(now_ns)
+    order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     return {
         "version": VERSION,
         "ts": ts,
         "order": order,
-        "event_id": event_id or uuid.uuid4().hex,
+        "event_id": event_id,
         "event": event,
         "quarantine_id": quarantine_id,
         "channel": channel,

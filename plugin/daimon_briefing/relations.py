@@ -25,11 +25,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
-import uuid
 from datetime import datetime, timezone
 
-from . import channels, config, jsonl, policy, provenance, schema, store
+from . import channels, clock, config, jsonl, policy, provenance, schema, store
 
 
 VERSION = 1
@@ -132,7 +130,7 @@ def make_id(type_: str, from_endpoint: dict, to_endpoint: dict) -> str:
 
 
 def _stamp(event: str, relation_id: str, channel: str,
-           *, now_ns: int | None = None) -> dict:
+           *, now_ns: int | None = None, event_id: str | None = None) -> dict:
     if event not in EVENTS:
         raise RelationError(f"unknown relation event: {event}")
     if not _REL_ID_RE.fullmatch(str(relation_id or "")):
@@ -140,14 +138,14 @@ def _stamp(event: str, relation_id: str, channel: str,
     if channel not in CHANNELS:
         raise RelationError(
             f"channel must be one of: {', '.join(sorted(CHANNELS))}")
-    order = time.time_ns() if now_ns is None else int(now_ns)
+    order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     return {
         "version": VERSION,
         "ts": ts,
         "order": order,
-        "event_id": uuid.uuid4().hex,
+        "event_id": event_id,
         "event": event,
         "relation_id": relation_id,
         "channel": channel,

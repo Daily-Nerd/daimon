@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from daimon_briefing import amendments, jsonl
+from daimon_briefing import amendments, clock, jsonl
 
 from ._prepared import shown, synthetic
 
@@ -174,14 +174,11 @@ def test_reject_then_repropose_reopens_as_candidate(project):
     assert record["history_count"] == 3
 
 
-def test_reopened_proposal_keeps_its_original_created_at(project, monkeypatch):
+def test_reopened_proposal_keeps_its_original_created_at(project, use_clock):
     # `ts` is second-resolution, so a same-second reject/repropose cannot
     # tell a preserved stamp from a reset one and the assertion would pass
     # either way. Pin three distinct seconds so it actually bites.
-    ticks = iter([1_700_000_000_000_000_000,
-                  1_700_000_060_000_000_000,
-                  1_700_000_120_000_000_000])
-    monkeypatch.setattr(amendments.time, "time_ns", lambda: next(ticks))
+    use_clock(clock.StepClock(1_700_000_000 * 10 ** 9, step_ns=60 * 10 ** 9))
     a_id = _propose(project)
     amendments.reject(a_id, channel="cli-tty", project_dir=project)
     assert _propose(project) == a_id

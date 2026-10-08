@@ -15,8 +15,10 @@ import re
 
 import pytest
 
-from daimon_briefing import (config, normalize, pending, redact, refutations,
-                             requests, store)
+from daimon_briefing import (clock, config, normalize, pending, redact,
+                             refutations, requests, store)
+
+from ._prepared import FrozenClock
 
 
 def _iso(offset_seconds=0):
@@ -1070,7 +1072,7 @@ def test_agent_accept_on_a_candidate_ruling_is_refused(project):
 
 
 def test_agent_accept_refuses_when_the_ratifying_machines_clock_leads_this_ones(
-        project, monkeypatch):
+        project):
     """#961 slice 4 review round 2 (H2): `accept()` no longer trusts
     `active_request_policies`'s current-state answer alone — it dry-runs the
     stamped row it is about to write through the SAME order-aware predicate
@@ -1081,15 +1083,12 @@ def test_agent_accept_refuses_when_the_ratifying_machines_clock_leads_this_ones(
     accept stamped with THIS machine's real, current `time.time_ns()`
     therefore falls BEFORE the interval the fold will look for, and must be
     refused here rather than land a row the fold treats as inert forever.
-    Simulated by advancing `refutations.time.time_ns` only for the ratify
-    call, then restoring it before `accept()` stamps its own row with the
-    real, unskewed clock."""
+    Simulated by running only the ratify call under a clock an hour ahead;
+    `accept()` then stamps its own row with the real, unskewed clock."""
     sender_slug = _seed_bucket("/p/req-skew-sender")
-    real_time_ns = time.time_ns
-    future_ns = real_time_ns() + 3600 * 10 ** 9  # an hour ahead
-    monkeypatch.setattr(refutations.time, "time_ns", lambda: future_ns)
-    _cover(project, sender_slug)
-    monkeypatch.setattr(refutations.time, "time_ns", real_time_ns)
+    future_ns = time.time_ns() + 3600 * 10 ** 9  # an hour ahead
+    with clock.use(clock.StepClock(future_ns)):
+        _cover(project, sender_slug)
     q_id = requests.open_request(
         to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
         project_dir=sender_slug)
@@ -4039,10 +4038,10 @@ def test_open_refuses_when_the_sender_project_is_unknown():
 
 
 def test_the_same_ask_twice_in_one_second_is_refused_not_collided(
-        project, monkeypatch):
+        project, use_clock):
     """The id hashes the second, so a re-ask inside one second would land on
     the record already open. It is refused instead of overwriting it."""
-    monkeypatch.setattr(requests.time, "time_ns", lambda: 1_786_000_000 * 10 ** 9)
+    use_clock(FrozenClock(1_786_000_000 * 10 ** 9))
     first = _open(project)
     with pytest.raises(requests.RequestError):
         _open(project)
@@ -6124,18 +6123,16 @@ def test_resolve_covering_open_policy_with_empty_to_returns_none(project):
 
 
 def test_agent_open_refuses_when_the_ratifying_machines_clock_leads_this_ones(
-        project, monkeypatch):
+        project):
     """The H2-review dry run applied to `open_request`: a ruling ratified on
     a machine whose clock runs AHEAD of this one stamps its `order` into
     what is, from here, still the future — an ordinary open stamped with
     THIS machine's real, current `time.time_ns()` falls BEFORE the
     interval's own `active_from` and must be refused here."""
     to_slug = "p-open-skew"
-    real_time_ns = time.time_ns
-    future_ns = real_time_ns() + 3600 * 10 ** 9
-    monkeypatch.setattr(refutations.time, "time_ns", lambda: future_ns)
-    _cover_open(project, to_slug)
-    monkeypatch.setattr(refutations.time, "time_ns", real_time_ns)
+    future_ns = time.time_ns() + 3600 * 10 ** 9
+    with clock.use(clock.StepClock(future_ns)):
+        _cover_open(project, to_slug)
     with pytest.raises(requests.RequestError) as exc_info:
         requests.open_request(
             to=to_slug, ask=ASK, why=WHY, channel="cli-agent", kind="info",

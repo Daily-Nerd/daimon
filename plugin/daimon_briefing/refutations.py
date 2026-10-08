@@ -28,12 +28,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
-import uuid
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import (channels, config, jsonl, normalize, policy, redact, store,
+from . import (channels, clock, config, jsonl, normalize, policy, redact, store,
                surfaces)
 
 
@@ -276,7 +274,7 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
         history = request_policy_history(project_dir=project_dir)
     except Exception:
         history = frozenset()
-    forget_order = time.time_ns()
+    forget_order = clock.now_ns()
     rows = []
     for entry in history:
         sender, to, kind, verb, by, ruling_id, sha, since, until = entry
@@ -655,14 +653,14 @@ def _stamp(event: str, refutation_id: str, channel: str,
     # Derived, never accepted: there is no way to name one channel and claim
     # the authority of another.
     authority = CHANNEL_AUTHORITY[channel]
-    order = time.time_ns() if now_ns is None else int(now_ns)
+    order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     return {
         "version": VERSION,
         "ts": ts,
         "order": order,
-        "event_id": event_id or uuid.uuid4().hex,
+        "event_id": event_id,
         "event": event,
         "refutation_id": refutation_id,
         "channel": channel,

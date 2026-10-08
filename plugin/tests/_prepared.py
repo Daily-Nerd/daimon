@@ -8,6 +8,7 @@ stamps the way `prepare` does. Both call the real functions: nothing here
 decides what is withheld or stamped."""
 
 import dataclasses
+import uuid
 from types import MappingProxyType
 
 from daimon_briefing import briefing, normalize, view
@@ -48,3 +49,17 @@ def shown(checkpoint, snap, now=NOW, *, live=True):
     out, candidates, _stale = briefing.stamp(opened.checkpoint, snap, now,
                                              with_stale=False)
     return out, opened, candidates
+
+
+class FrozenClock:
+    """A clock stuck on one instant, for a test that needs two writes inside
+    the same second. Ids stay random: only the time is pinned."""
+
+    def __init__(self, ns):
+        self._ns = int(ns)
+
+    def now_ns(self):
+        return self._ns
+
+    def new_id(self):
+        return uuid.uuid4().hex
