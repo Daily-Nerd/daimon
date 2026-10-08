@@ -46,3 +46,17 @@ def test_only_the_briefing_parser_is_defined_in_the_module():
     assert public - set(EXPECTED) <= {"dataclass", "field", "ITEM_MARKS",
                                       "RULING_MARK", "WARNING_MARKERS"}
     assert set(EXPECTED) <= public
+
+
+def test_the_api_re_exports_no_writer_less_write_convenience():
+    # Every write exit says who is writing (#1132 PR 10b); a re-export of one
+    # without the `writer` keyword would be a way around the registry.
+    import inspect
+
+    from daimon_briefing import api
+    for name in dir(api):
+        obj = getattr(api, name)
+        if callable(obj) and name in {"write_checkpoint", "append_event"}:
+            assert "writer" in inspect.signature(obj).parameters, name
+    assert not hasattr(api, "write_checkpoint")
+    assert not hasattr(api, "append_event")

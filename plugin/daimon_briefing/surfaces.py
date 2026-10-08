@@ -130,6 +130,9 @@ class Surface(NamedTuple):
     foreign_read: tuple[ReadPosture, ...] = ()
     index_content: bool = False       # recall._fingerprint input (scar 0107)
     mergeable: bool = False           # a legacy-bucket migration moves it
+    # Bytes of an append-only log judged for a write posture (0 = the whole
+    # file). A log that grows without bound must not be parsed per write.
+    tail_bytes: int = 0
     deleter: str = ""                 # forget registry (later PR)
     phase: str = ""                   # forget registry (later PR)
 
@@ -160,6 +163,8 @@ def quarantine_prose() -> tuple["FieldPath", ...]:
 def _scalars(*names: str) -> tuple[FieldPath, ...]:
     return tuple(FieldPath((n,)) for n in names)
 
+
+LOG_TAIL_BYTES = 64 * 1024   # the window a write judges an append-only log by
 
 _RP = ReadPosture
 # R2.3, the human copy lives in tests/test_read_posture_registry.py.
@@ -553,7 +558,8 @@ SURFACES: tuple[Surface, ...] = (
     # surface label only. Query text is deliberately not persisted, so this
     # is an auditable machine-local measurement surface without item prose.
     Surface("logs/recall-delivery.jsonl", "recall_telemetry.record",
-            False, "exempt-no-plaintext", "none", write=_W_EMITTER),
+            False, "exempt-no-plaintext", "none", write=_W_EMITTER,
+            tail_bytes=LOG_TAIL_BYTES),
     # #616 restored the glob's claim instead of widening it: serializer's
     # downgrade lines — the one writer that put item text under this shape —
     # now log a content hash (normalize.content_key, the same key a forget

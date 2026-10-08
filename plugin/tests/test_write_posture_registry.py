@@ -116,3 +116,28 @@ def test_an_ok_or_absent_ledger_always_proceeds(name, writer, state):
         # An undeclared writer is a bug even while the ledger is healthy.
         with pytest.raises(LookupError):
             surfaces.write_posture(row, writer, state.value)
+
+
+def test_only_the_unbounded_logs_are_judged_on_a_tail():
+    bounded = {s.shape: s.tail_bytes for s in surfaces.SURFACES
+               if s.tail_bytes}
+    assert bounded == {"logs/recall-delivery.jsonl": 64 * 1024}
+
+
+# A ledger-shaped file the registry deliberately gives NO write column, so a
+# reader of this table does not take it for an omission. `logs/checks.jsonl`
+# is appended by the stdlib-only hook runtime (checks_runtime.log_firing, a
+# raw open("a") in a standalone script that cannot import the package): it
+# is append-only and its readers skip bad rows. The census in
+# test_write_exit_census.py lists the same exemption.
+WRITE_EXEMPT = {
+    "logs/checks.jsonl": "written by the stdlib-only hook runtime, "
+                         "append-only, reader skips bad rows",
+}
+
+
+def test_every_exempt_log_is_declared_without_a_write_column():
+    for shape, reason in WRITE_EXEMPT.items():
+        row = surfaces.match(shape)
+        assert row is not None and row.shape == shape, shape
+        assert row.write == () and reason

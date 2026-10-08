@@ -345,8 +345,23 @@ def _transient_reason(exc: OSError) -> str:
     return ""
 
 
+def _read_tail(path: Path, n: int) -> bytes:
+    """The last `n` bytes of `path`, from the first line boundary inside them
+    (a partial first line is dropped), or the whole file when it is no bigger.
+    Raises OSError like `_read_bytes`."""
+    with path.open("rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size <= n:
+            return handle.read()
+        handle.seek(size - n)
+        data = handle.read()
+    cut = data.find(b"\n")
+    return data[cut + 1:] if cut >= 0 else b""
+
+
 def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
-         sleep: Callable[[float], None] = time.sleep) -> Read:
+         sleep: Callable[[float], None] = time.sleep,
+         tail_bytes: int | None = None) -> Read:
     """Judge one ledger file, per line, without raising.
 
     Bytes are decoded per line with surrogateescape, so one bad byte costs
@@ -362,7 +377,11 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
     DEGRADED, else OK. A failed open or read is retried `retries` times with
     `backoff` seconds between attempts; a transient errno, a Windows sharing
     violation or a cloud placeholder that still fails is TRANSIENT (never a
-    reason to repair), any other OSError is UNREADABLE. ENOENT is ABSENT."""
+    reason to repair), any other OSError is UNREADABLE. ENOENT is ABSENT.
+
+    `tail_bytes` judges only the last that many bytes, from a line boundary:
+    for an append-only log that grows without bound, whose write must not
+    cost a parse of the whole file. A failed open or stat is judged as ever."""
     reason = ""
     for attempt in range(retries + 1):
         if attempt:
@@ -371,7 +390,8 @@ def read(path: Path, *, retries: int = 3, backoff: float = 0.05,
             if _is_dataless(os.stat(path)):
                 reason = "dataless"
                 continue
-            data = _read_bytes(path)
+            data = (_read_tail(path, tail_bytes) if tail_bytes
+                    else _read_bytes(path))
         except FileNotFoundError:
             return Read(Health.ABSENT, [])
         except OSError as exc:
@@ -516,24 +536,29 @@ PostureArg = Union[WritePosture, Posture, Callable[[], Union[WritePosture,
                                                               Posture]]]
 
 
-def posture(path: Path, name: str, writer: Writer) -> Posture:
+def posture(path: Path, name: str, writer: Writer, *,
+            tail_bytes: int | None = None) -> Posture:
     """Judge `path` once and resolve what a `writer` does with it. `name` is
     the ledger's file name, the key of its registry row. A ledger is PROVEN
     when it is OK, ABSENT or DEGRADED and UNPROVEN when it is TRANSIENT or any
     UNREADABLE (an OS error, an undecodable byte, a garbage line): the
     registry says what each writer class does with an unproven one."""
-    result = read(path)
-    write = surfaces.write_posture(surfaces.write_row(name), writer,
-                                   result.health.value)
+    row = surfaces.write_row(name)
+    result = read(path, tail_bytes=(tail_bytes if tail_bytes is not None
+                                    else row.tail_bytes or None))
+    write = surfaces.write_posture(row, writer, result.health.value)
     return Posture(result.health, result.detail, result.undecodable, write,
                    name, result.cannot_scan, writer is Writer.ADMISSION)
 
 
-def lazy_posture(path: Path, writer: Writer,
-                 name: str | None = None) -> Callable[[], Posture]:
+def lazy_posture(path: Path, writer: Writer, name: str | None = None, *,
+                 tail_bytes: int | None = None) -> Callable[[], Posture]:
     """A zero-argument judgement of `path` for `append_lines`, which calls it
-    under the ledger lock right before the write."""
-    return lambda: posture(path, name or path.name, writer)
+    under the ledger lock right before the write. A ledger the registry
+    bounds (`Surface.tail_bytes`) is judged on its tail unless `tail_bytes`
+    says otherwise."""
+    return lambda: posture(path, name or path.name, writer,
+                           tail_bytes=tail_bytes)
 
 
 # A person at the CLI must be told why a write was refused; a library caller

@@ -38,6 +38,16 @@ POSTURE_CALLS = {("jsonl", "append"), ("jsonl", "append_lines")}
 BARE_PROCEED_ALLOWED = {"refutations.py", "buckets.py"}
 
 
+# Append-only files the package writes (or whose writer ships in it) WITHOUT
+# going through `jsonl.append*`, each with its reason; the registry test lists
+# the same exemption beside its write table.
+EXEMPT_APPENDERS = {
+    "logs/checks.jsonl": "written by the stdlib-only hook runtime "
+                         "(checks_runtime.log_firing), append-only, reader "
+                         "skips bad rows",
+}
+
+
 def _calls(tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -141,3 +151,12 @@ def test_the_scanner_flags_a_bare_proceed_outside_the_cure_modules():
 def test_the_scanner_flags_append_as_without_a_writer():
     assert violations("jsonl.append_as(path, row)\n", "x.py")
     assert not violations("jsonl.append_as(path, row, writer)\n", "x.py")
+
+
+def test_the_exempt_appenders_are_the_ones_the_registry_exempts():
+    from tests.test_write_posture_registry import WRITE_EXEMPT
+    assert set(EXEMPT_APPENDERS) == set(WRITE_EXEMPT)
+    # The runtime really appends outside the package's exits.
+    runtime = Path(daimon_briefing.__file__).parent / "checks_runtime.py"
+    assert "jsonl" not in runtime.read_text(encoding="utf-8").split(
+        "def log_firing", 1)[1].split("\ndef ", 1)[0]
