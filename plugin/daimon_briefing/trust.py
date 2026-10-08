@@ -523,10 +523,10 @@ def _unredacted(row: dict, content_key: str) -> bool:
     marker. The deleter's own predicate, read back off the ledger."""
     marker = store._FORGOTTEN_FIELD_MARKER.format(content_key)
     whole = row.get("value_key") == content_key
-    for fp in surfaces.bucket_ledger(_LEDGER).prose:
-        if len(fp.path) != 1:
-            continue
-        value = row.get(fp.path[0])
+    fields = [fp.path[0] for fp in surfaces.bucket_ledger(_LEDGER).prose
+              if len(fp.path) == 1]
+    for field in fields:
+        value = row.get(field)
         for one in (value if isinstance(value, list) else [value]):
             if (isinstance(one, str) and one.strip() and one != marker
                     and (whole or normalize.content_key(one) == content_key)):
