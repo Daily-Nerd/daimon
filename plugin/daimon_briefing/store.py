@@ -994,10 +994,12 @@ def foreign_forgotten_content_keys() -> set[str]:
     return keys
 
 
-def _foreign_tombstone_paths() -> list:
+def _foreign_tombstone_paths(include_own: bool = False) -> list:
     """Every tombstone ledger another author published in a synced sidecar:
-    the files `foreign_forgotten_content_keys` reads, and the ones
-    `forgotten_stamp` stats."""
+    the files `foreign_forgotten_content_keys` reads. `include_own` adds this
+    author's own ledgers and skips resolving the author, which can fork
+    `git config`: `forgotten_stamp` only needs to notice a change, so it
+    stats a superset and never pays that."""
     out: list = []
     try:
         remotes = [d for d in config.team_dir().iterdir()
@@ -1008,11 +1010,11 @@ def _foreign_tombstone_paths() -> list:
         return out
     # After the cheap exits: `config.author()` may fork `git config`, and a
     # machine with no sidecar must not pay that on every briefing.
-    own = project_slug(config.author()) or "unknown"
+    own = None if include_own else (project_slug(config.author()) or "unknown")
     for remote in remotes:
         try:
             out.extend(p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
-                       if p.parent.name != own)
+                       if own is None or p.parent.name != own)
         except OSError:
             continue
     return out
@@ -1038,7 +1040,7 @@ def forgotten_stamp() -> tuple:
         except OSError:
             local.append((name, None, None, None))
     foreign: list[tuple] = []
-    for path in _foreign_tombstone_paths():
+    for path in _foreign_tombstone_paths(include_own=True):
         try:
             st = os.stat(path)
             foreign.append((str(path), st.st_mtime_ns, st.st_size))
