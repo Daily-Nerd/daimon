@@ -2471,6 +2471,18 @@ def conversation_message_count(messages) -> int:
                if not (isinstance(m, dict) and m.get("tool_result")))
 
 
+def require_enough_messages(messages) -> None:
+    """Raise `TooShortError` for a transcript below `DAIMON_MIN_MESSAGES`: the
+    one gate both `serialize_strict` and the capture preflight (#1132 PR 10b)
+    apply, so a too-short session is a skip before anything else is judged and
+    can never be reported as a refusal."""
+    n = conversation_message_count(messages)
+    if n < config.min_messages():
+        raise TooShortError(
+            f"transcript too short ({n} < {config.min_messages()} messages)"
+        )
+
+
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                      escalate=False, source_ref=None, transcript_hash=None,
                      now=None, coverage=None) -> dict:
@@ -2494,11 +2506,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     """
     if chat is None:
         chat = llm.chat
-    n = conversation_message_count(messages)
-    if n < config.min_messages():
-        raise TooShortError(
-            f"transcript too short ({n} < {config.min_messages()} messages)"
-        )
+    require_enough_messages(messages)
     # #342: first liveness stamp — from here on the child proves it is alive
     # via heartbeats (entry, every chunk/pass, every merge group), so hung
     # detection can trust freshness over total wall-clock. After the

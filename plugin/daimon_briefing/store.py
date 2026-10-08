@@ -26,6 +26,7 @@ merged checkpoint history keeps a deep well of files to reconstruct from.
 
 import dataclasses
 import enum
+import errno
 import json
 import logging
 import os
@@ -38,6 +39,7 @@ from typing import NamedTuple
 
 from . import (config, jsonl, normalize, policy, receipts, redact, schema,
                serializer, surfaces, teamproject)
+from .surfaces import Writer
 
 log = logging.getLogger("daimon_briefing")
 
@@ -901,7 +903,61 @@ def _own_team_dirs(project_dir=None) -> list:
     return out
 
 
-def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
+class Published(list):
+    """The sidecar paths a publish wrote (a `list` of `str`, so `== []` still
+    means "nothing was written"), and what it could NOT write: `failed` is a
+    tuple of `(path, reason)` for every own sidecar that was over the cap,
+    unproven, or refused the append (#1132 PR 10b, D10.5). `keys` is the set
+    of content keys newly written to at least one sidecar."""
+
+    def __init__(self, paths=(), failed=(), keys=frozenset()):
+        super().__init__(paths)
+        self.failed = tuple(failed)
+        self.keys = frozenset(keys)
+
+
+def _publish_keys(content_keys, project_dir) -> Published:
+    """Append each of `content_keys` to the author's own tombstone ledger in
+    every sidecar this project routes to, presence-checked: a key already
+    there is not appended again. The presence check reads the ledger through
+    the capped reader, so a ledger that is over the cap or not proven cannot
+    say whether the key is there; it is a FAILURE (never re-appended as
+    "absent"), reported with its reason."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    written: list[str] = []
+    failed: list[tuple] = []
+    wrote: set = set()
+    for adir in _own_team_dirs(project_dir):
+        path = adir / _TOMBSTONE_NAME
+        got = _tombstone_keys(path)
+        todo = [k for k in content_keys if k not in got.keys]
+        if not todo:
+            continue
+        if got.unproven:
+            why = ("its tombstone ledger is over the 1 MB cap" if got.over_cap
+                   else f"its tombstone ledger is {got.health.value}")
+            failed.append((path, why))
+            continue
+        rows = [json.dumps({"ts": stamp, "key": k,
+                            "author": config.author()}, ensure_ascii=False)
+                for k in todo]
+        try:
+            adir.mkdir(parents=True, exist_ok=True)
+            # lock=False: this dir is committed by teamsync._commit_own, and a
+            # .pointer.lock sidecar would travel to every teammate.
+            jsonl.append_lines(
+                path, rows, lock=False,
+                posture=jsonl.lazy_posture(path, Writer.HUMAN))
+        except OSError as exc:
+            name = errno.errorcode.get(exc.errno or 0, "OSError")
+            failed.append((path, f"{name} while writing"))
+            continue
+        written.append(str(path))
+        wrote.update(todo)
+    return Published(written, failed, wrote)
+
+
+def publish_tombstone(content_hash: str, project_dir=None) -> Published:
     """Publish a forget so teammates can act on it (#600 slice B).
 
     A hash-only row — {ts, key, author}, never the text (#321) — appended
@@ -912,29 +968,24 @@ def publish_tombstone(content_hash: str, project_dir=None) -> list[str]:
 
     Gated on config.team_enabled(): nothing is published into a team the
     user has not opted into. Best-effort — a failed publish never costs the
-    local deletion, which already happened by the time this runs."""
+    local deletion, which already happened by the time this runs; it is
+    reported in `Published.failed` and `forget` exits 4 on it."""
     if not content_hash or not config.team_enabled():
-        return []
+        return Published()
+    return _publish_keys([content_hash], _resolved(project_dir))
+
+
+def republish_tombstones(project_dir=None) -> Published:
+    """Publish every standing local `forgotten:` key the own sidecar is
+    missing (`daimon forget --republish`): the cure for a publish that
+    failed. Presence-checked, so it is safe to repeat. Gated on
+    `team_enabled`; an unproven or over-cap sidecar is reported in
+    `Published.failed` and left alone."""
+    if not config.team_enabled():
+        return Published()
     project_dir = _resolved(project_dir)
-    written: list[str] = []
-    row = json.dumps({
-        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "key": content_hash,
-        "author": config.author(),
-    }, ensure_ascii=False)
-    for adir in _own_team_dirs(project_dir):
-        path = adir / _TOMBSTONE_NAME
-        try:
-            if path.exists() and content_hash in _tombstone_keys(path).keys:
-                continue
-            adir.mkdir(parents=True, exist_ok=True)
-            # lock=False: this dir is committed by teamsync._commit_own, and a
-            # .pointer.lock sidecar would travel to every teammate.
-            jsonl.append_lines(path, [row], lock=False)
-        except OSError:
-            continue
-        written.append(str(path))
-    return written
+    return _publish_keys(sorted(forgotten_content_keys(project_dir)),
+                         project_dir)
 
 
 # One ledger is read on the briefing path, so it cannot be unbounded: a
@@ -1398,10 +1449,78 @@ def _drop_ruling_echoes(checkpoint: dict, project_dir=None) -> list:
         return []
 
 
+def admission_gate(project_dir, writer: Writer) -> set[str]:
+    """The forgotten content keys of this project, from ONE read of its
+    `events.jsonl` that also judges the ledger (#1132 PR 10b, D10.4).
+
+    A forgotten value is kept out of a checkpoint by the keys this returns,
+    so a write that cannot read the tombstones must not guess "none": an
+    unproven ledger (TRANSIENT or any UNREADABLE) raises `jsonl.Refused` for
+    an ADMISSION or a HUMAN write before a byte lands, and a CURE (forget's
+    own rewrite) goes through on the good lines. DEGRADED is proven. An
+    unknown project has no ledger and no keys."""
+    path = _events_path(_resolved(project_dir))
+    if path is None:
+        return set()
+    result = jsonl.read(path)
+    write = surfaces.write_posture(surfaces.bucket_ledger("events.jsonl"),
+                                   writer, result.health.value)
+    if write is surfaces.WritePosture.REFUSE:
+        raise jsonl.Posture(result.health, result.detail, result.undecodable,
+                            write, "events.jsonl", result.cannot_scan,
+                            writer is Writer.ADMISSION).refusal()
+    return _tombstoned_keys(fold_resolutions(result.rows))
+
+
+def admission_state(project_dir) -> tuple[str, str] | None:
+    """(state, hint) when this project's events ledger is NOT proven, so an
+    admission would be refused, else None. The same judgement
+    `admission_gate` makes, as a value instead of a raise, for the serialize
+    ledger's classifier (D10.4)."""
+    path = _events_path(_resolved(project_dir))
+    if path is None:
+        return None
+    judged = jsonl.posture(path, "events.jsonl", Writer.ADMISSION)
+    if judged.write is not surfaces.WritePosture.REFUSE:
+        return None
+    refusal = judged.refusal()
+    return refusal.state, refusal.hint
+
+
+def ledger_file(project_dir, name: str):
+    """The path of the bucket ledger `name` ("amendments.jsonl") of this
+    project, or None when the project names no bucket. The one place a verb
+    resolves a ledger path from a project directory."""
+    slug = project_slug(_resolved(project_dir))
+    return config.checkpoint_dir() / slug / name if slug else None
+
+
+def emitters_open(project_dir) -> bool:
+    """May a machine row be written to this project's events ledger? One
+    judgement for the EMITTER class (D10.4): False when the ledger is not
+    proven, where every emitted row would be SKIPPED anyway. Capture asks once
+    before it emits instead of every row paying for its own read, and, on a
+    transient ledger, for its own retries. An unknown project has no ledger
+    and answers True, as it never blocked anything."""
+    path = _events_path(_resolved(project_dir))
+    if path is None:
+        return True
+    return jsonl.posture(path, "events.jsonl", Writer.EMITTER).write is (
+        surfaces.WritePosture.PROCEED)
+
+
+def admission_preflight(project_dir) -> None:
+    """Refuse an admission BEFORE the model is called when this project's
+    events ledger is not proven (D10.4). The ledger is judged once more by
+    `write_checkpoint`, which stays the enforcing point; this is only the
+    check that costs nothing. Raises `jsonl.Refused(admission=True)`."""
+    admission_gate(_resolved(project_dir), Writer.ADMISSION)
+
+
 def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
                      allow_disabled: bool = False,
                      rotate: bool = True,
-                     admit: bool = False) -> Path | None:
+                     admit: bool = False, *, writer: Writer) -> Path | None:
     """Write the session checkpoint + the global latest pointer, and — when the
     project is known — the per-project latest pointer too. The global pointer is
     kept for backward compatibility (pre-routing consumers and the fallback).
@@ -1418,6 +1537,12 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     rewrite: the maintainer ratified that deletion must still work while
     disabled (the deletion promise outranks "disabled writes nothing").
 
+    `writer` (#1132 PR 10b) is who is writing and is required: ADMISSION for
+    capture and the stdin `write-checkpoint`, HUMAN for `anchor --attach`,
+    CURE for forget's own rewrite. The events ledger is read once, before any
+    write (`admission_gate`): an unproven one refuses ADMISSION and HUMAN
+    with `jsonl.Refused`, and never an empty forgotten set.
+
     `admit=True` (#693) marks this write as an ADMISSION of new cognitive
     content — passed ONLY by the two admission callers (capture.run, the
     `write-checkpoint` stdin path) — and switches on the ruling echo filter.
@@ -1427,6 +1552,9 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     if config.is_disabled() and not allow_disabled:
         return None
     project_dir = _resolved(project_dir)
+    # D10.4: the one read of events.jsonl, before any directory or file is
+    # made, so a refused write leaves nothing behind.
+    forgotten = admission_gate(project_dir, writer)
     d = config.checkpoint_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = _contained_path(d, session_id)
@@ -1449,8 +1577,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     # text the forget command keyed the tombstone on), then id-stamping — lives
     # in policy.admit_checkpoint, pure by contract. The forgotten-keys ledger
     # read is its one I/O dependency, so it happens HERE and is injected.
-    forget_dropped = policy.admit_checkpoint(
-        checkpoint, forgotten_content_keys(project_dir))
+    forget_dropped = policy.admit_checkpoint(checkpoint, forgotten)
     if forget_dropped:
         # #404: account each suppression on the telemetry ledger. Best-effort
         # (never fatal) — a hit record must never fail the capture it observes.
@@ -2242,8 +2369,7 @@ def append_verification(item_ref: str, check: str, reason: str,
         row = policy.admit_row(row, redact_fields=("check", "reason"))
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
-        jsonl.append(path, row)
-        return True
+        return jsonl.append_as(path, row, Writer.EMITTER)
     except OSError:
         return False
 
@@ -2501,8 +2627,8 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
             # Default ensure_ascii (True): this ledger has always been
             # written ASCII-escaped, so the bytes stay what they were.
             lines.append(json.dumps(row))
-        jsonl.append_lines(path, lines)
-        return True
+        return jsonl.append_lines(
+            path, lines, posture=jsonl.lazy_posture(path, Writer.EMITTER)) > 0
     except OSError:
         return False
 
@@ -2569,7 +2695,7 @@ def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "",
                  allow_disabled: bool = False,
-                 tombstone: bool = False) -> bool:
+                 tombstone: bool = False, *, writer: Writer) -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. The ONE exception is
@@ -2615,8 +2741,12 @@ def append_event(item_ref: str, status: str, note: str = "",
             del evt["item_text"]
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
-        jsonl.append(path, evt)
-        return True
+        # `writer` picks the row of the registry's write column (#1132 PR
+        # 10b): a person and an admission are REFUSED an unproven events
+        # ledger, a machine row is SKIPPED, a cure always writes.
+        return jsonl.append_as(path, evt, writer)
+    except jsonl.Refused:
+        raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
 

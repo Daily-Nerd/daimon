@@ -24,6 +24,7 @@ import pytest
 
 from daimon_briefing import capture, cli, store
 from tests.conftest import make_messages
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +59,7 @@ def _agent_candidate(project, sample_checkpoint, quote,
     """Write a prior checkpoint, then `resolve --by agent --evidence` its
     first open question — the standard setup every test below shares.
     Returns the target item dict (with its stable id)."""
-    store.write_checkpoint(prev_session, sample_checkpoint, project_dir=project)
+    store.write_checkpoint(prev_session, sample_checkpoint, project_dir=project, writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir=project,
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)

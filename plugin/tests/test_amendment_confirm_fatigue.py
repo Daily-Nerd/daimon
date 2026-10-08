@@ -17,6 +17,7 @@ import json
 import pytest
 
 from daimon_briefing import amendments, capture, cli, pending, store, transcript
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture
@@ -139,7 +140,7 @@ def test_missing_role_renders_source_unknown(project, capsys):
                               project_dir=project)
     row = amendments._stamp("verified", a_id, "mechanical")
     row["evidence_role"] = ""
-    assert amendments.append(row, project_dir=project)
+    assert amendments.append(row, project_dir=project, writer=Writer.HUMAN)
     assert amendments.found_label(
         amendments.get(a_id, project_dir=project)["evidence_role"]
     ) == "source unknown ⚠"
@@ -164,7 +165,7 @@ def test_found_label_never_says_you_said():
 
 def test_row_shows_loop_text_from_lookup_item(project, capsys):
     store.write_checkpoint("S-1", _checkpoint_with_item(text="ship the fix"),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     a_id = amendments.propose(item_id=ITEM, change="progressed",
                               evidence="the PR merged this morning",
                               channel="cli-agent", project_dir=project)
@@ -281,7 +282,7 @@ def test_extra_read_slug_loop_text_never_leaks_across_projects(
     store.write_checkpoint(
         "S-other",
         _checkpoint_with_item(text="OTHER PROJECT SECRET TEXT"),
-        project_dir=other)
+        project_dir=other, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug(other))
     a_id = amendments.propose(item_id=ITEM, change="progressed",
                               evidence="the PR merged this morning",
@@ -304,7 +305,7 @@ def test_fanout_of_five_renders_one_card_no_confirm_all(project, capsys):
         store.write_checkpoint(f"S-{i}",
                                _checkpoint_with_item(item_id=item_id,
                                                      text=f"loop {i}"),
-                               project_dir=project)
+                               project_dir=project, writer=Writer.HUMAN)
         a_id = amendments.propose(item_id=item_id, change="progressed",
                                   evidence=quote, channel="cli-agent",
                                   project_dir=project)
@@ -629,7 +630,7 @@ def test_rich_brief_carries_the_found_line(monkeypatch, capsys):
 
 
 def test_mcp_brief_carries_the_found_line(project, monkeypatch):
-    store.write_checkpoint("S-1", _checkpoint_with_item(), project_dir=project)
+    store.write_checkpoint("S-1", _checkpoint_with_item(), project_dir=project, writer=Writer.HUMAN)
     a_id = amendments.propose(item_id=ITEM, change="progressed",
                               evidence="the PR merged this morning",
                               channel="cli-agent", project_dir=project)

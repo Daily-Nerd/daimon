@@ -18,6 +18,7 @@ import os
 import time
 
 from daimon_briefing import cli, config, privacy, recall, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 
 # ---- declaration hygiene --------------------------------------------------
@@ -320,7 +321,7 @@ def _write_min_checkpoint():
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "a decision that stays", "trust": "inferred"}]},
-    }, project_dir=_P)
+    }, project_dir=_P, writer=Writer.HUMAN)
 
 
 # ---- ledger columns (#1132) ------------------------------------------------
@@ -348,10 +349,18 @@ def test_field_paths_are_nonempty_tuples_of_str():
 def test_no_ledger_column_is_filled_on_a_non_jsonl_shape():
     jsonl = {s.shape for s in _bucket_jsonl()}
     for s in surfaces.SURFACES:
-        filled = (s.fold or s.prose or s.read or s.write or s.index_content
+        filled = (s.fold or s.prose or s.read or s.index_content
                   or s.mergeable or s.deleter or s.phase)
         if filled:
             assert s.shape in jsonl, f"{s.shape}: ledger column on a non-ledger"
+    # The write column also governs the two append-only ledgers outside a
+    # bucket (the own team tombstones, the recall delivery log).
+    outside = {"team/{remote}/**/tombstones.jsonl",
+               "logs/recall-delivery.jsonl"}
+    for s in surfaces.SURFACES:
+        if s.write:
+            assert s.shape in jsonl | outside, (
+                f"{s.shape}: write column on a non-ledger")
 
 
 def test_every_nonempty_fold_resolves_to_a_callable():
@@ -506,7 +515,7 @@ def test_event_scrub_redacts_exactly_the_registry_event_prose(
     from daimon_briefing import normalize
 
     value = "an event note that must go"
-    store.append_event("o-111aaa", "resolved", note=value, project_dir=_P)
+    store.append_event("o-111aaa", "resolved", note=value, project_dir=_P, writer=Writer.HUMAN)
     _with_prose(monkeypatch, "events.jsonl", ())
     assert store.scrub_event_fields(normalize.content_key(value),
                                     project_dir=_P) == 0

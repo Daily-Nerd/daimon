@@ -15,6 +15,7 @@ fix, and it would be reintroduced for every legacy row by a fix that guessed.
 """
 
 from daimon_briefing import cli, field_table, recall, store
+from daimon_briefing.surfaces import Writer
 
 
 def _cp(sid, items):
@@ -62,7 +63,7 @@ def test_an_item_carries_its_own_stated_by(tmp_checkpoint_dir, tmp_path,
          "stated_by": "ana"},
         {"text": "lemurs are diurnal", "trust": "inferred",
          "stated_by": "ben"},
-    ]), project_dir=proj)
+    ]), project_dir=proj, writer=Writer.HUMAN)
     rows = recall.search("lemurs", project_dir=proj, limit=10)
     got = {r["text"]: r.get("stated_by") for r in rows}
     assert got["lemurs are nocturnal"] == "ana"
@@ -79,7 +80,7 @@ def test_an_item_without_stated_by_is_null_not_the_author(
     monkeypatch.setenv("DAIMON_AUTHOR", "the-host")
     store.write_checkpoint("S-a", _cp("S-a", [
         {"text": "lemur with no speaker", "trust": "inferred"},
-    ]), project_dir=proj)
+    ]), project_dir=proj, writer=Writer.HUMAN)
     row = recall.search("lemur", project_dir=proj, limit=10)[0]
     assert row.get("stated_by") is None
     assert row["author"] == "the-host"
@@ -111,7 +112,7 @@ def test_cli_recall_names_the_stater(tmp_checkpoint_dir, tmp_path,
     monkeypatch.setenv("DAIMON_AUTHOR", "the-host")
     store.write_checkpoint("S-a", _cp("S-a", [
         {"text": "lemur claim", "trust": "inferred", "stated_by": "ana"},
-    ]), project_dir=proj)
+    ]), project_dir=proj, writer=Writer.HUMAN)
     assert cli.main(["recall", "lemur", "--project", proj]) == 0
     assert "stated by ana" in capsys.readouterr().out
 
@@ -124,7 +125,7 @@ def test_cli_recall_says_nothing_when_no_one_is_named(
     monkeypatch.setenv("DAIMON_AUTHOR", "the-host")
     store.write_checkpoint("S-a", _cp("S-a", [
         {"text": "lemur claim", "trust": "inferred"},
-    ]), project_dir=proj)
+    ]), project_dir=proj, writer=Writer.HUMAN)
     assert cli.main(["recall", "lemur", "--project", proj]) == 0
     out = capsys.readouterr().out
     assert "lemur claim" in out

@@ -11,6 +11,7 @@ import json
 import pytest
 
 from daimon_briefing import cli, config, mcp_tools, store
+from daimon_briefing.surfaces import Writer
 
 OWN = "/p/proj-notes-own"
 CLOSED = "/p/proj-notes-closed"
@@ -23,7 +24,7 @@ def _write(project, sid="S1"):
         "working_context": {"recent_decisions": [
             {"text": "a decision worth keeping", "trust": "inferred"}],
             "open_questions": []},
-        "epistemic_snapshot": {}}, project_dir=project)
+        "epistemic_snapshot": {}}, project_dir=project, writer=Writer.HUMAN)
 
 
 @pytest.fixture

@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import buckets, cli, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -82,7 +83,7 @@ def _checkpoint(marker: str, created: str, decisions=None) -> dict:
 def _write(project_dir, marker: str, created: str, decisions=None) -> None:
     """A REAL pointer, written by the store from a full envelope."""
     store.write_checkpoint(marker, _checkpoint(marker, created, decisions),
-                           project_dir=project_dir)
+                           project_dir=project_dir, writer=Writer.HUMAN)
 
 
 def _marker(path: Path) -> str:
@@ -132,7 +133,7 @@ def _stage_legacy_pointers(link, legacy: Path, sessions,
         held = flat.read_bytes() if flat.exists() else None
         cp = _checkpoint(marker, created, decisions)
         cp["project_slug"] = buckets.legacy_slug(link)
-        store.write_checkpoint(marker, cp, project_dir=str(scratch))
+        store.write_checkpoint(marker, cp, project_dir=str(scratch), writer=Writer.HUMAN)
         if held is not None:
             flat.write_bytes(held)
     made = config.checkpoint_dir() / (store.project_bucket(str(scratch)) or "")

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from daimon_briefing import store
+from daimon_briefing.surfaces import Writer
 
 HOOK_DIR = Path(__file__).parents[2] / "hook"
 START_HOOK = HOOK_DIR / "daimon-gemini-session-start.py"
@@ -70,7 +71,7 @@ def test_gemini_session_start_emits_additional_context(
     cwd = "/Users/x/projA"
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-gemini"
-    store.write_checkpoint("S-gemini", mine, project_dir=cwd)
+    store.write_checkpoint("S-gemini", mine, project_dir=cwd, writer=Writer.HUMAN)
 
     proc = _run(START_HOOK, {"cwd": cwd, "session_id": "S-new", "source": "startup"}, tmp_path)
 
@@ -84,7 +85,7 @@ def test_gemini_session_start_emits_additional_context(
 def test_gemini_session_start_labels_global_fallback(
     tmp_checkpoint_dir, sample_checkpoint, tmp_path
 ):
-    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"})
+    store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
 
     proc = _run(START_HOOK, {"cwd": "/p/never-seen", "source": "startup"}, tmp_path)
 

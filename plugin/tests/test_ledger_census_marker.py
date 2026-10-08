@@ -6,6 +6,7 @@ import json
 import os
 
 from daimon_briefing import config, ledger_census, privacy, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/marker-app"
 SECRET = "a distinctive row value the marker must never copy"
@@ -15,8 +16,8 @@ def _marker():
     return config.checkpoint_dir() / store.project_slug(PROJECT) / ".ledger-census"
 
 
-def _write(sid="S1"):
-    return store.write_checkpoint(sid, {"session_id": sid}, project_dir=PROJECT)
+def _write(sid="S1", writer=Writer.HUMAN):
+    return store.write_checkpoint(sid, {"session_id": sid}, project_dir=PROJECT, writer=writer)
 
 
 def _bucket():
@@ -90,7 +91,7 @@ def test_no_marker_under_the_kill_switch_even_for_the_forget_rewrite(
         monkeypatch):
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     store.write_checkpoint("S1", {"session_id": "S1"}, project_dir=PROJECT,
-                           allow_disabled=True)
+                           allow_disabled=True, writer=Writer.HUMAN)
     assert not _marker().exists()
 
 
@@ -133,7 +134,82 @@ def test_the_marker_carries_the_unavailable_forgotten_check():
                     "status": "forgotten:" + normalize.content_key(SECRET)}
                    ).encode() + b'\n{"note": "\xff"}\n')
     (_bucket() / "trust.jsonl").write_bytes(json.dumps({"reason": SECRET}).encode())
-    _write()
+    # A CURE write (forget's own rewrite): an admission would be refused by the
+    # unreadable events ledger (#1132 PR 10b) and never reach the marker.
+    _write(writer=Writer.CURE)
     marker = json.loads(_marker().read_text(encoding="utf-8"))
     assert marker["forgotten_check"] == "unavailable"
     assert marker["ledgers"]["trust.jsonl"]["tombstoned_present"] is None
+
+
+# ---- version 2: "postures live" (#1132 PR 10b, D10.5) ------------------------
+
+def _stamp(version):
+    marker = _marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    body = {"ts": "2026-09-01T00:00:00Z", "forgotten_check": "ok",
+            "ledgers": {}}
+    if version is not None:
+        body["version"] = version
+    marker.write_text(json.dumps(body), encoding="utf-8")
+
+
+def test_the_marker_is_version_2():
+    assert ledger_census.MARKER_VERSION == 2
+    _write()
+    assert json.loads(_marker().read_text(encoding="utf-8"))["version"] == 2
+
+
+def test_a_version_1_marker_reruns_the_census_once_and_is_restamped(
+        monkeypatch):
+    _stamp(1)
+    calls = []
+    real = ledger_census.census_bucket
+    monkeypatch.setattr(ledger_census, "census_bucket",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    _write("S1")
+    assert calls == [1]
+    assert json.loads(_marker().read_text(encoding="utf-8"))["version"] == 2
+    _write("S2")
+    assert calls == [1], "the census runs once per upgrade, not per write"
+
+
+def test_a_marker_without_a_version_or_unparsable_counts_as_version_0():
+    for body in (None, "not json at all", "[1, 2]", '{"version": "two"}'):
+        _stamp(None)
+        if body is not None:
+            _marker().write_text(body, encoding="utf-8")
+        _write("S-x")
+        assert json.loads(
+            _marker().read_text(encoding="utf-8"))["version"] == 2
+
+
+def test_a_newer_marker_is_left_alone(monkeypatch):
+    _stamp(3)
+    first = _marker().read_bytes()
+    monkeypatch.setattr(ledger_census, "census_bucket",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("re-ran")))
+    _write()
+    assert _marker().read_bytes() == first
+
+
+def test_a_bucket_migration_restamps_the_target_marker():
+    from daimon_briefing import buckets
+    target = store.project_slug(PROJECT)
+    legacy = "-legacy-bucket"
+    root = config.checkpoint_dir()
+    (root / legacy).mkdir(parents=True)
+    (root / target).mkdir(parents=True, exist_ok=True)
+    (root / legacy / "events.jsonl").write_text(
+        json.dumps({"item_ref": "i", "ts": "2026-01-01T00:00:00Z"}) + "\n")
+    _stamp(1)
+    marker_before = _marker().read_bytes()
+    from unittest import mock
+    with mock.patch.object(buckets, "legacy_slug", return_value=legacy), \
+            mock.patch.object(buckets, "target_slug", return_value=target):
+        buckets.migrate(PROJECT)
+    assert _marker().read_bytes() != marker_before
+    stamped = json.loads(_marker().read_text(encoding="utf-8"))
+    assert stamped["version"] == 2
+    assert stamped["ledgers"]["events.jsonl"]["state"] == "ok"

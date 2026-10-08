@@ -18,6 +18,7 @@ import json
 from datetime import datetime, timezone
 
 from daimon_briefing import briefing, cli, config, normalize, recall, store
+from daimon_briefing.surfaces import Writer
 
 # Fixed clock threaded into every now-consumer (scar 0016): the checkpoints
 # below carry a simulated calendar, so briefing.build must read the SAME
@@ -76,7 +77,7 @@ def test_forget_scrubs_same_value_sibling_in_another_section(tmp_checkpoint_dir,
             "recent_decisions": [_item(_S), _item(_T)],
             "open_questions": [_item(_S)],
         },
-    }, project_dir=_P)
+    }, project_dir=_P, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     d_id = next(i["id"] for i in stored["working_context"]["recent_decisions"]
@@ -101,7 +102,7 @@ def test_forget_scrubs_widened_hash_sibling_within_one_section(tmp_checkpoint_di
         "working_context": {
             "recent_decisions": [_item(_S), _item(_S), _item(_T)],
         },
-    }, project_dir=_P)
+    }, project_dir=_P, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     ids = [i["id"] for i in stored["working_context"]["recent_decisions"]
@@ -126,7 +127,7 @@ def test_forget_sibling_path_keeps_tombstone_and_normal_output(tmp_checkpoint_di
             "recent_decisions": [_item(_S), _item(_T)],
             "open_questions": [_item(_S)],
         },
-    }, project_dir=_P)
+    }, project_dir=_P, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_P, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     d_id = next(i["id"] for i in stored["working_context"]["recent_decisions"]

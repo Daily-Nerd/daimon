@@ -18,6 +18,7 @@ from pathlib import Path
 from daimon_briefing import (briefing, carry, cli, normalize, policy, recall,
                              redact, store)
 from tests.conftest import FIXTURES
+from daimon_briefing.surfaces import Writer
 
 _A = "/repo/policy-A"
 # A secret redaction masks (AWS access key id: AKIA + 16 uppercase/digits).
@@ -81,7 +82,7 @@ def test_write_checkpoint_drops_reasserted_secret_via_redacted_tombstone(
     redact first so the forget gate matches and the value stays gone."""
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_SECRET_RAW]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     item = stored["working_context"]["recent_decisions"][0]
@@ -89,7 +90,7 @@ def test_write_checkpoint_drops_reasserted_secret_via_redacted_tombstone(
     assert cli.main(["forget", item["id"]]) == 0
 
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_SECRET_RAW, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     latest = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     assert latest["session_id"] == "S2"
@@ -104,7 +105,7 @@ def test_disabled_write_checkpoint_refuses_and_touches_nothing(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     out = store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
-                                 project_dir=_A)
+                                 project_dir=_A, writer=Writer.HUMAN)
     assert out is None
     # no checkpoint file, no pointer, not even the directory
     assert not tmp_checkpoint_dir.exists()
@@ -145,7 +146,7 @@ def test_disabled_forget_still_removes_value_and_appends_tombstone(
         tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
@@ -172,11 +173,11 @@ def test_exemption_is_narrow_default_paths_still_refuse(
     write_checkpoint under the kill switch keep refusing."""
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
-    assert store.append_event("r-x", "resolved", project_dir=_A) is False
+    assert store.append_event("r-x", "resolved", project_dir=_A, writer=Writer.HUMAN) is False
     assert store.write_checkpoint("S2", _cp("S2", "2026-07-02T00:00:00Z", [_T]),
-                                  project_dir=_A) is None
+                                  project_dir=_A, writer=Writer.HUMAN) is None
 
 
 # ---- (d) purity guard: policy.py stays I/O-free (carry.py's contract) ----
@@ -463,7 +464,7 @@ def test_write_checkpoint_binds_origin_to_the_writing_session_and_author(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     item = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                   admit=store.Admit.ANY)["working_context"]["recent_decisions"][0]
     assert item["origin_session"] == "S1"
@@ -481,7 +482,7 @@ def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
 
     _store.write_checkpoint("S-A", _cp("S-A", "2026-07-01T00:00:00Z", [_S]),
-                            project_dir=_A)
+                            project_dir=_A, writer=Writer.HUMAN)
 
     def _write_with_carry(sid, created, texts):
         cp = _cp(sid, created, texts)
@@ -490,7 +491,7 @@ def test_origin_survives_two_carry_hops_while_carried_from_only_names_the_last(
         cp = carry.merge(cp, prev, _store._created_epoch(created),
                          floor=config.carry_floor(), cap=config.carry_max(),
                          resolved=frozenset())
-        _store.write_checkpoint(sid, cp, project_dir=_A)
+        _store.write_checkpoint(sid, cp, project_dir=_A, writer=Writer.HUMAN)
         return cp
 
     # B restates A's decision in its own wording -> native twin, not a copy.

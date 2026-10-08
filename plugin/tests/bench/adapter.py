@@ -41,6 +41,7 @@ from daimon_briefing import carry, config, llm, recall, serializer, store
 
 from tests.bench import cache as cache_mod
 from tests.bench import dataset, metrics
+from daimon_briefing.surfaces import Writer
 
 PROMPT_VERSION = serializer.PROMPT_VERSION
 
@@ -228,7 +229,7 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
                              cap=config.carry_max(), resolved=resolved)
             store._stamp_item_ids(cp)
             carry.bind_links(cp, prev)
-        store.write_checkpoint(sid, cp, project_dir=project_dir)
+        store.write_checkpoint(sid, cp, project_dir=project_dir, writer=Writer.HUMAN)
         tally["indexed"] += 1
         # Attribution is harvested AFTER the write: write_checkpoint mutates the
         # checkpoint in place (redaction, id stamps), and recall indexes the

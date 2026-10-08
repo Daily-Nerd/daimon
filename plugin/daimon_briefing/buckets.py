@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 from . import config, jsonl, store, surfaces
+from .surfaces import WritePosture
 
 
 class MigrationError(RuntimeError):
@@ -296,7 +297,8 @@ def _lines(path: Path) -> list[str]:
 def _append_lines(path: Path, lines: list[str]) -> None:
     """Append `lines`, healing a torn tail first, through the one append every
     ledger shares (`jsonl.append_lines`)."""
-    jsonl.append_lines(path, lines)
+    # A migration is a cure: it writes whatever the target ledger's health.
+    jsonl.append_lines(path, lines, posture=WritePosture.PROCEED)
 
 
 def legacy_leftovers(project_dir) -> tuple[str, ...]:
@@ -642,6 +644,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
         else:
             for path in _pointer_files(target_dir):
                 _restamp(path, legacy, target)
+            store._record_ledger_census(target, force=True)
             record = _record("rename", legacy, target, pointers=pointers,
                              by=by)
             _append_record(record)
@@ -711,6 +714,8 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
             (legacy_dir / name).unlink()
         except OSError:
             pass
+    # The target now holds rows it did not hold when its marker was stamped.
+    store._record_ledger_census(target, force=True)
     leftovers = _leftovers(legacy_dir)
     if not leftovers:
         try:

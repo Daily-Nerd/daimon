@@ -7,6 +7,7 @@ import re
 import pytest
 
 from daimon_briefing import briefing, cli, render, requests, store
+from daimon_briefing.surfaces import Writer
 
 SENDER = "/p/pc-sender"
 RECIPIENT = "/p/pc-recipient"
@@ -17,7 +18,7 @@ def _checkpoint(project, session):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
 
 
 def _ask(sender, recipient, ask):

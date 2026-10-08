@@ -23,6 +23,7 @@ deletion that crosses a trust boundary has no undo.
 import json
 
 from daimon_briefing import cli, config, normalize, schema, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/tombstone-propagation"
 MINE = "a decision this machine extracted on its own"
@@ -70,7 +71,7 @@ def test_forget_publishes_a_hash_only_tombstone_into_the_own_author_dir(
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 0
     published = list(config.team_dir().rglob(store._TOMBSTONE_NAME))
     assert published, "forget published no tombstone for teammates"
@@ -88,7 +89,7 @@ def test_publishing_is_append_only_and_idempotent(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 0
     path = next(iter(config.team_dir().rglob(store._TOMBSTONE_NAME)))
     first = path.read_text()
@@ -101,7 +102,7 @@ def test_publishing_is_skipped_when_team_mirroring_is_off(
     """Nothing is published into a team the user has not opted into."""
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 0
     assert list(config.team_dir().rglob(store._TOMBSTONE_NAME)) == []
 
@@ -202,7 +203,7 @@ def test_default_never_rewrites_this_machines_own_checkpoints(
     """The authority rule: a teammate writing a hash cannot delete local
     belief state. The plaintext stays until the user opts in."""
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     _teammate_publishes_a_tombstone()
     before = [p.read_text() for p in store.project_surfaces(PROJECT)]
     assert store.apply_foreign_tombstones(project_dir=PROJECT) == []
@@ -221,7 +222,7 @@ def test_opt_in_is_off_by_default(monkeypatch):
 def test_opt_in_scrubs_local_copies(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     _teammate_publishes_a_tombstone()
     rewritten = store.apply_foreign_tombstones(project_dir=PROJECT)
     assert rewritten, "opt-in must reach local surfaces"
@@ -238,7 +239,7 @@ def test_opt_in_scrubs_local_copies(tmp_checkpoint_dir, monkeypatch):
 def _seed_for_apply(monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM_APPLY_FORGET", "1")
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     _teammate_publishes_a_tombstone(remote="team-a", author="grace")
     assert any(THEIRS in p.read_text()
                for p in store.project_surfaces(PROJECT)), "seed failed"
@@ -307,10 +308,11 @@ def test_a_failed_publish_never_costs_the_local_deletion(
                        encoding="utf-8")
     monkeypatch.setenv("DAIMON_TEAM_DIR", str(blocked))
     store.write_checkpoint("S1", _cp("S1", [THEIRS, MINE]),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
     assert _local_plaintext_present(), \
         "seed failed — the canary must be on disk BEFORE we assert it is gone"
-    assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 0
+    # Exit 4: scrubbed, with the team publish unreached (#1132 PR 10b).
+    assert cli.main(["forget", THEIRS, "--project", PROJECT]) == 4
     assert store.publish_tombstone(KEY, project_dir=PROJECT) == [], \
         "an unwritable sidecar must report nothing published, not raise"
     assert not _local_plaintext_present(), \

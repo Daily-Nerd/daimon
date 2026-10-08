@@ -92,6 +92,7 @@ DESTS = {
         "reason": ("INE", "R6"),
         "project": ("OUT", "R1"),
         "dry_run": ("OUT", "R3"),
+        "republish": ("OUT", "R3"),
     },
     "reverify": {
         "target": ("OUT", "R2"),

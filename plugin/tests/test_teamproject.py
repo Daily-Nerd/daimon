@@ -13,6 +13,7 @@ import subprocess
 import pytest
 
 from daimon_briefing import config, store, teamproject
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture(autouse=True)
@@ -310,7 +311,7 @@ def test_remap_keeps_prior_history_readable(tmp_path, monkeypatch):
     repo = _repo(tmp_path, "svc", "git@github.com:org/finance-svc.git")
     # Day one, unmapped: ada syncs under the tier-3 origin-derived path.
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-early", _mini_cp("S-early", 30), project_dir=repo)
+    store.write_checkpoint("S-early", _mini_cp("S-early", 30), project_dir=repo, writer=Writer.HUMAN)
     derived = (config.team_dir() / "local" / "projects" / "org" / "finance-svc"
                / "authors" / "ada" / "S-early.json")
     assert derived.exists()
@@ -322,7 +323,7 @@ def test_remap_keeps_prior_history_readable(tmp_path, monkeypatch):
     )
     teamproject._cache.clear()
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("S-late", _mini_cp("S-late", 1), project_dir=repo)
+    store.write_checkpoint("S-late", _mini_cp("S-late", 1), project_dir=repo, writer=Writer.HUMAN)
     mapped = (config.team_dir() / "local" / "projects" / "core" / "finance"
               / "authors" / "grace" / "S-late.json")
     assert mapped.exists()  # new writes land at the mapped path only
@@ -341,11 +342,11 @@ def test_env_override_remap_keeps_prior_history_readable(tmp_path, monkeypatch):
         'repos = ["https://github.com/org/finance-svc"]\n'
     )
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-early", _mini_cp("S-early", 30), project_dir=repo)
+    store.write_checkpoint("S-early", _mini_cp("S-early", 30), project_dir=repo, writer=Writer.HUMAN)
     # This machine later imposes an explicit override (tier 1).
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/special")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("S-late", _mini_cp("S-late", 1), project_dir=repo)
+    store.write_checkpoint("S-late", _mini_cp("S-late", 1), project_dir=repo, writer=Writer.HUMAN)
     assert (config.team_dir() / "local" / "projects" / "squad" / "special"
             / "authors" / "grace" / "S-late.json").exists()
     team = store.read_team(project_dir=repo)
@@ -357,13 +358,13 @@ def test_same_author_across_candidates_newest_wins_once(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     repo = _repo(tmp_path, "svc", "git@github.com:org/finance-svc.git")
-    store.write_checkpoint("S-early", _mini_cp("S-early", 30), project_dir=repo)
+    store.write_checkpoint("S-early", _mini_cp("S-early", 30), project_dir=repo, writer=Writer.HUMAN)
     _write_config(
         '[projects."core/finance"]\n'
         'repos = ["https://github.com/org/finance-svc"]\n'
     )
     teamproject._cache.clear()
-    store.write_checkpoint("S-late", _mini_cp("S-late", 1), project_dir=repo)
+    store.write_checkpoint("S-late", _mini_cp("S-late", 1), project_dir=repo, writer=Writer.HUMAN)
     team = store.read_team(project_dir=repo)
     assert [a for a, _ in team] == ["ada"]  # one entry, no duplicates
     assert team[0][1]["session_id"] == "S-late"  # newest across candidates
@@ -405,7 +406,7 @@ def test_mapped_repos_share_one_team_pool(tmp_path, monkeypatch):
     cp = {"session_id": "S-svc",
           "working_context": {"recent_decisions": [
               {"text": "Adopt the shared pool", "trust": "inferred"}]}}
-    store.write_checkpoint("S-svc", cp, project_dir=svc)
+    store.write_checkpoint("S-svc", cp, project_dir=svc, writer=Writer.HUMAN)
     nested = (config.team_dir() / "local" / "projects" / "core" / "finance"
               / "authors" / "ada" / "S-svc.json")
     assert nested.exists()
@@ -598,9 +599,9 @@ def test_dual_write_scoped_remote_receives_only_member_project(
     _write_config('[scope]\nrepos = ["https://github.com/org/alpha"]\n',
                   remote="team-mem")
     store.write_checkpoint("S-in", {**sample_checkpoint, "session_id": "S-in"},
-                           project_dir=member)
+                           project_dir=member, writer=Writer.HUMAN)
     store.write_checkpoint("S-out", {**sample_checkpoint, "session_id": "S-out"},
-                           project_dir=foreign)
+                           project_dir=foreign, writer=Writer.HUMAN)
     clone_files = {p.name for p in sidecar.rglob("*.json")}
     assert "S-in.json" in clone_files
     assert "S-out.json" not in clone_files  # nothing foreign enters the clone
@@ -616,7 +617,7 @@ def test_dual_write_unscoped_remote_default_closed(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
     sidecar = _remote_clone()
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo)
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo, writer=Writer.HUMAN)
     assert not any(sidecar.rglob("*.json"))
     assert any((config.team_dir() / "local").rglob("*.json"))
 
@@ -628,7 +629,7 @@ def test_dual_write_env_project_reaches_remote(
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/alpha")
     repo = _repo(tmp_path, "alpha", "https://github.com/org/alpha")
     sidecar = _remote_clone()  # no config: env intent alone grants membership
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo)
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=repo, writer=Writer.HUMAN)
     assert any(sidecar.rglob("*.json"))
 
 

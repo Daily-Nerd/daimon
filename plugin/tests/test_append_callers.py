@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import config, jsonl, recall_telemetry, store
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/append-callers"
 KEY_A = "a" * 64
@@ -43,7 +44,7 @@ def _delivery(n):
 
 
 def _event(n):
-    assert store.append_event(f"o-{n}", "resolved", project_dir=PROJECT)
+    assert store.append_event(f"o-{n}", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     return store._events_path(PROJECT)
 
 
@@ -102,7 +103,7 @@ def test_a_clean_tail_gets_no_blank_line(appender, tmp_checkpoint_dir, team,
 def test_events_bytes_are_the_ensure_ascii_false_dump_of_the_row(
         tmp_checkpoint_dir):
     assert store.append_event("o-1", "resolved", note="café   end",
-                              project_dir=PROJECT)
+                              project_dir=PROJECT, writer=Writer.HUMAN)
     raw = store._events_path(PROJECT).read_bytes()
     line = raw.decode("utf-8")
     assert line.endswith("\n") and line.count("\n") == 1

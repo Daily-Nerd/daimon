@@ -977,6 +977,12 @@ def _outstanding_lines(outstanding) -> list:
             )
         elif f["class"] == "unrecoverable":
             lines.append(f"  - {f['sid']}  error {age} ago — transcript unavailable, cannot auto-heal")
+        elif f["class"] == "admission-refused":
+            # D10.4: heal holds this back until the ledger reads again, so
+            # "run heal" alone would send the reader in a circle.
+            lines.append(f"  - {f['sid']}  admission refused: events.jsonl is "
+                         f"{f['state']}; {f['hint']}, then `daimon heal`")
+            continue
         else:
             lines.append(f"  - {f['sid']}  error {age} ago — run `daimon heal`")
         # #474: the cause has always been in the record and was never read.
@@ -1098,6 +1104,11 @@ def _ledger_lines(data: dict) -> list:
     for name, entry in (census.get("other") or {}).items():
         if entry["state"] not in ("ok", "absent"):
             lines.append(f"⚠ ledger file {name}: {_ledger_state_text(entry)}")
+    for entry in census.get("admission") or []:
+        lines.append(
+            f"⚠ admission refused: {entry['count']} session(s) of "
+            f"{entry['slug']} not serialized: events.jsonl is "
+            f"{entry['state']}; {entry['hint']} ({entry['path']})")
     for entry in census.get("forget_incomplete") or []:
         shown = f" ({entry['detail']})" if entry.get("detail") else ""
         lines.append(

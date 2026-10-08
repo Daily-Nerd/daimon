@@ -13,6 +13,7 @@ import pytest
 
 from daimon_briefing import cli
 from tests.conftest import FIXTURES
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture(autouse=True)
@@ -88,7 +89,7 @@ def test_cli_brief_prints_briefing(tmp_checkpoint_dir, sample_checkpoint, capsys
     # Route to the checkpoint's own project — a slugless global-only write
     # would hit the #96 header-only fallback instead of rendering.
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     rc = cli.main(["brief"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -332,9 +333,9 @@ def test_cli_brief_prefers_project_latest(tmp_checkpoint_dir, sample_checkpoint,
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-mine"
     mine["working_context"]["open_questions"][0]["text"] = "PR #42 state — project A loop"
-    store.write_checkpoint("S-mine", mine, project_dir="/p/A")
+    store.write_checkpoint("S-mine", mine, project_dir="/p/A", writer=Writer.HUMAN)
     other = {**sample_checkpoint, "session_id": "S-other"}
-    store.write_checkpoint("S-other", other)  # global latest now belongs to another project
+    store.write_checkpoint("S-other", other, writer=Writer.HUMAN)  # global latest now belongs to another project
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["brief"])
@@ -348,7 +349,7 @@ def test_cli_brief_falls_back_to_global(tmp_checkpoint_dir, sample_checkpoint, c
     # renders only on explicit opt-in (covered by test_brief_fallback_full_*).
     from daimon_briefing import store
 
-    store.write_checkpoint("S-global", sample_checkpoint)
+    store.write_checkpoint("S-global", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/never-seen")
     rc = cli.main(["brief"])
     assert rc == 0
@@ -366,7 +367,7 @@ def test_cli_brief_torn_own_pointer_still_suppresses_the_foreign_body(
     # #96 suppression did not fire and a foreign body rendered with no note.
     from daimon_briefing import store
 
-    store.write_checkpoint("S-global", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-global", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     torn = store.project_latest_path("/p/B")
     torn.parent.mkdir(parents=True, exist_ok=True)
     torn.write_text("{not json", encoding="utf-8")
@@ -386,7 +387,7 @@ def test_cli_brief_torn_own_pointer_opt_in_still_shows_the_foreign_body(
     # route.
     from daimon_briefing import store
 
-    store.write_checkpoint("S-global", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-global", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     torn = store.project_latest_path("/p/B")
     torn.parent.mkdir(parents=True, exist_ok=True)
     torn.write_text("{not json", encoding="utf-8")
@@ -409,9 +410,9 @@ def test_cli_brief_routes_to_cwd_when_no_env(
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-cwd"
     mine["working_context"]["open_questions"][0]["text"] = "PR #99 state — cwd loop"
-    store.write_checkpoint("S-cwd", mine, project_dir=str(proj))
+    store.write_checkpoint("S-cwd", mine, project_dir=str(proj), writer=Writer.HUMAN)
     # another project owns the most recent GLOBAL checkpoint
-    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"})
+    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"}, writer=Writer.HUMAN)
 
     monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
     monkeypatch.chdir(proj)
@@ -429,8 +430,8 @@ def test_cli_brief_project_flag_overrides(
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-flag"
     mine["working_context"]["open_questions"][0]["text"] = "PR #77 state — flag loop"
-    store.write_checkpoint("S-flag", mine, project_dir="/p/flag")
-    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"})
+    store.write_checkpoint("S-flag", mine, project_dir="/p/flag", writer=Writer.HUMAN)
+    store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"}, writer=Writer.HUMAN)
 
     monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
     rc = cli.main(["brief", "--project", "/p/flag"])
@@ -523,7 +524,7 @@ def test_cli_status_project_checkpoint_present(
     # Age now derives from the written `created` stamp, not file mtime (#93), so
     # drive the 3m age through `created` rather than backdating the pointer's mtime.
     old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - (3 * 60 + 5)))
-    store.write_checkpoint("S-prev", {**sample_checkpoint, "created": old}, project_dir="/p/A")
+    store.write_checkpoint("S-prev", {**sample_checkpoint, "created": old}, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
 
     rc = cli.main(["status"])
@@ -547,7 +548,7 @@ def test_cli_status_global_fallback_labeled(
 ):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-global", _with_session(sample_checkpoint, "S-global"))  # global only
+    store.write_checkpoint("S-global", _with_session(sample_checkpoint, "S-global"), writer=Writer.HUMAN)  # global only
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/never-seen")
     rc = cli.main(["status"])
     assert rc == 0  # global exists -> 0
@@ -570,7 +571,7 @@ def test_cli_status_warning_tracks_the_global_fallback_opt_in(
     # in _status_health and still wrong on the surface an operator reads.
     from daimon_briefing import store
 
-    store.write_checkpoint("S-global", _with_session(sample_checkpoint, "S-global"))
+    store.write_checkpoint("S-global", _with_session(sample_checkpoint, "S-global"), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/never-seen")
 
     monkeypatch.delenv("DAIMON_BRIEF_GLOBAL_FALLBACK", raising=False)
@@ -590,7 +591,7 @@ def test_cli_status_same_session_dedup_noted(
     from daimon_briefing import store
 
     # One write updates BOTH pointers with the same session.
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["status"])
     assert rc == 0
@@ -781,7 +782,7 @@ def test_cli_status_json_shape(
 ):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     # #731: _plugin_drift_present() reads Path.home()/.claude/plugins/... —
     # the DEVELOPER'S REAL machine state, untouched by the checkpoint/log/
@@ -839,7 +840,7 @@ def test_cli_status_json_reflects_real_request_counts(
         "session_id": "S-recipient", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-req-a-recipient")
+    }, project_dir="/p/status-req-a-recipient", writer=Writer.HUMAN)
     requests.open_request(
         to=store.project_slug("/p/status-req-a-recipient"), ask="hey",
         why="because", channel="cli-agent", project_dir="/p/status-req-a")
@@ -857,7 +858,7 @@ def test_cli_status_plain_shows_the_requests_line_when_nonzero(
         "session_id": "S-recipient-b", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-req-b-recipient")
+    }, project_dir="/p/status-req-b-recipient", writer=Writer.HUMAN)
     requests.open_request(
         to=store.project_slug("/p/status-req-b-recipient"), ask="hey",
         why="because", channel="cli-agent", project_dir="/p/status-req-b")
@@ -881,7 +882,7 @@ def test_cli_status_json_reports_a_waiting_handoff_baton(
         "session_id": "S-a", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-baton-a")
+    }, project_dir="/p/status-baton-a", writer=Writer.HUMAN)
     assert cli.main(["handoff", "Ship the release next.",
                      "--project", "/p/status-baton-a"]) == 0
     capsys.readouterr()
@@ -904,7 +905,7 @@ def test_cli_status_plain_shows_the_handoff_line_when_waiting(
         "session_id": "S-b", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-baton-b")
+    }, project_dir="/p/status-baton-b", writer=Writer.HUMAN)
     assert cli.main(["handoff", "Ship the release next.",
                      "--project", "/p/status-baton-b"]) == 0
     capsys.readouterr()
@@ -924,7 +925,7 @@ def test_cli_status_silent_on_handoff_when_none_written(
         "session_id": "S-c", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-baton-c")
+    }, project_dir="/p/status-baton-c", writer=Writer.HUMAN)
     rc = cli.main(["status"])
     assert rc == 0
     assert "handoff" not in capsys.readouterr().out.lower()
@@ -971,7 +972,7 @@ def test_cli_status_handoff_fails_open_on_a_broken_reader(
         "session_id": "S-e", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-baton-e")
+    }, project_dir="/p/status-baton-e", writer=Writer.HUMAN)
 
     def boom(project_dir=None):
         raise RuntimeError("boom")
@@ -1005,7 +1006,7 @@ def test_cli_status_plain_silent_when_nothing_recorded(
         "session_id": "S-c", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/status-req-c")
+    }, project_dir="/p/status-req-c", writer=Writer.HUMAN)
     cli.main(["status"])
     out = capsys.readouterr().out
     assert "open sent" not in out
@@ -1026,7 +1027,7 @@ def test_cli_status_project_flag_overrides_env(
 ):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-flag", _with_session(sample_checkpoint, "S-flag"), project_dir="/p/flag")
+    store.write_checkpoint("S-flag", _with_session(sample_checkpoint, "S-flag"), project_dir="/p/flag", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/env")
     rc = cli.main(["status", "--project", "/p/flag"])
     assert rc == 0
@@ -1040,7 +1041,7 @@ def test_cli_status_env_overrides_cwd(
 ):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-env", _with_session(sample_checkpoint, "S-env"), project_dir="/p/env")
+    store.write_checkpoint("S-env", _with_session(sample_checkpoint, "S-env"), project_dir="/p/env", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/env")
     monkeypatch.chdir(tmp_path)  # cwd has no checkpoint; env must win
     rc = cli.main(["status"])
@@ -1058,7 +1059,7 @@ def test_cli_status_project_dot_resolves_to_cwd_checkpoint(
     monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
     proj = (tmp_path / "proj").resolve()
     proj.mkdir()
-    store.write_checkpoint("S-dot", _with_session(sample_checkpoint, "S-dot"), project_dir=str(proj))
+    store.write_checkpoint("S-dot", _with_session(sample_checkpoint, "S-dot"), project_dir=str(proj), writer=Writer.HUMAN)
     monkeypatch.chdir(proj)
     rc = cli.main(["status", "--project", "."])
     assert rc == 0
@@ -1073,7 +1074,7 @@ def test_cli_status_cwd_is_last_resort(
     from daimon_briefing import store
 
     monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
-    store.write_checkpoint("S-cwd", _with_session(sample_checkpoint, "S-cwd"), project_dir=str(tmp_path))
+    store.write_checkpoint("S-cwd", _with_session(sample_checkpoint, "S-cwd"), project_dir=str(tmp_path), writer=Writer.HUMAN)
     monkeypatch.chdir(tmp_path)
     rc = cli.main(["status"])
     assert rc == 0
@@ -1142,7 +1143,7 @@ def test_cli_heal_noop_when_checkpoint_exists(
 
     stem = "sample_transcript"
     transcript = FIXTURES / "sample_transcript.md"
-    store.write_checkpoint(stem, _with_session(sample_checkpoint, stem), project_dir="/p/A")
+    store.write_checkpoint(stem, _with_session(sample_checkpoint, stem), project_dir="/p/A", writer=Writer.HUMAN)
     _write_log(
         tmp_log_dir,
         [
@@ -2277,7 +2278,7 @@ def test_stats_receipt_probe_confirms_without_a_ledger_row(
     _pubkey_dir(tmp_path, monkeypatch)
     _signed_origin("S-origin", receipt_proj)
     store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
-                           project_dir=receipt_proj)
+                           project_dir=receipt_proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
@@ -2301,7 +2302,7 @@ def test_stats_receipt_probe_tampered_then_repaired_cures(
     _pubkey_dir(tmp_path, monkeypatch)
     _signed_origin("S-origin", receipt_proj, tamper=True)
     store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
-                           project_dir=receipt_proj)
+                           project_dir=receipt_proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
@@ -2346,7 +2347,7 @@ def test_stats_receipt_probe_skipped_when_origin_predates_receipts(
     _pubkey_dir(tmp_path, monkeypatch)
     _signed_origin("S-origin", receipt_proj, sidecar=False, receipts_era=False)
     store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
-                           project_dir=receipt_proj)
+                           project_dir=receipt_proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
@@ -2392,7 +2393,7 @@ def test_stats_receipts_line_renders_full_counts(
     _pubkey_dir(tmp_path, monkeypatch)
     _signed_origin("S-origin", receipt_proj)
     store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
-                           project_dir=receipt_proj)
+                           project_dir=receipt_proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
@@ -2415,7 +2416,7 @@ def test_stats_rich_renders_receipts_section(
     _pubkey_dir(tmp_path, monkeypatch)
     _signed_origin("S-origin", receipt_proj)
     store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
-                           project_dir=receipt_proj)
+                           project_dir=receipt_proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
@@ -2439,7 +2440,7 @@ def test_stats_receipts_disabled_counters_untouched_and_line_says_off(
     _pubkey_dir(tmp_path, monkeypatch)
     _signed_origin("S-origin", receipt_proj)  # present on disk, receipts OFF
     store.write_checkpoint("S-mine", _one_receipt_item_checkpoint(),
-                           project_dir=receipt_proj)
+                           project_dir=receipt_proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
@@ -2716,7 +2717,7 @@ def test_stats_store_counts_version_generations(tmp_checkpoint_dir):
     modern = _json.loads(_valid_json("S-new"))
     modern["format_version"] = "D-017"
     modern["extraction_version"] = 2
-    store.write_checkpoint("S-new", modern, project_dir="/p/A")
+    store.write_checkpoint("S-new", modern, project_dir="/p/A", writer=Writer.HUMAN)
     legacy_dir = config.checkpoint_dir()
     (legacy_dir / "S-old.json").write_text(_json.dumps(
         {"session_id": "S-old", "working_context": {}, "epistemic_snapshot": {}}))
@@ -2844,7 +2845,7 @@ def test_cli_brief_survives_broken_handoff_read(
     from daimon_briefing import store
 
     monkeypatch.chdir("/")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.store, "active_handoff",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
     rc = cli.main(["brief", "--project", "/p/A"])
@@ -2859,7 +2860,7 @@ def test_cli_brief_renders_handoff_above_everything(
     from daimon_briefing import store
 
     monkeypatch.chdir("/")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["handoff", "Ship the baton first.", "--project", "/p/A"]) == 0
     capsys.readouterr()
     rc = cli.main(["brief", "--project", "/p/A"])
@@ -3001,7 +3002,7 @@ def test_cli_anchor_attach_single_match_persists(
     from daimon_briefing import store
 
     proj = _anchor_proj(tmp_path, monkeypatch)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     capsys.readouterr()
 
     # "pinning" matches exactly one item: the strong belief.
@@ -3034,7 +3035,7 @@ def test_cli_anchor_attach_zero_matches_exits_nonzero(
     from daimon_briefing import store
 
     proj = _anchor_proj(tmp_path, monkeypatch)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "no-such-text",
                    "--project", str(proj)])
     assert rc != 0
@@ -3052,7 +3053,7 @@ def test_cli_anchor_attach_multiple_matches_lists_candidates(
     from daimon_briefing import store
 
     proj = _anchor_proj(tmp_path, monkeypatch)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     # "serializer" hits the chunk-threshold question AND the D-007 decision.
     rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "serializer",
                    "--project", str(proj)])
@@ -3088,7 +3089,7 @@ def test_cli_anchor_attach_refuses_another_projects_checkpoint(
 
     other = (tmp_path / "other").resolve()
     other.mkdir()
-    store.write_checkpoint("S-other", sample_checkpoint, project_dir=other)
+    store.write_checkpoint("S-other", sample_checkpoint, project_dir=other, writer=Writer.HUMAN)
     proj = _anchor_proj(tmp_path, monkeypatch)  # no bucket of its own
     capsys.readouterr()
 
@@ -3112,7 +3113,7 @@ def test_cli_anchor_attach_missing_session_id_exits_nonzero(
     from daimon_briefing import store
     proj = _anchor_proj(tmp_path, monkeypatch)
     torn = {k: v for k, v in sample_checkpoint.items() if k != "session_id"}
-    store.write_checkpoint("S-torn", torn, project_dir=str(proj))
+    store.write_checkpoint("S-torn", torn, project_dir=str(proj), writer=Writer.HUMAN)
     rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "Chunk threshold",
                    "--project", str(proj)])
     assert rc != 0
@@ -3134,7 +3135,7 @@ def test_cli_anchor_attach_preserves_existing_code_owned_stamps(
     proj = _anchor_proj(tmp_path, monkeypatch)
     stamped = {**sample_checkpoint, "format_version": "D-000",
                "created": "2020-01-01T00:00:00Z", "author": "ada"}
-    store.write_checkpoint("S-prev", stamped, project_dir=proj)
+    store.write_checkpoint("S-prev", stamped, project_dir=proj, writer=Writer.HUMAN)
     capsys.readouterr()
 
     rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "PINNING",
@@ -3155,7 +3156,7 @@ def test_cli_anchor_without_attach_writes_nothing(
     from daimon_briefing import store
 
     proj = _anchor_proj(tmp_path, monkeypatch)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     latest_path = tmp_checkpoint_dir / store.project_slug(proj) / "latest.json"
     before = latest_path.read_text()
     rc = cli.main(["anchor", "pkg/m.py", "foo", "--project", str(proj)])
@@ -3269,7 +3270,7 @@ def test_compute_outstanding_sees_codex_checkpoint_under_rollout_name(
     # can clear the spawn. The checkpoint on disk is named by rollout stem.
     from daimon_briefing import store
 
-    store.write_checkpoint(_CODEX_STEM, sample_checkpoint)
+    store.write_checkpoint(_CODEX_STEM, sample_checkpoint, writer=Writer.HUMAN)
     log = (f"2026-08-08T04:48:19Z codex-session-end: spawned serialize for "
            f"{_CODEX_SID} (reason: exit, project: /p/A)")
     now = datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc).timestamp()
@@ -3669,7 +3670,7 @@ def test_cmd_heal_real_serializes_target(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_heal_plan", lambda text, now, force=False: plan)
     monkeypatch.setattr(cli, "_append_retry_log", lambda *a, **k: None)
     seen = {}
-    monkeypatch.setattr(cli, "_run_serialize", lambda path, proj, escalate=False: seen.update(path=path, proj=proj) or 0)
+    monkeypatch.setattr(cli, "_run_serialize", lambda path, proj, escalate=False, session=None: seen.update(path=path, proj=proj, session=session) or 0)
 
     class A:
         dry_run = False
@@ -3750,7 +3751,7 @@ def test_run_serialize_skips_when_transcript_hash_matches_checkpoint(
     tp = FIXTURES / "sample_transcript.md"
     sid = tp.stem
     sha = transcript.file_sha256(tp)
-    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": sha})
+    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": sha}, writer=Writer.HUMAN)
 
     monkeypatch.setattr(cli, "_chat", fake_chat_factory("must not be called"))
     rc = cli._run_serialize(tp, "/p")
@@ -3769,7 +3770,7 @@ def test_run_serialize_proceeds_when_transcript_hash_differs(
 
     tp = FIXTURES / "sample_transcript.md"
     sid = tp.stem
-    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": "stale-hash"})
+    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": "stale-hash"}, writer=Writer.HUMAN)
 
     monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(sid)))
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
@@ -3792,7 +3793,7 @@ def test_run_serialize_proceeds_when_format_version_is_stale(
     sha = transcript.file_sha256(tp)
     store.write_checkpoint(
         sid,
-        {**json.loads(_valid_json(sid)), "transcript_hash": sha, "format_version": "D-000"},
+        {**json.loads(_valid_json(sid)), "transcript_hash": sha, "format_version": "D-000"}, writer=Writer.HUMAN
     )
 
     monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(sid)))
@@ -3825,7 +3826,7 @@ def test_run_serialize_proceeds_when_existing_checkpoint_has_no_hash(
     sid = tp.stem
     ck = json.loads(_valid_json(sid))
     ck.pop("transcript_hash", None)
-    store.write_checkpoint(sid, ck)
+    store.write_checkpoint(sid, ck, writer=Writer.HUMAN)
 
     monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json(sid)))
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
@@ -3847,7 +3848,7 @@ def test_run_serialize_skip_is_classified_skipped_by_ledger(
     tp = FIXTURES / "sample_transcript.md"
     sid = tp.stem
     sha = transcript.file_sha256(tp)
-    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": sha})
+    store.write_checkpoint(sid, {**json.loads(_valid_json(sid)), "transcript_hash": sha}, writer=Writer.HUMAN)
     monkeypatch.setattr(cli, "_chat", fake_chat_factory("must not be called"))
     cli._run_serialize(tp, "/p")
     capsys.readouterr()
@@ -4046,7 +4047,7 @@ def test_cli_brief_team_shows_teammate(tmp_checkpoint_dir, sample_checkpoint, ca
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
 
     rc = cli.main(["brief", "--team", "--project", proj])
@@ -4063,7 +4064,7 @@ def test_cli_brief_team_excludes_self(tmp_checkpoint_dir, sample_checkpoint, cap
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("a-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
 
     rc = cli.main(["brief", "--team", "--project", proj])
     assert rc == 0
@@ -4076,7 +4077,7 @@ def test_cli_brief_team_empty_is_byte_identical(tmp_checkpoint_dir, sample_check
 
     proj = str((tmp_path / "proj").resolve())
     # DAIMON_TEAM off (fixture default) → nothing mirrored → empty team dir.
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
 
     # #307 sweep: no rendered age on this path, but briefing.build defaults
     # `now` to the live clock for #78 weight ordering, so byte-identity across
@@ -4099,7 +4100,7 @@ def test_cli_brief_team_respects_decision_cap(tmp_checkpoint_dir, sample_checkpo
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "1")  # #77 cap, reused for teammates
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)  # 2 recent_decisions
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)  # 2 recent_decisions
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
 
     rc = cli.main(["brief", "--team", "--project", proj])
@@ -4134,11 +4135,11 @@ def test_cli_brief_team_withholds_a_teammate_item_the_reader_resolved(
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj)
+                       project_dir=proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4168,7 +4169,7 @@ def test_cli_brief_team_header_only_path_withholds_and_says_so(
             "open_questions": [], "recent_decisions": []},
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []}},
-        project_dir=str((tmp_path / "elsewhere").resolve()))
+        project_dir=str((tmp_path / "elsewhere").resolve()), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
     remote = config.team_dir() / "team-a"
     (remote / ".git").mkdir(parents=True, exist_ok=True)
@@ -4188,7 +4189,7 @@ def test_cli_brief_team_header_only_path_withholds_and_says_so(
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }), encoding="utf-8")
-    store.append_event("r-0000000000bb", "resolved", project_dir=proj)
+    store.append_event("r-0000000000bb", "resolved", project_dir=proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4210,11 +4211,11 @@ def test_team_briefings_with_an_events_fold_that_raises_withhold_nothing(
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj)
+                       project_dir=proj, writer=Writer.HUMAN)
 
     real = store.fold_resolutions
     calls = [0]
@@ -4252,7 +4253,7 @@ def test_team_briefings_close_when_the_quarantine_ledger_cannot_be_read(
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     trust.propose(text="Adopt the D-007 prompt for the serializer",
                   kind="decision", reason="fabricated finding",
@@ -4292,12 +4293,12 @@ def test_cli_brief_team_withheld_note_counts_the_teammates_item(
     # directory, so a fixture object written twice mirrors the second file
     # under the first author's name and the teammate renders twice.
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", copy.deepcopy(sample_checkpoint), project_dir=proj)
+    store.write_checkpoint("g-1", copy.deepcopy(sample_checkpoint), project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-1", copy.deepcopy(sample_checkpoint), project_dir=proj)
+    store.write_checkpoint("a-1", copy.deepcopy(sample_checkpoint), project_dir=proj, writer=Writer.HUMAN)
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj)
+                       project_dir=proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4319,11 +4320,11 @@ def test_cli_brief_team_resolved_item_does_not_take_a_capped_slot(
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("g-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj)
+                       project_dir=proj, writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4343,7 +4344,7 @@ def test_cli_brief_team_labels_foreign_verbatim_claim(tmp_checkpoint_dir, sample
 
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-1", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("a-1", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
 
     # A single synced clone; the env grant is this machine's explicit intent.
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/x")
@@ -4400,7 +4401,7 @@ def test_cli_recall_prints_result_lines(tmp_checkpoint_dir, capsys, monkeypatch,
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
-        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj)
+        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj, writer=Writer.HUMAN)
     rc = cli.main(["recall", "pangolin", "--project", proj])
     assert rc == 0
     out = capsys.readouterr().out
@@ -4421,7 +4422,7 @@ def test_cli_recall_writes_a_recall_search_row_with_via_cli(
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
-        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj)
+        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj, writer=Writer.HUMAN)
     rc = cli.main(["recall", "pangolin", "--project", proj])
     assert rc == 0
     capsys.readouterr()
@@ -4461,7 +4462,7 @@ def test_cli_recall_multiword_query(tmp_checkpoint_dir, capsys, monkeypatch, tmp
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
-        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj)
+        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj, writer=Writer.HUMAN)
     rc = cli.main(["recall", "pangolin", "caching", "--project", proj])
     assert rc == 0
     assert "pangolin caching" in capsys.readouterr().out
@@ -4478,13 +4479,13 @@ def test_cli_recall_flags_typed_supersession_only(
         "S-old", _recall_checkpoint(
             "S-old", "meerkat burrow mapping plan for the colony",
             "2021-01-01T00:00:00Z"),
-        project_dir=proj)
+        project_dir=proj, writer=Writer.HUMAN)
     newer = _recall_checkpoint(
         "S-new", "abandoned meerkat burrow mapping plan colony too unstable",
         "2025-01-01T00:00:00Z")
     newer["working_context"]["recent_decisions"][0]["links"] = [
         {"type": "supersedes", "target": "meerkat burrow mapping plan colony"}]
-    store.write_checkpoint("S-new", newer, project_dir=proj)
+    store.write_checkpoint("S-new", newer, project_dir=proj, writer=Writer.HUMAN)
     rc = cli.main(["recall", "meerkat", "--project", proj])
     assert rc == 0
     lines = [ln for ln in capsys.readouterr().out.splitlines() if "meerkat" in ln]
@@ -4512,13 +4513,13 @@ def test_cli_recall_says_which_writer_superseded_an_item(
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     cp = _recall_checkpoint("S-linked", "meerkat burrow mapping plan colony")
-    store.write_checkpoint("S-linked", cp, project_dir=proj)
+    store.write_checkpoint("S-linked", cp, project_dir=proj, writer=Writer.HUMAN)
     newer = _recall_checkpoint(
         "S-new", "abandoned meerkat burrow mapping plan colony too unstable",
         "2025-06-01T00:00:00Z")
     newer["working_context"]["recent_decisions"][0]["links"] = [
         {"type": "supersedes", "target": "meerkat burrow mapping plan colony"}]
-    store.write_checkpoint("S-new", newer, project_dir=proj)
+    store.write_checkpoint("S-new", newer, project_dir=proj, writer=Writer.HUMAN)
 
     assert cli.main(["recall", "meerkat", "--project", proj]) == 0
     line = [ln for ln in capsys.readouterr().out.splitlines()
@@ -4537,9 +4538,9 @@ def test_cli_recall_marks_a_human_resolution_as_recorded(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     cp = _recall_checkpoint("S-res", "meerkat burrow mapping plan colony")
     cp["working_context"]["recent_decisions"][0]["id"] = "o-mee111"
-    store.write_checkpoint("S-res", cp, project_dir=proj)
+    store.write_checkpoint("S-res", cp, project_dir=proj, writer=Writer.HUMAN)
     store.append_event("o-mee111", "superseded-by:o-later22", source="cli",
-                       project_dir=proj)
+                       project_dir=proj, writer=Writer.HUMAN)
 
     assert cli.main(["recall", "meerkat", "--project", proj]) == 0
     line = [ln for ln in capsys.readouterr().out.splitlines()
@@ -4560,7 +4561,7 @@ def test_cli_recall_marks_contradiction_evidence(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     cp = _recall_checkpoint("S-bad", "meerkat burrow mapping plan colony")
     cp["working_context"]["recent_decisions"][0]["id"] = "o-bad111"
-    store.write_checkpoint("S-bad", cp, project_dir=proj)
+    store.write_checkpoint("S-bad", cp, project_dir=proj, writer=Writer.HUMAN)
     _write_verification_ledger(store.project_slug(proj), [
         {"ts": "2026-08-29T10:00:00Z", "check": "receipt",
          "item_ref": "o-bad111", "reason": "receipt-invalid"}])
@@ -4583,7 +4584,7 @@ def test_cli_recall_marks_a_cleared_contradiction(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     cp = _recall_checkpoint("S-cured", "meerkat burrow mapping plan colony")
     cp["working_context"]["recent_decisions"][0]["id"] = "o-mee111"
-    store.write_checkpoint("S-cured", cp, project_dir=proj)
+    store.write_checkpoint("S-cured", cp, project_dir=proj, writer=Writer.HUMAN)
     _write_verification_ledger(store.project_slug(proj), [
         {"ts": "2026-08-29T10:00:00Z", "check": "receipt",
          "item_ref": "o-mee111", "reason": "receipt-invalid"},
@@ -4627,7 +4628,7 @@ def test_cli_recall_json(tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint(
-        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj)
+        "S1", _recall_checkpoint("S1", "Adopt pangolin caching"), project_dir=proj, writer=Writer.HUMAN)
     rc = cli.main(["recall", "pangolin", "--project", proj, "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
@@ -4646,9 +4647,9 @@ def test_cli_recall_project_scoping_and_all_projects(tmp_checkpoint_dir, capsys,
     monkeypatch.setenv("DAIMON_TEAM", "1")  # team stamp attributes both projects
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-a", _recall_checkpoint("S-a", "lemur work in a"),
-                           project_dir=proj_a)
+                           project_dir=proj_a, writer=Writer.HUMAN)
     store.write_checkpoint("S-b", _recall_checkpoint("S-b", "lemur work in b"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
 
     rc = cli.main(["recall", "lemur", "--project", proj_a])
     assert rc == 0
@@ -4675,7 +4676,7 @@ def test_cli_recall_hostile_query_never_tracebacks(tmp_checkpoint_dir, capsys, m
 
     proj = str((tmp_path / "proj").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S1", _recall_checkpoint("S1", "x"), project_dir=proj)
+    store.write_checkpoint("S1", _recall_checkpoint("S1", "x"), project_dir=proj, writer=Writer.HUMAN)
     for hostile in ['"', 'AND', '(((', 'a NEAR/2 b', '🔥"']:
         rc = cli.main(["recall", hostile, "--project", proj])
         assert rc == 0  # weird query → no matches, never a traceback
@@ -4797,7 +4798,7 @@ def _seed_recall_history(project="/repo/x"):
              "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=project,
+        project_dir=project, writer=Writer.HUMAN
     )
     store.write_checkpoint(
         "S-latest",
@@ -4807,7 +4808,7 @@ def _seed_recall_history(project="/repo/x"):
              "open_questions": [], "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=project,
+        project_dir=project, writer=Writer.HUMAN
     )
 
 
@@ -4927,7 +4928,7 @@ def _seed_two_wide_items(project="/repo/wide"):
                  "recent_decisions": []},
              "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                     "contradictions_flagged": []}},
-            project_dir=project,
+            project_dir=project, writer=Writer.HUMAN
         )
     store.write_checkpoint(
         "S-wide-latest",
@@ -4938,7 +4939,7 @@ def _seed_two_wide_items(project="/repo/wide"):
              "open_questions": [], "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=project,
+        project_dir=project, writer=Writer.HUMAN
     )
 
 
@@ -5219,7 +5220,7 @@ def _seed_item(session, text, importance, project="/repo/x",
              "recent_decisions": []},
          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=project,
+        project_dir=project, writer=Writer.HUMAN
     )
 
 
@@ -5462,7 +5463,7 @@ def _seed_aged(session, text, importance, *, days_old, kind="decision",
              "open_questions": questions, "recent_decisions": decisions},
          "epistemic_snapshot": {"strong_beliefs": beliefs, "uncertainties": [],
                                 "contradictions_flagged": []}},
-        project_dir=project,
+        project_dir=project, writer=Writer.HUMAN
     )
 
 
@@ -5688,7 +5689,7 @@ def _prev_with_open_question(project, prev_created, first_seen):
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
     }
-    store.write_checkpoint("S-prev", prev, project_dir=project)
+    store.write_checkpoint("S-prev", prev, project_dir=project, writer=Writer.HUMAN)
 
 
 def test_serialize_carry_folds_prev_open_question(
@@ -5918,7 +5919,7 @@ def test_carry_still_carries_candidate_ref(tmp_checkpoint_dir, monkeypatch):
     project = "/p/candidate-carry-pin"
     monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
     store.append_event("X", "supersede-candidate:r-new", source="serializer",
-                       project_dir=project)
+                       project_dir=project, writer=Writer.HUMAN)
 
     events = store.resolutions(project_dir=project)
     resolved = frozenset(ref for ref, evt in events.items()
@@ -5948,7 +5949,7 @@ def test_candidate_emission_skips_forgotten_value(tmp_checkpoint_dir, monkeypatc
     # never tombstoned, so the human-speaks-once gate cannot save us here.
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
-                       project_dir=project, tombstone=True)
+                       project_dir=project, tombstone=True, writer=Writer.HUMAN)
 
     pairs = [("r-old0001", "r-new0001", _FORGOTTEN_TEXT),
              ("r-old0002", "r-new0002", _CONTROL_TEXT)]
@@ -5962,24 +5963,39 @@ def test_candidate_emission_skips_forgotten_value(tmp_checkpoint_dir, monkeypatc
     assert count == 1
 
 
-def test_candidate_emission_emits_nothing_when_forgotten_keys_read_fails(
+def test_candidate_emission_is_skipped_when_the_events_ledger_is_unproven(
         tmp_checkpoint_dir, monkeypatch):
-    # Fail-safe direction: if we cannot PROVE a value isn't forgotten, emit
-    # nothing — a missed candidate event costs a suggestion; a leaked value
-    # costs the deletion guarantee.
+    # An EMITTER write to an unproven events ledger is SKIPPED (#1132 PR 10b):
+    # a missed suggestion costs a candidate event, and nothing is written into
+    # a ledger whose tombstones cannot be read. The read-side `except` that
+    # used to stand guard here could not fire (`jsonl.read` never raises).
     from daimon_briefing import store
 
     project = "/p/candidate-keys-broken"
     monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    path = store._events_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<<<<<<< conflict\n")
+    pairs = [("r-old0001", "r-new0001", "a perfectly ordinary decision text")]
+    assert cli._emit_supersede_candidates(pairs, {}, project) == 0
+    assert path.read_bytes() == b"<<<<<<< conflict\n"
+
+
+def test_candidate_emission_has_no_guard_around_the_forgotten_read(
+        tmp_checkpoint_dir, monkeypatch):
+    # The dead guard is gone: a read that DOES raise is a bug and surfaces.
+    from daimon_briefing import store
+
+    project = "/p/candidate-keys-bug"
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
 
     def _boom(*args, **kwargs):
-        raise RuntimeError("ledger unreadable")
+        raise RuntimeError("a bug in the fold")
 
     monkeypatch.setattr(store, "forgotten_content_keys", _boom)
     pairs = [("r-old0001", "r-new0001", "a perfectly ordinary decision text")]
-    assert cli._emit_supersede_candidates(pairs, {}, project) == 0
-    slug = store.project_slug(project)
-    assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
+    with pytest.raises(RuntimeError):
+        cli._emit_supersede_candidates(pairs, {}, project)
 
 
 def test_serialize_supersede_candidate_never_leaks_forgotten_text(
@@ -6010,7 +6026,7 @@ def test_serialize_supersede_candidate_never_leaks_forgotten_text(
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
     }
-    store.write_checkpoint("S-prev", prev, project_dir=project)
+    store.write_checkpoint("S-prev", prev, project_dir=project, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     forgotten_id = next(
@@ -6022,7 +6038,7 @@ def test_serialize_supersede_candidate_never_leaks_forgotten_text(
     # human-speaks-once gate blocks the pair.
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
-                       project_dir=project, tombstone=True)
+                       project_dir=project, tombstone=True, writer=Writer.HUMAN)
 
     # 3. New session supersedes BOTH prev decisions by free-text target.
     # Native texts share no salient vocabulary with prev texts (no twin
@@ -6097,7 +6113,7 @@ def test_brief_labels_global_fallback_for_other_project(
     # brief --project X with no checkpoint for X silently rendered ANOTHER
     # project's briefing. status labels the same fallback; brief must too.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/some-other-project"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6107,7 +6123,7 @@ def test_brief_labels_global_fallback_for_other_project(
 def test_brief_no_fallback_label_for_own_project(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     assert "fallback" not in capsys.readouterr().out.lower()
@@ -6120,7 +6136,7 @@ def test_brief_fallback_header_only_by_default(
     # contamination. Default is now an orientation header; the foreign body
     # renders only on explicit opt-in.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/some-other-project"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6138,7 +6154,7 @@ def test_brief_fallback_header_still_renders_handoff_baton(
     # `daimon status` said "waiting baton". The baton must lead even the
     # no-briefing note.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     assert cli.main(["handoff", "Wire the gateway first. Beware rate limits.",
                      "--project", "/repo/fresh"]) == 0
     capsys.readouterr()
@@ -6155,7 +6171,7 @@ def test_brief_fallback_header_still_renders_handoff_baton(
 def test_brief_fallback_full_via_flag(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/other", "--global-fallback"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6167,7 +6183,7 @@ def test_brief_fallback_full_via_env(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/other"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6182,7 +6198,7 @@ def test_brief_fallback_header_only_with_team_shows_teammates(
     # any machine with a global pointer but no own-project checkpoint, which
     # is exactly the new-teammate case where reading the team matters most.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def _fake_read_team(project_dir=None):
         assert project_dir == "/repo/some-other-project"
@@ -6203,7 +6219,7 @@ def test_brief_fallback_header_only_without_team_flag_unchanged(
     # Same setup as above, but no --team: output must stay byte-identical to
     # the pre-#223 behavior — no teammate content, no regression of #96.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def _fake_read_team(project_dir=None):
         return [("grace", sample_checkpoint)]
@@ -6222,7 +6238,7 @@ def test_brief_fallback_header_only_with_team_empty_is_byte_identical(
     # Empty team -> _print_teammates no-ops -> --team must not change a single
     # byte of the header-only fallback note for a team-less machine.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     # #307: the fallback header embeds a truncated relative age read from the
     # live clock (cli's `_format_age(time.time() - epoch)`), so two calls
@@ -6245,7 +6261,7 @@ def test_brief_withholds_resolved_item_and_notes_suppression(
     # #103: a resolved item must not print in the brief, and the withheld
     # count must be announced so the suppression is never silent.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     # write_checkpoint stamps a stable per-item id (#102) on every item, so a
     # real checkpoint's items are id-bearing by the time brief reads them —
     # resolve that exact id (the id-less fuzzy path is for legacy checkpoints
@@ -6254,7 +6270,7 @@ def test_brief_withholds_resolved_item_and_notes_suppression(
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6283,7 +6299,7 @@ def test_brief_warns_on_stale_carried_item(
         "trust": "inferred", "carried_from": "S-prev",
         "first_seen": stale_iso,
     }]
-    store.write_checkpoint("S-mine", cp, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", cp, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6318,12 +6334,12 @@ def test_brief_reverify_restores_stored_tag_on_stale_carried_item(
         "trust": "inferred", "carried_from": "S-prev",
         "first_seen": stale_iso,
     }]
-    store.write_checkpoint("S-mine", cp, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", cp, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][0]["id"]
-    store.append_event(item_id, "reopened", project_dir="/repo/x")
+    store.append_event(item_id, "reopened", project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6337,7 +6353,7 @@ def test_brief_no_stale_note_when_nothing_stale(
     # House rule: no line, no false alarms — a briefing with no stale carried
     # items must emit NOTHING about staleness.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6351,7 +6367,7 @@ def test_brief_renders_nothing_when_the_preparation_raises(
     # swallowed into a briefing without its marks: one error line, rc 2, and
     # nothing rendered. (The #215/#977 fail-open it replaces hid the bug.)
     from daimon_briefing import briefing, store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("boom")
@@ -6371,7 +6387,7 @@ def test_brief_fails_open_when_resolutions_raises(
     # a events fold that raises still renders the brief (no loop is closed
     # by a ledger nobody could read), exits clean, and says which ledger.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("boom")
@@ -6389,13 +6405,13 @@ def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkp
     # item(s) withheld" note with the actual listing, formatting what view.suppressed
     # decides rather than reimplementing the classification.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][1]
     item_id = item["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6412,7 +6428,7 @@ def test_status_suppressed_lists_a_quarantined_item(tmp_checkpoint_dir, sample_c
     # suppressed listing too, the same way a resolution does.
     # #1132 PR 7b: the row names the item and the record, never the text.
     from daimon_briefing import store, trust
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN,
                                      admit=store.Admit.ANY)
@@ -6439,15 +6455,15 @@ def test_status_suppressed_never_lists_a_forgotten_item(
     # #1132 PR 7b: a forgotten value reads as absent here, listed or counted
     # nowhere, even when a resolution also closed it.
     from daimon_briefing import normalize, store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN,
                                      admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][1]
-    store.append_event(item["id"], "resolved", project_dir="/repo/x")
+    store.append_event(item["id"], "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     key = normalize.content_key(item["text"])
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir="/repo/x")
+                       tombstone=True, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6460,7 +6476,7 @@ def test_status_suppressed_says_so_when_the_trust_ledger_cannot_be_read(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     # never "no suppressed items": nothing can be proven not quarantined
     from daimon_briefing import config, store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     bucket = config.checkpoint_dir() / store.project_slug("/repo/x")
     with open(bucket / "trust.jsonl", "ab") as fh:
         fh.write(b"<<<<<<< HEAD\n")
@@ -6478,13 +6494,13 @@ def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, samp
     # but withhold used to iterate only carry._CARRIED_KINDS (3 of 5) — a
     # resolved strong_beliefs id never suppressed. Cover the gap end-to-end.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item = written["epistemic_snapshot"]["strong_beliefs"][0]
     item_id = item["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x")
+    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6517,13 +6533,13 @@ def test_a_live_question_sharing_a_resolved_ones_vocabulary_survives_the_brief(
     closed = "should the exporter batch rows before writing the archive"
     live = "should the exporter compress the archive before writing it to disk"
     store.write_checkpoint("S1", _q_checkpoint("S1", closed, quote=closed,
-                                               trust="verbatim"), project_dir=P)
+                                               trust="verbatim"), project_dir=P, writer=Writer.HUMAN)
     first = store.read_latest_body(project_dir=P, route=store.Route.OWN,
                                    admit=store.Admit.ANY)
     closed_id = first["working_context"]["open_questions"][0]["id"]
-    store.append_event(closed_id, "resolved", project_dir=P)
+    store.append_event(closed_id, "resolved", project_dir=P, writer=Writer.HUMAN)
     merged = capture.carry_forward(_q_checkpoint("S2", live), P)
-    store.write_checkpoint("S2", merged, project_dir=P)
+    store.write_checkpoint("S2", merged, project_dir=P, writer=Writer.HUMAN)
     assert cli.main(["brief", "--project", P]) == 0
     out = capsys.readouterr().out
     assert live in out
@@ -6543,13 +6559,13 @@ def test_status_suppressed_names_an_inherited_identity_with_the_live_wording(
     closed = "dead loop no longer relevant"
     reworded = "dead loop is no longer relevant now"
     store.write_checkpoint("S1", _q_checkpoint("S1", closed, quote=closed,
-                                               trust="verbatim"), project_dir=P)
+                                               trust="verbatim"), project_dir=P, writer=Writer.HUMAN)
     first = store.read_latest_body(project_dir=P, route=store.Route.OWN,
                                    admit=store.Admit.ANY)
     closed_id = first["working_context"]["open_questions"][0]["id"]
-    store.append_event(closed_id, "resolved", project_dir=P)
+    store.append_event(closed_id, "resolved", project_dir=P, writer=Writer.HUMAN)
     merged = capture.carry_forward(_q_checkpoint("S2", reworded), P)
-    store.write_checkpoint("S2", merged, project_dir=P)
+    store.write_checkpoint("S2", merged, project_dir=P, writer=Writer.HUMAN)
     assert cli.main(["status", "--suppressed", "--project", P]) == 0
     out = capsys.readouterr().out
     assert closed_id in out
@@ -6560,7 +6576,7 @@ def test_status_suppressed_names_an_inherited_identity_with_the_live_wording(
 
 def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6573,7 +6589,7 @@ def test_status_suppressed_none_prints_message(tmp_checkpoint_dir, sample_checkp
 def test_brief_shows_annotation_and_status_lists_subsection(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -6581,7 +6597,7 @@ def test_brief_shows_annotation_and_status_lists_subsection(
     item_id = item["id"]
     # new-id must be serializer-shaped (kind initial + hex slice) — withhold's
     # #14 shape gate refuses anything else, so the fixture uses a real shape.
-    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x", writer=Writer.HUMAN)
 
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
@@ -6606,12 +6622,12 @@ def test_transient_field_never_persisted(tmp_checkpoint_dir, sample_checkpoint, 
     # no writer ever persists it. Run a brief (which triggers withhold), then
     # re-read the checkpoint straight off disk and confirm it never appears.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["recent_decisions"][0]["id"]
-    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x")
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x", writer=Writer.HUMAN)
 
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
@@ -6865,7 +6881,7 @@ def test_crash_log_info_bad_header_stamp_falls_back_to_mtime(tmp_path):
 
 def test_status_json_includes_crash_info(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import config, store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     crash = config.log_dir() / "serialize-crash.log"
     crash.parent.mkdir(parents=True, exist_ok=True)
     crash.write_text(
@@ -6880,7 +6896,7 @@ def test_status_json_includes_crash_info(tmp_checkpoint_dir, sample_checkpoint, 
 
 def test_status_plain_shows_crash_line(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import config, store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     crash = config.log_dir() / "serialize-crash.log"
     crash.parent.mkdir(parents=True, exist_ok=True)
     crash.write_text(
@@ -6899,7 +6915,7 @@ def test_status_plain_shows_recall_index_attribution(
     # #233: dark matter must be visible — a stampless legacy flat file indexes
     # with project_slug NULL and only status can tell the user it exists.
     from daimon_briefing import config, recall, store
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     (config.checkpoint_dir() / "S9.json").write_text(json.dumps({
         "session_id": "S9",
         "working_context": {
@@ -6922,7 +6938,7 @@ def test_status_plain_recall_index_clause_drops_when_fully_attributed(
     # Silence stays the default: a fully-stamped store shows the count with
     # no dark-matter clause.
     from daimon_briefing import recall, store
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     recall.rebuild()
     capsys.readouterr()
     assert cli.main(["status"]) == 0
@@ -6937,7 +6953,7 @@ def test_status_rich_shows_recall_index_attribution(
     pytest.importorskip("rich")
     from daimon_briefing import config, recall, render, store
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     (config.checkpoint_dir() / "S9.json").write_text(json.dumps({
         "session_id": "S9",
         "working_context": {
@@ -6960,7 +6976,7 @@ def test_status_plain_no_recall_index_line_without_db(
     # No index on disk -> no line, and status must NOT build one as a side
     # effect (the helper is read-only by contract).
     from daimon_briefing import config, store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["status"]) == 0
     out = capsys.readouterr().out
     assert "recall index:" not in out
@@ -6972,7 +6988,7 @@ def test_status_plain_no_crash_line_for_warnings_only_log(
     # #194: the live misreport — lastResort warnings in serialize-crash.log
     # made status render "last serialize crash" for a healthy pipeline.
     from daimon_briefing import config, store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     crash = config.log_dir() / "serialize-crash.log"
     crash.parent.mkdir(parents=True, exist_ok=True)
     crash.write_text(
@@ -6984,7 +7000,7 @@ def test_status_plain_no_crash_line_for_warnings_only_log(
 
 def test_status_plain_no_crash_line_when_log_absent(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     rc = cli.main(["status"])
     assert rc == 0
     assert "last serialize crash" not in capsys.readouterr().out.lower()
@@ -7159,7 +7175,7 @@ def test_status_health_not_disabled_unchanged():
 
 def test_status_shows_disabled_banner(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     rc = cli.main(["status"])
     assert rc == 0
@@ -7169,7 +7185,7 @@ def test_status_shows_disabled_banner(tmp_checkpoint_dir, sample_checkpoint, cap
 
 def test_status_json_reports_disabled(tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     cli.main(["status", "--json"])
     data = json.loads(capsys.readouterr().out)
@@ -7181,7 +7197,7 @@ def test_status_counts_recent_skipped_sessions(
     # F5 (audit): a too-short session skips serialize by design, but status
     # implied the session was captured. Surface the count.
     from daimon_briefing import store
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _write_log(tmp_log_dir, [
         "2026-06-10T12:00:00Z session-end: spawned serialize for S-tiny (reason: exit, project: /p/A)",
@@ -7198,7 +7214,7 @@ def test_status_counts_recent_skipped_sessions(
 
 def test_status_no_skip_line_when_none(tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     cli.main(["status"])
     assert "skipped" not in capsys.readouterr().out
 
@@ -7207,7 +7223,7 @@ def test_status_surfaces_recall_error(tmp_checkpoint_dir, sample_checkpoint, cap
     # #28 S5: the recall breadcrumb must reach status, or it's a second
     # dead-drop.
     from daimon_briefing import config, store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     p = config.log_dir() / "recall-error.log"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("2026-07-03T10:00:00Z search: OSError: disk full\n")
@@ -7463,7 +7479,7 @@ def test_status_payload_matches_status_json_output(
     # `daimon status --json` — one payload assembler, two consumers.
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _write_log(tmp_log_dir, [
         "2026-06-10T12:00:00Z session-end: spawned serialize for S-prev "
@@ -7499,8 +7515,8 @@ def test_projects_rows_matches_projects_json_output(
     # #261: same single-assembler rule for the projects table.
     from daimon_briefing import store
 
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
-    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["projects", "--json"])
     assert rc == 0
@@ -7647,7 +7663,7 @@ def test_stats_plain_fallback_line_suffix_covered(
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
     monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
     assert "fallback: attempted 0, succeeded 0  (rescue available, not needed)" in out
@@ -7662,7 +7678,7 @@ def test_stats_rich_fallback_line_suffix_covered(
     monkeypatch.setattr(config, "llm_api_key", lambda: "k")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
     monkeypatch.setattr(llm, "_missing_binary", lambda c: None)  # #747: CI has no claude
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
     assert "rescue available, not needed" in out
@@ -7674,7 +7690,7 @@ def test_stats_plain_fallback_line_suffix_none(
     monkeypatch.setenv("DAIMON_PLAIN", "1")
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
     assert ("fallback: attempted 0, succeeded 0  (no rescue path — set "
@@ -7687,7 +7703,7 @@ def test_stats_rich_fallback_line_suffix_none(
     monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["stats"]) == 0
     out = capsys.readouterr().out
     # Rich wraps the table cell at column width, so the phrase can land on
@@ -7707,7 +7723,7 @@ def test_stats_plain_fallback_line_historical_disclaimer_when_posture_none(
     monkeypatch.setenv("DAIMON_PLAIN", "1")
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setattr(llm, "_resolve_command", lambda: ("claude -p", "text", "stdin"))
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     lines = []
     for i in range(30):
@@ -7866,7 +7882,7 @@ def test_stats_capture_window_counts_fallback(tmp_log_dir):
 def test_stats_json_includes_capture_window(tmp_checkpoint_dir, tmp_log_dir,
                                             sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert set(data["capture"]["window"]) == {
@@ -7880,7 +7896,7 @@ def test_stats_json_includes_capture_window(tmp_checkpoint_dir, tmp_log_dir,
 def test_stats_json_carries_the_gate_margins(tmp_checkpoint_dir, tmp_log_dir,
                                              sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -7920,7 +7936,7 @@ def test_stats_plain_shows_the_margin_when_the_gate_stays_silent(
         monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -7943,7 +7959,7 @@ def test_stats_rich_shows_the_margin_when_the_gate_stays_silent(
     from daimon_briefing import render, store
     monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -7961,7 +7977,7 @@ def test_stats_plain_renders_capture_window_line(tmp_checkpoint_dir,
                                                  monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -7982,7 +7998,7 @@ def test_stats_plain_warns_when_window_error_rate_exceeds_gate(
     # any install must be able to see itself trip it.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -8000,7 +8016,7 @@ def test_stats_plain_no_gate_warning_at_or_below_threshold(
         monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -8019,7 +8035,7 @@ def test_stats_rich_renders_capture_window_row(tmp_checkpoint_dir, tmp_log_dir,
     pytest.importorskip("rich")
     from daimon_briefing import render, store
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     _write_log(tmp_log_dir, [
         f"{_iso(now - timedelta(days=1))} session-end: spawned serialize for A "
@@ -8156,7 +8172,7 @@ def test_preflight_names_missing_model_when_key_present(monkeypatch):
 
 def test_brief_appends_usage_line(tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["brief"]) == 0
     usage = (tmp_log_dir / "usage.log").read_text()
     assert "brief" in usage
@@ -8165,7 +8181,7 @@ def test_brief_appends_usage_line(tmp_checkpoint_dir, tmp_log_dir, sample_checkp
 def test_usage_logging_respects_kill_switch(tmp_checkpoint_dir, tmp_log_dir,
                                             sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     assert cli.main(["brief"]) == 0
     assert not (tmp_log_dir / "usage.log").exists()
@@ -8174,7 +8190,7 @@ def test_usage_logging_respects_kill_switch(tmp_checkpoint_dir, tmp_log_dir,
 def test_brief_auto_logs_distinct_single_token(tmp_checkpoint_dir, tmp_log_dir,
                                                sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["brief", "--auto"]) == 0
     lines = (tmp_log_dir / "usage.log").read_text().splitlines()
     assert len(lines) == 1
@@ -8184,7 +8200,7 @@ def test_brief_auto_logs_distinct_single_token(tmp_checkpoint_dir, tmp_log_dir,
 def test_brief_without_auto_logs_plain_token(tmp_checkpoint_dir, tmp_log_dir,
                                              sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["brief"]) == 0
     lines = (tmp_log_dir / "usage.log").read_text().splitlines()
     assert lines[0].split()[1] == "brief"
@@ -8193,7 +8209,7 @@ def test_brief_without_auto_logs_plain_token(tmp_checkpoint_dir, tmp_log_dir,
 def test_stats_json_reports_usage_capture_and_store(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     _write_log(tmp_log_dir, [
         "2026-07-03T10:00:00Z session-end: spawned serialize for S1 "
         "(reason: exit, project: /p/A) (transcript: /t/S1.jsonl)",
@@ -8228,7 +8244,7 @@ def test_stats_json_reports_usage_capture_and_store(
 def test_stats_plain_renders_key_lines(tmp_checkpoint_dir, tmp_log_dir,
                                        sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["brief"]) == 0
     capsys.readouterr()
     rc = cli.main(["stats"])
@@ -8256,9 +8272,9 @@ def test_stats_events_reports_line_count_and_fold_time(
     # line for the CURRENT project and times a full read+fold at stats time.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "resolved", project_dir="/p/A")
-    store.append_event("o-a", "reopened", project_dir="/p/A")  # same ref, later line
-    store.append_event("o-b", "resolved", project_dir="/p/A")
+    store.append_event("o-a", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-a", "reopened", project_dir="/p/A", writer=Writer.HUMAN)  # same ref, later line
+    store.append_event("o-b", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     rc = cli.main(["stats", "--json"])
     assert rc == 0
     ev = json.loads(capsys.readouterr().out)["events"]
@@ -8273,8 +8289,8 @@ def test_stats_events_scoped_to_current_project(
     # the section reports ONLY the current project's log — another project's
     # events must not leak into the count.
     from daimon_briefing import store
-    store.append_event("o-a", "resolved", project_dir="/p/A")
-    store.append_event("o-b", "resolved", project_dir="/p/OTHER")
+    store.append_event("o-a", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-b", "resolved", project_dir="/p/OTHER", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["stats", "--json"])
     assert rc == 0
@@ -8315,7 +8331,7 @@ def test_stats_resolutions_counts_all_four_states(
         {"text": "agent claims and it verifies"},
         {"text": "agent claims and it stays pending"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/repo/x")
+    store.write_checkpoint("S1", cp, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -8373,7 +8389,7 @@ def test_reverify_records_a_usage_tag(
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/repo/rv")
     cp = {"working_context": {"open_questions": [{"text": "close then reopen"}]}}
-    store.write_checkpoint("S1", cp, project_dir="/repo/rv")
+    store.write_checkpoint("S1", cp, project_dir="/repo/rv", writer=Writer.HUMAN)
     item = store.read_latest_body(project_dir="/repo/rv",
                                   route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)[
@@ -8542,8 +8558,8 @@ def test_stats_resolutions_human_counts_events_not_refs(
     # not fold down to 1 the way store.resolutions()'s latest-wins view would.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
-    store.append_event("o-a", "superseded-by:o-b", source="cli", project_dir="/p/A")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-a", "superseded-by:o-b", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
     rc = cli.main(["stats", "--json"])
     assert rc == 0
     res = json.loads(capsys.readouterr().out)["resolutions"]
@@ -8559,14 +8575,16 @@ def test_stats_resolutions_skips_garbage_lines_and_counts_the_rest(
     # around it (same reader stance as store.resolutions itself).
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-b", "resolved", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     events_path = tmp_checkpoint_dir / slug / "events.jsonl"
+    # Planted AFTER the rows are written: a ledger holding a garbage line is
+    # unproven, and a writer refuses it (#1132 PR 10b).
     with events_path.open("a", encoding="utf-8") as f:
         f.write("{not json at all\n")
         f.write('"a json string, not an object"\n')
         f.write('{"status": "resolved", "source": "cli", "kind": "resolution"}\n')  # no item_ref
-    store.append_event("o-b", "resolved", source="cli", project_dir="/p/A")
     rc = cli.main(["stats", "--json"])
     assert rc == 0
     res = json.loads(capsys.readouterr().out)["resolutions"]
@@ -8580,7 +8598,7 @@ def test_stats_resolutions_pending_count_fails_open_on_fold_error(
     # as the loops listing.
     from daimon_briefing import capture, store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
     def boom(events):
         raise RuntimeError("corrupt fold")
     # Scoped to the guarded call: store.resolutions itself is also used by
@@ -8608,7 +8626,7 @@ def test_stats_resolutions_human_excludes_forget_and_log_events(
     # asserting it via a hand-picked literal.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A", tombstone=True)
+    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A", tombstone=True, writer=Writer.HUMAN)
     assert cli.main(["log", "--text", "an ordinary log line", "--kind", "note",
                      "--project", "/p/A"]) == 0
     capsys.readouterr()
@@ -8622,9 +8640,9 @@ def test_stats_resolutions_human_excludes_reopen_and_pending_candidate(
         tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "reopened", source="cli", project_dir="/p/A")
+    store.append_event("o-a", "reopened", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
     store.append_event("o-b", "resolving-candidate", source="agent",
-                       note="quote", project_dir="/p/A")
+                       note="quote", project_dir="/p/A", writer=Writer.HUMAN)
     rc = cli.main(["stats", "--json"])
     assert rc == 0
     res = json.loads(capsys.readouterr().out)["resolutions"]
@@ -8636,8 +8654,8 @@ def test_stats_resolutions_human_excludes_reopen_and_pending_candidate(
 def test_stats_resolutions_scoped_to_current_project(
         tmp_checkpoint_dir, capsys, monkeypatch):
     from daimon_briefing import store
-    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A")
-    store.append_event("o-b", "resolved", source="cli", project_dir="/p/OTHER")
+    store.append_event("o-a", "resolved", source="cli", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-b", "resolved", source="cli", project_dir="/p/OTHER", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["stats", "--json"])
     assert rc == 0
@@ -8989,7 +9007,7 @@ def test_capture_alarm_silent_when_checkpoints_landing(
     tmp_log_dir.mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "serialize.log").write_text(
         _spawn_line(2, "S1", now) + _spawn_line(3, "S2", now) + _spawn_line(4, "S3", now))
-    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"})
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, writer=Writer.HUMAN)
     assert cli._capture_alarm(now) is None
 
 
@@ -9043,7 +9061,7 @@ def test_status_no_capture_alarm_when_healthy(
     tmp_log_dir.mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "serialize.log").write_text(
         _spawn_line(1, "S1", now) + _spawn_line(2, "S2", now) + _spawn_line(3, "S3", now))
-    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A")
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A", writer=Writer.HUMAN)
     cli.main(["status"])
     assert "silent capture" not in capsys.readouterr().out.lower()
     cli.main(["status", "--json"])
@@ -9053,7 +9071,7 @@ def test_status_no_capture_alarm_when_healthy(
 def test_stats_json_includes_retention(tmp_checkpoint_dir, tmp_log_dir,
                                        sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert cli.main(["stats", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert "retention" in data
@@ -9069,7 +9087,7 @@ def test_stats_plain_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
                                                sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     tmp_log_dir.mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "usage.log").write_text(_usage_line(1, "brief:auto", now)
@@ -9088,7 +9106,7 @@ def test_stats_rich_renders_retention_section(tmp_checkpoint_dir, tmp_log_dir,
     pytest.importorskip("rich")
     from daimon_briefing import render, store
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     tmp_log_dir.mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "usage.log").write_text(_usage_line(1, "brief:auto", now)
@@ -9107,7 +9125,7 @@ def test_stats_plain_says_why_the_ratio_is_withheld_on_mixed_hosts(
     a caveat documented elsewhere does not survive a pasted stats table."""
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     now = datetime.now(timezone.utc)
     tmp_log_dir.mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "serialize.log").write_text(
@@ -9126,7 +9144,7 @@ def test_stats_plain_warns_on_stale_hook(tmp_checkpoint_dir, tmp_log_dir,
                                          sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PLAIN", "1")
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     tmp_log_dir.mkdir(parents=True, exist_ok=True)
     (tmp_log_dir / "serialize.log").write_text(
@@ -9171,7 +9189,7 @@ def _write_cp_with_ids(store, project="/p/A"):
         {"text": "release pipeline awaiting manual approval step", "trust": "inferred"},
         {"text": "serializer chunk retry budget unclear", "trust": "inferred"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir=project)
+    store.write_checkpoint("S1", cp, project_dir=project, writer=Writer.HUMAN)
     return cp
 
 
@@ -9204,7 +9222,7 @@ def test_resolve_ambiguous_refuses_and_lists_candidates(tmp_checkpoint_dir, caps
         {"text": "gateway retry budget for serializer chunks"},
         {"text": "serializer chunk retry budget unclear"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["resolve", "serializer chunk retry budget"]) == 1
     out = capsys.readouterr().out
     for item in cp["working_context"]["open_questions"]:
@@ -9242,7 +9260,7 @@ def test_resolve_ambiguous_records_distinct_usage_event(
         {"text": "gateway retry budget for serializer chunks"},
         {"text": "serializer chunk retry budget unclear"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["resolve", "serializer chunk retry budget"]) == 1
     lines = (tmp_log_dir / "usage.log").read_text().splitlines()
     assert lines[0].split()[1] == "resolve:ambiguous"
@@ -9292,7 +9310,7 @@ def test_stats_surfaces_resolve_usage_counters(
         {"text": "gateway retry budget for serializer chunks"},
         {"text": "serializer chunk retry budget unclear"},
     ]}}
-    store.write_checkpoint("S2", cp2, project_dir="/p/B")
+    store.write_checkpoint("S2", cp2, project_dir="/p/B", writer=Writer.HUMAN)
     assert cli.main(["resolve", "serializer chunk retry budget"]) == 1
 
     capsys.readouterr()
@@ -9307,7 +9325,7 @@ def test_stats_surfaces_resolve_usage_counters(
 def test_existing_usage_counters_unaffected_by_resolve_instrumentation(
         tmp_checkpoint_dir, tmp_log_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     assert cli.main(["brief"]) == 0
     assert cli.main(["recall", "chunk"]) == 0
@@ -9355,7 +9373,7 @@ def test_resolve_dry_run_ambiguous_output_identical_to_normal_run(
         {"text": "gateway retry budget for serializer chunks"},
         {"text": "serializer chunk retry budget unclear"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     rc_normal = cli.main(["resolve", "serializer chunk retry budget"])
     out_normal = capsys.readouterr().out
     rc_dry = cli.main(["resolve", "serializer chunk retry budget", "--dry-run"])
@@ -9509,7 +9527,7 @@ def test_loops_skips_idless_and_empty_text_items(tmp_checkpoint_dir, capsys, mon
         {"text": "legacy loop without an id", "trust": "inferred"},
         {"text": "live loop with an id", "trust": "inferred"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     # Strip the id write_checkpoint stamped on the first item, blank the text
     # path via a raw edit of the stored checkpoint.
     stored = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
@@ -9547,7 +9565,7 @@ def test_loops_no_open_loops_exits_0_with_friendly_message(tmp_checkpoint_dir, c
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = {"working_context": {"recent_decisions": [
         {"text": "adopt D-007 prompt", "trust": "verbatim"}]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["loops"]) == 0
     out = capsys.readouterr().out
     assert "no open loops" in out.lower()
@@ -9562,7 +9580,7 @@ def test_loops_excludes_decisions_scope_guard(tmp_checkpoint_dir, capsys, monkey
         "open_questions": [{"text": "chunk threshold unclear", "trust": "inferred"}],
         "recent_decisions": [{"text": "adopt D-007 prompt", "trust": "verbatim"}],
     }}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["loops"]) == 0
     out = capsys.readouterr().out
     assert "chunk threshold unclear" in out
@@ -9628,7 +9646,7 @@ def test_resolve_by_agent_candidate_never_withholds_human_resolve_still_does(
     # supersede-candidates already have. A human `resolve` on the SAME KIND
     # of item withholds exactly as it always has.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -9739,7 +9757,7 @@ def test_resolve_by_agent_ambiguous_target_still_refuses_with_candidates(
         {"text": "gateway retry budget for serializer chunks"},
         {"text": "serializer chunk retry budget unclear"},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     rc = cli.main(["resolve", "serializer chunk retry budget", "--by", "agent",
                    "--evidence", "quote"])
     assert rc == 1
@@ -9757,7 +9775,7 @@ def test_resolve_by_agent_ambiguous_target_still_refuses_with_candidates(
 def test_brief_shows_agent_claim_annotation_unverified(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -9779,7 +9797,7 @@ def test_brief_shows_agent_claim_annotation_unverified(
 def test_brief_ordinary_item_unaffected_by_agent_claim_render(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -9804,7 +9822,7 @@ def test_brief_agent_verified_item_shows_no_claim_annotation(
     # nothing at all — no claim lines, and (since withhold drops it whole)
     # not even the item's own text.
     from daimon_briefing import capture, store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -9828,7 +9846,7 @@ def test_agent_claim_stamp_never_persisted(tmp_checkpoint_dir, sample_checkpoint
     # Mirrors test_transient_field_never_persisted (#14's own stamp-hygiene
     # test): the `_agent_claim` stamp lives ONLY on withhold's returned copy.
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
@@ -9897,7 +9915,7 @@ def test_reverify_human_path_records_observed_tty_source(
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
     assert store.resolutions(project_dir="/p/A")[iid]["source"] == "cli-tty"
 
@@ -9907,7 +9925,7 @@ def test_reverify_refuses_without_evidence_when_no_anchor(tmp_checkpoint_dir, ca
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid]) == 1
     out = capsys.readouterr().out
     assert "without evidence" in out
@@ -9920,7 +9938,7 @@ def test_reverify_with_evidence_reopens(tmp_checkpoint_dir, capsys, monkeypatch)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
     r = store.resolutions(project_dir="/p/A")
     assert not store.is_resolved(r[iid])
@@ -9934,9 +9952,9 @@ def test_reverify_anchor_live_reopens_without_evidence(tmp_checkpoint_dir, tmp_p
         {"text": "anchored claim about foo()", "trust": "inferred",
          "anchored_to": {"file": "foo.py", "symbol": "foo", "body_hash": "deadbeef"}},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
     assert cli.main(["reverify", iid]) == 0
     r = store.resolutions(project_dir="/p/A")
@@ -9953,9 +9971,9 @@ def test_reverify_anchor_live_and_evidence_combined_note(tmp_checkpoint_dir, cap
         {"text": "anchored claim about foo()", "trust": "inferred",
          "anchored_to": {"file": "foo.py", "symbol": "foo", "body_hash": "deadbeef"}},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
     assert cli.main(["reverify", iid, "--evidence", "saw it work"]) == 0
     r = store.resolutions(project_dir="/p/A")
@@ -9970,9 +9988,9 @@ def test_reverify_anchor_drifted_still_refused_without_evidence(tmp_checkpoint_d
         {"text": "anchored claim about bar()", "trust": "inferred",
          "anchored_to": {"file": "bar.py", "symbol": "bar", "body_hash": "deadbeef"}},
     ]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.anchor, "check", lambda a, p: "hard")
     assert cli.main(["reverify", iid]) == 1
     r = store.resolutions(project_dir="/p/A")
@@ -9991,7 +10009,7 @@ def test_reverify_rejects_candidate_without_evidence(tmp_checkpoint_dir, capsys,
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
     store.append_event(iid, "supersede-candidate:o-9f3a2b",
-                       source="serializer", project_dir="/p/A")
+                       source="serializer", project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid]) == 0
     r = store.resolutions(project_dir="/p/A")
     # latest event is now a human reopen — the item stays live (not resolved)
@@ -10008,7 +10026,7 @@ def test_reverify_candidate_reject_silences_re_detection(tmp_checkpoint_dir, cap
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
     store.append_event(iid, "supersede-candidate:o-9f3a2b",
-                       source="serializer", project_dir="/p/A")
+                       source="serializer", project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid]) == 0
     events = store.resolutions(project_dir="/p/A")
     pairs = [(iid, "o-9f3a2b", "release pipeline awaiting manual approval step")]
@@ -10023,7 +10041,7 @@ def test_reverify_still_refuses_resolved_item_without_evidence(tmp_checkpoint_di
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A")
+    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid]) == 1
     out = capsys.readouterr().out
     assert "without evidence" in out
@@ -10223,9 +10241,9 @@ def test_cli_recall_slug_scopes_by_bucket_identity(tmp_checkpoint_dir, capsys, m
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-a", _recall_checkpoint("S-a", "marmot work in a"),
-                           project_dir=proj_a)
+                           project_dir=proj_a, writer=Writer.HUMAN)
     store.write_checkpoint("S-b", _recall_checkpoint("S-b", "marmot work in b"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
 
     # run from proj_a's scope, target proj_b by slug — no path involved
     monkeypatch.setenv("DAIMON_PROJECT_DIR", proj_a)
@@ -10257,7 +10275,7 @@ def test_cli_brief_slug_renders_target_bucket(tmp_checkpoint_dir, sample_checkpo
     other = json.loads(json.dumps(sample_checkpoint))
     other["session_id"] = "S-other"
     other["working_context"]["open_questions"][0]["text"] = "PR #99 state — project B loop"
-    store.write_checkpoint("S-other", other, project_dir="/p/B")
+    store.write_checkpoint("S-other", other, project_dir="/p/B", writer=Writer.HUMAN)
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     slug = store.project_slug("/p/B")
@@ -10273,7 +10291,7 @@ def test_cli_brief_slug_missing_bucket_never_falls_back(tmp_checkpoint_dir, samp
     from daimon_briefing import store
 
     # a global pointer exists — an implicit fallback would leak it
-    store.write_checkpoint("S-global", sample_checkpoint)
+    store.write_checkpoint("S-global", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["brief", "--slug", "-p-nonexistent"])
     assert rc == 1
@@ -10301,12 +10319,12 @@ def test_cli_brief_slug_withholds_resolved_items(tmp_checkpoint_dir, sample_chec
 
     cp = json.loads(json.dumps(sample_checkpoint))
     cp["session_id"] = "S-b"
-    store.write_checkpoint("S-b", cp, project_dir="/p/B")
+    store.write_checkpoint("S-b", cp, project_dir="/p/B", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/p/B", route=store.Route.OWN,
                                      admit=store.Admit.ANY)
     iid = written["working_context"]["open_questions"][0]["id"]
     q_text = written["working_context"]["open_questions"][0]["text"]
-    store.append_event(iid, "resolved", project_dir="/p/B")
+    store.append_event(iid, "resolved", project_dir="/p/B", writer=Writer.HUMAN)
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["brief", "--slug", store.project_slug("/p/B")])
@@ -10369,7 +10387,7 @@ def test_anchor_attach_warms_index(tmp_checkpoint_dir, tmp_path, capsys, monkeyp
     src.write_text("def fn():\n    return 1\n")
     cp = {"session_id": "S-anchor", "working_context": {"open_questions": [
         {"text": "anchor target item", "trust": "inferred"}]}}
-    store.write_checkpoint("S-anchor", cp, project_dir=str(tmp_path))
+    store.write_checkpoint("S-anchor", cp, project_dir=str(tmp_path), writer=Writer.HUMAN)
     calls = _count_warm(monkeypatch)
     rc = cli.main(["anchor", "mod.py", "fn", "--project", str(tmp_path),
                    "--attach", "anchor target"])
@@ -10396,7 +10414,7 @@ def test_recall_zero_match_teases_other_projects(tmp_checkpoint_dir, capsys, mon
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-b1", _recall_checkpoint("S-b1", "homeauto wiring notes"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
 
     rc = cli.main(["recall", "homeauto", "--project", proj_a])
     assert rc == 0
@@ -10425,7 +10443,7 @@ def test_recall_zero_match_json_contract_untouched(tmp_checkpoint_dir, capsys, m
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-b2", _recall_checkpoint("S-b2", "homeauto wiring notes"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
     rc = cli.main(["recall", "homeauto", "--project", proj_a, "--json"])
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == []
@@ -10440,7 +10458,7 @@ def test_recall_zero_match_no_tease_under_explicit_scope(tmp_checkpoint_dir, cap
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-b3", _recall_checkpoint("S-b3", "homeauto wiring notes"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
     rc = cli.main(["recall", "zebrafish", "--all-projects"])
     assert rc == 0
     assert capsys.readouterr().out.strip() == "no matches"
@@ -10546,7 +10564,7 @@ def test_forget_missing_session_id_refuses_rewrite(tmp_checkpoint_dir, capsys, m
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = {"working_context": {"open_questions": [
         {"text": "orphan item without a session id", "trust": "inferred"}]}}
-    store.write_checkpoint("S1", cp, project_dir="/p/A")
+    store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     # simulate a torn/legacy pointer whose session_id never landed
     slug = store.project_slug("/p/A")
     import json as _json
@@ -11193,7 +11211,7 @@ def test_brief_notes_in_flight_serialize(tmp_checkpoint_dir, sample_checkpoint,
                                          capsys, monkeypatch):
     from daimon_briefing import store, ledger
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setattr(ledger, "serialize_in_flight", lambda slug, now=None: True)
     rc = cli.main(["brief"])
     assert rc == 0
@@ -11205,7 +11223,7 @@ def test_brief_silent_when_no_serialize_in_flight(tmp_checkpoint_dir,
                                                   monkeypatch):
     from daimon_briefing import store, ledger
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setattr(ledger, "serialize_in_flight", lambda slug, now=None: False)
     rc = cli.main(["brief"])
     assert rc == 0
@@ -11538,9 +11556,9 @@ def _two_recall_buckets(monkeypatch, tmp_path):
     proj_a = str((tmp_path / "proj-a").resolve())
     proj_b = str((tmp_path / "proj-b").resolve())
     store.write_checkpoint("S-a", _recall_checkpoint("S-a", "marmot work in a"),
-                           project_dir=proj_a)
+                           project_dir=proj_a, writer=Writer.HUMAN)
     store.write_checkpoint("S-b", _recall_checkpoint("S-b", "marmot work in b"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", proj_a)
     return proj_a, proj_b
 
@@ -11581,7 +11599,7 @@ def test_tenant_scope_zero_match_never_teases_other_projects(
     _, proj_b = _two_recall_buckets(monkeypatch, tmp_path)
     from daimon_briefing import store
     store.write_checkpoint("S-c", _recall_checkpoint("S-c", "narwhal only in b"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
     assert cli.main(["recall", "narwhal"]) == 0
     out = capsys.readouterr().out
@@ -11707,7 +11725,7 @@ def test_anchor_attach_under_the_kill_switch_writes_nothing(
         tmp_checkpoint_dir, capsys, monkeypatch, tmp_path, sample_checkpoint):
     from daimon_briefing import store
     proj = _anchor_proj(tmp_path, monkeypatch)
-    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-prev", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     capsys.readouterr()
     monkeypatch.setenv("DAIMON_DISABLE", "1")
     rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "PINNING",
@@ -11728,7 +11746,7 @@ def test_team_briefings_skip_a_teammate_with_nothing_to_surface(
                             "recent_decisions": []},
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                "contradictions_flagged": []},
-    }, project_dir=proj)
+    }, project_dir=proj, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     assert cli._team_briefings(proj) == []
 
@@ -11827,7 +11845,7 @@ def test_status_suppressed_fails_closed_when_the_view_raises(
     # raise point is `view.open`: a ledger fold that raises is a health note
     # in the snapshot (next test), not an exception.
     from daimon_briefing import store, view
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def boom(*a, **k):
         raise RuntimeError("view broke")
@@ -11844,7 +11862,7 @@ def test_status_suppressed_fails_closed_when_the_view_raises(
 def test_status_suppressed_names_a_fold_that_raised(
         tmp_checkpoint_dir, sample_checkpoint, capsys, monkeypatch):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
 
     def boom(*a, **k):
         raise RuntimeError("hand-edited ledger")
@@ -11858,13 +11876,13 @@ def test_status_suppressed_names_a_fold_that_raised(
 def test_status_suppressed_prints_the_note_a_resolution_carried(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     from daimon_briefing import store
-    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-mine", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     written = store.read_latest_body(project_dir="/repo/x",
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
     store.append_event(item_id, "resolved", note="shipped in 0.9",
-                       project_dir="/repo/x")
+                       project_dir="/repo/x", writer=Writer.HUMAN)
     assert cli.main(["status", "--suppressed", "--project", "/repo/x"]) == 0
     out = capsys.readouterr().out
     assert "resolved" in out

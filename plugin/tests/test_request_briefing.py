@@ -8,6 +8,7 @@ this file drives briefing.request_panel_lines/render directly.
 import json
 
 from daimon_briefing import briefing, clock, config, requests, store
+from daimon_briefing.surfaces import Writer
 
 RECIPIENT = "/p/req-brief-recipient"
 SENDER = "/p/req-brief-sender"
@@ -18,7 +19,7 @@ def _seed_sender(session="S-req-sender"):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "the sender shipped something", "trust": "inferred"}]},
-    }, project_dir=SENDER)
+    }, project_dir=SENDER, writer=Writer.HUMAN)
     return store.project_slug(SENDER)
 
 
@@ -149,7 +150,7 @@ def test_panel_never_reads_kind_off_a_raw_row(tmp_checkpoint_dir):
     row.update({"to": store.project_slug(RECIPIENT),
                "ask": "publish the schema", "why": "the client needs it",
                "kind": "info"})
-    assert requests.append(row, project_dir=sender)
+    assert requests.append(row, project_dir=sender, writer=Writer.HUMAN)
     lines = briefing.request_panel_lines(RECIPIENT)
     # Positive anchor: an empty line list would also satisfy "no marker".
     assert any("q-0123456789ab" in ln for ln in lines)

@@ -8,6 +8,7 @@ is never called on an excluded path.
 """
 
 from daimon_briefing import cli, requests, store
+from daimon_briefing.surfaces import Writer
 
 
 def _seed_checkpoint(project_dir, session):
@@ -15,7 +16,7 @@ def _seed_checkpoint(project_dir, session):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
     return store.project_slug(project_dir)
 
 
@@ -128,7 +129,7 @@ def test_cli_brief_global_fallback_never_stamps_or_shows_the_panel(
         "session_id": "S-other", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "y", "trust": "inferred"}]},
-    })  # no project_dir -> global pointer only
+    }, writer=Writer.HUMAN)  # no project_dir -> global pointer only
     monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/cbr-never-seen")
 
@@ -172,7 +173,7 @@ def test_cli_brief_no_addressed_requests_shows_no_panel(tmp_checkpoint_dir,
         "session_id": "S-cbr-g", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "z", "trust": "inferred"}]},
-    }, project_dir=recipient)
+    }, project_dir=recipient, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", recipient)
     rc = cli.main(["brief"])
     assert rc == 0

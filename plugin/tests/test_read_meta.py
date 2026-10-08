@@ -4,6 +4,7 @@ else (#1132 PR 6a). Fixtures come from the real writer."""
 import json
 
 from daimon_briefing import config, field_table, store
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/read-meta"
 ENVELOPE = ("session_id", "created", "author", "format_version",
@@ -20,7 +21,7 @@ def _write(sid="S-meta", **extra):
           "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
                                  "contradictions_flagged": ["SENTINEL-BARE"]},
           **extra}
-    store.write_checkpoint(sid, cp, project_dir=PROJECT)
+    store.write_checkpoint(sid, cp, project_dir=PROJECT, writer=Writer.HUMAN)
     return (config.checkpoint_dir() / store.project_slug(PROJECT))
 
 

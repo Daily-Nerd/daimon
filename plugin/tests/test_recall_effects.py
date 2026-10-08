@@ -15,6 +15,7 @@ from daimon_briefing import (cli, config, effects_commit, normalize,
                              recall, recall_telemetry, store, view)
 from daimon_briefing.effects import (Effects, ErrorLog, Seen, Telemetry,
                                      merge)
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/repo/effects"
 OTHER = "/repo/other"
@@ -42,10 +43,10 @@ def _checkpoint(session, text, created):
 def _seed(project=PROJECT, text=BELIEF):
     store.write_checkpoint("S-old", _checkpoint("S-old", text,
                                                 "2026-06-20T00:00:00Z"),
-                           project_dir=project)
+                           project_dir=project, writer=Writer.HUMAN)
     store.write_checkpoint("S-latest", _checkpoint(
         "S-latest", "unrelated newer bookkeeping", "2026-06-28T00:00:00Z"),
-        project_dir=project)
+        project_dir=project, writer=Writer.HUMAN)
 
 
 @pytest.fixture
@@ -295,7 +296,7 @@ def test_telemetry_count_drops_a_term_whose_key_is_forgotten(
     _seed()
     key = normalize.content_key("zebrafish")
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True)
+                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     effects_commit.commit(Effects(telemetry=(Telemetry([], {
         "query_terms": ["zebrafish", "pelican"],
         "surface": "recall-search", "via": "cli"}),)))
@@ -348,7 +349,7 @@ def test_a_tenant_scoped_query_cannot_read_another_projects_rows(
     _seed(PROJECT)
     store.write_checkpoint("S-foreign", _checkpoint(
         "S-foreign", "selfHeal belongs to the other tenant",
-        "2026-06-21T00:00:00Z"), project_dir=OTHER)
+        "2026-06-21T00:00:00Z"), project_dir=OTHER, writer=Writer.HUMAN)
     wide = recall.query("selfHeal", project_dir=PROJECT, all_projects=True)
     assert {r["project_slug"] for r in wide.rows} >= {
         store.project_slug(PROJECT), store.project_slug(OTHER)}

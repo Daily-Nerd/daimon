@@ -12,6 +12,7 @@ import pytest
 
 from daimon_briefing import carry, cli, config, render, schema, store
 from daimon_briefing.cli import history
+from daimon_briefing.surfaces import Writer
 
 
 _PROJECT = "/p/hist-diff"
@@ -43,7 +44,7 @@ def _checkpoint(session_id, created, *, decisions=(), questions=()):
 def _write(session_id, created, *, project=_PROJECT, **kw):
     """Write through the real writer so ids, first_seen and rotation are real."""
     checkpoint = _checkpoint(session_id, created, **kw)
-    assert store.write_checkpoint(session_id, checkpoint, project_dir=project)
+    assert store.write_checkpoint(session_id, checkpoint, project_dir=project, writer=Writer.HUMAN)
     return checkpoint
 
 
@@ -128,7 +129,7 @@ def test_diff_reports_a_resolved_item_as_resolved(tmp_checkpoint_dir, capsys):
                    questions=[_item("does the pointer chain expire")])
     item_id = _ids(first)["does the pointer chain expire"]
     assert store.append_event(item_id, "resolved", source="cli-tty",
-                              project_dir=_PROJECT)
+                              project_dir=_PROJECT, writer=Writer.HUMAN)
     _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("chain expires")])
 
     assert cli.main(["diff", "--project", _PROJECT]) == 0
@@ -142,7 +143,7 @@ def test_diff_reports_a_superseded_item_with_the_naming_id(tmp_checkpoint_dir,
                    decisions=[_item("retry budget is six")])
     item_id = _ids(first)["retry budget is six"]
     assert store.append_event(item_id, "superseded-by:d-0123456789ab",
-                              source="cli-tty", project_dir=_PROJECT)
+                              source="cli-tty", project_dir=_PROJECT, writer=Writer.HUMAN)
     _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("retry budget is ten")])
 
     assert cli.main(["diff", "--project", _PROJECT]) == 0
@@ -175,7 +176,7 @@ def test_diff_reports_a_retagged_item(tmp_checkpoint_dir, capsys):
     item_id = _ids(first)["pin the serializer model"]
     second = _checkpoint("S-2", "2026-09-01T11:00:00Z",
                          decisions=[_item("pin the serializer model", "inferred")])
-    assert store.write_checkpoint("S-2", second, project_dir=_PROJECT)
+    assert store.write_checkpoint("S-2", second, project_dir=_PROJECT, writer=Writer.HUMAN)
     assert _ids(second)["pin the serializer model"] == item_id
 
     assert cli.main(["diff", "--project", _PROJECT]) == 0
@@ -195,7 +196,7 @@ def test_diff_reports_a_restated_item(tmp_checkpoint_dir, capsys):
         "S-2", "2026-09-01T11:00:00Z",
         decisions=[_item("the retry budget stays at six attempts overall")])
     merged = carry.merge(native, first, now=1_800_000_000.0)
-    assert store.write_checkpoint("S-2", merged, project_dir=_PROJECT)
+    assert store.write_checkpoint("S-2", merged, project_dir=_PROJECT, writer=Writer.HUMAN)
     texts = _ids(merged)
     assert texts["the retry budget stays at six attempts overall"] == item_id
 
@@ -285,7 +286,7 @@ def test_items_by_id_skips_a_bare_string_contradiction(tmp_checkpoint_dir):
                              decisions=[_item("alpha fact")])
     checkpoint["epistemic_snapshot"]["contradictions_flagged"] = [
         "a legacy bare-string contradiction"]
-    assert store.write_checkpoint("S-1", checkpoint, project_dir=_PROJECT)
+    assert store.write_checkpoint("S-1", checkpoint, project_dir=_PROJECT, writer=Writer.HUMAN)
     by_id = history._items_by_id(checkpoint)
     assert list(by_id) == [_ids(checkpoint)["alpha fact"]]
 

@@ -120,6 +120,10 @@ KNOWN_BYPASSES = frozenset({
     ("bucket migrate", "checkpoints/migrations.jsonl"),
     ("bucket migrate", "checkpoints/{slug}/events.jsonl"),
     ("bucket migrate", "checkpoints/{slug}/refutations.jsonl"),
+    # The census marker is re-stamped after a merge or a rename (#1132 PR
+    # 10b): the target now holds rows it did not hold when it was stamped.
+    # It records counts and states, never a row.
+    ("bucket migrate", "checkpoints/{slug}/.ledger-census"),
     # One admitted legacy pointer, written into the first free slot. The
     # target's own pointers are never rewritten (#963 review), so no
     # latest.json / prev-1 entry belongs here.

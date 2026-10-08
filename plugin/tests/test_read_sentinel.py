@@ -369,6 +369,8 @@ case("cli:forget", "no-match", A("forget", "zzzqqq"), tty=True, rc=(0, 1),
      dests=("target",))
 case("cli:forget", "dry", A("forget", I("question"), "--dry-run"), tty=True,
      rc=(0, 1), dests=("dry_run", "project"), axes=("STDIN_TTY",))
+case("cli:forget", "republish", A("forget", "--republish"), tty=True,
+     rc=(0, 1, 4), dests=("project", "republish"))
 case("cli:reverify", "id", A("reverify", I("question"), "--evidence",
      "checked"), tty=True, rc=(0, 1), dests=("target", "project"))
 
@@ -594,7 +596,7 @@ def test_dests_match_the_parser_and_are_classified():
         dests = {a.dest for a in parser._actions
                  if not isinstance(a, argparse._HelpAction)}
         assert dests == set(DESTS[" ".join(leaf)]), leaf
-    assert sum(len(v) for v in DESTS.values()) == 338
+    assert sum(len(v) for v in DESTS.values()) == 339
     for leaf, row in DESTS.items():
         for name, (cls, code) in row.items():
             assert cls in ("OUT", "INE"), (leaf, name)

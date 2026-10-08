@@ -13,6 +13,7 @@ same-project gate, same post-print stamp timing.
 import json
 
 from daimon_briefing import briefing, cli, config, requests, store
+from daimon_briefing.surfaces import Writer
 
 
 def _seed_checkpoint(project_dir, session):
@@ -20,7 +21,7 @@ def _seed_checkpoint(project_dir, session):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
     return store.project_slug(project_dir)
 
 
@@ -201,7 +202,7 @@ def test_owed_panel_never_reads_kind_off_a_raw_row(tmp_checkpoint_dir):
     row = requests._stamp("opened", "q-0123456789ab", "cli-agent")
     row.update({"to": store.project_slug(recipient), "ask": "port it",
                "why": "because", "kind": "info"})
-    assert requests.append(row, project_dir=sender_slug)
+    assert requests.append(row, project_dir=sender_slug, writer=Writer.HUMAN)
     requests.accept("q-0123456789ab", channel="cli-tty",
                     project_dir=recipient)
     lines = briefing.owed_panel_lines(recipient)

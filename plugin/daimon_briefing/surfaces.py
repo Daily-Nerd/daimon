@@ -69,6 +69,37 @@ class ReadPosture(str, enum.Enum):
 READ_STATES = ("absent", "degraded", "transient", "unreadable")
 
 
+class Writer(str, enum.Enum):
+    """Who is writing: the class that picks a row of a `write` column.
+
+    HUMAN is a verb a person ran. ADMISSION is new cognitive content entering
+    through capture or `write-checkpoint`. EMITTER is a machine row written
+    beside a capture (a candidate, a counter, a log line). CURE is a repair or
+    a forget: it PROCEEDs on every row by construction, so it is never a
+    column. No caller has a default: a writer that does not say which it is
+    does not compile."""
+    HUMAN = "human"
+    ADMISSION = "admission"
+    EMITTER = "emitter"
+    CURE = "cure"
+
+
+class WritePosture(str, enum.Enum):
+    """What a write does with a ledger in one health state (#1132 PR 10b).
+
+    PROCEED appends (a torn tail is healed first). REFUSE raises, so nothing
+    is written and the caller says why. SKIP writes nothing and returns, for a
+    machine row that must never cost the capture beside it."""
+    PROCEED = "proceed"
+    REFUSE = "refuse"
+    SKIP = "skip"
+
+
+# The three states a write column lists, in order. ABSENT and OK always
+# PROCEED, and are not columns.
+WRITE_STATES = ("degraded", "transient", "unreadable")
+
+
 class FieldPath(NamedTuple):
     """One prose field of a ledger row: a key path into the row dict.
     `is_list` marks a top-level key holding a list of strings."""
@@ -91,12 +122,17 @@ class Surface(NamedTuple):
     prose: tuple[FieldPath, ...] = ()  # plaintext row fields
     # Read posture per state, in READ_STATES order (absent, degraded,
     # transient, unreadable); `foreign_read` is the same for a ledger read
-    # across buckets or authors. `write` stays empty until the write side.
+    # across buckets or authors. `write` is the same per writer class.
     read: tuple[ReadPosture, ...] = ()
-    write: tuple[str, ...] = ()       # health write policy (later PR)
+    # Write posture per writer class, each in WRITE_STATES order (degraded,
+    # transient, unreadable). Immutable: a tuple of (Writer, postures).
+    write: tuple[tuple[Writer, tuple[WritePosture, ...]], ...] = ()
     foreign_read: tuple[ReadPosture, ...] = ()
     index_content: bool = False       # recall._fingerprint input (scar 0107)
     mergeable: bool = False           # a legacy-bucket migration moves it
+    # Bytes of an append-only log judged for a write posture (0 = the whole
+    # file). A log that grows without bound must not be parsed per write.
+    tail_bytes: int = 0
     deleter: str = ""                 # forget registry (later PR)
     phase: str = ""                   # forget registry (later PR)
 
@@ -128,6 +164,8 @@ def _scalars(*names: str) -> tuple[FieldPath, ...]:
     return tuple(FieldPath((n,)) for n in names)
 
 
+LOG_TAIL_BYTES = 64 * 1024   # the window a write judges an append-only log by
+
 _RP = ReadPosture
 # R2.3, the human copy lives in tests/test_read_posture_registry.py.
 _READ_NOTED = (_RP.OPEN, _RP.NOTE, _RP.NOTE, _RP.NOTE)
@@ -135,12 +173,27 @@ _READ_TRUST = (_RP.OPEN, _RP.NOTE, _RP.CLOSED, _RP.CLOSED)
 _READ_COUNTERS = (_RP.OPEN, _RP.OPEN, _RP.OPEN, _RP.NOTE)
 _READ_FOREIGN = (_RP.OPEN, _RP.NOTE, _RP.SKIP_SOURCE, _RP.SKIP_SOURCE)
 
+_WP = WritePosture
+# R2.3 write column, the human copy lives in tests/test_write_posture_registry.py.
+# An unproven ledger (TRANSIENT or any UNREADABLE) is REFUSE for a person and
+# for admission, SKIP for a machine row, never a silent drop; DEGRADED is
+# proven, so every writer PROCEEDs.
+_WRITE_REFUSED = (_WP.PROCEED, _WP.REFUSE, _WP.REFUSE)
+_WRITE_SKIPPED = (_WP.PROCEED, _WP.SKIP, _WP.SKIP)
+_WRITE_OPEN = (_WP.PROCEED, _WP.PROCEED, _WP.PROCEED)
+_WR = Writer
+_W_HUMAN = ((_WR.HUMAN, _WRITE_REFUSED),)
+_W_HUMAN_EMITTER = ((_WR.HUMAN, _WRITE_REFUSED), (_WR.EMITTER, _WRITE_SKIPPED))
+_W_EMITTER = ((_WR.EMITTER, _WRITE_SKIPPED),)
+
 SURFACES: tuple[Surface, ...] = (
     # -- per-project bucket ledgers (specific before the *.json generics) --
     Surface("checkpoints/{slug}/events.jsonl", "store.append_event",
             True, "append-tombstone", "forget",
             prose=_scalars("note", "item_text", "status"),
-            index_content=True, mergeable=True, read=_READ_NOTED),
+            index_content=True, mergeable=True, read=_READ_NOTED,
+            write=((_WR.HUMAN, _WRITE_REFUSED), (_WR.ADMISSION, _WRITE_REFUSED),
+                   (_WR.EMITTER, _WRITE_SKIPPED))),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
     #    carries item PLAINTEXT by design (subject, verdict, scope, note,
     #    revisit_when, anchors, evidence), so it sits in the checkpoint's
@@ -196,7 +249,8 @@ SURFACES: tuple[Surface, ...] = (
                            "note") + (
                 FieldPath(("anchors",), True), FieldPath(("evidence",), True),
                 FieldPath(("check", "match")), FieldPath(("check", "body"))),
-            mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN),
+            mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN,
+            write=_W_HUMAN),
     # -- the amendment ledger (#691): the fourth bucket ledger — evidence
     #    quotes and human-channel notes, both length-capped, both plaintext
     #    by design, so it sits in the checkpoint's deletion category with
@@ -219,7 +273,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/amendments.jsonl", "amendments.append",
             True, "rewrite", "forget", fold="amendments.fold",
             prose=_scalars("evidence", "note"), mergeable=True,
-            read=_READ_NOTED, foreign_read=_READ_FOREIGN),
+            read=_READ_NOTED, foreign_read=_READ_FOREIGN,
+            write=_W_HUMAN_EMITTER),
     # -- the request ledger (#694): the fifth bucket ledger — one project's
     #    ask of another, so its rows carry the ask, its rationale, a human
     #    verdict note, and a completion quote: plaintext by design, in the
@@ -247,19 +302,19 @@ SURFACES: tuple[Surface, ...] = (
             True, "rewrite", "forget", fold="requests.fold",
             prose=_scalars("ask", "why", "note", "evidence", "from_label",
                            "act_author"), mergeable=True, read=_READ_NOTED,
-            foreign_read=_READ_FOREIGN),
+            foreign_read=_READ_FOREIGN, write=_W_HUMAN_EMITTER),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",
             "store.append_verification", False, "exempt-no-plaintext",
             "none", audit_exempt=True, index_content=True, mergeable=True,
-            read=_READ_COUNTERS),
+            read=_READ_COUNTERS, write=_W_EMITTER),
     # store.record_forget_hits: {ts, key, reason?} — "NEVER the text or any
     # prefix"; reason (#693) is a closed-vocabulary code ("ruling-echo").
     Surface("checkpoints/{slug}/forget-hits.jsonl",
             "store.record_forget_hits", False, "exempt-no-plaintext",
             "none", audit_exempt=True, mergeable=True,
-            read=_READ_COUNTERS),
+            read=_READ_COUNTERS, write=_W_EMITTER),
     # -- the bucket root record (#1092): one line, the absolute resolved
     #    directory that FIRST wrote to this bucket. store.record_bucket_root
     #    stamps it once, on the first ledger/checkpoint write, and never
@@ -293,7 +348,7 @@ SURFACES: tuple[Surface, ...] = (
     #    files by suffix. --
     Surface("checkpoints/{slug}/*" + QUARANTINE_SIDECAR_SUFFIX,
             "ledger_repair.quarantine_lines", True, "rewrite", "forget",
-            prose=_scalars("text"), mergeable=True, read=_READ_NOTED,
+            prose=_scalars("text"), mergeable=True, read=_READ_NOTED, write=_W_HUMAN,
             deleter="ledger_repair.forget_quarantined_lines"),
     # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
     #    only — no field can carry item text (relations.py refuses at the
@@ -310,7 +365,7 @@ SURFACES: tuple[Surface, ...] = (
     #    growth is measured, never silent. --
     Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
             True, "rewrite", "forget", fold="relations.fold",
-            mergeable=True, read=_READ_NOTED),
+            mergeable=True, read=_READ_NOTED, write=_W_HUMAN),
     # -- the trust ledger (#1109 Slice 1): a human-only quarantine verdict on
     #    a checkpoint value, append-only like refutations.jsonl, and in the
     #    same category — it carries item PLAINTEXT by design (`reason`,
@@ -330,7 +385,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/trust.jsonl", "trust.append",
             True, "rewrite", "forget", fold="trust.fold",
             prose=(FieldPath(("reason",)), FieldPath(("evidence",), True)),
-            index_content=True, mergeable=True, read=_READ_TRUST),
+            index_content=True, mergeable=True, read=_READ_TRUST, write=_W_HUMAN),
     # -- the request-policy tombstones (#961 slice 5): one row per activation
     #    interval of a ruling that forget has since removed, so a forgotten
     #    ruling's `info` asks do not silently flip to `work` (refutations.
@@ -347,6 +402,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/request_policy_tombstones.jsonl",
             "refutations._write_policy_tombstones", False,
             "exempt-no-plaintext", "none", audit_exempt=True,
+            # Cure-only writer (forget's policy tombstones, PROCEED outright):
+            # no write column.
             mergeable=True, read=_READ_NOTED),
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
@@ -428,7 +485,10 @@ SURFACES: tuple[Surface, ...] = (
     # and named `.jsonl` so no `*.json` walk claims it.
     Surface("team/{remote}/**/tombstones.jsonl", "store.publish_tombstone",
             False, "exempt-no-plaintext", "none",
-            foreign_read=_READ_FOREIGN),
+            foreign_read=_READ_FOREIGN,
+            # Append-only and read per line, the reader skips a bad row: the
+            # own sidecar is a write target in every state (R2.3).
+            write=((_WR.HUMAN, _WRITE_OPEN),)),
     Surface("team/{remote}/**/*.json", "store._dual_write_team",
             True, "known-gap", "audit", issue="#600"),
     Surface("team/{remote}/.git/**", "git (teamsync subprocess)",
@@ -500,7 +560,8 @@ SURFACES: tuple[Surface, ...] = (
     # surface label only. Query text is deliberately not persisted, so this
     # is an auditable machine-local measurement surface without item prose.
     Surface("logs/recall-delivery.jsonl", "recall_telemetry.record",
-            False, "exempt-no-plaintext", "none"),
+            False, "exempt-no-plaintext", "none", write=_W_EMITTER,
+            tail_bytes=LOG_TAIL_BYTES),
     # #616 restored the glob's claim instead of widening it: serializer's
     # downgrade lines — the one writer that put item text under this shape —
     # now log a content hash (normalize.content_key, the same key a forget
@@ -626,6 +687,58 @@ def read_posture(row: Surface, state: str, *,
         return ReadPosture.OPEN
     column = row.foreign_read if foreign else row.read
     return column[READ_STATES.index(state)]
+
+
+def write_posture(row: Surface, writer: Writer, state: str) -> WritePosture:
+    """The write posture of `row` for `writer` in `state` (a `jsonl.Health`
+    value, as a word). OK and ABSENT always PROCEED, and so does CURE on any
+    row: a repair must be able to write the ledger it is repairing. A writer
+    class the row never declared is a bug in the caller, not a PROCEED, so
+    it raises LookupError whatever the ledger's state (a bug must not wait
+    for the day the ledger breaks to show itself)."""
+    if writer is Writer.CURE:
+        return WritePosture.PROCEED
+    for declared, column in row.write:
+        if declared is writer:
+            if state in ("ok", "absent"):
+                return WritePosture.PROCEED
+            return column[WRITE_STATES.index(state)]
+    raise LookupError(f"{row.shape} declares no {writer.value} write posture")
+
+
+def ledger_hint(name: str, state: str, detail: str = "",
+                unscannable: str = "", *, on_status: bool = False) -> str:
+    """What to do about a ledger in `state`: retry a transient failure, check
+    permissions after an OS error (the errno is in `unscannable`), repair a
+    degraded or garbage ledger. `state` is a `jsonl.Health` value. On the
+    `status` verb itself ("run: daimon status" would send the reader in a
+    circle) the pointer back to it is dropped and the path is printed
+    instead."""
+    if state == "transient":
+        return "retry"
+    if str(detail).startswith("fold raised"):
+        return "check the ledger file" if on_status else "run: daimon status"
+    if state == "unreadable" and unscannable and unscannable != "undecodable":
+        hint = f"check permissions ({unscannable})"
+        return hint if on_status else hint + "; run: daimon status"
+    if name == "trust.jsonl":
+        return "run: daimon trust repair"
+    return f"run: daimon ledger repair {name.removesuffix('.jsonl')}"
+
+
+def write_row(name: str) -> Surface:
+    """The registry row for the ledger file `name` ("events.jsonl",
+    "events.quarantined-lines", "tombstones.jsonl"). Raises LookupError for a
+    name no row declares: a writer asking about a ledger the registry never
+    governed is a bug. A row with no write column (a cure-only writer) is
+    returned too, and `write_posture` then refuses any class but CURE."""
+    for s in SURFACES:
+        last = s.shape.split("/")[-1]
+        # Ledger shapes only: a generic glob (`*`, `*.json`) names no ledger.
+        if (last.endswith((".jsonl", QUARANTINE_SIDECAR_SUFFIX))
+                and _part_matches(last, name)):
+            return s
+    raise LookupError(f"no declared ledger {name!r}")
 
 
 def match(pattern: str) -> Surface | None:

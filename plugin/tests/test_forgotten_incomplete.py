@@ -16,6 +16,7 @@ import pytest
 from daimon_briefing import (cli, config, jsonl, mcp_tools, normalize, recall,
                              store, view)
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import Writer
 
 FORGETFUL = "/repo/forgetful"
 OTHER = "/repo/other"
@@ -36,13 +37,13 @@ def _write(project, texts, sid=None):
     # One session file per project: two projects sharing a session id would
     # overwrite each other's flat copy.
     sid = sid or "S-" + store.project_slug(project).strip("-")
-    store.write_checkpoint(sid, _cp(sid, texts), project_dir=project)
+    store.write_checkpoint(sid, _cp(sid, texts), project_dir=project, writer=Writer.HUMAN)
     return store.project_slug(project)
 
 
 def _forget(project, text):
     store.append_event("d-aaaaaa", "forgotten:" + normalize.content_key(text),
-                       kind="tombstone", tombstone=True, project_dir=project)
+                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
 
 
 def _events(project):
@@ -257,7 +258,7 @@ def test_recall_inject_and_action_recall_print_no_incomplete_line(
             "text": belief, "trust": "verbatim", "quote": belief[:40],
             "importance": 9, "first_seen": "2026-06-20T00:00:00Z"}],
             "recent_decisions": []},
-        "epistemic_snapshot": {}}, project_dir=OTHER)
+        "epistemic_snapshot": {}}, project_dir=OTHER, writer=Writer.HUMAN)
     _write(FORGETFUL, ["words"])
     _events(FORGETFUL).write_bytes(b"<<<<<<< HEAD\n")
     monkeypatch.setattr("sys.stdin", io.StringIO(

@@ -17,6 +17,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from daimon_briefing import briefing, carry, cli, config, normalize, recall, store
+from daimon_briefing.surfaces import Writer
 
 # Fixed clock threaded into every now-consumer (scar 0016): the checkpoints
 # below carry a simulated calendar, so briefing.build must read the SAME clock,
@@ -83,7 +84,7 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
 
     # --- Block 1: pre-state positive control (serialize #1) -----------------
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored1 = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                      admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored1["working_context"]["recent_decisions"]
@@ -103,7 +104,7 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     # --- Block 3: negative + liveness control, same block (serialize #2) ----
     # A fresh session re-extracts S and T verbatim into the same field.
     store.write_checkpoint("S2", _cp("S2", "2026-07-03T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored2 = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                      admit=store.Admit.ANY)
 
@@ -143,7 +144,7 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     # a value forgotten in ANY local project, the same set the briefing's view
     # uses (#1132 PR 9a), so recall and brief agree.
     store.write_checkpoint("SB", _cp("SB", "2026-07-05T00:00:00Z", [_S]),
-                           project_dir=_B)
+                           project_dir=_B, writer=Writer.HUMAN)
     recall.rebuild()
     assert _S not in [h["text"] for h in recall.search(_HOT, project_dir=_B)]
     assert _S in _latest_raw(_B)                      # B keeps it on disk
@@ -152,7 +153,7 @@ def test_forgotten_value_stays_gone_across_reassertion(tmp_checkpoint_dir, monke
     # --- Block 5: durability across index rebuild + a third carried session -
     recall.rebuild()
     store.write_checkpoint("S3", _cp("S3", "2026-07-06T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored3 = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                      admit=store.Admit.ANY)
     assert _S not in _brief_decisions(stored3) and _T in _brief_decisions(stored3)
@@ -175,7 +176,7 @@ def test_forget_dual_write_copy_never_carries_forgotten_value(tmp_checkpoint_dir
     monkeypatch.setenv("DAIMON_TEAM", "1")
 
     store.write_checkpoint("T1", _cp("T1", "2026-07-01T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=_A, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     x_id = next(d["id"] for d in stored["working_context"]["recent_decisions"]
@@ -183,7 +184,7 @@ def test_forget_dual_write_copy_never_carries_forgotten_value(tmp_checkpoint_dir
     assert cli.main(["forget", x_id]) == 0
 
     store.write_checkpoint("T2", _cp("T2", "2026-07-03T00:00:00Z", [_S, _T]),
-                           project_dir=_A)
+                           project_dir=_A, writer=Writer.HUMAN)
 
     # Any team mirror file must carry T but never S.
     team_blobs = [p.read_text(encoding="utf-8")

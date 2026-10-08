@@ -51,6 +51,7 @@ from . import (buckets, clock, config, display, jsonl, normalize, policy,
 # future channel tier ("ui", "signed") consistent across ledgers instead of
 # forking per module.
 from .refutations import CHANNEL_AUTHORITY, CHANNEL_LABEL
+from .surfaces import Writer
 
 VERSION = 1
 # #961: the approval-requirement a request carries. `info` is answerable from
@@ -362,7 +363,7 @@ def _stamp(event: str, request_id: str, channel: str,
     return row
 
 
-def append(row: dict, project_dir=None) -> bool:
+def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row. Never mutates another bucket."""
     if config.is_disabled():
         return False
@@ -374,8 +375,9 @@ def append(row: dict, project_dir=None) -> bool:
                             "author", "act_author"))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        jsonl.append(path, admitted)
-        return True
+        return jsonl.append_as(path, admitted, writer)
+    except jsonl.Refused:
+        raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
 
@@ -1570,7 +1572,8 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
                 "kind info lowers this request's own approval requirement, "
                 "and only the sender's human channel may assign it"
                 f"{detail} this call arrived through {channel!r}")
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RequestError(
             "request not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
@@ -1622,7 +1625,8 @@ def revise(request_id: str, *, channel: str, ask: str | None = None,
     if not any(key in row for key in ("ask", "why", "evidence")):
         raise RequestError(
             "revision changes nothing; provide a new ask, why, or evidence")
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RequestError("revision not written")
 
 
@@ -1681,7 +1685,8 @@ def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
     for key, value in stamp.items():
         if value:
             row[key] = value
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RequestError("verdict not written")
 
 
@@ -1887,7 +1892,8 @@ def suppress(request_id: str, *, channel: str, note: str = "",
     note = _text("note", note, required=False)
     if note:
         row["note"] = note
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RequestError("suppression not written")
 
 
@@ -1908,7 +1914,8 @@ def done(request_id: str, *, channel: str, evidence: str,
             "completed")
     row = _stamp("done", request_id, channel, author=author)
     row["evidence"] = _scrub("evidence", evidence)
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RequestError("completion not written")
 
 
@@ -1951,7 +1958,8 @@ def reply(request_id: str, note: str, evidence: str | None = None, *,
     if proof:
         row["evidence"] = proof
     row["revision"] = record["revision"]
-    if not append(row, project_dir=project_dir):
+    if not append(row, project_dir=project_dir,
+                  writer=Writer.HUMAN):
         raise RequestError("reply not written")
 
 
@@ -1971,7 +1979,8 @@ def verify_done(request_id: str, *, role: str, project_dir=None) -> bool:
     drops that qualifier just because a role was recorded."""
     row = _stamp("done_verified", request_id, "mechanical")
     row["evidence_role"] = _text("role", role)[:_ROLE_MAX]
-    return append(row, project_dir=project_dir)
+    return append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER)
 
 
 def plaintext_values(row: dict) -> list[str]:
@@ -2426,7 +2435,8 @@ def stamp_owed_delivered(request_id: str, session: str,
         raise RequestError("owed_delivered stamp requires a session id")
     row = _stamp("owed_delivered", request_id, "mechanical")
     row["session"] = session
-    return append(row, project_dir=project_dir)
+    return append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER)
 
 
 def owed_deliverable(session: str, project_dir=None) -> dict:
@@ -2650,7 +2660,8 @@ def stamp_verdict_surfaced(request_id: str, project_dir=None, *,
     row = _stamp("verdict_surfaced", request_id, "mechanical")
     if reply_event_id:  # #1117: rides on the same event, only when set
         row["reply_event_id"] = str(reply_event_id)
-    return append(row, project_dir=project_dir)
+    return append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER)
 
 
 def unseen_reply_id(record: dict, session: str | None = None) -> str | None:
@@ -2712,7 +2723,8 @@ def stamp_verdict_delivered(request_id: str, session: str,
     row["session"] = session
     if reply_event_id:  # #1117: rides on the same event, only when set
         row["reply_event_id"] = str(reply_event_id)
-    return append(row, project_dir=project_dir)
+    return append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER)
 
 
 def verdict_deliverable(session: str, project_dir=None) -> dict:
@@ -2777,7 +2789,8 @@ def stamp_surfaced(request_id: str, project_dir=None) -> bool:
     duplicate is at worst a second row the fold's earliest-wins tie-break
     absorbs for free."""
     row = _stamp("surfaced", request_id, "mechanical")
-    return append(row, project_dir=project_dir)
+    return append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER)
 
 
 def needs_delivered_stamp(record: dict, session: str) -> bool:
@@ -2805,7 +2818,8 @@ def stamp_delivered(request_id: str, session: str, project_dir=None) -> bool:
         raise RequestError("delivered stamp requires a session id")
     row = _stamp("delivered", request_id, "mechanical")
     row["session"] = session
-    return append(row, project_dir=project_dir)
+    return append(row, project_dir=project_dir,
+                  writer=Writer.EMITTER)
 
 
 def supersedes_label(record: dict) -> str:
@@ -2843,6 +2857,7 @@ def status_counts(project_dir=None) -> dict:
     return {"open_sent": open_sent, "awaiting_you": awaiting, "notes": notes}
 
 
+@jsonl.reaching(_path, lambda row, key: key in row_content_keys(row))
 def forget_content_key(content_key: str, *, project_dir=None) -> list[str]:
     """Remove every record holding `content_key` in a plaintext field.
 

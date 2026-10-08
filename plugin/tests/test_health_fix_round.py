@@ -12,6 +12,7 @@ import pytest
 from daimon_briefing import (cli, config, display, jsonl, recall, requests,
                              store, view)
 from daimon_briefing.jsonl import Health
+from daimon_briefing.surfaces import Writer
 
 OWN = "/p/round-own"
 SENDER = "/p/round-sender"
@@ -29,7 +30,7 @@ def _write(project, texts, sid=None):
         "working_context": {"recent_decisions": [
             {"text": t, "trust": "inferred"} for t in texts],
             "open_questions": []},
-        "epistemic_snapshot": {}}, project_dir=project)
+        "epistemic_snapshot": {}}, project_dir=project, writer=Writer.HUMAN)
     return store.project_slug(project)
 
 
@@ -229,7 +230,7 @@ def test_a_chmod_reaches_every_memo_without_clearing_a_cache(
     broken = _write("/p/round-broken", ["words"])
     _write("/p/round-fine", ["other words"])
     events = _bucket("/p/round-broken") / "events.jsonl"
-    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-broken")
+    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-broken", writer=Writer.HUMAN)
     assert store.forgotten_incomplete() == frozenset()      # memo warm
     assert view.judge(broken).index_closed is False         # judge memo warm
     assert view.snapshot("/p/round-fine").notes() == ()
@@ -247,7 +248,7 @@ def test_a_chmod_reaches_every_memo_without_clearing_a_cache(
 
 def test_the_stamps_change_on_a_chmod(tmp_checkpoint_dir):
     _write("/p/round-stamp", ["words"])
-    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-stamp")
+    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-stamp", writer=Writer.HUMAN)
     path = _bucket("/p/round-stamp") / "events.jsonl"
     key, stamp = view._stat_key(path), store.forgotten_stamp()
     time.sleep(0.01)

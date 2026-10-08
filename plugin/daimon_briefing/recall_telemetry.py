@@ -13,6 +13,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 
 from . import config, jsonl
+from .surfaces import Writer
 
 WINDOW_DAYS = 7
 
@@ -213,7 +214,9 @@ def record(rows, *, query_terms, surface, hint_form=None, injected_into=None,
         path = config.recall_delivery_log()
         path.parent.mkdir(parents=True, exist_ok=True)
         # lock=False: logs/ holds no bucket and declares no lock sidecar.
-        jsonl.append_lines(path, entries, lock=False)
+        jsonl.append_lines(
+            path, entries, lock=False,
+            posture=jsonl.lazy_posture(path, Writer.EMITTER))
     except OSError:
         pass
 

@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 
 from daimon_briefing import checks, checks_runtime, cli, config, refutations
+from daimon_briefing.surfaces import Writer
 
 MATCH = "gh pr create"
 BODY = "#!/bin/sh\nexit 0\n"
@@ -88,7 +89,7 @@ def test_child_sync_of_its_own_root_never_touches_a_layer_entry(tmp_path, monkey
     ruling_id = _arm_enforce(work, "a layer rule the child must not re-key")
 
     before = _manifest_path().read_text(encoding="utf-8")
-    report = checks.sync(str(repo))
+    report = checks.sync(str(repo), writer=Writer.HUMAN)
     after = _manifest_path().read_text(encoding="utf-8")
 
     assert report.ok
@@ -122,7 +123,7 @@ def test_hooks_install_reports_a_failed_layer_sync(tmp_path, monkeypatch, capsys
     _arm_enforce(work, "a layer rule whose hooks-install sync will be made to fail")
     monkeypatch.chdir(repo)
 
-    def _fake_sync_layers(project_dir=None):
+    def _fake_sync_layers(project_dir=None, *, writer):
         return [(str(work), checks.SyncReport(False, 0, "", "boom"))]
 
     monkeypatch.setattr(checks, "sync_layers", _fake_sync_layers)
@@ -171,7 +172,7 @@ def test_promotion_window_child_and_layer_copies_both_armed_until_child_retires(
     assert {e["project_dir"] for e in matching} == {str(repo), str(work)}
 
     refutations.retire(child_id, channel="cli-tty", project_dir=str(repo))
-    checks.sync(str(repo))
+    checks.sync(str(repo), writer=Writer.HUMAN)
 
     entries = _armed_for(str(repo))
     matching = [e for e in entries if e["ruling_id"] == child_id]
@@ -246,7 +247,7 @@ def test_check_sync_reports_a_failed_layer_sync(tmp_path, monkeypatch, capsys):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
     _arm_enforce(work, "a layer rule whose sync will be made to fail")
 
-    def _fake_sync_layers(project_dir=None):
+    def _fake_sync_layers(project_dir=None, *, writer):
         return [(str(work), checks.SyncReport(False, 0, "", "boom"))]
 
     monkeypatch.setattr(checks, "sync_layers", _fake_sync_layers)
@@ -282,7 +283,7 @@ def test_layer_bucket_holding_only_a_candidate_contributes_nothing_to_sync(
         check={"match": MATCH, "body": BODY, "intent": "enforce"},
         project_dir=str(work))
 
-    layer_reports = checks.sync_layers(str(repo))
+    layer_reports = checks.sync_layers(str(repo), writer=Writer.HUMAN)
     assert all(report.armed == 0 for _layer, report in layer_reports)
     entries = _armed_for(str(repo))
     assert entries == []

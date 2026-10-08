@@ -4,6 +4,7 @@ exactly — same D2 gate, same D1 post-print stamp timing.
 """
 
 from daimon_briefing import cli, requests, store
+from daimon_briefing.surfaces import Writer
 
 
 def _seed_checkpoint(project_dir, session):
@@ -11,7 +12,7 @@ def _seed_checkpoint(project_dir, session):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
     return store.project_slug(project_dir)
 
 
@@ -116,7 +117,7 @@ def test_cli_brief_global_fallback_never_stamps_or_shows_the_verdict_panel(
         "session_id": "S-other-v", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "y", "trust": "inferred"}]},
-    })  # no project_dir -> global pointer only
+    }, writer=Writer.HUMAN)  # no project_dir -> global pointer only
     monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/cbv-never-seen")
 
@@ -207,7 +208,7 @@ def _later_session(project_dir, session, minutes):
         "session_id": session, "created": created,
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project_dir)
+    }, project_dir=project_dir, writer=Writer.HUMAN)
 
 
 def test_cli_brief_shows_and_stamps_a_late_reply_once(

@@ -3,6 +3,7 @@ import sys
 import pytest
 
 from daimon_briefing import render
+from daimon_briefing.surfaces import Writer
 
 
 def _force_rich_present(monkeypatch):
@@ -287,7 +288,7 @@ def _seed_request(recipient_dir, ask="publish the schema"):
         "session_id": "S-render-req-sender", "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir="/p/render-req-sender")
+    }, project_dir="/p/render-req-sender", writer=Writer.HUMAN)
     to = store.project_slug(recipient_dir)
     return requests.open_request(
         to=to, ask=ask, why="because", channel="cli-agent",
@@ -346,7 +347,7 @@ def _seed_verdict(sender_dir, ask="publish the schema"):
         "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=recipient_dir)
+    }, project_dir=recipient_dir, writer=Writer.HUMAN)
     to = store.project_slug(recipient_dir)
     q_id = requests.open_request(to=to, ask=ask, why="because",
                                  channel="cli-agent", project_dir=sender_dir)

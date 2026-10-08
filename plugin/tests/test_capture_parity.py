@@ -22,6 +22,7 @@ import json
 import os
 
 from daimon_briefing import cli, hooks, provenance, store, transcript
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/parity"
 SESSION = "S-parity"
@@ -100,7 +101,7 @@ def _seed_home(monkeypatch, home):
     monkeypatch.setenv("DAIMON_LOG_DIR", str(home / "logs"))
     # deepcopy: write_checkpoint mutates its argument in place (scar 0027) —
     # both homes must be seeded from the same pristine dict.
-    store.write_checkpoint("S-prev", copy.deepcopy(_PREV), project_dir=PROJECT)
+    store.write_checkpoint("S-prev", copy.deepcopy(_PREV), project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _rows_minus_ts(path):

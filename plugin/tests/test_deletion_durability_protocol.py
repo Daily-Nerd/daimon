@@ -63,6 +63,7 @@ from daimon_briefing import (
     serializer,
     store,
 )
+from daimon_briefing.surfaces import Writer
 
 # Fixed clock (scar 0016): the checkpoints below carry a simulated calendar, so
 # every now-consumer must read THIS clock, never wall time.
@@ -142,7 +143,7 @@ def _serialize_and_write(session_id, created, fake_chat_factory):
     # forgotten items), so snapshot the pre-write extraction to prove the
     # resurrection vector is real BEFORE the boundary closes it.
     pre_write = copy.deepcopy(cp)
-    store.write_checkpoint(session_id, cp, project_dir=_P)
+    store.write_checkpoint(session_id, cp, project_dir=_P, writer=Writer.HUMAN)
     return pre_write
 
 

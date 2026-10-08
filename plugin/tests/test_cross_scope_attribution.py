@@ -11,6 +11,7 @@ defect wearing a fix.
 """
 
 from daimon_briefing import cli, recall, store
+from daimon_briefing.surfaces import Writer
 
 
 def _cp(sid, text):
@@ -58,9 +59,9 @@ def test_cli_recall_all_projects_marks_the_foreign_row(
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-a", _cp("S-a", "lemur work in a"),
-                           project_dir=proj_a)
+                           project_dir=proj_a, writer=Writer.HUMAN)
     store.write_checkpoint("S-b", _cp("S-b", "lemur work in b"),
-                           project_dir=proj_b)
+                           project_dir=proj_b, writer=Writer.HUMAN)
 
     assert cli.main(["recall", "lemur", "--project", proj_a,
                      "--all-projects"]) == 0
@@ -77,7 +78,7 @@ def test_cli_recall_scoped_search_marks_nothing(
     proj = str((tmp_path / "proj-only").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("S-a", _cp("S-a", "lemur work here"),
-                           project_dir=proj)
+                           project_dir=proj, writer=Writer.HUMAN)
     assert cli.main(["recall", "lemur", "--project", proj]) == 0
     out = capsys.readouterr().out
     assert "lemur work here" in out
@@ -90,7 +91,7 @@ def test_cli_recall_json_is_unchanged(
     concern and must not become a second encoding of the same fact."""
     proj = str((tmp_path / "proj-json").resolve())
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", _cp("S-a", "lemur json"), project_dir=proj)
+    store.write_checkpoint("S-a", _cp("S-a", "lemur json"), project_dir=proj, writer=Writer.HUMAN)
     assert cli.main(["recall", "lemur", "--project", proj, "--json"]) == 0
     out = capsys.readouterr().out
     assert '"project_slug"' in out

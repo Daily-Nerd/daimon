@@ -5,6 +5,7 @@ row", the sweep's rule, not "no checkpoint at all"."""
 import json
 
 from daimon_briefing import ledger, store
+from daimon_briefing.surfaces import Writer
 
 
 def _ledger_error(sid, transcript):
@@ -46,7 +47,7 @@ def _write_checkpoint(sid, created, sample_checkpoint):
     cp = dict(sample_checkpoint)
     cp["session_id"] = sid
     cp["created"] = created
-    store.write_checkpoint(sid, cp)
+    store.write_checkpoint(sid, cp, writer=Writer.HUMAN)
 
 
 def test_checkpoint_covers_is_false_when_conversation_continues_after_it(

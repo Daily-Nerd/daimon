@@ -25,7 +25,8 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-from . import checks_runtime, config, refutations, store
+from . import checks_runtime, config, jsonl, refutations, store
+from .surfaces import WritePosture, Writer
 
 
 class SyncReport(NamedTuple):
@@ -89,15 +90,22 @@ def _wanted(project_dir, root: str) -> list:
     return out
 
 
-def sync(project_dir=None) -> SyncReport:
-    """Rebuild this project's armed checks from its ledger. Never raises."""
+def sync(project_dir=None, *, writer: Writer) -> SyncReport:
+    """Rebuild this project's armed checks from its ledger. Never raises.
+
+    `writer` (#1132 PR 10b) is who is syncing. The manifest is rebuilt from
+    `refutations.jsonl`, and a ledger that cannot be read yields NO armed
+    entries, so a rebuild from it would unlink every check this project has
+    armed. A person's sync (HUMAN) therefore REFUSES while that ledger is
+    unproven, as a failed report with the reason; a forget's own
+    re-derivation (CURE) proceeds."""
     try:
-        return _sync(project_dir)
+        return _sync(project_dir, writer)
     except Exception as exc:  # noqa: BLE001 — a report, never a raise
         return SyncReport(False, 0, "", f"{type(exc).__name__}: {exc}")
 
 
-def sync_layers(project_dir=None) -> list:
+def sync_layers(project_dir=None, *, writer: Writer) -> list:
     """Sync every ruling layer above `project_dir` (#1092) through this SAME
     `sync` entry point (#1095), so `hooks install` and `check sync` re-arm an
     inherited check on a machine that has never synced the layer's own
@@ -119,15 +127,20 @@ def sync_layers(project_dir=None) -> list:
     `SyncReport(ok=False, ...)` rather than aborting the loop — so this
     needs no guard of its own, the same trust `_inherited_active` extends to
     it."""
-    return [(layer, sync(layer)) for layer in config.layer_scopes(project_dir)]
+    return [(layer, sync(layer, writer=writer))
+            for layer in config.layer_scopes(project_dir)]
 
 
-def _sync(project_dir) -> SyncReport:
+def _sync(project_dir, writer: Writer) -> SyncReport:
     resolved = config.resolve_project_dir(project_dir)
     slug = store.project_slug(resolved)
     if not slug:
         return SyncReport(False, 0, "", "that project directory names no "
                                         "bucket, so there is no ledger to read")
+    judged = jsonl.posture(config.checkpoint_dir() / slug / "refutations.jsonl",
+                           "refutations.jsonl", writer)
+    if judged.write is WritePosture.REFUSE:
+        return SyncReport(False, 0, slug, str(judged.refusal()))
     root = str(resolved)
     base = config.checks_dir()
     manifest_path = base / checks_runtime.MANIFEST_NAME

@@ -18,7 +18,9 @@ from .. import (
     briefing,
     carry,
     config,
+    display,
     effects_commit,
+    jsonl,
     ledger_repair,
     normalize,
     pending,
@@ -32,6 +34,7 @@ from .. import (
     trust,
 )
 from ..effects import Effects
+from ..surfaces import Writer
 from ._ledger import _check_sync_warning
 
 
@@ -160,7 +163,8 @@ def _cmd_resolve(args) -> int:
         target["id"], effective_status,
         note=(evidence if by_agent else (args.note or "")),
         source=event_source,
-        project_dir=project, item_text=str(target.get("text") or ""))
+        project_dir=project, item_text=str(target.get("text") or ""),
+        writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
@@ -175,6 +179,50 @@ def _cmd_resolve(args) -> int:
         [f"resolved {target['id']}: {target.get('text', '')} [{args.status}]"])
     return 0
 
+def _unreached_line(u) -> str:
+    """One line for a surface forget could not vouch for (D10.5): which
+    ledger, why, and the cure. The human channel names the file."""
+    stem = u.name.removesuffix(".jsonl")
+    if u.name.endswith(".quarantined-lines"):
+        return (f"{u.name} holds {u.torn or 'a'} line(s) forget cannot read "
+                f"({u.state.value}); review that file by hand")
+    if u.state is jsonl.Health.DEGRADED and u.torn:
+        return (f"{u.name} has {u.torn} torn line(s) that forget cannot "
+                f"read; run: daimon ledger repair {stem}, which moves them "
+                f"to {stem}.quarantined-lines and re-scrubs by key; a value "
+                "fused into a torn row needs manual review of that sidecar")
+    if u.state in (jsonl.Health.OK, jsonl.Health.DEGRADED):
+        return (f"{u.name} could not be rewritten; the value may still be "
+                "in it")
+    shown = f" ({u.detail})" if u.detail else ""
+    hint = display.ledger_hint(u.name, u.state.value, u.detail, u.unscannable)
+    return f"{u.name} is {u.state.value}{shown}; {hint}"
+
+
+def _published_lines(published) -> list:
+    return [f"warning: forget not published to the team ({why}); fix that "
+            f"file ({path}), then run: daimon forget --republish"
+            for path, why in published.failed]
+
+
+def _cmd_forget_republish(args) -> int:
+    """`forget --republish` (D10.5): publish every standing local tombstone
+    the own team sidecar is missing, the cure for a failed publish. No heal
+    does this on its own."""
+    project = _cli._resolve_project(args.project)
+    # The keys come from the events ledger. Unproven, its forgotten fold is
+    # empty, and "republished 0" would be a claim about a ledger nobody read.
+    _cli.require_ledger(project, "events.jsonl")
+    if not config.team_enabled():
+        print("no team is enabled; nothing to republish")
+        return 0
+    published = store.republish_tombstones(project_dir=project)
+    lines = [f"republished {len(published.keys)} tombstone(s) to the team "
+             "sidecar"] + _published_lines(published)
+    render.render_lifecycle_lines(lines)
+    return 4 if published.failed else 0
+
+
 def _cmd_forget(args) -> int:
     """Deliberate item removal (#321): append a tombstone event whose status
     carries a content HASH, never the text — removal means the content leaves
@@ -186,6 +234,16 @@ def _cmd_forget(args) -> int:
     rides the resolutions fold, so withhold, carry suppression, and the
     recall index deletion all inherit it with no new plumbing. The rewritten
     checkpoint re-mints its receipt, so the post-removal state is signed."""
+    if getattr(args, "republish", False):
+        if args.target:
+            print("error: --republish takes no target; it publishes the "
+                  "forgets already recorded", file=sys.stderr)
+            return 2
+        return _cmd_forget_republish(args)
+    if not args.target:
+        print("error: forget needs a target (an item id or a query), or "
+              "--republish", file=sys.stderr)
+        return 2
     project = _cli._resolve_project(args.project)
     checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                         admit=store.Admit.ANY)
@@ -454,6 +512,15 @@ def _cmd_forget(args) -> int:
                 "still withholds")
         render.render_lifecycle_lines(preview)
         return 0
+    # D10.5 / R2.9: ONE explicit preflight on events.jsonl, before anything is
+    # asked or written. The tombstone is the record that makes the deletion
+    # real everywhere else (the write gate, the recall index, the team), so a
+    # forget that cannot record it is refused outright (exit 2, nothing
+    # touched) instead of scrubbing surfaces and then failing to say so. A
+    # dry run above wrote nothing and needs no proven ledger.
+    events_path = store._events_path(store._resolved(project))
+    if events_path is not None:
+        jsonl.require_writable(events_path, Writer.HUMAN)
     # #402: key the tombstone on the CANONICAL value (normalize.content_key),
     # not the raw bytes — so a later re-extraction of the same claim (different
     # case, invisible chars, a look-alike glyph) folds to the same key and is
@@ -500,7 +567,7 @@ def _cmd_forget(args) -> int:
     ok = store.append_event(str(target["id"]), f"forgotten:{content_hash}",
                             note=args.reason or "", kind="tombstone",
                             project_dir=project, allow_disabled=True,
-                            tombstone=True)
+                            tombstone=True, writer=Writer.HUMAN)
     if not ok:
         print("tombstone event not written (project unknown or ledger unwritable)")
         return 1
@@ -533,7 +600,8 @@ def _cmd_forget(args) -> int:
         # made the deletion manufacture a fresh copy of the value it was asked to
         # remove, in a file that did not exist when the user ran the command.
         store.write_checkpoint(sid, checkpoint, project_dir=project,
-                               allow_disabled=True, rotate=False)
+                               allow_disabled=True, rotate=False,
+                               writer=Writer.CURE)
     # The live checkpoint is one surface of several. prev-N and superseded
     # session files hold the same plaintext and were never in the contract
     # (#419: plaintext is what puts a file inside it, not its role). Runs even
@@ -548,7 +616,7 @@ def _cmd_forget(args) -> int:
     # #600 slice B: publish the deletion itself (hash only) so teammates can
     # suppress the value without waiting to pull the scrubbed file — and so
     # a copy THEY extracted independently can be acted on at all.
-    store.publish_tombstone(content_hash, project_dir=project)
+    published = store.publish_tombstone(content_hash, project_dir=project)
     # Every ledger deleter, in one shared entry that `daimon ledger repair`
     # also calls (ledger_repair.scrub_forgotten_key). Events are redacted in
     # place (#599), refutations/amendments/requests drop the records holding
@@ -719,8 +787,23 @@ def _cmd_forget(args) -> int:
     if check_warning:
         report.append(f"{check_warning} — a forgotten ruling's check may "
                       "still be armed on this host")
+    # D10.5: what forget could not vouch for. A plaintext ledger it did not
+    # reach, or a team publish that failed, makes the exit 4 ("scrubbed, with
+    # unreached surfaces"); a ledger that holds no plaintext is only noted.
+    failing = [u for u in scrubbed.unreached if u.plaintext]
+    for u in scrubbed.unreached:
+        report.append(
+            f"unreached: {_unreached_line(u)}" if u.plaintext else
+            f"note: {_unreached_line(u)}; it holds no plaintext, so this "
+            "does not block forget")
+    report.extend(_published_lines(published))
+    if failing or published.failed:
+        report.append(
+            f"forget scrubbed everything it could read; "
+            f"{len(failing) + len(published.failed)} surface(s) were not "
+            "reached (exit 4)")
     render.render_lifecycle_lines(report)
-    return 0
+    return 4 if (failing or published.failed) else 0
 
 def _is_supersede_candidate(item_id: str, project) -> bool:
     """True when the item's LATEST lifecycle event is a serializer-authored
@@ -794,7 +877,8 @@ def _cmd_reverify(args) -> int:
         return 1
     ok = store.append_event(item["id"], "reopened", note=note,
                             source=human_channel,
-                            item_text=item.get("text", ""), project_dir=project)
+                            item_text=item.get("text", ""), project_dir=project,
+                            writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
@@ -1194,12 +1278,17 @@ def register(sub, fmt) -> None:
         epilog="Examples:\n  daimon forget o-3f8a2c --reason \"contains client name\"\n"
                "  daimon forget \"wrong belief about retry nonce\" --dry-run\n",
     )
-    p_forget.add_argument("target", help="item id (exact) or a query that must match exactly one item")
+    p_forget.add_argument("target", nargs="?", default=None,
+                          help="item id (exact) or a query that must match exactly one item")
     p_forget.add_argument("--reason", help="recorded on the tombstone event (redacted like any note)")
     p_forget.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_forget.add_argument(
         "--dry-run", action="store_true",
         help="show what would be forgotten without writing — look before a destructive op")
+    p_forget.add_argument(
+        "--republish", action="store_true",
+        help="publish every local forget the team sidecar is missing "
+             "(the cure for a publish that failed); takes no target")
     p_forget.set_defaults(func=_cli._cmd_forget)
 
     p_reverify = sub.add_parser(

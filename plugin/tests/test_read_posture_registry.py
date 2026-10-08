@@ -55,10 +55,6 @@ def test_foreign_read_is_declared_where_another_bucket_or_author_is_read():
     assert team.read == ()
 
 
-def test_the_write_column_stays_empty_until_the_write_side_lands():
-    assert all(s.write == () for s in surfaces.SURFACES)
-
-
 def test_a_posture_is_always_one_of_the_four_and_has_one_per_state():
     for s in surfaces.SURFACES:
         for column in (s.read, s.foreign_read):

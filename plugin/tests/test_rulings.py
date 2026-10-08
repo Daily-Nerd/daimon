@@ -20,6 +20,7 @@ import pytest
 import time as _time
 
 from daimon_briefing import clock, config, redact, refutations, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 
 PROJECT = "/p/rulings"
@@ -96,7 +97,7 @@ def test_human_ratify_activates_a_ruling(tmp_checkpoint_dir):
 def test_mechanical_activated_is_inert_on_a_ruling(tmp_checkpoint_dir):
     ruling_id = _rule()
     row = refutations._stamp("activated", ruling_id, "mechanical")
-    assert refutations.append(row, project_dir=PROJECT)
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
     record = refutations.get(ruling_id, project_dir=PROJECT)
     assert record["state"] == "candidate"
 
@@ -107,7 +108,7 @@ def test_agent_revised_row_is_inert_on_an_active_ruling(tmp_checkpoint_dir):
     ruling_id = _rule(channel="cli-tty", ratified=True)
     row = refutations._stamp("revised", ruling_id, "cli-agent")
     row["verdict"] = "the opposite of the standing rule"
-    assert refutations.append(row, project_dir=PROJECT)
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
     record = refutations.get(ruling_id, project_dir=PROJECT)
     assert record["state"] == "active"
     assert record["verdict"] == "internal numbers never appear in public posts"
@@ -522,7 +523,7 @@ def test_forget_refuses_an_active_ruling_without_a_terminal(
         "session_id": "S1", "created": "2026-07-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "unrelated", "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False,
                         raising=False)
     rc = cli.main(["forget", "internal numbers never appear in public posts",
@@ -541,7 +542,7 @@ def test_forget_from_a_terminal_still_reaches_a_ruling(
         "session_id": "S1", "created": "2026-07-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "unrelated", "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     rc = cli.main(["forget", "internal numbers never appear in public posts",
                    "--project", PROJECT])
     assert rc == 0
@@ -633,7 +634,7 @@ def test_destructive_forget_of_an_active_ruling_confirms_at_the_tty(
         "session_id": "S1", "created": "2026-07-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "unrelated", "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setattr("builtins.input", lambda prompt="": "n")
     rc = cli.main(["forget", "internal numbers never appear in public posts",
                    "--project", PROJECT])
@@ -718,7 +719,7 @@ def test_guard_open_proposals_tolerates_bad_order_values(tmp_checkpoint_dir):
     ruling_id = _rule(channel="cli-tty", ratified=True)
     row = refutations._stamp("revision-proposed", ruling_id, "cli-agent")
     row["order"] = "not-a-number"
-    assert refutations.append(row, project_dir=PROJECT)
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
     refutations.revise(
         ruling_id, channel="cli-agent", evidence=["issue:693"],
         verdict="a proposal", project_dir=PROJECT)
@@ -1279,7 +1280,7 @@ def test_dry_run_warns_about_active_rulings(tmp_checkpoint_dir, _tty,
         "session_id": "S1", "created": "2026-07-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "unrelated", "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     rc = cli.main(["forget", "internal numbers never appear in public posts",
                    "--dry-run", "--project", PROJECT])
     assert rc == 0
@@ -2654,7 +2655,7 @@ def test_a_ruling_revised_twice_then_forgotten_tombstones_both_intervals(
     covered_row.update({"to": "p-first", "ask": "an ask", "why": "a why",
                         "kind": "info", "under_ruling": ruling_id,
                         "policy_sha256": sha1})
-    assert requests.append(covered_row, project_dir=PROJECT)
+    assert requests.append(covered_row, project_dir=PROJECT, writer=Writer.HUMAN)
     record = requests.records(project_dir=PROJECT)["q-0000000000f6"]
     assert record["kind"] == "info"
 
@@ -2665,7 +2666,7 @@ def test_a_ruling_revised_twice_then_forgotten_tombstones_both_intervals(
     late_row.update({"to": "p-first", "ask": "a late ask", "why": "a why",
                      "kind": "info", "under_ruling": ruling_id,
                      "policy_sha256": sha1})
-    assert requests.append(late_row, project_dir=PROJECT)
+    assert requests.append(late_row, project_dir=PROJECT, writer=Writer.HUMAN)
     record = requests.records(project_dir=PROJECT)["q-0000000000f7"]
     assert record["kind"] == "work"
 
@@ -3000,7 +3001,7 @@ def test_a_forged_agent_ratified_row_does_not_apply_the_pending_proposal(
     # a pin match alone must never stand in for human authority.
     row = refutations._stamp("ratified", ruling_id, "cli-agent")
     row["check_sha256"] = proposed_sha
-    assert refutations.append(row, project_dir=PROJECT)
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
     record = refutations.get(ruling_id, project_dir=PROJECT)
     assert record.get("revision_proposed") is not None
     assert "check" not in record

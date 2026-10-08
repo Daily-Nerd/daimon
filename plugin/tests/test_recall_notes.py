@@ -11,6 +11,7 @@ import pytest
 import daimon_briefing
 from daimon_briefing import cli, config, mcp_tools, recall, store, trust
 from tests import _sentinel_drive as drive
+from daimon_briefing.surfaces import Writer
 
 HOT = "walrusharbor"
 VISIBLE = "a plain decision about the walrusharbor deployment"
@@ -25,7 +26,7 @@ def stale(tmp_checkpoint_dir, monkeypatch):
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     recall.rebuild()
 
@@ -62,7 +63,7 @@ def test_a_clean_recall_prints_no_note(tmp_checkpoint_dir, monkeypatch,
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["recall", HOT]) == 0
     out = capsys.readouterr()
@@ -82,7 +83,7 @@ def test_mcp_recall_clean_result_is_the_bare_list(tmp_checkpoint_dir,
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     got = mcp_tools.HANDLERS["daimon_recall"]({"query": HOT})
     assert [r["text"] for r in json.loads(got.text)] == [VISIBLE]
@@ -105,7 +106,7 @@ def test_a_closed_bucket_note_names_no_project_and_no_count(
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     ledger = config.checkpoint_dir() / store.project_slug(PROJECT) / "trust.jsonl"
     ledger.write_text("garbage line\n")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
@@ -138,7 +139,7 @@ def test_and_to_or_fallback_survives_a_fully_withheld_and_result(
         "working_context": {"recent_decisions": [
             {"text": both, "trust": "inferred"},
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     recall.rebuild()
     monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)
     monkeypatch.setattr(recall, "_rebuild_forced", lambda path, notes: False)
@@ -155,7 +156,7 @@ def test_a_failed_forced_rebuild_serves_the_judged_rows_with_a_stale_note(
         "working_context": {"recent_decisions": [
             {"text": QUARANTINED, "trust": "inferred"},
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     recall.rebuild()
     monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)
 
@@ -176,7 +177,7 @@ def test_a_closed_item_finds_absent_not_withheld(tmp_checkpoint_dir):
         "session_id": "S1", "created": "2026-08-01T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT)
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
     slug = store.project_slug(PROJECT)
     got = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                  admit=store.Admit.ANY)

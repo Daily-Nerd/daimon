@@ -20,6 +20,7 @@ scan it triggers runs together, not the sum of the isolated numbers.
 import time
 
 from daimon_briefing import pending, refutations, requests, store
+from daimon_briefing.surfaces import Writer
 
 RECIPIENT = "/p/scan-cost-recipient"
 N_BUCKETS = 50          # "a realistic multi-bucket store" per the PR brief
@@ -48,7 +49,7 @@ def _seed(n_buckets=N_BUCKETS, n_addressed=N_ADDRESSED):
             "session_id": f"S-scan-{i}", "created": "2026-08-16T00:00:00Z",
             "working_context": {"recent_decisions": [
                 {"text": "x", "trust": "inferred"}]},
-        }, project_dir=project_dir)
+        }, project_dir=project_dir, writer=Writer.HUMAN)
         slug = store.project_slug(project_dir)
         if i < n_addressed:
             requests.open_request(
@@ -231,7 +232,7 @@ def _seed_policy_recipients(n=_N_POLICY_RECIPIENTS,
             "session_id": f"S-policy-scan-{i}", "created": "2026-08-16T00:00:00Z",
             "working_context": {"recent_decisions": [
                 {"text": "x", "trust": "inferred"}]},
-        }, project_dir=sender_dir)
+        }, project_dir=sender_dir, writer=Writer.HUMAN)
         sender_slug = store.project_slug(sender_dir)
         requests.open_request(
             to=recipient_slug, ask=f"ask {i} about the release", why="because",

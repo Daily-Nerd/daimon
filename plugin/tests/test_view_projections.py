@@ -5,6 +5,7 @@ written by the real writers (`store.write_checkpoint`, `store.append_event`,
 import pytest
 
 from daimon_briefing import config, normalize, schema, store, trust, view
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/view-projections"
 S_TOPIC = "SENTINEL-topic the weekly sync cadence"
@@ -36,7 +37,7 @@ def _checkpoint(sid="S-1", created="2026-08-01T00:00:00Z", **texts):
 
 def _write(project=PROJECT, **kw):
     cp = _checkpoint(**kw)
-    store.write_checkpoint(cp["session_id"], cp, project_dir=project)
+    store.write_checkpoint(cp["session_id"], cp, project_dir=project, writer=Writer.HUMAN)
     return cp["session_id"]
 
 
@@ -55,7 +56,7 @@ def _all_texts(cp):
 def _forget(text):
     key = normalize.content_key(text)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT)
+                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind):
@@ -144,7 +145,7 @@ def test_a_closed_snapshot_empties_every_field(tmp_checkpoint_dir):
 def test_live_drops_resolved_loops_and_counts_them(tmp_checkpoint_dir):
     _write()
     item_id = _raw_latest()["working_context"]["open_questions"][0]["id"]
-    store.append_event(item_id, "resolved", project_dir=PROJECT)
+    store.append_event(item_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     kept = view.open(PROJECT, live=False)
     dropped = view.open(PROJECT, live=True)
     assert S_QUESTION in _all_texts(kept.checkpoint) and kept.suppressed == 0
@@ -155,7 +156,7 @@ def test_live_drops_resolved_loops_and_counts_them(tmp_checkpoint_dir):
 def test_withheld_beats_suppressed(tmp_checkpoint_dir):
     _write()
     item_id = _raw_latest()["working_context"]["open_questions"][0]["id"]
-    store.append_event(item_id, "resolved", project_dir=PROJECT)
+    store.append_event(item_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
     _forget(S_QUESTION)
     got = view.open(PROJECT, live=True)
     assert got.suppressed == 0

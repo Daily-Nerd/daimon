@@ -15,6 +15,7 @@ import json
 
 from daimon_briefing import carry, cli, config, render, schema, store
 from daimon_briefing.cli import history
+from daimon_briefing.surfaces import Writer
 
 
 _PROJECT = "/p/hist-blame"
@@ -46,7 +47,7 @@ def _checkpoint(session_id, created, *, decisions=(), questions=()):
 
 def _write(checkpoint, *, project=_PROJECT):
     assert store.write_checkpoint(checkpoint["session_id"], checkpoint,
-                                  project_dir=project)
+                                  project_dir=project, writer=Writer.HUMAN)
     return checkpoint
 
 
@@ -152,9 +153,9 @@ def test_blame_lists_events_in_order_with_their_channel(tmp_checkpoint_dir,
         questions=[_item("does the pointer chain expire")]))
     item_id = _ids(first)["does the pointer chain expire"]
     assert store.append_event(item_id, "resolved", source="cli-tty",
-                              project_dir=_PROJECT)
+                              project_dir=_PROJECT, writer=Writer.HUMAN)
     assert store.append_event(item_id, "reopened", note="checked the rotation",
-                              source="cli-tty", project_dir=_PROJECT)
+                              source="cli-tty", project_dir=_PROJECT, writer=Writer.HUMAN)
 
     assert cli.main(["blame", item_id, "--project", _PROJECT, "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -174,7 +175,7 @@ def test_blame_never_answers_for_a_corroboration_row(tmp_checkpoint_dir,
     item_id = _ids(first)["a native fact"]
     assert store.append_event(store.corroboration_ref(item_id),
                               "corroborated-by:S-9", source="serialize",
-                              project_dir=_PROJECT)
+                              project_dir=_PROJECT, writer=Writer.HUMAN)
     assert cli.main(["blame", item_id, "--project", _PROJECT, "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["events"] == []
 
@@ -193,7 +194,7 @@ def test_item_events_survives_a_corrupt_ledger_line(tmp_checkpoint_dir):
                                decisions=[_item("a native fact")]))
     item_id = _ids(first)["a native fact"]
     assert store.append_event(item_id, "resolved", source="cli-tty",
-                              project_dir=_PROJECT)
+                              project_dir=_PROJECT, writer=Writer.HUMAN)
     path = config.checkpoint_dir() / store.project_slug(_PROJECT) / "events.jsonl"
     with path.open("a", encoding="utf-8") as handle:
         handle.write("{not json\n")

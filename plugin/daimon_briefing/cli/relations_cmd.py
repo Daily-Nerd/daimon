@@ -69,6 +69,7 @@ def _cmd_relations_show(args) -> int:
 
 def _cmd_relations_verdict(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "relations.jsonl")
     move = {"confirm": relations.confirm, "reject": relations.reject,
             "retract": relations.retract}[args.verdict]
     try:

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from daimon_briefing import (briefing, checks, clock, config, refutations,
                              store)
+from daimon_briefing.surfaces import Writer
 
 
 def _init_git_repo(path: Path) -> None:
@@ -293,7 +294,7 @@ def test_manifest_enforce_line_for_worktree_not_in_the_ledger_walk(
     refutations.ratify(ruling_id, channel="ui",
                        check_sha256=hashlib.sha256(body.encode()).hexdigest(),
                        project_dir=str(repo))
-    checks.sync(str(repo))
+    checks.sync(str(repo), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
 
     lines = briefing.ruling_lines(str(wt))
@@ -334,7 +335,7 @@ def test_manifest_enforce_lines_are_capped_and_count_toward_overflow(
     wt = _worktree(repo)
     for n in range(3):
         _arm_enforce(repo, f"cap post rule {n}")
-    checks.sync(str(repo))
+    checks.sync(str(repo), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
     monkeypatch.setenv("DAIMON_RULING_CAP", "2")
 
@@ -354,7 +355,7 @@ def test_manifest_enforce_lines_share_the_cap_with_own_rows(
             subject="wt own subject")
     for n in range(2):
         _arm_enforce(repo, f"mixed cap rule {n}")
-    checks.sync(str(repo))
+    checks.sync(str(repo), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
     monkeypatch.setenv("DAIMON_RULING_CAP", "2")
 
@@ -427,7 +428,7 @@ def test_admission_drops_an_inherited_verdict_and_its_layer_suffix(
         },
     }
     out = store.write_checkpoint("S-echo-inherit", checkpoint,
-                                 project_dir=str(repo), admit=True)
+                                 project_dir=str(repo), admit=True, writer=Writer.HUMAN)
     data = json.loads(out.read_text(encoding="utf-8"))
     beliefs = [i["text"] for i in data["epistemic_snapshot"]["strong_beliefs"]]
     assert rendered not in beliefs
@@ -448,7 +449,7 @@ def test_slug_brief_shows_slug_line_and_no_caller_cwd_rulings(
             subject="layer leak subject")
     store.write_checkpoint("S0", {"session_id": "S0", "working_context": {},
                                   "epistemic_snapshot": {}},
-                           project_dir=str(slug_target))
+                           project_dir=str(slug_target), writer=Writer.HUMAN)
     slug = store.project_slug(str(slug_target))
 
     assert cli.main(["brief", "--slug", slug]) in (0, 1)
@@ -468,7 +469,7 @@ def test_mcp_brief_slug_shows_slug_line_and_no_caller_cwd_rulings(
     _rule_at(work, "mcp layer rule must not leak", subject="mcp layer leak")
     store.write_checkpoint("S0", {"session_id": "S0", "working_context": {},
                                   "epistemic_snapshot": {}},
-                           project_dir=str(slug_target))
+                           project_dir=str(slug_target), writer=Writer.HUMAN)
     slug = store.project_slug(str(slug_target))
 
     _, out = rpc(_init(), _call("daimon_brief", {"slug": slug}))

@@ -443,3 +443,72 @@ def test_the_scan_finds_each_kind_of_raw_read():
         ("f", "jsonl.read_rows"), ("f", "inspector._project_checkpoints"),
         ("f", "json.load"), ("f", "json.loads"),
         ("f", "store.read_checkpoint"), ("C.g", "store.read_team")}
+
+
+# ---- import DIRECTION (#1132 PR 10b) ----------------------------------------
+#
+# The ledger layer sits under the readers: no ledger module imports a module of
+# the read, view, index or entry layers. (It may import the write layer: the
+# ledgers lean on store and config, which own the paths.) `display` is a
+# stdlib-only presenter that the layer table files under read; `requests` and
+# `ledger` word their notes through it, which is the only crossing, listed here
+# with its reason. `jsonl` and `surfaces` are stricter: leaves that import each
+# other and nothing else in the package.
+
+UPWARD = {"read", "view", "index", "entry"}
+ALLOWED_UPWARD = {
+    ("daimon_briefing/requests.py", "display"):
+        "stdlib-only presenter, one wording for every channel",
+    ("daimon_briefing/ledger.py", "display"):
+        "stdlib-only presenter, one wording for every channel",
+}
+LEAVES = {"daimon_briefing/jsonl.py": {"surfaces"},
+          "daimon_briefing/surfaces.py": set()}
+
+
+def _package_imports(path) -> set:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    mods = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level == 1:
+            if node.module:
+                mods.add(node.module.split(".")[0])
+            else:
+                mods.update(a.name for a in node.names)
+        elif node.level == 0 and (node.module or "").startswith(
+                "daimon_briefing."):
+            mods.add(node.module.split(".")[1])
+    return mods
+
+
+def _upward_crossings(layer_table, root) -> set:
+    found = set()
+    for rel, layer in layer_table.items():
+        if layer != "ledger":
+            continue
+        for mod in _package_imports(root / rel):
+            target = layer_table.get(f"daimon_briefing/{mod}.py")
+            if target in UPWARD:
+                found.add((rel, mod))
+    return found
+
+
+def test_no_ledger_module_imports_a_reader():
+    assert _upward_crossings(LAYER, PLUGIN) == set(ALLOWED_UPWARD)
+
+
+def test_the_direction_scan_sees_an_upward_import(tmp_path):
+    (tmp_path / "daimon_briefing").mkdir()
+    (tmp_path / "daimon_briefing" / "low.py").write_text(
+        "def f():\n    from . import high\n")
+    table = {"daimon_briefing/low.py": "ledger",
+             "daimon_briefing/high.py": "read"}
+    assert _upward_crossings(table, tmp_path) == {
+        ("daimon_briefing/low.py", "high")}
+
+
+def test_jsonl_and_surfaces_are_leaves():
+    for rel, allowed in LEAVES.items():
+        assert _package_imports(PLUGIN / rel) == allowed, rel

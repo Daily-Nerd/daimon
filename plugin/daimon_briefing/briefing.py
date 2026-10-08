@@ -26,7 +26,7 @@ from typing import Any, NamedTuple
 # don't apply here). checks_runtime is the #943 stdlib-only runtime module —
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
-from . import (capture, checks_host, checks_runtime, config, display,
+from . import (capture, checks_host, checks_runtime, config, display, ledger,
                llm, pending, receipts, refutations, requests, schema,
                scoring, store)
 # Imported as constants, not as the module.
@@ -750,6 +750,16 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             wc_stats = None
             ledger_rows = []
     notes = snap.notes()
+    # D10.4: sessions of THIS project that were refused for an unproven events
+    # ledger and are waiting on a repair. Own bucket only; silent once the
+    # ledger reads again, when they are ordinary healable failures.
+    try:
+        admission = ledger.admission_notes(
+            store.project_slug(config.resolve_project_dir(project)) or "")
+    except Exception:  # noqa: BLE001 - a log it cannot read is no note
+        admission = ()
+    if admission:
+        notes = display.merge_notes(notes, admission)
     if worldcheck_project and not opened.fell_back:
         # The request panels of this brief read the same joins; their notes
         # (a sender left out, or read around) join the snapshot's here, so

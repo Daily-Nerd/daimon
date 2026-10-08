@@ -19,6 +19,7 @@ from .. import (
     capture,
     config,
     harvest,
+    jsonl,
     ledger,
     llm,
     recall,
@@ -28,6 +29,7 @@ from .. import (
     transcript,
 )
 from ..ledger import _append_serialize_log
+from ..surfaces import Writer
 
 
 def _preflight_error(path: Path) -> str | None:
@@ -235,6 +237,21 @@ def _run_serialize(transcript_path: Path, project: str | None,
         _print_error(msg)
         _append_serialize_log(msg)
         return 1
+    except jsonl.Refused as exc:
+        # D10.4: a refused admission is an ORDINARY failed serialize: the same
+        # result line every fold already parses, so `status` counts it, the
+        # briefing names it and `heal` retries it. The session group sits
+        # BEFORE the transcript group (the transcript regex swallows anything
+        # after the path) and is printed only when the host named the session
+        # (`--session`), which keys the line to the real session rather than
+        # to the transcript stem (Kimi, #988).
+        elapsed = int(time.monotonic() - start)
+        named = (session or "").strip()
+        group = f" (session: {named})" if named else ""
+        msg = f"error: {exc}{group} (transcript: {path}) after {elapsed}s"
+        _print_error(msg)
+        _append_serialize_log(msg)
+        return 1
     finally:
         # #564: the pipeline is over on every path out of this try — success
         # (checkpoint already on disk), skip, error, or an unexpected raise —
@@ -392,7 +409,7 @@ def _cmd_write_checkpoint(args) -> int:
     # model-authored checkpoint passes the ruling echo filter like capture's.
     out = store.write_checkpoint(session_id, checkpoint,
                                  project_dir=project,
-                                 admit=True)
+                                 admit=True, writer=Writer.ADMISSION)
     if out is None:  # #421: write boundary refused (kill switch)
         print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
               file=sys.stderr)
@@ -466,8 +483,19 @@ def _cmd_heal(args) -> int:
     # multiple perspectives instead — heal-path only, so the extra token cost
     # scales with failure, never with usage.
     escalate = config.heal_escalation_enabled()
+    # The session id goes along only when it is not what the transcript's own
+    # name says: Kimi (every file is `wire.jsonl`, #988) yes, Codex (its id is
+    # the rollout stem's `_session_key`) and Claude no, so a healed Codex
+    # checkpoint keeps its `rollout-...` name and the sweep and the identical-
+    # bytes guard still find it.
+    session = (t["sid"] if t["sid"] != ledger._session_key(transcript_path.stem)
+               else None)
     with render.working(f"healing {t['sid']} — re-serializing transcript"):
-        return _cli._run_serialize(transcript_path, t["project"], escalate=escalate)
+        if session is None:
+            return _cli._run_serialize(transcript_path, t["project"],
+                                       escalate=escalate)
+        return _cli._run_serialize(transcript_path, t["project"],
+                                   escalate=escalate, session=session)
 
 
 def register(sub, fmt) -> None:

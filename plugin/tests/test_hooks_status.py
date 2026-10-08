@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from daimon_briefing import cli, render
+from daimon_briefing.surfaces import Writer
 
 PKG_HOOKS_DIR = Path(__file__).parents[1] / "daimon_briefing" / "_hooks"
 
@@ -434,7 +435,7 @@ def test_status_rich_reports_manifest_drift(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     monkeypatch.setattr(render, "supports_rich", lambda: True)
@@ -532,7 +533,7 @@ def test_hooks_status_reports_manifest_drift_and_exits_non_zero(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     rc = cli.main(["hooks", "status"])
@@ -552,7 +553,7 @@ def test_hooks_status_json_stays_a_list_of_hosts(tmp_path, monkeypatch,
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     rc = cli.main(["hooks", "status", "--json"])
@@ -578,7 +579,7 @@ def test_hooks_status_json_explains_why_it_exited_non_zero(tmp_path,
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     ruling_id = _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     rc = cli.main(["hooks", "status", "--json"])
@@ -598,7 +599,7 @@ def test_the_manifest_entry_reports_no_drift_when_the_manifest_is_in_step(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     rc = cli.main(["hooks", "status", "--json"])
     entry = json.loads(capsys.readouterr().out)[-1]
     assert entry["drift"] is False and rc == 0
@@ -627,7 +628,7 @@ def test_manifest_drift_never_reaches_the_hook_drift_pointer(tmp_path,
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     assert cli._hook_drift_present() is False

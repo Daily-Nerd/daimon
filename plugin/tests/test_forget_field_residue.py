@@ -23,6 +23,7 @@ with the value it names.
 import json
 
 from daimon_briefing import cli, normalize, privacy, recall, store
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/forget-field-residue"
 CANARY = "zqxfieldcanary9917 the staging db password rotates on fridays"
@@ -40,7 +41,7 @@ def _checkpoint(sid, created, items):
 
 def _write(sid, created, items):
     store.write_checkpoint(sid, _checkpoint(sid, created, items),
-                           project_dir=PROJECT)
+                           project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _forget_canary():
@@ -158,7 +159,7 @@ def test_forget_drops_active_topic_carrying_the_value(tmp_checkpoint_dir):
             "active_topic": {"text": CANARY, "trust": "inferred"},
             "recent_decisions": [{"text": CANARY, "trust": "inferred"},
                                  {"text": KEEPER, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     _forget_canary()
     cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
@@ -175,7 +176,7 @@ def test_forget_scrubs_active_topic_quote(tmp_checkpoint_dir):
             "active_topic": {"text": KEEPER, "quote": CANARY,
                              "trust": "verbatim"},
             "recent_decisions": [{"text": CANARY, "trust": "inferred"}]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     _forget_canary()
     cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
@@ -194,7 +195,7 @@ def test_forget_drops_link_whose_target_is_the_value(tmp_checkpoint_dir):
              "links": [{"type": "supersedes", "target": CANARY},
                        {"type": "supersedes", "target": "r-abcdef123456"}]},
         ]},
-    }, project_dir=PROJECT)
+    }, project_dir=PROJECT, writer=Writer.HUMAN)
     _forget_canary()
     kept = _live_decisions()
     assert [i["text"] for i in kept] == [KEEPER]
@@ -212,7 +213,7 @@ def test_forget_drops_link_whose_target_is_the_value(tmp_checkpoint_dir):
 def test_forget_scrubs_event_item_text_in_place(tmp_checkpoint_dir):
     _write("S1", "2026-08-01T00:00:00Z", [{"text": CANARY, "trust": "inferred"}])
     store.append_event("i-y", "resolved", item_text=CANARY,
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     _forget_canary()
     rows = _events_rows()
     scrubbed = [r for r in rows if r.get("item_ref") == "i-y"]
@@ -224,8 +225,8 @@ def test_forget_scrubs_event_item_text_in_place(tmp_checkpoint_dir):
 
 def test_forget_scrubs_event_status_and_note_fields(tmp_checkpoint_dir):
     _write("S1", "2026-08-01T00:00:00Z", [{"text": CANARY, "trust": "inferred"}])
-    store.append_event("i-y", CANARY, project_dir=PROJECT)
-    store.append_event("i-z", "resolved", note=CANARY, project_dir=PROJECT)
+    store.append_event("i-y", CANARY, project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("i-z", "resolved", note=CANARY, project_dir=PROJECT, writer=Writer.HUMAN)
     _forget_canary()
     rows = _events_rows()
     by_ref = {r["item_ref"]: r for r in rows if r.get("item_ref") in ("i-y", "i-z")}
@@ -237,7 +238,7 @@ def test_forget_scrubs_event_status_and_note_fields(tmp_checkpoint_dir):
 def test_events_scrub_preserves_unrelated_rows_verbatim(tmp_checkpoint_dir):
     _write("S1", "2026-08-01T00:00:00Z", [{"text": CANARY, "trust": "inferred"}])
     store.append_event("i-k", "resolved", item_text=KEEPER, note="fine",
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     before = [r for r in _events_rows() if r.get("item_ref") == "i-k"]
     _forget_canary()
     after = [r for r in _events_rows() if r.get("item_ref") == "i-k"]
@@ -258,8 +259,8 @@ def test_status_scrub_preserves_reopen_classification(tmp_checkpoint_dir):
     ])
     victim_id = next(i["id"] for i in _live_decisions()
                      if i["text"].startswith("b-victim"))
-    store.append_event(victim_id, "resolved", project_dir=PROJECT)
-    store.append_event(victim_id, revival, project_dir=PROJECT)  # revived
+    store.append_event(victim_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(victim_id, revival, project_dir=PROJECT, writer=Writer.HUMAN)  # revived
     assert not store.is_resolved(store.resolutions(project_dir=PROJECT)[victim_id])
     assert cli.main(["forget", revival, "--project", PROJECT]) == 0
     evt = store.resolutions(project_dir=PROJECT)[victim_id]
@@ -275,7 +276,7 @@ def test_status_scrub_keeps_free_form_resolved_class(tmp_checkpoint_dir):
     ])
     other_id = next(i["id"] for i in _live_decisions()
                     if i["text"] == "some other item")
-    store.append_event(other_id, CANARY, project_dir=PROJECT)
+    store.append_event(other_id, CANARY, project_dir=PROJECT, writer=Writer.HUMAN)
     assert store.is_resolved(store.resolutions(project_dir=PROJECT)[other_id])
     _forget_canary()
     evt = store.resolutions(project_dir=PROJECT)[other_id]
@@ -309,12 +310,15 @@ def test_event_scrub_edge_guards_return_zero(tmp_checkpoint_dir, monkeypatch):
 def test_event_scrub_copies_uninterpretable_lines_verbatim(tmp_checkpoint_dir):
     _write("S1", "2026-08-01T00:00:00Z", [{"text": CANARY, "trust": "inferred"}])
     store.append_event("i-y", "resolved", item_text=CANARY,
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     path = store._events_path(PROJECT)
     with path.open("a", encoding="utf-8") as f:
         f.write("not json at all\n")
         f.write('["a", "json", "array", "row"]\n')
-    _forget_canary()
+    # The scrub itself, not the verb: `forget` refuses a ledger holding a
+    # garbage line before it writes anything (#1132 PR 10b, R2.9), and what
+    # this pins is that the redaction copies lines it cannot read verbatim.
+    store.scrub_event_fields(normalize.content_key(CANARY), project_dir=PROJECT)
     lines = path.read_text().splitlines()
     assert "not json at all" in lines
     assert '["a", "json", "array", "row"]' in lines
@@ -333,7 +337,7 @@ def test_event_scrub_routes_rewritten_rows_through_admit_row(
     from daimon_briefing import policy
     _write("S1", "2026-08-01T00:00:00Z", [{"text": CANARY, "trust": "inferred"}])
     store.append_event("i-y", "resolved", item_text=CANARY,
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     admitted = []
     orig = policy.admit_row
 
@@ -358,7 +362,7 @@ def test_audit_privacy_is_clean_after_forget(tmp_checkpoint_dir):
         {"text": FRESH, "trust": "inferred", "scene": CANARY},
     ])
     store.append_event("i-y", "resolved", item_text=CANARY,
-                       project_dir=PROJECT)
+                       project_dir=PROJECT, writer=Writer.HUMAN)
     _write("S2", "2026-08-02T00:00:00Z", [
         {"text": KEEPER, "trust": "verbatim", "quote": CANARY},
     ])

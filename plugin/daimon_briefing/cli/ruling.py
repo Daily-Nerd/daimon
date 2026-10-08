@@ -137,6 +137,7 @@ def _cmd_ruling_ratify(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
+    _cli.require_ledger(project, "refutations.jsonl")
     try:
         channel = _refute_channel(args)
     except refutations.RefutationError as exc:
@@ -272,6 +273,7 @@ def _cmd_ruling_ratify(args) -> int:
 
 def _cmd_ruling_revise(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "refutations.jsonl")
     record = refutations.get(args.ruling_id, project_dir=project)
     if record is None:
         # #1094: same pointer as `ratify` — covers a `--check` attach too,
@@ -404,6 +406,7 @@ def _cmd_ruling_retire(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
+    _cli.require_ledger(project, "refutations.jsonl")
     try:
         event = refutations.retire(
             args.ruling_id, channel=_refute_channel(args),

@@ -61,6 +61,7 @@ def _cmd_refute_ratify(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
+    _cli.require_ledger(project, "refutations.jsonl")
     if _refuse_ruling_id(refutations.get(args.refutation_id,
                                          project_dir=project), "ratify"):
         return 1
@@ -84,6 +85,7 @@ def _cmd_refute_ratify(args) -> int:
 
 def _cmd_refute_revise(args) -> int:
     project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "refutations.jsonl")
     if _refuse_ruling_id(refutations.get(args.refutation_id,
                                          project_dir=project), "revise"):
         return 1
@@ -116,6 +118,7 @@ def _cmd_refute_overturn(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
+    _cli.require_ledger(project, "refutations.jsonl")
     if _refuse_ruling_id(refutations.get(args.refutation_id,
                                          project_dir=project), "retire"):
         return 1

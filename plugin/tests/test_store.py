@@ -6,12 +6,13 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import config, normalize, serializer, store
+from daimon_briefing.surfaces import Writer
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def test_write_then_read_round_trip(tmp_checkpoint_dir, sample_checkpoint):
-    path = store.write_checkpoint("S-prev", sample_checkpoint)
+    path = store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     assert path.exists()
     assert path == tmp_checkpoint_dir / "S-prev.json"
 
@@ -20,7 +21,7 @@ def test_write_then_read_round_trip(tmp_checkpoint_dir, sample_checkpoint):
 
 
 def test_latest_pointer_updated_on_write(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     latest = store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                     admit=store.Admit.ANY)
     assert latest is not None
@@ -28,8 +29,8 @@ def test_latest_pointer_updated_on_write(tmp_checkpoint_dir, sample_checkpoint):
 
 
 def test_latest_reflects_most_recent_write(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-old", {**sample_checkpoint, "session_id": "S-old"})
-    store.write_checkpoint("S-new", {**sample_checkpoint, "session_id": "S-new"})
+    store.write_checkpoint("S-old", {**sample_checkpoint, "session_id": "S-old"}, writer=Writer.HUMAN)
+    store.write_checkpoint("S-new", {**sample_checkpoint, "session_id": "S-new"}, writer=Writer.HUMAN)
     latest = store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                     admit=store.Admit.ANY)
     assert latest["session_id"] == "S-new"
@@ -47,19 +48,19 @@ def test_read_checkpoint_none_when_missing(tmp_checkpoint_dir):
 def test_write_creates_dir(tmp_path, monkeypatch, sample_checkpoint):
     nested = tmp_path / "a" / "b" / "checkpoints"
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(nested))
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert nested.exists()
 
 
 def test_latest_pointer_is_separate_file(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     files = {p.name for p in tmp_checkpoint_dir.iterdir()}
     assert "S-prev.json" in files
     assert "latest.json" in files
 
 
 def test_write_leaves_no_temp_files(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     files = {p.name for p in tmp_checkpoint_dir.iterdir()}
     # .pointer.lock is deliberate infrastructure (#31 item 2), not a leak —
     # unlinking a flock file after release reintroduces the ABA race it
@@ -71,7 +72,7 @@ def test_write_leaves_no_temp_files(tmp_checkpoint_dir, sample_checkpoint):
 
 
 def test_write_stamps_format_version_and_created(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-stamp", sample_checkpoint)
+    store.write_checkpoint("S-stamp", sample_checkpoint, writer=Writer.HUMAN)
     for name in ("S-stamp.json", "latest.json"):
         blob = json.loads((tmp_checkpoint_dir / name).read_text(encoding="utf-8"))
         assert blob["format_version"] == serializer.PROMPT_VERSION
@@ -81,7 +82,7 @@ def test_write_stamps_format_version_and_created(tmp_checkpoint_dir, sample_chec
 def test_write_does_not_overwrite_existing_stamp(tmp_checkpoint_dir, sample_checkpoint):
     # Idempotent re-writes / rotation must not re-stamp an already-stamped checkpoint.
     pre = {**sample_checkpoint, "format_version": "D-000", "created": "2020-01-01T00:00:00Z"}
-    store.write_checkpoint("S-keep", pre)
+    store.write_checkpoint("S-keep", pre, writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S-keep.json").read_text(encoding="utf-8"))
     assert blob["format_version"] == "D-000"
     assert blob["created"] == "2020-01-01T00:00:00Z"
@@ -98,7 +99,7 @@ def test_write_is_atomic_via_os_replace(tmp_checkpoint_dir, sample_checkpoint, m
         return real_replace(src, dst)
 
     monkeypatch.setattr(store.os, "replace", spy)
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     # Both the checkpoint and the latest pointer land via os.replace (atomic on POSIX).
     assert len(calls) == 2
     assert any(c.endswith("S-prev.json") for c in calls)
@@ -106,7 +107,7 @@ def test_write_is_atomic_via_os_replace(tmp_checkpoint_dir, sample_checkpoint, m
 
 
 def test_write_traversal_session_id_stays_inside_dir(tmp_checkpoint_dir, sample_checkpoint):
-    path = store.write_checkpoint("../../evil", sample_checkpoint)
+    path = store.write_checkpoint("../../evil", sample_checkpoint, writer=Writer.HUMAN)
     assert path.resolve().is_relative_to(tmp_checkpoint_dir.resolve())
     # Nothing escaped above the checkpoint dir.
     parent = tmp_checkpoint_dir.parent
@@ -121,7 +122,7 @@ def test_write_escaping_path_raises(tmp_checkpoint_dir, sample_checkpoint, monke
 
     monkeypatch.setattr(store, "_safe_name", lambda s: s)
     with pytest.raises(ValueError):
-        store.write_checkpoint("../../evil", sample_checkpoint)
+        store.write_checkpoint("../../evil", sample_checkpoint, writer=Writer.HUMAN)
 
 
 def test_read_escaping_path_returns_none(tmp_checkpoint_dir, monkeypatch):
@@ -197,14 +198,14 @@ def test_project_slug_never_contains_separator():
 
 
 def test_write_routes_to_project_dir_and_global(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA", writer=Writer.HUMAN)
     assert (tmp_checkpoint_dir / "-Users-x-projA" / "latest.json").exists()
     assert (tmp_checkpoint_dir / "latest.json").exists()
     assert (tmp_checkpoint_dir / "S1.json").exists()
 
 
 def test_write_without_project_creates_no_slug_dirs(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     assert all(not p.is_dir() for p in tmp_checkpoint_dir.iterdir())
 
 
@@ -212,13 +213,13 @@ def test_write_stamps_project_slug(tmp_checkpoint_dir, sample_checkpoint):
     # Durable attribution: bucket pointers rotate away (depth = history), so a
     # session older than the pointer window would otherwise lose its project
     # forever — and scoped recall could never surface it again.
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA", writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["project_slug"] == "-Users-x-projA"
 
 
 def test_write_unknown_project_stamps_no_slug(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert "project_slug" not in blob
 
@@ -227,7 +228,7 @@ def test_write_does_not_overwrite_existing_project_slug(tmp_checkpoint_dir, samp
     # Same idempotence contract as format_version/created/author: a checkpoint
     # carrying its own stamp is never re-stamped.
     pre = {**sample_checkpoint, "project_slug": "-original-home"}
-    store.write_checkpoint("S1", pre, project_dir="/Users/x/projA")
+    store.write_checkpoint("S1", pre, project_dir="/Users/x/projA", writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["project_slug"] == "-original-home"
 
@@ -261,7 +262,7 @@ def test_write_stamps_git_branch_when_project_dir_is_a_repo(
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_git_repo_with_commit(repo, monkeypatch, branch="feat/222-git-branch-stamp")
-    store.write_checkpoint("S1", sample_checkpoint, project_dir=str(repo))
+    store.write_checkpoint("S1", sample_checkpoint, project_dir=str(repo), writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["git_branch"] == "feat/222-git-branch-stamp"
 
@@ -270,14 +271,14 @@ def test_write_no_git_branch_stamp_for_non_repo_project_dir(
         tmp_checkpoint_dir, sample_checkpoint, tmp_path):
     plain = tmp_path / "plain"
     plain.mkdir()
-    store.write_checkpoint("S1", sample_checkpoint, project_dir=str(plain))
+    store.write_checkpoint("S1", sample_checkpoint, project_dir=str(plain), writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert "git_branch" not in blob
 
 
 def test_write_no_git_branch_stamp_when_project_dir_is_none(
         tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert "git_branch" not in blob
 
@@ -291,7 +292,7 @@ def test_write_does_not_overwrite_existing_git_branch(
     repo.mkdir()
     _init_git_repo_with_commit(repo, monkeypatch, branch="main")
     pre = {**sample_checkpoint, "git_branch": "feat/original"}
-    store.write_checkpoint("S1", pre, project_dir=str(repo))
+    store.write_checkpoint("S1", pre, project_dir=str(repo), writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["git_branch"] == "feat/original"
 
@@ -304,7 +305,7 @@ def test_git_branch_survives_redaction(tmp_checkpoint_dir, tmp_path, monkeypatch
     _init_git_repo_with_commit(repo, monkeypatch, branch="feat/222-git-branch-stamp")
     cp = {"working_context": {"open_questions": [
         {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?"}]}}
-    store.write_checkpoint("S1", cp, project_dir=str(repo))
+    store.write_checkpoint("S1", cp, project_dir=str(repo), writer=Writer.HUMAN)
     on_disk = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert on_disk["git_branch"] == "feat/222-git-branch-stamp"
     assert "redactions" in on_disk  # sanity: redaction actually ran
@@ -319,7 +320,7 @@ def test_llm_backend_and_model_survive_write_and_read_back(tmp_checkpoint_dir, s
     # pipeline audit from #222 found nothing strips top-level keys, but this
     # is a contract, not an assumption: verify the round trip to disk.
     stamped = {**sample_checkpoint, "llm_backend": "litellm", "llm_model": "test-model"}
-    store.write_checkpoint("S1", stamped)
+    store.write_checkpoint("S1", stamped, writer=Writer.HUMAN)
     on_disk = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert on_disk["llm_backend"] == "litellm"
     assert on_disk["llm_model"] == "test-model"
@@ -340,7 +341,7 @@ def test_write_project_latest_is_atomic(tmp_checkpoint_dir, sample_checkpoint, m
         return real_replace(src, dst)
 
     monkeypatch.setattr(store.os, "replace", spy)
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/projA", writer=Writer.HUMAN)
     # session file + global latest + project latest + the #1092 bucket-root
     # record + the #1132 ledger-census marker (both stamped on the FIRST
     # write to this bucket), all via os.replace
@@ -352,8 +353,8 @@ def test_write_project_latest_is_atomic(tmp_checkpoint_dir, sample_checkpoint, m
 
 def test_read_latest_prefers_project(tmp_checkpoint_dir, sample_checkpoint):
     # The original bug: session in A, then B; returning to A must NOT see B's checkpoint.
-    store.write_checkpoint("S-a", {**sample_checkpoint, "session_id": "S-a"}, project_dir="/p/A")
-    store.write_checkpoint("S-b", {**sample_checkpoint, "session_id": "S-b"}, project_dir="/p/B")
+    store.write_checkpoint("S-a", {**sample_checkpoint, "session_id": "S-a"}, project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-b", {**sample_checkpoint, "session_id": "S-b"}, project_dir="/p/B", writer=Writer.HUMAN)
     assert store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-a"
     assert store.read_latest_body(project_dir="/p/B", route=store.Route.OWN_ELSE_GLOBAL,
@@ -364,7 +365,7 @@ def test_read_latest_prefers_project(tmp_checkpoint_dir, sample_checkpoint):
 
 
 def test_read_latest_falls_back_to_global(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"})
+    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"}, writer=Writer.HUMAN)
     assert store.read_latest_body(project_dir="/p/never-seen",
                                   route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-g"
@@ -380,14 +381,14 @@ def test_read_latest_no_fallback_skips_global(tmp_checkpoint_dir, sample_checkpo
     # #94: carry's read path must not see another project's checkpoint through
     # the global pointer — a fresh project reads None, not a foreign session.
     store.write_checkpoint("S-other", {**sample_checkpoint, "session_id": "S-other"},
-                           project_dir="/p/other")
+                           project_dir="/p/other", writer=Writer.HUMAN)
     assert store.read_latest_body(project_dir="/p/fresh", route=store.Route.OWN,
                                   admit=store.Admit.ANY) is None
 
 
 def test_read_latest_no_fallback_still_reads_own_project(tmp_checkpoint_dir, sample_checkpoint):
     store.write_checkpoint("S-a", {**sample_checkpoint, "session_id": "S-a"},
-                           project_dir="/p/A")
+                           project_dir="/p/A", writer=Writer.HUMAN)
     assert store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
                                   admit=store.Admit.ANY)["session_id"] == "S-a"
 
@@ -401,7 +402,7 @@ def _pointer_session(path):
 
 def test_rotation_keeps_prev_pointers_per_project(tmp_checkpoint_dir, sample_checkpoint):
     for sid in ("S1", "S2", "S3"):
-        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A")
+        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A", writer=Writer.HUMAN)
     d = tmp_checkpoint_dir / "-p-A"
     assert _pointer_session(d / "latest.json") == "S3"
     assert _pointer_session(d / "prev-1.json") == "S2"
@@ -410,7 +411,7 @@ def test_rotation_keeps_prev_pointers_per_project(tmp_checkpoint_dir, sample_che
 
 def test_rotation_drops_oldest_beyond_history(tmp_checkpoint_dir, sample_checkpoint):
     for sid in ("S1", "S2", "S3", "S4"):
-        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A")
+        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A", writer=Writer.HUMAN)
     d = tmp_checkpoint_dir / "-p-A"
     assert _pointer_session(d / "latest.json") == "S4"
     assert _pointer_session(d / "prev-1.json") == "S3"
@@ -421,7 +422,7 @@ def test_rotation_drops_oldest_beyond_history(tmp_checkpoint_dir, sample_checkpo
 def test_rotation_history_env_configurable(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "2")
     for sid in ("S1", "S2", "S3"):
-        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A")
+        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A", writer=Writer.HUMAN)
     d = tmp_checkpoint_dir / "-p-A"
     assert _pointer_session(d / "latest.json") == "S3"
     assert _pointer_session(d / "prev-1.json") == "S2"
@@ -431,23 +432,23 @@ def test_rotation_history_env_configurable(tmp_checkpoint_dir, sample_checkpoint
 def test_rotation_history_1_disables(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
     for sid in ("S1", "S2"):
-        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A")
+        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, project_dir="/p/A", writer=Writer.HUMAN)
     d = tmp_checkpoint_dir / "-p-A"
     assert _pointer_session(d / "latest.json") == "S2"
     assert not (d / "prev-1.json").exists()
 
 
 def test_rotation_applies_to_global_pointer(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"})
-    store.write_checkpoint("S2", {**sample_checkpoint, "session_id": "S2"})
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, writer=Writer.HUMAN)
+    store.write_checkpoint("S2", {**sample_checkpoint, "session_id": "S2"}, writer=Writer.HUMAN)
     assert _pointer_session(tmp_checkpoint_dir / "latest.json") == "S2"
     assert _pointer_session(tmp_checkpoint_dir / "prev-1.json") == "S1"
 
 
 def test_rotation_latest_always_present(tmp_checkpoint_dir, sample_checkpoint):
     # latest.json is copied (not moved) to prev-1, so it never vanishes mid-rotation.
-    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A")
-    store.write_checkpoint("S2", {**sample_checkpoint, "session_id": "S2"}, project_dir="/p/A")
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S2", {**sample_checkpoint, "session_id": "S2"}, project_dir="/p/A", writer=Writer.HUMAN)
     d = tmp_checkpoint_dir / "-p-A"
     assert (d / "latest.json").exists()
     assert _pointer_session(d / "latest.json") == "S2"
@@ -520,7 +521,7 @@ def _write_seq(sample, sids, **kw):
     # newest-N ordering is deterministic — same-second ties are arbitrary by design.
     for i, sid in enumerate(sids):
         created = f"202{i + 1}-01-01T00:00:00Z"
-        store.write_checkpoint(sid, {**sample, "session_id": sid, "created": created}, **kw)
+        store.write_checkpoint(sid, {**sample, "session_id": sid, "created": created}, **kw, writer=Writer.HUMAN)
 
 
 def test_gc_prunes_beyond_keep(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
@@ -568,7 +569,7 @@ def test_gc_disabled_at_zero(tmp_checkpoint_dir, sample_checkpoint, monkeypatch)
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
     monkeypatch.setenv("DAIMON_CHECKPOINT_KEEP", "0")
     for sid in ("S1", "S2", "S3", "S4", "S5"):
-        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid})
+        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, writer=Writer.HUMAN)
     present = _session_files_present(tmp_checkpoint_dir)
     assert present == {"S1.json", "S2.json", "S3.json", "S4.json", "S5.json"}
 
@@ -578,13 +579,13 @@ def test_gc_error_does_not_break_write(tmp_checkpoint_dir, sample_checkpoint, mo
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
     monkeypatch.setenv("DAIMON_CHECKPOINT_KEEP", "1")
     for sid in ("S1", "S2", "S3"):
-        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid})
+        store.write_checkpoint(sid, {**sample_checkpoint, "session_id": sid}, writer=Writer.HUMAN)
 
     def boom(self, *a, **k):
         raise OSError("unlink failed")
 
     monkeypatch.setattr(store.Path, "unlink", boom)
-    out = store.write_checkpoint("S4", {**sample_checkpoint, "session_id": "S4"})
+    out = store.write_checkpoint("S4", {**sample_checkpoint, "session_id": "S4"}, writer=Writer.HUMAN)
     assert out.exists()  # write succeeded despite GC unlink failing
     assert "S4.json" in _session_files_present(tmp_checkpoint_dir)
 
@@ -623,14 +624,14 @@ def _team_author_dir(author_slug: str) -> Path:
 
 def test_write_stamps_author(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", sample_checkpoint)
+    store.write_checkpoint("S-a", sample_checkpoint, writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S-a.json").read_text(encoding="utf-8"))
     assert blob["author"] == "ada"
 
 
 def test_write_does_not_overwrite_existing_author(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", {**sample_checkpoint, "author": "grace"})
+    store.write_checkpoint("S-a", {**sample_checkpoint, "author": "grace"}, writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S-a.json").read_text(encoding="utf-8"))
     assert blob["author"] == "grace"  # setdefault: idempotent, never re-stamps
 
@@ -638,14 +639,14 @@ def test_write_does_not_overwrite_existing_author(tmp_checkpoint_dir, sample_che
 def test_dual_write_off_by_default(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", sample_checkpoint)
+    store.write_checkpoint("S-a", sample_checkpoint, writer=Writer.HUMAN)
     assert not config.team_dir().exists()  # DAIMON_TEAM unset → zero team files
 
 
 def test_dual_write_creates_team_file(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     path = _team_author_dir("ada") / "S-a.json"
     assert path.exists()
     blob = json.loads(path.read_text(encoding="utf-8"))
@@ -660,14 +661,14 @@ def test_dual_write_author_slug_full_munging(tmp_checkpoint_dir, sample_checkpoi
     # must be munged away too.
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "a/b")
-    store.write_checkpoint("S-1", {**sample_checkpoint, "session_id": "S-1"})
+    store.write_checkpoint("S-1", {**sample_checkpoint, "session_id": "S-1"}, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "a_b")
-    store.write_checkpoint("S-2", {**sample_checkpoint, "session_id": "S-2"})
+    store.write_checkpoint("S-2", {**sample_checkpoint, "session_id": "S-2"}, writer=Writer.HUMAN)
     authors_root = config.team_dir() / "local" / "authors"
     dirs = sorted(p.name for p in authors_root.iterdir())
     assert dirs == ["a-b", "a_b"]  # distinct dirs — no silent merge
     monkeypatch.setenv("DAIMON_AUTHOR", "eve:*?<>|smith")
-    store.write_checkpoint("S-3", {**sample_checkpoint, "session_id": "S-3"})
+    store.write_checkpoint("S-3", {**sample_checkpoint, "session_id": "S-3"}, writer=Writer.HUMAN)
     names = {p.name for p in authors_root.iterdir()}
     assert not any(c in n for n in names for c in ':*?<>|"')
 
@@ -678,7 +679,7 @@ def test_dual_write_stamps_project_slug(tmp_checkpoint_dir, sample_checkpoint, m
     # copies must agree.
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     blob = json.loads((_team_author_dir("ada") / "S-a.json").read_text(encoding="utf-8"))
     assert blob["project_slug"] == store.project_slug("/repo/x")
     local = json.loads((tmp_checkpoint_dir / "S-a.json").read_text(encoding="utf-8"))
@@ -688,7 +689,7 @@ def test_dual_write_stamps_project_slug(tmp_checkpoint_dir, sample_checkpoint, m
 def test_dual_write_no_pointers_in_team_dir(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     names = {p.name for p in _team_author_dir("ada").iterdir()}
     assert names == {"S-a.json"}  # immutable append-only, NEVER a latest.json pointer
 
@@ -700,7 +701,7 @@ def test_dual_write_failure_does_not_break_serialize(tmp_checkpoint_dir, sample_
     blocker = tmp_path / "blocker"
     blocker.write_text("not a dir", encoding="utf-8")
     monkeypatch.setattr(config, "team_dir", lambda: blocker / "team")
-    out = store.write_checkpoint("S-a", sample_checkpoint)  # must NOT raise
+    out = store.write_checkpoint("S-a", sample_checkpoint, writer=Writer.HUMAN)  # must NOT raise
     assert out.exists()  # local write intact
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY) is not None
@@ -732,11 +733,11 @@ def test_read_team_newest_per_author_for_project(tmp_checkpoint_dir, sample_chec
     # ada writes two checkpoints for /repo/x; newest by created must win.
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ada_new = _ago(10)
-    store.write_checkpoint("a-old", {**sample_checkpoint, "created": _ago(100)}, project_dir="/repo/x")
-    store.write_checkpoint("a-new", {**sample_checkpoint, "created": ada_new}, project_dir="/repo/x")
+    store.write_checkpoint("a-old", {**sample_checkpoint, "created": _ago(100)}, project_dir="/repo/x", writer=Writer.HUMAN)
+    store.write_checkpoint("a-new", {**sample_checkpoint, "created": ada_new}, project_dir="/repo/x", writer=Writer.HUMAN)
     # grace writes one checkpoint for /repo/x.
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-1", {**sample_checkpoint, "created": _ago(50)}, project_dir="/repo/x")
+    store.write_checkpoint("g-1", {**sample_checkpoint, "created": _ago(50)}, project_dir="/repo/x", writer=Writer.HUMAN)
 
     team = store.read_team(project_dir="/repo/x")
     by_author = {author: cp for author, cp in team}
@@ -751,8 +752,8 @@ def test_read_team_filters_by_project(tmp_checkpoint_dir, sample_checkpoint, mon
     # caller's dict via setdefault, so a REUSED dict carries the first write's
     # slug into the second — both blobs stamped /repo/x and the filter below
     # never exercised. Production builds a fresh dict per serialize.
-    store.write_checkpoint("a-x", {**sample_checkpoint}, project_dir="/repo/x")
-    store.write_checkpoint("a-y", {**sample_checkpoint}, project_dir="/repo/y")
+    store.write_checkpoint("a-x", {**sample_checkpoint}, project_dir="/repo/x", writer=Writer.HUMAN)
+    store.write_checkpoint("a-y", {**sample_checkpoint}, project_dir="/repo/y", writer=Writer.HUMAN)
     team = store.read_team(project_dir="/repo/x")
     authors = [a for a, _ in team]
     assert authors == ["ada"]
@@ -801,9 +802,9 @@ def test_read_team_retention_filters_old_checkpoints(tmp_checkpoint_dir, sample_
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_TEAM_RETENTION_DAYS", "30")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-old", _stamped(sample_checkpoint, "a-old", 40), project_dir="/repo/x")
+    store.write_checkpoint("a-old", _stamped(sample_checkpoint, "a-old", 40), project_dir="/repo/x", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
-    store.write_checkpoint("g-new", _stamped(sample_checkpoint, "g-new", 1), project_dir="/repo/x")
+    store.write_checkpoint("g-new", _stamped(sample_checkpoint, "g-new", 1), project_dir="/repo/x", writer=Writer.HUMAN)
 
     team = store.read_team(project_dir="/repo/x")
     assert [a for a, _ in team] == ["grace"]  # ada aged out of the READ window
@@ -815,7 +816,7 @@ def test_read_team_retention_zero_keeps_all(tmp_checkpoint_dir, sample_checkpoin
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_TEAM_RETENTION_DAYS", "0")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-ancient", _stamped(sample_checkpoint, "a-ancient", 4000), project_dir="/repo/x")
+    store.write_checkpoint("a-ancient", _stamped(sample_checkpoint, "a-ancient", 4000), project_dir="/repo/x", writer=Writer.HUMAN)
     team = store.read_team(project_dir="/repo/x")
     assert [a for a, _ in team] == ["ada"]
 
@@ -824,7 +825,7 @@ def test_read_team_retention_default_is_generous(tmp_checkpoint_dir, sample_chec
     # Default 365 days: a months-old teammate checkpoint still surfaces.
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("a-90d", _stamped(sample_checkpoint, "a-90d", 90), project_dir="/repo/x")
+    store.write_checkpoint("a-90d", _stamped(sample_checkpoint, "a-90d", 90), project_dir="/repo/x", writer=Writer.HUMAN)
     assert [a for a, _ in store.read_team(project_dir="/repo/x")] == ["ada"]
 
 
@@ -842,7 +843,7 @@ def test_dual_write_nested_under_resolved_project(tmp_checkpoint_dir, sample_che
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api gateway")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     path = _nested_author_dir("core/api-gateway", "ada") / "S-a.json"
     assert path.exists()
     blob = json.loads(path.read_text(encoding="utf-8"))
@@ -857,7 +858,7 @@ def test_dual_write_flat_when_unresolved(tmp_checkpoint_dir, sample_checkpoint, 
     # No env, /repo/x is not a git repo → tier 4 → TODAY'S flat behavior exactly.
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/repo/x", writer=Writer.HUMAN)
     path = _team_author_dir("ada") / "S-a.json"
     assert path.exists()
     blob = json.loads(path.read_text(encoding="utf-8"))
@@ -870,16 +871,16 @@ def test_read_team_merges_both_eras_newest_wins(tmp_checkpoint_dir, sample_check
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     # Legacy flat era: ada's OLD checkpoint (stamp filter must admit it).
     store.write_checkpoint("a-flat", _stamped(sample_checkpoint, "a-flat", 100),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     # Nested era: ada's NEWER checkpoint under the resolved project.
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
     store.write_checkpoint("a-nested", _stamped(sample_checkpoint, "a-nested", 10),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     # grace only ever wrote in the flat era.
     monkeypatch.delenv("DAIMON_TEAM_PROJECT")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
     store.write_checkpoint("g-flat", _stamped(sample_checkpoint, "g-flat", 50),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
 
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
     team = store.read_team(project_dir="/repo/x")
@@ -893,11 +894,11 @@ def test_read_team_none_resolution_reads_legacy_only(tmp_checkpoint_dir, sample_
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
     store.write_checkpoint("a-nested", _stamped(sample_checkpoint, "a-nested", 10),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     monkeypatch.delenv("DAIMON_TEAM_PROJECT")
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
     store.write_checkpoint("g-flat", _stamped(sample_checkpoint, "g-flat", 5),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     # Resolution now yields None (/repo/x is not a repo, no env) → legacy only.
     team = store.read_team(project_dir="/repo/x")
     assert [a for a, _ in team] == ["grace"]
@@ -921,10 +922,10 @@ def test_read_team_nested_retention_applies(tmp_checkpoint_dir, sample_checkpoin
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "core/api")
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     store.write_checkpoint("a-old", _stamped(sample_checkpoint, "a-old", 40),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
     store.write_checkpoint("g-new", _stamped(sample_checkpoint, "g-new", 1),
-                           project_dir="/repo/x")
+                           project_dir="/repo/x", writer=Writer.HUMAN)
     team = store.read_team(project_dir="/repo/x")
     assert [a for a, _ in team] == ["grace"]  # ada aged out of the READ window
     # NO physical deletes — the nested era is append-only too.
@@ -1020,7 +1021,7 @@ def test_read_team_foreign_cannot_reassert_forgotten_value(tmp_checkpoint_dir, s
     forgotten_text = "Adopt the D-007 prompt for the serializer"
     store.append_event(
         "d-dead01", f"forgotten:{normalize.content_key(forgotten_text)}",
-        kind="tombstone", project_dir="/repo/x", tombstone=True)
+        kind="tombstone", project_dir="/repo/x", tombstone=True, writer=Writer.HUMAN)
     remote = _clone_remote()
     _foreign_file(remote, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
                   logical="core/x")
@@ -1068,8 +1069,8 @@ def test_read_team_own_synced_copy_not_clamped(tmp_checkpoint_dir, sample_checkp
 
 
 def test_write_older_checkpoint_does_not_steal_global_latest(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0))
-    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2))
+    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), writer=Writer.HUMAN)
+    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), writer=Writer.HUMAN)
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-new"
     # the per-session checkpoint itself still lands — only the pointer is guarded
@@ -1077,8 +1078,8 @@ def test_write_older_checkpoint_does_not_steal_global_latest(tmp_checkpoint_dir,
 
 
 def test_write_older_checkpoint_does_not_steal_project_latest(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), project_dir="/p/A")
-    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), project_dir="/p/A")
+    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), project_dir="/p/A", writer=Writer.HUMAN)
     assert store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-new"
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
@@ -1088,8 +1089,8 @@ def test_write_older_checkpoint_does_not_steal_project_latest(tmp_checkpoint_dir
 def test_write_older_checkpoint_guards_pointers_independently(tmp_checkpoint_dir, sample_checkpoint):
     # Project B has no pointer yet: its pointer must still be written even though
     # the global pointer is newer and stays put.
-    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), project_dir="/p/A")
-    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), project_dir="/p/B")
+    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), project_dir="/p/B", writer=Writer.HUMAN)
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-new"
     assert store.read_latest_body(project_dir="/p/B", route=store.Route.OWN_ELSE_GLOBAL,
@@ -1097,8 +1098,8 @@ def test_write_older_checkpoint_guards_pointers_independently(tmp_checkpoint_dir
 
 
 def test_write_newer_checkpoint_still_takes_latest(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2))
-    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0))
+    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), writer=Writer.HUMAN)
+    store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), writer=Writer.HUMAN)
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-new"
 
@@ -1110,7 +1111,7 @@ def test_write_over_legacy_pointer_without_created_takes_latest(tmp_checkpoint_d
     legacy = {**sample_checkpoint, "session_id": "S-legacy"}
     legacy.pop("created", None)
     (d / "latest.json").write_text(json.dumps(legacy), encoding="utf-8")
-    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2))
+    store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), writer=Writer.HUMAN)
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-old"
 
@@ -1125,7 +1126,7 @@ def _first_seens(ckpt):
 
 def test_first_seen_stamped_on_new_items(tmp_checkpoint_dir, sample_checkpoint):
     ckpt = _stamped(sample_checkpoint, "S-1", 3)
-    store.write_checkpoint("S-1", ckpt, project_dir="/p/A")
+    store.write_checkpoint("S-1", ckpt, project_dir="/p/A", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-1")
     for text, fs in _first_seens(back).items():
         assert fs == back["created"], text
@@ -1134,7 +1135,7 @@ def test_first_seen_stamped_on_new_items(tmp_checkpoint_dir, sample_checkpoint):
 
 def test_first_seen_inherited_on_exact_text_match(tmp_checkpoint_dir, sample_checkpoint):
     first = _stamped(sample_checkpoint, "S-1", 3)
-    store.write_checkpoint("S-1", first, project_dir="/p/A")
+    store.write_checkpoint("S-1", first, project_dir="/p/A", writer=Writer.HUMAN)
     t1 = store.read_checkpoint("S-1")["created"]
 
     second = _stamped(sample_checkpoint, "S-2", 1)  # same item texts, newer session
@@ -1142,7 +1143,7 @@ def test_first_seen_inherited_on_exact_text_match(tmp_checkpoint_dir, sample_che
         dict(second["working_context"]["open_questions"][0]),  # carried verbatim
         {"text": "brand new question", "trust": "inferred"},   # born this session
     ]
-    store.write_checkpoint("S-2", second, project_dir="/p/A")
+    store.write_checkpoint("S-2", second, project_dir="/p/A", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-2")
     fs = _first_seens(back)
     carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
@@ -1151,12 +1152,12 @@ def test_first_seen_inherited_on_exact_text_match(tmp_checkpoint_dir, sample_che
 
 
 def test_first_seen_changed_text_gets_fresh_stamp(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-1", _stamped(sample_checkpoint, "S-1", 3), project_dir="/p/A")
+    store.write_checkpoint("S-1", _stamped(sample_checkpoint, "S-1", 3), project_dir="/p/A", writer=Writer.HUMAN)
     second = _stamped(sample_checkpoint, "S-2", 1)
     second["working_context"]["open_questions"] = [
         {"text": "reworded question entirely", "trust": "inferred"}
     ]
-    store.write_checkpoint("S-2", second, project_dir="/p/A")
+    store.write_checkpoint("S-2", second, project_dir="/p/A", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-2")
     assert _first_seens(back)["reworded question entirely"] == back["created"]
 
@@ -1170,7 +1171,7 @@ def test_first_seen_legacy_prev_falls_back_to_prev_created(tmp_checkpoint_dir, s
     (d / "latest.json").write_text(json.dumps(legacy), encoding="utf-8")
 
     second = _stamped(sample_checkpoint, "S-2", 1)
-    store.write_checkpoint("S-2", second)
+    store.write_checkpoint("S-2", second, writer=Writer.HUMAN)
     back = store.read_checkpoint("S-2")
     carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
     assert _first_seens(back)[carried_text] == legacy["created"]
@@ -1179,7 +1180,7 @@ def test_first_seen_legacy_prev_falls_back_to_prev_created(tmp_checkpoint_dir, s
 def test_first_seen_idempotent_on_rewrite(tmp_checkpoint_dir, sample_checkpoint):
     ckpt = _stamped(sample_checkpoint, "S-1", 1)
     ckpt["working_context"]["open_questions"][0]["first_seen"] = "2026-01-01T00:00:00Z"
-    store.write_checkpoint("S-1", ckpt, project_dir="/p/A")
+    store.write_checkpoint("S-1", ckpt, project_dir="/p/A", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-1")
     carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
     assert _first_seens(back)[carried_text] == "2026-01-01T00:00:00Z"
@@ -1196,13 +1197,13 @@ def test_725_first_seen_pipeline_unaffected_by_the_new_strip_entry(
     import copy as _copy
 
     fresh = _stamped(sample_checkpoint, "S-1", 3)
-    store.write_checkpoint("S-1", fresh, project_dir="/p/A")
+    store.write_checkpoint("S-1", fresh, project_dir="/p/A", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-1")
     assert back["working_context"]["active_topic"].get("first_seen") == back["created"]
 
     rewritten = _copy.deepcopy(back)
     rewritten["working_context"]["open_questions"][0]["first_seen"] = "2026-01-01T00:00:00Z"
-    store.write_checkpoint("S-1", rewritten, project_dir="/p/A")
+    store.write_checkpoint("S-1", rewritten, project_dir="/p/A", writer=Writer.HUMAN)
     back2 = store.read_checkpoint("S-1")
     assert back2["working_context"]["open_questions"][0]["first_seen"] == "2026-01-01T00:00:00Z"
 
@@ -1228,10 +1229,10 @@ def test_gc_pins_high_importance_beyond_keep(tmp_checkpoint_dir, sample_checkpoi
     monkeypatch.setenv("DAIMON_CHECKPOINT_HISTORY", "1")
     monkeypatch.setenv("DAIMON_CHECKPOINT_KEEP", "2")
     store.write_checkpoint("S1", _imp_cp(sample_checkpoint, "S1",
-                                         "2021-01-01T00:00:00Z", 10))
+                                         "2021-01-01T00:00:00Z", 10), writer=Writer.HUMAN)
     for i, sid in enumerate(("S2", "S3", "S4")):
         store.write_checkpoint(sid, _imp_cp(sample_checkpoint, sid,
-                                            f"202{i + 2}-01-01T00:00:00Z", 3))
+                                            f"202{i + 2}-01-01T00:00:00Z", 3), writer=Writer.HUMAN)
     present = _session_files_present(tmp_checkpoint_dir)
     assert "S1.json" in present            # pinned by importance
     assert "S2.json" not in present        # normal prune
@@ -1243,10 +1244,10 @@ def test_gc_pin_disabled_at_zero(tmp_checkpoint_dir, sample_checkpoint, monkeypa
     monkeypatch.setenv("DAIMON_CHECKPOINT_KEEP", "2")
     monkeypatch.setenv("DAIMON_GC_PIN_IMPORTANCE", "0")
     store.write_checkpoint("S1", _imp_cp(sample_checkpoint, "S1",
-                                         "2021-01-01T00:00:00Z", 10))
+                                         "2021-01-01T00:00:00Z", 10), writer=Writer.HUMAN)
     for i, sid in enumerate(("S2", "S3", "S4")):
         store.write_checkpoint(sid, _imp_cp(sample_checkpoint, sid,
-                                            f"202{i + 2}-01-01T00:00:00Z", 3))
+                                            f"202{i + 2}-01-01T00:00:00Z", 3), writer=Writer.HUMAN)
     present = _session_files_present(tmp_checkpoint_dir)
     assert "S1.json" not in present        # pinning off -> pure recency window
 
@@ -1258,7 +1259,7 @@ def test_gc_reaps_stale_tmp_files(tmp_checkpoint_dir, sample_checkpoint):
     import os as _os
     import time as _time
     store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"},
-                           project_dir="/p/A")
+                           project_dir="/p/A", writer=Writer.HUMAN)
     d = tmp_checkpoint_dir
     bucket = next(p for p in d.iterdir() if p.is_dir())
     stale_flat = d / "dead.json.999.tmp"
@@ -1313,7 +1314,7 @@ def _cp_with_items():
 def test_write_stamps_id_on_every_list_item(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = _cp_with_items()
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert cp["working_context"]["open_questions"][0]["id"].startswith("o-")
     assert cp["working_context"]["recent_decisions"][0]["id"].startswith("r-")
     assert cp["epistemic_snapshot"]["strong_beliefs"][0]["id"].startswith("s-")
@@ -1324,12 +1325,12 @@ def test_write_stamps_id_on_every_list_item(tmp_checkpoint_dir):
 def test_id_stamping_is_idempotent_and_deterministic(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = _cp_with_items()
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     first = cp["working_context"]["open_questions"][0]["id"]
-    store.write_checkpoint("S1b", cp)
+    store.write_checkpoint("S1b", cp, writer=Writer.HUMAN)
     assert cp["working_context"]["open_questions"][0]["id"] == first
     cp2 = _cp_with_items()
-    store.write_checkpoint("S2", cp2)
+    store.write_checkpoint("S2", cp2, writer=Writer.HUMAN)
     assert cp2["working_context"]["open_questions"][0]["id"] == first  # same kind+text -> same id
 
 
@@ -1338,7 +1339,7 @@ def test_identical_text_twins_get_distinct_ids(tmp_checkpoint_dir):
     cp = _cp_with_items()
     cp["working_context"]["open_questions"].append(
         {"text": "will the cache hold"})  # exact duplicate text
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     ids = [i["id"] for i in cp["working_context"]["open_questions"]]
     assert len(set(ids)) == 2
 
@@ -1346,7 +1347,7 @@ def test_identical_text_twins_get_distinct_ids(tmp_checkpoint_dir):
 def test_non_dict_and_empty_items_are_skipped(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"open_questions": ["bare string", {"text": ""}, {"no": "text"}]}}
-    store.write_checkpoint("S1", cp)  # must not raise
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)  # must not raise
     assert "id" not in cp["working_context"]["open_questions"][1]
 
 
@@ -1357,7 +1358,7 @@ def test_append_event_writes_jsonl_line(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     assert store.append_event("o-abc123", "resolved", note="shipped",
-                              project_dir="/p/A") is True
+                              project_dir="/p/A", writer=Writer.HUMAN) is True
     slug = store.project_slug("/p/A")
     lines = (tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()
     evt = json.loads(lines[0])
@@ -1371,7 +1372,7 @@ def test_append_event_writes_jsonl_line(tmp_checkpoint_dir, monkeypatch):
 def test_append_event_respects_kill_switch(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_DISABLE", "1")
-    assert store.append_event("o-abc123", "resolved", project_dir="/p/A") is False
+    assert store.append_event("o-abc123", "resolved", project_dir="/p/A", writer=Writer.HUMAN) is False
     slug = store.project_slug("/p/A")
     assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
 
@@ -1592,7 +1593,7 @@ def test_handoff_event_never_resolves_an_item(tmp_checkpoint_dir):
     # handoff was recorded.
     from daimon_briefing import store
     assert store.append_event("", "active", note="baton", kind="handoff",
-                              project_dir="/p/A") is True
+                              project_dir="/p/A", writer=Writer.HUMAN) is True
     res = store.resolutions(project_dir="/p/A")
     assert res == {}
 
@@ -1730,7 +1731,7 @@ def test_resolutions_invalid_utf8_bytes_cost_only_their_own_line(
 def test_append_event_stores_item_text_when_given(tmp_checkpoint_dir):
     from daimon_briefing import store
     store.append_event("o-abc", "resolved", project_dir="/p/A",
-                       item_text="the exact loop wording")
+                       item_text="the exact loop wording", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
     assert evt["item_text"] == "the exact loop wording"
@@ -1738,7 +1739,7 @@ def test_append_event_stores_item_text_when_given(tmp_checkpoint_dir):
 
 def test_append_event_omits_empty_item_text(tmp_checkpoint_dir):
     from daimon_briefing import store
-    store.append_event("o-abc", "resolved", project_dir="/p/A")
+    store.append_event("o-abc", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
     assert "item_text" not in evt
@@ -1752,7 +1753,7 @@ def test_write_checkpoint_redacts_text_and_quote(tmp_checkpoint_dir):
     cp = {"working_context": {"open_questions": [
         {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?",
          "quote": "he pasted DAIMON_LLM_API_KEY=sk-abcdef1234567890"}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     item = cp["working_context"]["open_questions"][0]
     assert "AKIAIOSFODNN7EXAMPLE" not in item["text"]
     assert "sk-abcdef1234567890" not in item["quote"]
@@ -1765,14 +1766,14 @@ def test_write_checkpoint_redacts_active_topic(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"active_topic": {
         "text": "rotating postgres://admin:hunter2secret@db/x"}}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert "hunter2secret" not in cp["working_context"]["active_topic"]["text"]
 
 
 def test_no_redactions_key_when_clean(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"open_questions": [{"text": "all clean here"}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert "redactions" not in cp
 
 
@@ -1781,7 +1782,7 @@ def test_item_id_hashes_redacted_text(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"open_questions": [
         {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?"}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     item = cp["working_context"]["open_questions"][0]
     digest = hashlib.sha1(
         f"open_questions:{item['text']}".encode("utf-8")).hexdigest()
@@ -1799,11 +1800,11 @@ def test_rewrite_merges_redaction_counts(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"open_questions": [
         {"text": "creds AKIAIOSFODNN7EXAMPLE leaked?"}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert cp["redactions"] == {"aws-key": 1}
     cp["working_context"]["open_questions"].append(
         {"text": "charge key sk_live_abcdef1234567890 exposed"})
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert cp["redactions"] == {"aws-key": 1, "stripe-key": 1}
 
 
@@ -1814,9 +1815,9 @@ def test_rewrite_same_secret_keeps_redaction_count_stable(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"open_questions": [
         {"text": "set DAIMON_LLM_API_KEY=sk-abcdef1234567890 in env"}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert cp["redactions"] == {"api-key": 1}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert cp["redactions"] == {"api-key": 1}
 
 
@@ -1824,7 +1825,7 @@ def test_append_event_redacts_note_and_item_text(tmp_checkpoint_dir):
     from daimon_briefing import store
     store.append_event("o-a", "resolved", note="key was AKIAIOSFODNN7EXAMPLE",
                        item_text="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.x",
-                       project_dir="/p/A")
+                       project_dir="/p/A", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
     assert "AKIAIOSFODNN7EXAMPLE" not in raw and "eyJhbGci" not in raw
@@ -1837,7 +1838,7 @@ def test_append_event_redacts_status(tmp_checkpoint_dir):
     # must not escape to events.jsonl.
     from daimon_briefing import store
     store.append_event("o-a", "blocked-on:AKIAIOSFODNN7EXAMPLE",
-                       project_dir="/p/A")
+                       project_dir="/p/A", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
     assert "AKIAIOSFODNN7EXAMPLE" not in raw
@@ -1899,7 +1900,7 @@ def test_redact_scrubs_link_targets(tmp_checkpoint_dir):
         {"text": "use gateway B",
          "links": [{"type": "supersedes",
                     "target": "use gateway A with DAIMON_LLM_API_KEY=sk-abcdef1234567890"}]}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     tgt = cp["working_context"]["recent_decisions"][0]["links"][0]["target"]
     assert "sk-abcdef1234567890" not in tgt and "[redacted:api-key]" in tgt
     assert cp["redactions"]["api-key"] == 1
@@ -1909,7 +1910,7 @@ def test_redact_tolerates_malformed_links(tmp_checkpoint_dir):
     from daimon_briefing import store
     cp = {"working_context": {"recent_decisions": [
         {"text": "x", "links": ["bare", {"no": "target"}, {"target": 7}]}]}}
-    store.write_checkpoint("S1", cp)  # must not raise
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)  # must not raise
 
 
 # ---- #139: cross-project first_seen bleed + corrupt-pointer tolerance ----
@@ -1926,8 +1927,8 @@ def test_first_seen_does_not_bleed_across_projects(tmp_checkpoint_dir, sample_ch
     # Project A has an older checkpoint whose item text coincides with project B's.
     # B's FIRST write has no per-project pointer yet; the birth stamp must NOT fall
     # back to the global pointer (A's checkpoint) and inherit A's older first_seen.
-    store.write_checkpoint("S-a", _independent(sample_checkpoint, "S-a", 5), project_dir="/p/A")
-    store.write_checkpoint("S-b", _independent(sample_checkpoint, "S-b", 0), project_dir="/p/B")
+    store.write_checkpoint("S-a", _independent(sample_checkpoint, "S-a", 5), project_dir="/p/A", writer=Writer.HUMAN)
+    store.write_checkpoint("S-b", _independent(sample_checkpoint, "S-b", 0), project_dir="/p/B", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-b")
     carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
     assert _first_seens(back)[carried_text] == back["created"]  # fresh, not A's
@@ -1937,16 +1938,16 @@ def test_first_seen_still_inherits_within_same_project(tmp_checkpoint_dir, sampl
     # Guard against over-fixing: a second write to the SAME project still inherits
     # first_seen from that project's own prior checkpoint (the project pointer path,
     # which fallback=False does not touch).
-    store.write_checkpoint("S-1", _independent(sample_checkpoint, "S-1", 5), project_dir="/p/A")
+    store.write_checkpoint("S-1", _independent(sample_checkpoint, "S-1", 5), project_dir="/p/A", writer=Writer.HUMAN)
     t1 = store.read_checkpoint("S-1")["created"]
-    store.write_checkpoint("S-2", _independent(sample_checkpoint, "S-2", 0), project_dir="/p/A")
+    store.write_checkpoint("S-2", _independent(sample_checkpoint, "S-2", 0), project_dir="/p/A", writer=Writer.HUMAN)
     back = store.read_checkpoint("S-2")
     carried_text = sample_checkpoint["working_context"]["open_questions"][0]["text"]
     assert _first_seens(back)[carried_text] == t1  # inherited from A's own prior
 
 
 def test_read_checkpoint_corrupt_file_returns_none(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S-torn", sample_checkpoint)
+    store.write_checkpoint("S-torn", sample_checkpoint, writer=Writer.HUMAN)
     (tmp_checkpoint_dir / "S-torn.json").write_text('{"created": "2026', encoding="utf-8")
     assert store.read_checkpoint("S-torn") is None  # tolerant, no raise
 
@@ -1954,7 +1955,7 @@ def test_read_checkpoint_corrupt_file_returns_none(tmp_checkpoint_dir, sample_ch
 def test_read_latest_corrupt_project_pointer_falls_through_to_global(
     tmp_checkpoint_dir, sample_checkpoint
 ):
-    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"})  # global
+    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"}, writer=Writer.HUMAN)  # global
     slug = store.project_slug("/p/torn")
     pdir = tmp_checkpoint_dir / slug
     pdir.mkdir(parents=True, exist_ok=True)
@@ -1982,7 +1983,7 @@ _NON_OBJECT_PAYLOADS = ['["x"]', '"str"', "42"]
 def test_read_latest_non_object_project_pointer_falls_through_to_global(
     tmp_checkpoint_dir, sample_checkpoint, payload
 ):
-    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"})  # global
+    store.write_checkpoint("S-g", {**sample_checkpoint, "session_id": "S-g"}, writer=Writer.HUMAN)  # global
     slug = store.project_slug("/p/nonobj")
     pdir = tmp_checkpoint_dir / slug
     pdir.mkdir(parents=True, exist_ok=True)
@@ -2027,13 +2028,13 @@ def test_read_latest_agrees_with_reportable_on_non_object_pointer(tmp_checkpoint
 
 def test_transcript_unchanged_true_on_hash_match(tmp_checkpoint_dir, sample_checkpoint):
     ck = {**sample_checkpoint, "session_id": "S-hash", "transcript_hash": "abc123"}
-    store.write_checkpoint("S-hash", ck)
+    store.write_checkpoint("S-hash", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-hash", "abc123") is True
 
 
 def test_transcript_unchanged_false_on_hash_mismatch(tmp_checkpoint_dir, sample_checkpoint):
     ck = {**sample_checkpoint, "session_id": "S-hash", "transcript_hash": "abc123"}
-    store.write_checkpoint("S-hash", ck)
+    store.write_checkpoint("S-hash", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-hash", "different-hash") is False
 
 
@@ -2045,20 +2046,20 @@ def test_transcript_unchanged_false_when_stored_hash_missing(tmp_checkpoint_dir,
     # Pre-#125 checkpoints carry no transcript_hash at all — fail open, never skip.
     ck = {**sample_checkpoint, "session_id": "S-nohash"}
     ck.pop("transcript_hash", None)
-    store.write_checkpoint("S-nohash", ck)
+    store.write_checkpoint("S-nohash", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-nohash", "abc123") is False
 
 
 def test_transcript_unchanged_false_when_stored_hash_malformed(tmp_checkpoint_dir, sample_checkpoint):
     ck = {**sample_checkpoint, "session_id": "S-badhash", "transcript_hash": 12345}
-    store.write_checkpoint("S-badhash", ck)
+    store.write_checkpoint("S-badhash", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-badhash", "abc123") is False
 
 
 def test_transcript_unchanged_false_when_new_hash_is_none(tmp_checkpoint_dir, sample_checkpoint):
     # An unreadable/missing transcript hashes to None — never treated as a match.
     ck = {**sample_checkpoint, "session_id": "S-hash2", "transcript_hash": "abc123"}
-    store.write_checkpoint("S-hash2", ck)
+    store.write_checkpoint("S-hash2", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-hash2", None) is False
 
 
@@ -2076,7 +2077,7 @@ def test_transcript_unchanged_true_when_format_version_matches_current(
         "transcript_hash": "abc123",
         "format_version": serializer.PROMPT_VERSION,
     }
-    store.write_checkpoint("S-samever", ck)
+    store.write_checkpoint("S-samever", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-samever", "abc123") is True
 
 
@@ -2091,7 +2092,7 @@ def test_transcript_unchanged_false_when_format_version_is_stale(
         "transcript_hash": "abc123",
         "format_version": "D-000",
     }
-    store.write_checkpoint("S-stalever", ck)
+    store.write_checkpoint("S-stalever", ck, writer=Writer.HUMAN)
     assert store.transcript_unchanged("S-stalever", "abc123") is False
 
 
@@ -2174,8 +2175,8 @@ def test_checkpoints_written_since_counts_recent_only(tmp_checkpoint_dir, sample
     import os
 
     now = _time.time()
-    store.write_checkpoint("S-fresh", {**sample_checkpoint, "session_id": "S-fresh"})
-    old = store.write_checkpoint("S-old", {**sample_checkpoint, "session_id": "S-old"})
+    store.write_checkpoint("S-fresh", {**sample_checkpoint, "session_id": "S-fresh"}, writer=Writer.HUMAN)
+    old = store.write_checkpoint("S-old", {**sample_checkpoint, "session_id": "S-old"}, writer=Writer.HUMAN)
     os.utime(old, (now - 20 * 86400, now - 20 * 86400))  # aged out of a 14d window
     cutoff = now - 14 * 86400
     # Only the fresh session file counts; the aged one is outside the window.
@@ -2185,7 +2186,7 @@ def test_checkpoints_written_since_counts_recent_only(tmp_checkpoint_dir, sample
 def test_checkpoints_written_since_ignores_pointers(tmp_checkpoint_dir, sample_checkpoint):
     # A write lands one session file plus latest.json (and per-project pointers);
     # only the per-session checkpoint is a "checkpoint written", never a pointer.
-    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A")
+    store.write_checkpoint("S1", {**sample_checkpoint, "session_id": "S1"}, project_dir="/p/A", writer=Writer.HUMAN)
     assert store.checkpoints_written_since(_time.time() - 14 * 86400) == 1
 
 
@@ -2214,7 +2215,7 @@ def test_write_checkpoint_redacts_scene(tmp_checkpoint_dir):
         "open_questions": [
             {"text": "clean",
              "scene": "arose pasting DAIMON_LLM_API_KEY=sk-scenesecret12345678"}]}}
-    store.write_checkpoint("S1", cp)
+    store.write_checkpoint("S1", cp, writer=Writer.HUMAN)
     assert "sk-scenesecret12345678" not in cp["working_context"]["open_questions"][0]["scene"]
     assert "sk-topicsecret99887766" not in cp["working_context"]["active_topic"]["scene"]
     assert cp["redactions"]["api-key"] == 2
@@ -2331,20 +2332,20 @@ def test_tie_rank_resolved_agent_verified_is_ordinary_rank_not_candidate_rank():
 def test_write_stamps_project_name(tmp_checkpoint_dir, sample_checkpoint):
     # #672: the slug is a lossy flattening, so the directory's real name exists
     # only at write time — stamp it or lose it.
-    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/My Proj")
+    store.write_checkpoint("S1", sample_checkpoint, project_dir="/Users/x/My Proj", writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["project_name"] == "My Proj"
 
 
 def test_write_unknown_project_stamps_no_name(tmp_checkpoint_dir, sample_checkpoint):
-    store.write_checkpoint("S1", sample_checkpoint)
+    store.write_checkpoint("S1", sample_checkpoint, writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert "project_name" not in blob
 
 
 def test_write_does_not_overwrite_existing_project_name(tmp_checkpoint_dir, sample_checkpoint):
     pre = {**sample_checkpoint, "project_name": "original"}
-    store.write_checkpoint("S1", pre, project_dir="/Users/x/projA")
+    store.write_checkpoint("S1", pre, project_dir="/Users/x/projA", writer=Writer.HUMAN)
     blob = json.loads((tmp_checkpoint_dir / "S1.json").read_text(encoding="utf-8"))
     assert blob["project_name"] == "original"
 
@@ -2355,7 +2356,7 @@ def test_write_does_not_overwrite_existing_project_name(tmp_checkpoint_dir, samp
 def test_read_latest_reportable_returns_the_projects_own_checkpoint(tmp_checkpoint_dir, tmp_path):
     mine = (tmp_path / "rlr-mine").resolve()
     mine.mkdir()
-    store.write_checkpoint("S-mine", {"session_id": "S-mine"}, project_dir=str(mine))
+    store.write_checkpoint("S-mine", {"session_id": "S-mine"}, project_dir=str(mine), writer=Writer.HUMAN)
     got = store.read_latest_body(str(mine), route=store.Route.OWN_ELSE_GLOBAL,
                                  admit=store.Admit.OWN_OR_UNROUTED)
     assert (got or {}).get("session_id") == "S-mine"
@@ -2364,7 +2365,7 @@ def test_read_latest_reportable_returns_the_projects_own_checkpoint(tmp_checkpoi
 def test_read_latest_reportable_refuses_another_projects_checkpoint(tmp_checkpoint_dir, tmp_path):
     other = (tmp_path / "rlr-other").resolve()
     other.mkdir()
-    store.write_checkpoint("S-other", {"session_id": "S-other"}, project_dir=str(other))
+    store.write_checkpoint("S-other", {"session_id": "S-other"}, project_dir=str(other), writer=Writer.HUMAN)
     mine = (tmp_path / "rlr-mine2").resolve()
     mine.mkdir()
     # read_latest WOULD hand this project the other one's checkpoint.
@@ -2378,7 +2379,7 @@ def test_read_latest_reportable_refuses_another_projects_checkpoint(tmp_checkpoi
 def test_read_latest_reportable_allows_an_unrouted_checkpoint(tmp_checkpoint_dir, tmp_path):
     # Written before a project was known, so it carries no project_slug stamp
     # and belongs to nobody. Pre-routing stores must keep working.
-    store.write_checkpoint("S-unrouted", {"session_id": "S-unrouted"})
+    store.write_checkpoint("S-unrouted", {"session_id": "S-unrouted"}, writer=Writer.HUMAN)
     mine = (tmp_path / "rlr-mine3").resolve()
     mine.mkdir()
     got = store.read_latest_body(str(mine), route=store.Route.OWN_ELSE_GLOBAL,
@@ -2452,7 +2453,7 @@ def test_record_bucket_root_survives_oserror(tmp_checkpoint_dir, monkeypatch):
 
 def test_write_checkpoint_records_root_on_first_write(tmp_checkpoint_dir, sample_checkpoint):
     proj = "/repo/checkpoint-root"
-    store.write_checkpoint("S-ckpt", sample_checkpoint, project_dir=proj)
+    store.write_checkpoint("S-ckpt", sample_checkpoint, project_dir=proj, writer=Writer.HUMAN)
     assert store.bucket_root(proj) == proj
 
 
@@ -2471,7 +2472,7 @@ def test_record_forget_hits_records_root_on_first_write(tmp_checkpoint_dir):
 
 def test_append_event_records_root_on_first_write(tmp_checkpoint_dir):
     proj = "/repo/event-root"
-    store.append_event("item-1", "resolved", project_dir=proj)
+    store.append_event("item-1", "resolved", project_dir=proj, writer=Writer.HUMAN)
     assert store.bucket_root(proj) == proj
 
 
@@ -2482,7 +2483,7 @@ def test_first_writer_across_entry_points_wins(tmp_checkpoint_dir, sample_checkp
     first = "/repo/shared bucket"
     second = "/repo/shared-bucket"
     assert store.project_slug(first) == store.project_slug(second)
-    store.append_event("item-1", "resolved", project_dir=first)
-    store.write_checkpoint("S-shared", sample_checkpoint, project_dir=second)
+    store.append_event("item-1", "resolved", project_dir=first, writer=Writer.HUMAN)
+    store.write_checkpoint("S-shared", sample_checkpoint, project_dir=second, writer=Writer.HUMAN)
     assert store.bucket_root(first) == first
 

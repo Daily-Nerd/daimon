@@ -18,6 +18,7 @@ from daimon_briefing import (
     trust,
 )
 from daimon_briefing.cli import lifecycle
+from daimon_briefing.surfaces import Writer
 
 ITEM = "o-1234567890ab"
 LONG_ASK = ("Please review the release plan and tell me what is missing.\n"
@@ -58,7 +59,7 @@ def _seed_every_kind(bucket, *, sender="/p/X"):
             "recent_decisions": [],
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
-    }, project_dir=bucket)
+    }, project_dir=bucket, writer=Writer.HUMAN)
     a_id = amendments.propose(
         item_id=ITEM, change="progressed", evidence="the PR merged",
         channel="cli-agent", project_dir=bucket)

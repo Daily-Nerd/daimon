@@ -9,6 +9,7 @@ import json
 import pytest
 
 from daimon_briefing import privacy, relations, store, surfaces
+from daimon_briefing.surfaces import Writer
 
 
 @pytest.fixture
@@ -282,17 +283,17 @@ def test_item_level_pass_skips_symmetric_type_even_hand_reversed(bucket):
     a = relations._stamp("proposed", "rel-" + "d" * 16, "lab-import")
     a.update({"type": "same-arc", "from": x, "to": y,
              "matched_by": ["carry-absolute"], "matcher_version": "lineage-v1"})
-    assert relations._append(a, project_dir=bucket)
+    assert relations._append(a, project_dir=bucket, writer=Writer.HUMAN)
     assert relations._append(
         relations._stamp("confirmed", "rel-" + "d" * 16, "cli-tty"),
-        project_dir=bucket)
+        project_dir=bucket, writer=Writer.HUMAN)
     b = relations._stamp("proposed", "rel-" + "e" * 16, "lab-import")
     b.update({"type": "same-arc", "from": y, "to": x,
              "matched_by": ["carry-absolute"], "matcher_version": "lineage-v1"})
-    assert relations._append(b, project_dir=bucket)
+    assert relations._append(b, project_dir=bucket, writer=Writer.HUMAN)
     assert relations._append(
         relations._stamp("confirmed", "rel-" + "e" * 16, "cli-tty"),
-        project_dir=bucket)
+        project_dir=bucket, writer=Writer.HUMAN)
     folded = relations.records(project_dir=bucket)
     assert folded["rel-" + "d" * 16]["contradiction"] is False
     assert folded["rel-" + "e" * 16]["contradiction"] is False
@@ -349,10 +350,10 @@ def test_exact_inverse_pass_survives_an_endpoint_missing_session_id(bucket):
                          "to": {"item_id": "r-def123456789"},
                          "matched_by": ["carry-absolute"],
                          "matcher_version": "lineage-v1"})
-    assert relations._append(damaged_from, project_dir=bucket)
+    assert relations._append(damaged_from, project_dir=bucket, writer=Writer.HUMAN)
     assert relations._append(
         relations._stamp("confirmed", "rel-" + "f" * 16, "cli-tty"),
-        project_dir=bucket)
+        project_dir=bucket, writer=Writer.HUMAN)
     folded = relations.records(project_dir=bucket)
     assert folded["rel-" + "f" * 16]["contradiction"] is False
 
@@ -393,7 +394,7 @@ def test_forget_item_id_keeps_uninterpretable_rows_byte_identical(bucket):
 
 def test_erased_comes_from_tombstones_not_absence(bucket):
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True)
+                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
     erased = relations.tombstoned_item_ids(project_dir=bucket)
     assert "r-abc123456789" in erased
     # absent-but-never-tombstoned is NOT erased
@@ -410,7 +411,7 @@ def test_listing_sorts_candidates_first_and_withholds_erased(bucket):
     doomed = _propose(bucket, frm=_endpoint("S4", item="r-ccc777888999"),
                       to=_endpoint("S1", item="r-ddd000111222"))
     store.append_event("r-ccc777888999", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True)
+                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
     rows, withheld = relations.listing(project_dir=bucket)
     ids = [r["relation_id"] for r in rows]
     assert doomed not in ids
@@ -443,7 +444,7 @@ def test_for_item_withholds_chains_touching_erased_endpoints(bucket):
     rel_id = _propose(bucket)
     relations.confirm(rel_id, channel="cli-tty", project_dir=bucket)
     store.append_event("r-def123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True)
+                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
     rows, withheld = relations.for_item("r-abc123456789", project_dir=bucket)
     assert rows == [] and withheld == 1
 
@@ -455,7 +456,7 @@ def test_endpoint_texts_joins_over_project_surfaces(bucket):
           "working_context": {"recent_decisions": [
               {"text": "keep the fold deterministic", "trust": "inferred"}]}}
     policy.stamp_item_ids(cp)
-    store.write_checkpoint("S1", cp, project_dir=bucket)
+    store.write_checkpoint("S1", cp, project_dir=bucket, writer=Writer.HUMAN)
     item_id = cp["working_context"]["recent_decisions"][0]["id"]
     texts = relations.endpoint_texts(project_dir=bucket)
     assert texts[item_id] == "keep the fold deterministic"
@@ -499,7 +500,7 @@ def test_audit_reports_relations_counts_and_stays_provable(bucket):
 def test_audit_finds_residue_when_scrub_missed_a_tombstoned_endpoint(bucket):
     _propose(bucket)  # endpoint r-abc123456789 lands in the ledger
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True)
+                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
     results = privacy.audit_project(project_dir=bucket)
     hits = [f for f in results["findings"]
             if f.get("surface") == "relations-ledger"]
@@ -590,7 +591,7 @@ def test_verdicts_on_retracted_record_are_refused_at_the_api(bucket):
 
 def test_orphan_lifecycle_event_is_inert(bucket):
     row = relations._stamp("confirmed", "rel-" + "a" * 16, "cli-tty")
-    assert relations._append(row, project_dir=bucket)
+    assert relations._append(row, project_dir=bucket, writer=Writer.HUMAN)
     assert relations.records(project_dir=bucket) == {}
 
 
@@ -599,7 +600,7 @@ def test_forged_verdict_on_agent_channel_cannot_move_state(bucket):
     # row on an agent channel must still fold to candidate.
     rel_id = _propose(bucket)
     row = relations._stamp("confirmed", rel_id, "lab-import")
-    assert relations._append(row, project_dir=bucket)
+    assert relations._append(row, project_dir=bucket, writer=Writer.HUMAN)
     assert relations.records(project_dir=bucket)[rel_id]["state"] == "candidate"
 
 
@@ -609,7 +610,7 @@ def test_forged_verdicts_on_retracted_record_stay_inert_in_fold(bucket):
     relations.retract(rel_id, channel="cli-tty", project_dir=bucket)
     for event in ("confirmed", "rejected"):
         row = relations._stamp(event, rel_id, "cli-tty")
-        assert relations._append(row, project_dir=bucket)
+        assert relations._append(row, project_dir=bucket, writer=Writer.HUMAN)
     assert relations.records(project_dir=bucket)[rel_id]["state"] == "retracted"
 
 
@@ -629,9 +630,9 @@ def test_contradiction_pass_skips_symmetric_and_forged_types(bucket):
     forged.update({"type": "friends-with", "from": x, "to": y,
                    "matched_by": ["carry-absolute"],
                    "matcher_version": "lineage-v1"})
-    assert relations._append(forged, project_dir=bucket)
+    assert relations._append(forged, project_dir=bucket, writer=Writer.HUMAN)
     confirm_row = relations._stamp("confirmed", "rel-" + "b" * 16, "cli-tty")
-    assert relations._append(confirm_row, project_dir=bucket)
+    assert relations._append(confirm_row, project_dir=bucket, writer=Writer.HUMAN)
     folded = relations.records(project_dir=bucket)
     assert folded[arc]["contradiction"] is False
     assert folded["rel-" + "b" * 16]["contradiction"] is False
@@ -642,9 +643,9 @@ def test_contradiction_pass_survives_damaged_endpoints(bucket):
     damaged.update({"type": "revision-of", "from": {}, "to": {},
                     "matched_by": ["carry-absolute"],
                     "matcher_version": "lineage-v1"})
-    assert relations._append(damaged, project_dir=bucket)
+    assert relations._append(damaged, project_dir=bucket, writer=Writer.HUMAN)
     confirm_row = relations._stamp("confirmed", "rel-" + "c" * 16, "cli-tty")
-    assert relations._append(confirm_row, project_dir=bucket)
+    assert relations._append(confirm_row, project_dir=bucket, writer=Writer.HUMAN)
     folded = relations.records(project_dir=bucket)
     assert folded["rel-" + "c" * 16]["contradiction"] is False
 
@@ -672,8 +673,8 @@ def test_forget_empty_target_absent_ledger_and_no_match(bucket):
 
 def test_reopen_lifts_the_tombstone(bucket):
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True)
-    store.append_event("r-abc123456789", "reopen", project_dir=bucket)
+                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
+    store.append_event("r-abc123456789", "reopen", project_dir=bucket, writer=Writer.HUMAN)
     assert "r-abc123456789" not in relations.tombstoned_item_ids(
         project_dir=bucket)
 
@@ -711,7 +712,7 @@ def test_cli_forget_scrubs_relations_and_reports_them(
             "recent_decisions": [
                 {"text": "adopt sqlite for the relations cache",
                  "trust": "inferred"}]},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
     stored = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     item_id = stored["working_context"]["recent_decisions"][0]["id"]
@@ -744,7 +745,7 @@ def test_append_survives_unwritable_ledger(bucket):
     path.chmod(0o400)
     try:
         row = relations._stamp("proposed", "rel-" + "d" * 16, "lab-import")
-        assert relations._append(row, project_dir=bucket) is False
+        assert relations._append(row, project_dir=bucket, writer=Writer.HUMAN) is False
     finally:
         path.chmod(0o600)
 

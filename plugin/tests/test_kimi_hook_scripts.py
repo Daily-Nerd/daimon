@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 import pytest
+from daimon_briefing.surfaces import Writer
 
 HOOK_DIR = Path(__file__).resolve().parents[2] / "hook"
 PROMPT_HOOK = HOOK_DIR / "daimon-kimi-user-prompt-submit.py"
@@ -326,7 +327,7 @@ def _checkpoint(sample_checkpoint):
 
     mine = json.loads(json.dumps(sample_checkpoint))
     mine["session_id"] = "S-kimi"
-    store.write_checkpoint("S-kimi", mine, project_dir=PROJECT)
+    store.write_checkpoint("S-kimi", mine, project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _prompt(home, text="where were we", session=SESSION):

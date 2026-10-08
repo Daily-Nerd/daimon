@@ -7,6 +7,7 @@ drops a record: dropping one would lift the quarantine and let the withheld
 value show again, so the hash latch (`value_key`) has to survive.
 """
 from daimon_briefing import cli, ledger_census, normalize, privacy, store, trust
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/forget-trust-ledger"
 CANARY = "zqxtrustcanary2c1 the staging db password rotates on fridays"
@@ -22,7 +23,7 @@ def _checkpoint_with(*texts):
     store.write_checkpoint(
         "S1", {"session_id": "S1", "created": "2026-08-01T00:00:00Z",
                "working_context": {"recent_decisions": items}},
-        project_dir=PROJECT)
+        project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _quarantine(text=QUARANTINED, reason="looks fabricated", evidence=None):
@@ -138,7 +139,9 @@ def test_torn_and_non_json_lines_survive_verbatim(tmp_checkpoint_dir):
     with _ledger().open("ab") as handle:
         for line in junk:
             handle.write(line + b"\n")
-    _forget(CANARY)
+    # The ledger holds lines forget cannot read, so it says so (exit 4,
+    # #1132 PR 10b) while still redacting every row it could.
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
     lines = _ledger().read_bytes().split(b"\n")
     for line in junk:
         assert line in lines

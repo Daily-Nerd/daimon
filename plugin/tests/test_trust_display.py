@@ -3,6 +3,7 @@
 import json
 
 from daimon_briefing import cli, normalize, pending, store, trust
+from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/forget-trust-ledger"
 CANARY = "zqxtrustcanary2c1 the staging db password rotates on fridays"
@@ -16,7 +17,7 @@ def _checkpoint_with(*texts):
     store.write_checkpoint(
         "S1", {"session_id": "S1", "created": "2026-08-01T00:00:00Z",
                "working_context": {"recent_decisions": items}},
-        project_dir=PROJECT)
+        project_dir=PROJECT, writer=Writer.HUMAN)
 
 
 def _quarantine(reason, evidence):

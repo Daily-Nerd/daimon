@@ -11,6 +11,7 @@ import pytest
 
 from daimon_briefing import refutations, store
 from daimon_ui import server
+from daimon_briefing.surfaces import Writer
 
 
 def _cp(sid):
@@ -33,7 +34,7 @@ def refut_proj(tmp_checkpoint_dir, tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     proj = tmp_path / "proj"
     proj.mkdir()
-    store.write_checkpoint("S1", _cp("S1"), project_dir=proj)
+    store.write_checkpoint("S1", _cp("S1"), project_dir=proj, writer=Writer.HUMAN)
     return proj
 
 

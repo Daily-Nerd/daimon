@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, store, transcript
+from . import config, display, jsonl, store, transcript
 
 
 def _append_serialize_log(line: str) -> None:
@@ -139,6 +139,14 @@ def _parse_serialize_log(path, now) -> dict | None:
 # the config (e.g. adding the API key) makes the retry succeed.
 _HEAL_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)(?: after \d+s|$)")
 
+# #1132 PR 10b: a refused admission names the session it belongs to in a group
+# that sits BEFORE the transcript group (the transcript regex swallows anything
+# after the path): `... (session: <id>) (transcript: <path>) after Ns`. Printed
+# only when the serialize was given `--session`, which is what lets a Kimi
+# refusal (the transcript stem is always `wire`, #988) land on the real session.
+# Twin: _LOG_ERR_SESSION_RE in hook/_daimon_hook_lib.py.
+_ERR_SESSION_RE = re.compile(r"\(session: (.+?)\)(?= \(transcript: )")
+
 # Per-session ledger regexes (kept SEPARATE from _RESULT_OK_RE/_RESULT_ERR_RE,
 # which _parse_serialize_log depends on). Success lines embed the session id in
 # the checkpoint path: `wrote checkpoint: <dir>/<session>.json (took Ns)`.
@@ -189,12 +197,17 @@ def _has_checkpoint(sid: str) -> bool:
                for p in config.checkpoint_dir().glob("rollout-*.json"))
 
 
-def _session_ledger(text: str, now: float) -> dict:
+def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
     """Fold serialize.log into per-session terminal state. Unlike
     _parse_serialize_log (last-of-each-kind, no pairing), this attributes every
     line to its session_id — spawn regex group, success checkpoint-path stem, or
     error transcript stem — so a failure is never masked by a later session's
-    success. Pre-flight errors (no transcript) carry no session and are dropped."""
+    success. Pre-flight errors (no transcript) carry no session and are dropped.
+
+    `tail` is how many of the last lines are folded; `None` folds them all, for
+    the admission pass, which must not lose a refusal to the 200-line window
+    (D10.4). A refused admission carrying a `(session: <id>)` group is keyed by
+    that id rather than the transcript stem."""
     sessions: dict = {}
 
     def _entry(sid: str) -> dict:
@@ -204,7 +217,8 @@ def _session_ledger(text: str, now: float) -> dict:
             "retried": False,
         })
 
-    for line in text.splitlines()[-200:]:
+    lines = text.splitlines()
+    for line in lines if tail is None else lines[-tail:]:
         line = line.strip()
         m = _SPAWN_RE.match(line)
         if m:
@@ -248,7 +262,9 @@ def _session_ledger(text: str, now: float) -> dict:
             tm = _HEAL_TRANSCRIPT_RE.search(line)
             if not tm:
                 continue  # pre-flight error, no session to attribute
-            e = _entry(_session_key(Path(tm.group(1)).stem))
+            sm = _ERR_SESSION_RE.search(line)
+            e = _entry(_session_key(sm.group(1)) if sm
+                       else _session_key(Path(tm.group(1)).stem))
             e["result_kind"] = "error"
             e["result_line"] = line
             e["transcript"] = tm.group(1)
@@ -298,9 +314,28 @@ def _repair_in_flight(age, ceiling, heartbeat_age, sid) -> bool:
     return age is not None and age <= ceiling
 
 
+def admission_state(project) -> tuple[str, str] | None:
+    """(state, hint) when `project`'s events ledger is NOT proven, else None.
+
+    The module seam `_outstanding_failures` and `_compute_outstanding`
+    consult for a refused admission (D10.4), like `heartbeat_age`: a refusal
+    is held back (class `admission-refused`) only while the ledger that
+    refused it is still unproven, and is an ordinary `healable` failure the
+    moment it reads again. A `project` that is `?`, empty or names no bucket
+    answers None: such an entry counts in the machine total and in no
+    bucket's briefing."""
+    if not project or str(project).strip() in ("", "?"):
+        return None
+    return store.admission_state(project)
+
+
+def _is_admission_refusal(e) -> bool:
+    return str(e["result_line"] or "").startswith(jsonl.ADMISSION_PREFIX)
+
+
 def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists,
                           force=False, heartbeat_age=None,
-                          checkpoint_covers=None) -> list:
+                          checkpoint_covers=None, admission_state=None) -> list:
     """Sessions still LOST — no checkpoint AND latest state != success.
     `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
     stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
@@ -326,16 +361,33 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             continue
         age = e["spawn_age"]
         if e["result_kind"] == "error":
-            if e["retried"] and not force:
+            held = None
+            if _is_admission_refusal(e):
+                # D10.4: a refused admission never burns the single retry
+                # (#26): it is held while its ledger is unproven, and once
+                # proven it ignores the `retried` gate (no transcript is
+                # still `unrecoverable`).
+                held = admission_state(e["project"]) if admission_state else None
+                if held:
+                    cls = "admission-refused"
+                elif (e["spawned"] and e["transcript"]
+                      and transcript_exists(e["transcript"])):
+                    cls = "healable"
+                else:
+                    cls = "unrecoverable"
+            elif e["retried"] and not force:
                 cls = "retry-exhausted"
             elif e["spawned"] and e["transcript"] and transcript_exists(e["transcript"]):
                 cls = "healable"
             else:
                 cls = "unrecoverable"
-            out.append({"sid": sid, "kind": "error", "class": cls, "age": age,
-                        "age_str": _format_age(age) if age is not None else "unknown",
-                        "transcript": e["transcript"], "project": e["project"],
-                        "spawned": e["spawned"], "line": e["result_line"]})
+            item = {"sid": sid, "kind": "error", "class": cls, "age": age,
+                    "age_str": _format_age(age) if age is not None else "unknown",
+                    "transcript": e["transcript"], "project": e["project"],
+                    "spawned": e["spawned"], "line": e["result_line"]}
+            if held:
+                item["state"], item["hint"] = held
+            out.append(item)
         elif (e["result_kind"] is None and e["spawned"] and e["retried"]
               and _repair_in_flight(age, ceiling, heartbeat_age, sid)):
             # #936: a heal retry that is still running. Visible, not
@@ -373,23 +425,140 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
     return out
 
 
+def _slug_of(project) -> str:
+    """The bucket slug a serialize-log `project` (a cwd) addresses, or ""."""
+    if not project or str(project).strip() in ("", "?"):
+        return ""
+    return store.project_slug(store._resolved(project)) or ""
+
+
+def admission_notes(slug: str, *, text: str | None = None,
+                    now: float | None = None) -> tuple[str, ...]:
+    """The `admission-refused` note for `slug`, or `()` (D10.4). Pure over the
+    same scan `status` and `heal` use, in the shape of `serialize_in_flight`:
+    own bucket only, and silent unless a session of THIS project is held back
+    right now, that is a refusal whose ledger is still unproven. Once the
+    ledger reads again the sessions are ordinary healable failures and the
+    note is gone."""
+    if not slug:
+        return ()
+    if text is None:
+        try:
+            text = (config.log_dir() / "serialize.log").read_text(
+                encoding="utf-8")
+        except OSError:
+            return ()
+    t = now if now is not None else time.time()
+    long_fold = _admission_ledger(text, t)
+    if not long_fold:
+        return ()
+    held = [f for f in _outstanding_failures(
+                long_fold, t, _has_checkpoint, config.hung_after_seconds(),
+                lambda p: bool(p) and Path(p).exists(),
+                checkpoint_covers=checkpoint_covers,
+                admission_state=_memoized_admission_state())
+            if f["class"] == "admission-refused"
+            and _slug_of(f["project"]) == slug]
+    if not held:
+        return ()
+    return (display.admission_refused_note(
+        len(held), held[0]["state"], held[0]["hint"]),)
+
+
+def admission_waiting(slug: str, *, text: str | None = None,
+                      now: float | None = None) -> int:
+    """How many sessions of `slug` were refused and can now be healed: the
+    ledger reads again, the transcript is on disk, and `heal` will take them
+    one per run (D10.4). Zero while the ledger is still unproven (they are
+    held, not waiting) and for a refusal whose transcript is gone."""
+    if not slug:
+        return 0
+    if text is None:
+        try:
+            text = (config.log_dir() / "serialize.log").read_text(
+                encoding="utf-8")
+        except OSError:
+            return 0
+    t = now if now is not None else time.time()
+    long_fold = _admission_ledger(text, t)
+    if not long_fold:
+        return 0
+    return sum(
+        1 for f in _outstanding_failures(
+            long_fold, t, _has_checkpoint, config.hung_after_seconds(),
+            lambda p: bool(p) and Path(p).exists(),
+            checkpoint_covers=checkpoint_covers,
+            admission_state=_memoized_admission_state())
+        if f["class"] == "healable" and _slug_of(f["project"]) == slug)
+
+
+# The admission pass folds this many trailing bytes of serialize.log. A
+# refusal is the one failure that must outlive the 200-line tail, because it
+# waits for a ledger repair that can take days; the window bounds the cost.
+_ADMISSION_WINDOW_BYTES = 4 * 1024 * 1024
+
+
+def _memoized_admission_state():
+    """`admission_state` remembered per project for the life of one scan:
+    N refused sessions of a project cost one events read, not N."""
+    seen: dict = {}
+
+    def state_of(project):
+        if project not in seen:
+            seen[project] = admission_state(project)
+        return seen[project]
+    return state_of
+
+
+def _admission_window(text: str) -> str:
+    """The last `_ADMISSION_WINDOW_BYTES` of the log, from a line start."""
+    if len(text) <= _ADMISSION_WINDOW_BYTES:
+        return text
+    window = text[-_ADMISSION_WINDOW_BYTES:]
+    return window[window.find("\n") + 1:]
+
+
+def _admission_ledger(text: str, now: float) -> dict:
+    """The sessions whose LATEST result line is a refused admission, folded
+    over the long window (spawn and result lines both, so `project`, `spawned`
+    and the transcript are known)."""
+    window = _admission_window(text)
+    if jsonl.ADMISSION_PREFIX not in window:
+        return {}
+    return {sid: e for sid, e in _session_ledger(window, now, tail=None).items()
+            if e["result_kind"] == "error" and _is_admission_refusal(e)}
+
+
 def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
     """Wire the pure ledger/classifier to the live store + filesystem. Single
     source for both `status` (display) and `heal` (repair) so their notion of
     'outstanding' can never drift. `force` (#15) is forwarded to
     `_outstanding_failures`; callers that don't pass it get unchanged default
-    classification."""
-    return _outstanding_failures(
-        _session_ledger(text, now), now,
-        _has_checkpoint,
-        config.hung_after_seconds(),
-        lambda p: bool(p) and Path(p).exists(),
+    classification.
+
+    Two folds, one answer: every class keeps the 200-line window it always
+    had, and a refused admission (D10.4) is read over the last 4 MB instead,
+    so it is never counted, briefed or healed late. An admission entry from
+    the long fold replaces the same session's entry from the short one."""
+    state_of = _memoized_admission_state()
+    common = dict(
+        has_checkpoint=_has_checkpoint,
+        ceiling=config.hung_after_seconds(),
+        transcript_exists=lambda p: bool(p) and Path(p).exists(),
         force=force,
         # #342: module-level heartbeat_age resolves via the global, not the
         # classifier's same-named parameter.
         heartbeat_age=lambda sid: heartbeat_age(sid, now),
         checkpoint_covers=checkpoint_covers,
+        admission_state=state_of,
     )
+    out = _outstanding_failures(_session_ledger(text, now), now, **common)
+    long_fold = _admission_ledger(text, now)
+    if long_fold:
+        out = [f for f in out if f["sid"] not in long_fold]
+        out += _outstanding_failures(long_fold, now, **common)
+        out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
+    return out
 
 
 _HEAL_SKIP_REASON = {
@@ -421,6 +590,9 @@ def _heal_plan(text, now, force=False) -> dict:
             continue
         if f["class"] == "healable":
             reason = "newer failure took this run — re-run 'daimon heal' to reach it"
+        elif f["class"] == "admission-refused":
+            reason = (f"admission refused: events.jsonl is {f['state']}; "
+                      f"{f['hint']}")
         elif f["class"] == "repairing":
             hb = f.get("heartbeat_age")
             reason = ("repair already running "

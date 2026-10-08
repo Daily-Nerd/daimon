@@ -22,6 +22,7 @@ import pytest
 
 from daimon_briefing import (amendments, cli, config, normalize, refutations,
                              relations, requests, schema, store, trust)
+from daimon_briefing.surfaces import Writer
 
 KINDS = tuple(f.kind for f in schema.ITEM_FIELDS)
 QUARANTINED = ("topic", "question", "contradiction")
@@ -142,13 +143,13 @@ def build_world(tmp_path, monkeypatch) -> World:
 
     monkeypatch.setenv("DAIMON_AUTHOR", "grace")
     cp = checkpoint("G-1", "2026-08-03T00:00:00Z")
-    store.write_checkpoint("G-1", cp, project_dir=project)
+    store.write_checkpoint("G-1", cp, project_dir=project, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
 
     for sid, created in (("S-1", "2026-08-01T00:00:00Z"),
                          ("S-2", "2026-08-02T00:00:00Z")):
         store.write_checkpoint(sid, checkpoint(sid, created),
-                               project_dir=project)
+                               project_dir=project, writer=Writer.HUMAN)
 
     world = World(project=project,
                   bucket=config.checkpoint_dir() / store.project_slug(project),
@@ -177,7 +178,7 @@ def build_world(tmp_path, monkeypatch) -> World:
             store.append_event(
                 item_id,
                 "forgotten:" + normalize.content_key("a different value"),
-                kind="tombstone", tombstone=True, project_dir=project)
+                kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
             world.ids["idforgot"] = item_id
 
     # quarantine three, by a human
@@ -196,8 +197,8 @@ def _write_ledger_prose(world: World, project: str) -> None:
     q, t, c = TEXTS["question"], TEXTS["topic"], TEXTS["contradiction"]
     # events: note, item_text, status (free-form)
     assert store.append_event(world.ids["question"], "reopen", note=c,
-                              item_text=q, project_dir=project)
-    assert store.append_event("i-prose-status", t, project_dir=project)
+                              item_text=q, project_dir=project, writer=Writer.HUMAN)
+    assert store.append_event("i-prose-status", t, project_dir=project, writer=Writer.HUMAN)
     # refutations / rulings: subject, verdict, scope, revisit_when, note
     world.ruling_id = refutations.assert_ruling(
         subject=t, verdict=q, scope=c, evidence=["issue:693"],

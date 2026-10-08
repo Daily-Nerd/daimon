@@ -28,6 +28,7 @@ import re
 from datetime import datetime, timezone
 
 from . import channels, clock, config, jsonl, policy, provenance, schema, store
+from .surfaces import Writer
 
 
 VERSION = 1
@@ -156,7 +157,7 @@ def _stamp(event: str, relation_id: str, channel: str,
     }
 
 
-def _append(row: dict, project_dir=None) -> bool:
+def _append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted row.  Never raises; never mutates another ledger."""
     if config.is_disabled():
         return False
@@ -166,8 +167,9 @@ def _append(row: dict, project_dir=None) -> bool:
     admitted = policy.admit_row(row, redact_fields=("author",))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        jsonl.append(path, admitted)
-        return True
+        return jsonl.append_as(path, admitted, writer)
+    except jsonl.Refused:
+        raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
 
@@ -177,7 +179,8 @@ def _write(row: dict, project_dir=None) -> None:
     if len(blob.encode("utf-8")) > _MAX_ROW_BYTES:
         raise RelationError(
             f"relation row too large ({len(blob)} > {_MAX_ROW_BYTES} bytes)")
-    if not _append(row, project_dir=project_dir):
+    if not _append(row, project_dir=project_dir,
+                   writer=Writer.HUMAN):
         raise RelationError(
             "relation not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
@@ -554,6 +557,10 @@ def _row_item_ids(row: dict) -> set[str]:
     return out
 
 
+# No plaintext lives here, so a torn line cannot hide the value: only a ledger
+# that was not READ leaves this unreached.
+@jsonl.reaching(_path, lambda row, item: str(item or "") in _row_item_ids(row),
+                plaintext=False)
 def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     """Remove every record whose edge touches `item_id` (#678 fork A).
 

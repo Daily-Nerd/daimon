@@ -13,14 +13,15 @@ import pytest
 
 from daimon_briefing import cli, mcp_tools, store
 from daimon_ui import server
+from daimon_briefing.surfaces import Writer
 
 OWN, OTHER = "/p/A", "/p/B"
 
 
 @pytest.fixture
 def two_tenants(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir=OWN)
-    store.write_checkpoint("S-b", sample_checkpoint, project_dir=OTHER)
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir=OWN, writer=Writer.HUMAN)
+    store.write_checkpoint("S-b", sample_checkpoint, project_dir=OTHER, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", OWN)
     return store.project_slug(OWN), store.project_slug(OTHER)
 

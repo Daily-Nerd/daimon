@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import checks, checks_runtime, config, refutations
+from daimon_briefing.surfaces import Writer
 
 CANONICAL = Path(__file__).parents[1] / "daimon_briefing" / "checks_host.py"
 
@@ -391,7 +392,7 @@ def _entry(ruling_id, project, *, body=CLEAN, match=MATCH, intent="warn"):
 
 def test_an_armed_ruling_that_synced_is_in_step(tmp_path):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     audit = checks.audit(str(tmp_path))
     assert audit.state == "read" and audit.drift is False
     assert audit.wanted == [ruling_id] and audit.have == [ruling_id]
@@ -401,7 +402,7 @@ def test_an_armed_ruling_that_synced_is_in_step(tmp_path):
 
 def test_a_wanted_ruling_the_manifest_never_got_is_missing(tmp_path):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_manifest([])
     audit = checks.audit(str(tmp_path))
     assert audit.missing == [ruling_id] and audit.drift is True
@@ -414,7 +415,7 @@ def test_a_manifest_pinned_to_a_body_the_ledger_no_longer_wants_drifts(
     stale at the hash the manifest still names. Reporting only one half hides
     which side moved."""
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_manifest([_entry(ruling_id, config.resolve_project_dir(str(tmp_path)),
                             body=VIOLATION)])
     audit = checks.audit(str(tmp_path))
@@ -424,7 +425,7 @@ def test_a_manifest_pinned_to_a_body_the_ledger_no_longer_wants_drifts(
 
 def test_an_entry_for_a_ruling_that_was_retired_is_stale(tmp_path):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     root = config.resolve_project_dir(str(tmp_path))
     refutations.retire(ruling_id, channel="cli-tty", project_dir=str(tmp_path))
     _write_manifest([_entry(ruling_id, root)])
@@ -436,7 +437,7 @@ def test_an_entry_for_a_ruling_that_was_retired_is_stale(tmp_path):
 def test_a_body_the_manifest_names_and_the_disk_does_not_have_is_drift(
         tmp_path):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     entry = checks_runtime.load_manifest(_manifest_path()).entries[0]
     checks_runtime.body_path(entry, config.checks_dir()).unlink()
     audit = checks.audit(str(tmp_path))
@@ -449,7 +450,7 @@ def test_a_body_edited_out_of_band_is_caught_before_the_runner_sees_it(
     """The fourth state a manifest cannot express. The runner catches it at
     exec time as body-hash-mismatch, one action too late to be a report."""
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     entry = checks_runtime.load_manifest(_manifest_path()).entries[0]
     path = checks_runtime.body_path(entry, config.checks_dir())
     path.chmod(0o600)
@@ -468,7 +469,7 @@ def test_no_manifest_with_nothing_wanted_is_not_drift(tmp_path):
 
 def test_no_manifest_with_something_wanted_is_drift(tmp_path):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _manifest_path().unlink()
     audit = checks.audit(str(tmp_path))
     assert audit.state == "absent" and audit.drift is True
@@ -492,8 +493,8 @@ def test_another_projects_entries_are_neither_wanted_nor_stale(tmp_path):
     other.mkdir()
     mine = _arm(tmp_path)
     theirs = _arm(other, subject="their posts")
-    checks.sync(str(tmp_path))
-    checks.sync(str(other))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks.sync(str(other), writer=Writer.HUMAN)
     audit = checks.audit(str(tmp_path))
     assert audit.wanted == [mine] and audit.have == [mine]
     assert theirs not in audit.stale and audit.drift is False
@@ -503,7 +504,7 @@ def test_the_audit_carries_ids_and_nothing_else(tmp_path):
     """No match patterns, no bodies, no project directories: every list is a
     list of strings a caller may print."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     audit = checks.audit(str(tmp_path))
     for name in ("wanted", "have", "missing", "stale", "body_missing",
                  "body_mismatch"):
@@ -536,7 +537,7 @@ def _run(argv):
 
 def test_check_sync_check_exits_zero_and_says_in_step(tmp_path, capsys):
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
     assert rc == 0
     assert "checks manifest: in step, 1 armed" in capsys.readouterr().out
@@ -545,7 +546,7 @@ def test_check_sync_check_exits_zero_and_says_in_step(tmp_path, capsys):
 def test_check_sync_check_exits_one_on_drift_and_names_the_ids(
         tmp_path, capsys):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_manifest([])
     rc = _run(["check", "sync", "--check", "--project", str(tmp_path)])
     out = capsys.readouterr().out
@@ -571,7 +572,7 @@ def test_check_sync_check_writes_nothing(tmp_path):
     """The whole point of the flag. A repair disguised as an audit reports a
     clean machine it just made clean."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_manifest([])
     _run(["check", "sync", "--check", "--project", str(tmp_path)])
     assert checks_runtime.load_manifest(_manifest_path()).entries == []
@@ -579,7 +580,7 @@ def test_check_sync_check_writes_nothing(tmp_path):
 
 def test_check_sync_check_json_carries_every_audit_field(tmp_path, capsys):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _run(["check", "sync", "--check", "--json", "--project", str(tmp_path)])
     payload = json.loads(capsys.readouterr().out)
     assert list(payload) == ["state", "wanted", "have", "missing", "stale",
@@ -617,7 +618,7 @@ def test_ruling_checks_crosses_every_ruling_with_every_host(tmp_path, capsys):
     the profiles rather than guessing. A missing row is a host whose column
     an author would never see."""
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     assert _checks_table(tmp_path) == 0
     out = capsys.readouterr().out
     assert ruling_id in out
@@ -630,7 +631,7 @@ def test_the_mode_column_is_what_the_host_delivers_not_what_was_asked(
     """Spec 5. An author asked for warn; codex documents no warn channel and
     windsurf is unmeasured, so the same intent reads three ways."""
     _arm(tmp_path, intent="warn")
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _checks_table(tmp_path)
     out = capsys.readouterr().out
     assert "claude-code   warn" in out
@@ -643,7 +644,7 @@ def test_never_fired_is_not_the_same_cell_as_zero_counts(tmp_path, capsys):
     found nothing are different facts, and the second is the only one that
     says the wiring works."""
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _checks_table(tmp_path)
     before = [ln for ln in capsys.readouterr().out.splitlines()
               if CC in ln][0]
@@ -686,7 +687,7 @@ def test_an_unsupported_host_shows_no_liveness_cell(tmp_path, capsys):
     """A column that reads `unsupported` has no channel to fire through, so
     a count beside it would be a number about nothing."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _checks_table(tmp_path)
     line = [ln for ln in capsys.readouterr().out.splitlines()
             if "windsurf" in ln][0]
@@ -695,7 +696,7 @@ def test_an_unsupported_host_shows_no_liveness_cell(tmp_path, capsys):
 
 def test_the_header_reports_the_manifest_state(tmp_path, capsys):
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _checks_table(tmp_path)
     assert "armed 1 of 1 wanted" in capsys.readouterr().out
     _write_manifest([])
@@ -706,7 +707,7 @@ def test_the_header_reports_the_manifest_state(tmp_path, capsys):
 def test_the_header_tells_no_manifest_from_an_unreadable_one(
         tmp_path, capsys):
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _manifest_path().unlink()
     _checks_table(tmp_path)
     assert "no manifest" in capsys.readouterr().out
@@ -719,7 +720,7 @@ def test_the_header_reports_every_host_the_hook_ran_on(tmp_path, capsys):
     """The project-level rows. They prove the hook is wired even when no
     check of this project's ever matched a command."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_log(_row(cause="no-match", ts="2026-09-06T08:00:00Z"),
                _row(cause="no-manifest", host="codex",
                     ts="2026-09-06T09:00:00Z"))
@@ -735,7 +736,7 @@ def test_the_table_header_names_the_window_the_counts_cover(tmp_path,
     """#955. The log is capped, so every count under this header is a count
     over a retained window, and the header is where the window is named."""
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_log(_row(ruling_id=ruling_id, outcome="clean",
                     ts="2026-09-01T07:00:00Z"),
                _row(ruling_id=ruling_id, outcome="clean",
@@ -749,7 +750,7 @@ def test_the_table_names_no_window_when_the_log_holds_no_rows(tmp_path,
     """A window over nothing is a claim about a file that has none. The
     header simply ends."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _checks_table(tmp_path)
     assert "firing log since" not in capsys.readouterr().out
 
@@ -759,7 +760,7 @@ def test_the_table_names_no_window_when_the_log_cannot_be_read(tmp_path,
     """The unreadable line already says why every cell is blank. A window
     beside it would be a fact this read cannot support."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     path = _log_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.mkdir()
@@ -806,8 +807,8 @@ def test_another_projects_ruling_never_reaches_the_table(tmp_path, capsys):
     other.mkdir()
     mine = _arm(tmp_path)
     theirs = _arm(other, subject="their posts", match="git push --force")
-    checks.sync(str(tmp_path))
-    checks.sync(str(other))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks.sync(str(other), writer=Writer.HUMAN)
     _write_log(_row(ruling_id=theirs, outcome="violation"))
     _checks_table(tmp_path)
     out = capsys.readouterr().out
@@ -817,7 +818,7 @@ def test_another_projects_ruling_never_reaches_the_table(tmp_path, capsys):
 
 def test_ruling_checks_json_has_a_fixed_shape(tmp_path, capsys):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_log(_row(ruling_id=ruling_id, outcome="clean"))
     _checks_table(tmp_path, "--json")
     payload = json.loads(capsys.readouterr().out)
@@ -1037,7 +1038,7 @@ def test_status_counts_proposed_checks_beside_armed_ones(
 def test_status_appends_the_drift_pointer(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_manifest([])
     _status(tmp_path)
     out = capsys.readouterr().out
@@ -1073,7 +1074,7 @@ def test_the_status_line_never_moves_the_exit_code(tmp_path, monkeypatch):
     change it, the same way hook drift never has."""
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     before = _status(tmp_path)
     _write_manifest([])
     assert _status(tmp_path) == before
@@ -1267,7 +1268,7 @@ def test_status_says_the_log_is_unreadable_rather_than_never_fired(
 def test_ruling_checks_heads_the_table_with_the_log_state(
         break_log, tmp_path, capsys):
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     break_log()
     _checks_table(tmp_path)
     out = capsys.readouterr().out
@@ -1412,7 +1413,7 @@ def test_an_empty_manifest_that_is_in_step_still_says_in_step(tmp_path,
     """`absent` is about the FILE, not about the count. A manifest that
     exists and correctly holds nothing for this project is in step."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     refutations.retire(_propose(tmp_path, subject="second"),
                        channel="cli-tty", project_dir=str(tmp_path))
     _write_manifest([])
@@ -1426,7 +1427,7 @@ def test_json_nulls_the_counts_on_a_never_fired_row(tmp_path, capsys):
     "0 clean" reading constraint 2 exists to prevent, so JSON says nothing
     where the table says nothing."""
     _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _checks_table(tmp_path, "--json")
     row = json.loads(capsys.readouterr().out)["rows"][0]
     assert row["fired"] is False and row["last_fired"] is None
@@ -1439,7 +1440,7 @@ def test_json_nulls_the_counts_on_a_never_fired_row(tmp_path, capsys):
 
 def test_json_carries_the_counts_once_a_row_has_fired(tmp_path, capsys):
     ruling_id = _arm(tmp_path)
-    checks.sync(str(tmp_path))
+    checks.sync(str(tmp_path), writer=Writer.HUMAN)
     _write_log(_row(ruling_id=ruling_id, outcome="violation"))
     _checks_table(tmp_path, "--json")
     row = [r for r in json.loads(capsys.readouterr().out)["rows"]

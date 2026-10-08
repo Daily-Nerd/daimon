@@ -11,6 +11,7 @@ from daimon_briefing import (briefing, cli, effects_commit, mcp_tools,
                              recall_telemetry, requests, store, view, worldcheck)
 from daimon_briefing.effects import (Effects, Surfaced, Telemetry,
                                      Verification)
+from daimon_briefing.surfaces import Writer
 
 
 class Recorder(io.StringIO):
@@ -143,7 +144,7 @@ def _checkpoint(project, session="S-ec"):
         "session_id": session, "created": "2026-08-16T00:00:00Z",
         "working_context": {"recent_decisions": [
             {"text": "x", "trust": "inferred"}]},
-    }, project_dir=project)
+    }, project_dir=project, writer=Writer.HUMAN)
 
 
 def test_brief_writes_its_usage_stamps_and_ledger_after_the_output(
@@ -310,7 +311,7 @@ def test_mcp_usage_records_when_the_handler_raises_a_tool_error(
 
 def test_mcp_recall_telemetry_commits_after_the_rows_are_built(
         tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
-    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A")
+    store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     seen = []
     real = recall_telemetry.record
@@ -332,7 +333,7 @@ def test_mcp_recall_telemetry_commits_after_the_rows_are_built(
 def test_hermes_pre_llm_call_records_no_usage(tmp_checkpoint_dir,
                                               sample_checkpoint, monkeypatch):
     from daimon_briefing import hooks
-    store.write_checkpoint("S-prev", sample_checkpoint)
+    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
     monkeypatch.setattr(cli, "_note_usage", lambda tag: pytest.fail(tag))
     out = hooks.pre_llm_call(session_id="S2", user_message="hi",
                              conversation_history=[], is_first_turn=True,
