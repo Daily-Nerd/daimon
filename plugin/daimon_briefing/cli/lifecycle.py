@@ -1251,6 +1251,7 @@ def _decide_cards(rows: list) -> list:
     return cards
 
 
+@_cli.guarded
 def _cmd_decide(args) -> int:
     """`decide` — everything waiting on a HUMAN, with the command that closes it.
 

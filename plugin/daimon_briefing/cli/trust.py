@@ -65,7 +65,7 @@ def _human_channel() -> bool:
     return sys.stdin.isatty()
 
 
-def _shown(project, records: list, *, snap, human: bool) -> list:
+def _masked_records(project, records: list, *, snap, human: bool) -> list:
     """`records` as this channel may read them. `reason` is a value copy and
     is masked on every channel; a deleter's marker reads "(value forgotten)".
     A quarantine whose value was forgotten has no key to show. Evidence is raw
@@ -141,7 +141,7 @@ def _cmd_trust_list(args) -> int:
         trust.records(project_dir=project).values(),
         key=lambda r: (r["state"] != "candidate",
                        r.get("updated_at") or "", r["quarantine_id"]))
-    rows = _shown(project, records, snap=view.judge(_slug_of(project)).snap,
+    rows = _masked_records(project, records, snap=view.judge(_slug_of(project)).snap,
                   human=_human_channel())
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
@@ -162,7 +162,7 @@ def _cmd_trust_show(args) -> int:
         return 1
     human = _human_channel()
     cited = len(record.get("evidence") or [])
-    record = _shown(project, [record], snap=view.judge(_slug_of(project)).snap,
+    record = _masked_records(project, [record], snap=view.judge(_slug_of(project)).snap,
                     human=human)[0]
     if args.json:
         print(json.dumps(record, ensure_ascii=False, indent=2))

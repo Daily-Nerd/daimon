@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 
 from . import (briefing, config, display, effects_commit, recall,
-               recall_telemetry, requests, store)
+               recall_telemetry, requests, store, view)
 from .effects import Effects, Telemetry
 from .terms import salient_terms
 
@@ -210,9 +210,13 @@ def _requests_inbox(arguments: dict, fx) -> ToolResult:
     from . import cli
     project = cli._resolve_project(arguments.get("project") or None)
     got = requests.inbox(project)
+    # Every prose column is judged over the bucket's light snapshot (and the
+    # snapshot of each bucket a row names) before it leaves this tool; the
+    # fold stays raw. There is no id parameter here, by design.
+    rows = view.masked(project, "requests.jsonl", got.rows)
     # A sender left out of the join is said in a block of its own, so the
     # payload stays exactly the JSON array it says it is.
-    return ToolResult(json.dumps(got.rows, ensure_ascii=False, indent=2),
+    return ToolResult(json.dumps(rows, ensure_ascii=False, indent=2),
                       got.notes)
 
 

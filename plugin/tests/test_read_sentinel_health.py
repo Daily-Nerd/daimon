@@ -168,6 +168,8 @@ ALLOWED = {
         ("cli:brief", "contradiction"),
         ("cli:brief", "question"),
         ("cli:brief", "topic"),
+        ("cli:decide", "question"),
+        ("cli:decide", "topic"),
         ("cli:refute guard", "question"),
         ("cli:refute guard", "topic"),
         ("cli:refute list", "contradiction"),
@@ -232,7 +234,13 @@ ALLOWED = {
         ("hook:pre_llm_call", "question"),
         ("http:/api/activity", "contradiction"),
         ("http:/api/activity", "topic"),
-        ("mcp:daimon_brief", "question")},
+        ("http:/api/refutations", "contradiction"),
+        ("http:/api/refutations", "question"),
+        ("http:/api/refutations", "topic"),
+        ("mcp:daimon_brief", "question"),
+        ("mcp:requests_inbox", "contradiction"),
+        ("mcp:requests_inbox", "question"),
+        ("mcp:requests_inbox", "topic")},
 }
 
 
@@ -247,4 +255,4 @@ def test_a_damaged_ledger_leaks_nothing_new_and_says_so(health_runs, name):
 
 
 def test_the_known_leak_list_is_unchanged_by_this_axis():
-    assert len(rs.KNOWN_LEAKS) == 11
+    assert len(rs.KNOWN_LEAKS) == 0

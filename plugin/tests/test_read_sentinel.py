@@ -597,11 +597,7 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 # Allowlists (seeded from the run; shrink-only)
 # ===========================================================================
 # {(surface, kind)}: seeded from the run, each must still leak, nothing else may
-KNOWN_LEAKS: set = {
-    *{("cli:decide", k) for k in ("peerforgot", "question", "topic",)},
-    *{("http:/api/refutations", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-    *{("mcp:requests_inbox", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-}
+KNOWN_LEAKS: set = set()
 
 
 @pytest.fixture(scope="module")
@@ -926,6 +922,9 @@ CONVERTED = {
                     "overturn")},
     **{f"cli:ruling {verb}": ("cli/_ledger.py", frozenset({"masked"}))
        for verb in ("list", "show", "ratify", "revise", "retire")},
+    "cli:decide": ("pending.py", frozenset({"masked"})),
+    "mcp:requests_inbox": ("mcp_tools.py", frozenset({"masked"})),
+    "http:/api/refutations": ("../daimon_ui/server.py", frozenset({"masked"})),
     "cli:amend list": ("cli/amend.py", frozenset({"masked"})),
     "cli:trust list": ("cli/trust.py", frozenset({"masked"})),
     "cli:trust show": ("cli/trust.py", frozenset({"masked"})),
@@ -953,8 +952,13 @@ CONVERTED_RECALL = {
     "http:/api/recall": ("../daimon_ui/server.py", frozenset({"query"})),
 }
 
-# Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
-# 7a onward deletes entries as readers convert; an empty set is the goal.
+# Shrink-only: surfaces that do not yet read through the view. Each PR from 7a
+# onward deleted entries as readers converted. What is left prints state words,
+# ids and counts and no ledger prose (amend ratify and reject, trust confirm,
+# dismiss, release and repair, relations confirm, reject and retract, ruling
+# checks, audit privacy, check sync, heal, ledger repair, stats, team status,
+# verify-receipt, the session-end hook, daimon_status). PR 12 deletes the
+# mechanism itself, the KNOWN_LEAKS set and this table with it.
 UNCONVERTED = ({s for s, _ in CASES} - set(CONVERTED)
                - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
 
@@ -996,6 +1000,11 @@ def test_unconverted_is_a_subset_of_the_registry():
 def test_a_converted_surface_reaches_the_view():
     for surface, (rel, names) in CONVERTED.items():
         assert _calls_view(rel, names), (surface, rel)
+
+
+def test_the_unconverted_surfaces_are_pinned_and_only_shrink():
+    assert len(UNCONVERTED) == 19, sorted(UNCONVERTED)
+    assert KNOWN_LEAKS == set()
 
 
 def test_a_hook_surface_reaches_the_view():

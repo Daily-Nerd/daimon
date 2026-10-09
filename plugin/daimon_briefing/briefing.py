@@ -1441,7 +1441,11 @@ def decision_count_line(project_dir=None) -> str | None:
     if project_dir is None:
         return None
     try:
-        here = len(pending.queue(project_dir=project_dir)["rows"])
+        # A count of rows, no text rendered: the lanes skip the prose masking
+        # (and the judge) so a masker that fails can never break the briefing
+        # count, and this path takes no new judge call.
+        here = len(pending.queue(project_dir=project_dir,
+                                 masked=False)["rows"])
     except Exception:
         return None
     elsewhere = 0

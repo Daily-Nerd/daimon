@@ -142,3 +142,17 @@ def test_a_judge_that_fails_shows_nothing(tmp_checkpoint_dir, capsys,
     rc, out, err = m.run(capsys, "refute", "show", rid)
     assert rc == 2 and out == "" and m.VISIBLE not in err
     assert err.count("\n") == 1
+
+
+def test_the_viewer_route_masks_both_lanes(tmp_checkpoint_dir):
+    from daimon_ui import server
+    _record(verdict=m.QUARANTINED)
+    refutations.assert_ruling(
+        subject="s", verdict=m.QUARANTINED, scope="sc", evidence=["issue:1"],
+        channel="cli-tty", project_dir=m.PROJECT)
+    m.quarantine()
+    payload = server._refutations_payload(m.SLUG)
+    assert payload["ok"] and payload["rows"] and payload["rulings"]
+    assert "SECRET" not in json.dumps(payload)
+    assert payload["rows"][0]["verdict"].startswith("[withheld: quarantine")
+    assert payload["rulings"][0]["verdict"].startswith("[withheld: quarantine")

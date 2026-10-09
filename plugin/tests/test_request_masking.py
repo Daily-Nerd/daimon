@@ -193,3 +193,33 @@ def test_the_hook_prints_nothing_and_stamps_nothing_when_masked_raises(
     monkeypatch.setattr(view, "masked", real)       # nothing was stamped
     rc, out = _inject(capsys, monkeypatch)
     assert rc == 0 and "a plain ask" in out
+
+
+# ---- the MCP tool and the viewer route ------------------------------------
+
+
+def test_the_mcp_inbox_tool_masks_every_row(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import mcp_tools
+    rid = _ask(sender=OTHER_PEER, ask=m.QUARANTINED, why=m.FORGOTTEN)
+    tid = m.quarantine()
+    m.forget()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", m.PROJECT)
+    got = mcp_tools.HANDLERS["requests_inbox"]({"project": m.PROJECT})
+    assert "SECRET" not in got.text
+    row = next(r for r in json.loads(got.text) if r["request_id"] == rid)
+    assert row["ask"] == f"[withheld: quarantine {tid}]" and row["why"] == ""
+
+
+def test_the_mcp_inbox_tool_fails_closed_when_masked_raises(
+        tmp_checkpoint_dir, monkeypatch):
+    import pytest
+
+    from daimon_briefing import mcp_tools
+
+    def boom(*_a, **_k):
+        raise RuntimeError("no")
+
+    _ask(sender=OTHER_PEER)
+    monkeypatch.setattr(view, "masked", boom)
+    with pytest.raises(Exception):
+        mcp_tools.HANDLERS["requests_inbox"]({"project": m.PROJECT})
