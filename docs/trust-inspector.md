@@ -279,6 +279,9 @@ value a character at a time.
 | withheld because the trust ledger cannot be read | refused on every channel with `daimon trust repair` (exit 2) | refused on every channel (exit 2) | binds on every channel |
 | forgotten | not found | not found | not found |
 
+Item-id verbs exist on the CLI, the viewer and the in-process api; the MCP
+tools take no item id by design (pinned by test).
+
 A forgotten id is never a write target for `resolve`, `reverify` or
 `amend propose`: any later event on an id lifts its tombstone, so writing one
 would bring the value back. `forget` does not take one either, so a tombstoned
@@ -307,3 +310,28 @@ trust ledger cannot be read) prints the marker, and an edge that touches a
 forgotten item is left out and counted nowhere. `daimon audit quotes` audits the
 copies a reader may see, so a quarantined or forgotten item is neither checked
 nor printed.
+
+## Prose in the ledgers
+
+The refutation, ruling, request, amendment and trust ledgers hold what people
+and agents wrote, and a person's sentence can be exactly the value a
+quarantine or a forget withholds. Every verb that prints a record (`refute`,
+`ruling`, `request`, `amend list`, `trust`, `decide`, the request inbox tool
+and the viewer's refutations lane), in text and in `--json`, judges each prose
+column as a whole value: a forgotten value is blank, a quarantined one is
+`[withheld: quarantine tr-…]`, and a copy of an item's text is masked while the
+trust ledger cannot be read. What a person wrote stays readable then, as the
+standing rulings do in the briefing. A request is a join between two projects,
+so it is judged by every project it names.
+
+A ceremony does not ask for a signature on text the person cannot read:
+`ruling ratify`, `ruling revise`, `ruling propose --ratify` and the `refute`
+verbs that act on a record stop with exit 2 and write nothing when the record
+(or the words just typed) has a withheld field, and a quarantine names
+`daimon trust show <id>` on a terminal. The signature binds the stored record,
+never what was displayed.
+
+`daimon trust show` and `daimon trust list` give the evidence a quarantine cites
+to a person at a terminal. Non-interactive callers see `Evidence: [N withheld]`
+in the text and no `evidence` key in the JSON, and the quarantine's reason is
+masked for everyone. A quarantine whose value was forgotten shows no value key.
