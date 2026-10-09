@@ -9,7 +9,8 @@ from daimon_briefing import (api, display, inspector, pending, requests, store,
 
 REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing", "inbox",
-             "join", "ledger_health", "project_slug", "receipt_state", "Writer")
+             "join", "ledger_health", "project_slug", "receipt_state", "Writer",
+             "masked")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -35,6 +36,7 @@ def test_every_name_is_the_source_object():
     assert api.ledger_health is view.ledger_health
     assert api.project_slug is store.project_slug
     assert api.receipt_state is view.receipt_state
+    assert api.masked is view.masked
     assert api.Writer is surfaces.Writer
     assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
