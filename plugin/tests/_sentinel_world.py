@@ -96,7 +96,7 @@ def checkpoint(sid, created):
         "working_context": {
             "active_topic": {"text": t["topic"], "trust": "inferred"},
             "open_questions": [
-                {"text": t["question"], "trust": "inferred",
+                {"text": t["question"], "trust": "verbatim",
                  "quote": t["question"]},
                 {"text": "an unrelated open question stays visible",
                  "trust": "inferred"}],
@@ -124,6 +124,21 @@ class World:
     amendment_id: str = ""
     request_id: str = ""
     root: Path = None                             # the tmp root being watched
+
+
+def _plant_transcripts(world: World, tmp_path, monkeypatch) -> None:
+    """A resolvable transcript for each session that does NOT hold the
+    question's quote: the question is a verbatim item whose quote fails, so
+    `audit quotes` has a failure to print if it reads the item at all."""
+    import json
+    projects = tmp_path / ".claude" / "projects"
+    monkeypatch.setenv("DAIMON_CLAUDE_PROJECTS_DIR", str(projects))
+    slug_dir = projects / world.bucket.name
+    slug_dir.mkdir(parents=True)
+    for sid in ("S-1", "S-2"):
+        (slug_dir / f"{sid}.jsonl").write_text(
+            json.dumps({"role": "user", "content": "an unrelated chat"}) + "\n",
+            encoding="utf-8")
 
 
 def _item_ids(project):
@@ -176,6 +191,7 @@ def build_world(tmp_path, monkeypatch) -> World:
     world = World(project=project,
                   bucket=config.checkpoint_dir() / store.project_slug(project),
                   root=tmp_path)
+    _plant_transcripts(world, tmp_path, monkeypatch)
     by_text = _item_ids(project)
     for kind in KINDS:
         for (k, text), item_id in by_text.items():

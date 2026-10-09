@@ -839,6 +839,8 @@ CONVERTED = {
     "cli:amend propose": ("cli/amend.py", frozenset({"match"})),
     "cli:anchor": ("cli/brief.py", frozenset({"match"})),
     "cli:forget": ("cli/lifecycle.py", frozenset({"label"})),
+    "cli:audit quotes": ("cli/audit.py", frozenset({"open_sessions"})),
+    "cli:audit-quotes": ("cli/audit.py", frozenset({"open_sessions"})),
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
     "cli:relations show": ("cli/relations_cmd.py", frozenset({"relations"})),
     "http:/api/relations": ("../daimon_ui/server.py", frozenset({"relations"})),
@@ -934,7 +936,10 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
                 assert shown not in text, (surface, tag, label)
             if surface.startswith("cli:"):
                 assert res.rc == 2, (surface, tag, label, res.rc)
-                assert text.strip().count("\n") == 0, (surface, tag, label)
+                # the deprecated `audit-quotes` alias prints its rename note first
+                lines = [ln for ln in text.strip().splitlines()
+                         if ln.strip() and not ln.startswith("note: ")]
+                assert len(lines) == 1, (surface, tag, label)
             elif surface.startswith("mcp:"):
                 assert res.rc == "raised", (surface, tag, label)
             elif surface.startswith("http:"):
