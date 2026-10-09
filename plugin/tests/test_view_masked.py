@@ -222,3 +222,16 @@ def test_withheld_in_names_what_is_withheld_without_the_text():
     assert [w.reason for w in view.withheld_in(
         PROJECT, "trust.jsonl", {"reason": "r"},
         snap=snap(closed=True))] == ["closed"]
+
+
+def test_an_undeclared_leaf_holding_a_deleter_marker_is_dropped():
+    marker = store._FORGOTTEN_FIELD_MARKER.format("0123456789abcdef")
+    out = masked("requests.jsonl", [{"ask": "x", "extra": marker,
+                                     "many": [marker, "kept"]}], snap=snap())
+    assert out == [{"ask": "x", "extra": "", "many": ["kept"]}]
+
+
+def test_an_event_status_that_was_only_a_marker_reads_as_nothing():
+    marker = store._FORGOTTEN_FIELD_MARKER.format("0123456789abcdef")
+    assert masked("events.jsonl", [{"status": marker}], snap=snap()) == [
+        {"status": ""}]

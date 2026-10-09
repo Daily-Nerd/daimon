@@ -117,3 +117,10 @@ def test_decide_prints_masked_cards_and_foreign_ones_by_their_own_bucket(
         rc, out, _ = m.run(capsys, "decide", *flags)
         assert rc == 0 and "SECRET" not in out, flags
         assert "withheld: quarantine" in out
+
+
+def test_queue_typed_carries_masked_rows_and_the_notes(tmp_checkpoint_dir):
+    _plant()
+    typed = pending.queue_typed(project_dir=m.PROJECT)
+    assert typed.rows and "SECRET" not in json.dumps(typed.rows)
+    assert isinstance(typed.notes, tuple)

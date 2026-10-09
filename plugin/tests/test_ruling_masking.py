@@ -193,3 +193,79 @@ def test_the_ceremony_lists_inherited_rules_masked(tmp_checkpoint_dir,
     out = capsys.readouterr().out
     assert "Inherited rulings in force here:" in out
     assert "SECRET" not in out and "withheld: quarantine" in out
+
+
+# ---- a clean record still goes through every ceremony branch ---------------
+
+
+def test_propose_ratify_shows_a_clean_typed_text_and_its_check(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    body = tmp_path / "check.sh"
+    body.write_text("echo hello\nexit 0\n")
+    m.human(monkeypatch)
+    rc, out, _ = m.run(
+        capsys, "ruling", "propose", "--subject", "typed subject",
+        "--verdict", "typed verdict", "--scope", "typed scope", "--evidence",
+        "issue:1", "--ratify", "--check-match", "hello", "--check-body-file",
+        str(body))
+    assert rc == 0 and "About to found and ratify" in out
+    assert "typed verdict" in out and "Check:" in out
+    rc, out, err = m.run(
+        capsys, "ruling", "propose", "--subject", "typed two", "--verdict",
+        "typed verdict two", "--scope", "typed scope two", "--evidence",
+        "issue:1", "--ratify", "--json")
+    assert rc == 0 and "typed verdict two" in err         # ceremony on stderr
+    assert json.loads(out)["state"] == "active"
+
+
+def test_ratify_accepts_a_clean_pending_revision_in_text_and_json(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    rid = _ruling()
+    refutations.revise(rid, channel="cli-agent", evidence=["issue:1"],
+                       subject="a new subject", verdict="a new verdict",
+                       project_dir=m.PROJECT)
+    m.human(monkeypatch)
+    rc, out, _ = m.run(capsys, "ruling", "ratify", rid)
+    assert rc == 0 and "New text: a new verdict" in out
+    assert "New governs: a new subject" in out
+    rid2 = _ruling(subject="other", scope="other scope")
+    refutations.revise(rid2, channel="cli-agent", evidence=["issue:1"],
+                       verdict="another verdict", project_dir=m.PROJECT)
+    rc, out, err = m.run(capsys, "ruling", "ratify", rid2, "--json")
+    assert rc == 0 and "another verdict" in err
+    assert json.loads(out)["verdict"] == "another verdict"
+
+
+def test_revise_shows_a_clean_typed_change_and_its_check(
+        tmp_checkpoint_dir, capsys, monkeypatch, tmp_path):
+    rid = _ruling()
+    body = tmp_path / "check.sh"
+    body.write_text("echo hello\nexit 0\n")
+    m.human(monkeypatch)
+    rc, out, _ = m.run(
+        capsys, "ruling", "revise", rid, "--verdict", "typed change",
+        "--subject", "typed governs", "--evidence", "issue:1",
+        "--check-match", "hello", "--check-body-file", str(body))
+    assert rc == 0 and "About to change the ACTIVE text" in out
+    assert "New text: typed change" in out and "New governs: typed governs" in out
+    assert "New check:" in out
+
+
+def test_an_inherited_rule_whose_text_was_forgotten_is_left_out(
+        tmp_checkpoint_dir, tmp_path, monkeypatch, capsys):
+    from daimon_briefing import normalize, store
+    from daimon_briefing.surfaces import Writer
+    work, repo = _layers(tmp_path, monkeypatch)
+    _ruling(str(work), subject="layer", scope="layer", verdict=m.FORGOTTEN)
+    _ruling(str(work), subject="layer two", scope="two", verdict=m.VISIBLE)
+    assert store.append_event(
+        "o-x", "forgotten:" + normalize.content_key(m.FORGOTTEN),
+        kind="tombstone", tombstone=True, project_dir=str(work),
+        writer=Writer.HUMAN)
+    rid = _ruling(str(repo), subject="child", scope="child", ratify=False)
+    m.human(monkeypatch)
+    capsys.readouterr()
+    assert cli.main(["ruling", "ratify", rid, "--project", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "Inherited rulings in force here:" in out
+    assert m.VISIBLE in out and "SECRET-F" not in out
