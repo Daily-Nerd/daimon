@@ -163,6 +163,7 @@ CONDITIONS = {
 # a note that equals a quarantined value shows while the ledger is closed.
 ALLOWED = {
     "trust-transient": {
+        ("cli:amend list", "contradiction"),
         ("cli:blame", "contradiction"),
         ("cli:brief", "contradiction"),
         ("cli:brief", "question"),
@@ -246,4 +247,4 @@ def test_a_damaged_ledger_leaks_nothing_new_and_says_so(health_runs, name):
 
 
 def test_the_known_leak_list_is_unchanged_by_this_axis():
-    assert len(rs.KNOWN_LEAKS) == 18
+    assert len(rs.KNOWN_LEAKS) == 11

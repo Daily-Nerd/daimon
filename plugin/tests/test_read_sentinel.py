@@ -583,7 +583,10 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
             lines=lines_before)
         blob = res.text() + "\n" + b"\n".join(res.written).decode(
             "utf-8", errors="replace")
-        leaks |= {(surface, tag, k) for k in sw.leaked_kinds(blob)}
+        found = {(surface, tag, k) for k in sw.leaked_kinds(blob)}
+        if tty_now and (surface, tag) in HUMAN_RAW:
+            found = {f for f in found if f[2] not in HUMAN_RAW[(surface, tag)]}
+        leaks |= found
         if (surface, tag) not in KEY_EXEMPT:
             leaks |= {(surface, tag, k) for k in sw.leaked_keys(blob)}
         results.append((label, res))
@@ -595,10 +598,7 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 # ===========================================================================
 # {(surface, kind)}: seeded from the run, each must still leak, nothing else may
 KNOWN_LEAKS: set = {
-    *{("cli:amend list", k) for k in ("contradiction", "question",)},
     *{("cli:decide", k) for k in ("peerforgot", "question", "topic",)},
-    *{("cli:trust list", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:trust show", k) for k in ("contradiction", "topic",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
 }
@@ -802,12 +802,21 @@ def test_cases_ran_and_said_what_they_should(world_run):
 HUMAN_CHANNEL = {
     ("cli:trust show", "id"):
         "a human reads the quarantined evidence they are about to confirm",
+    ("cli:trust show", "id-json"):
+        "the same record as JSON; evidence is omitted for the agent channel",
     ("cli:trust propose", "text"):
         "echoes the text the human just typed; the agent channel is refused",
     ("cli:forget", "dry"):
         "dry run names the target the human is about to forget",
     ("cli:forget", "receipt"):
         "forgets a quarantined value by exact id; an agent is refused",
+}
+# What a person at a terminal is shown raw on purpose, by kinds. `trust show`
+# prints the evidence a quarantine cites to a tty so the person can judge it;
+# the agent run of the same case is held to nothing (the test below).
+HUMAN_RAW = {
+    ("cli:trust show", "id"): {"topic"},
+    ("cli:trust show", "id-json"): {"topic"},
 }
 # Bytes that carry a checkpoint forward on purpose: not read output.
 WRITE_CARRY = {
@@ -829,6 +838,8 @@ WRITE_CARRY = {
 def test_exemptions_name_real_cases():
     for key in HUMAN_CHANNEL:
         assert key in CASES, key
+    for key in HUMAN_RAW:
+        assert key in CASES and key[0] in {k[0] for k in HUMAN_CHANNEL}, key
     for surface, tag in WRITE_CARRY:
         assert (surface in NO_ITEMS or surface.startswith("store.")
                 or (surface, tag) in CASES), (surface, tag)
@@ -915,6 +926,10 @@ CONVERTED = {
                     "overturn")},
     **{f"cli:ruling {verb}": ("cli/_ledger.py", frozenset({"masked"}))
        for verb in ("list", "show", "ratify", "revise", "retire")},
+    "cli:amend list": ("cli/amend.py", frozenset({"masked"})),
+    "cli:trust list": ("cli/trust.py", frozenset({"masked"})),
+    "cli:trust show": ("cli/trust.py", frozenset({"masked"})),
+    "cli:trust propose": ("cli/trust.py", frozenset({"masked"})),
     **{f"cli:request {verb}": ("cli/request.py", frozenset({"masked"}))
        for verb in ("list", "inbox", "accept", "reject", "needs-info",
                     "suppress", "done", "reply", "revise", "open")},

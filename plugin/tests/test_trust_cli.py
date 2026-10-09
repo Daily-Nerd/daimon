@@ -123,8 +123,10 @@ def test_cli_show_json(tmp_checkpoint_dir, capsys):
     assert "value_key" in row
 
 
-def test_cli_show_plain_text(tmp_checkpoint_dir, capsys):
+def test_cli_show_plain_text(tmp_checkpoint_dir, capsys, monkeypatch):
     tid = _propose()
+    # the evidence is shown raw to a person at a terminal (11c)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     rc = cli.main(["trust", "show", tid, "--project", "/p/A"])
     assert rc == 0
     out = capsys.readouterr().out
