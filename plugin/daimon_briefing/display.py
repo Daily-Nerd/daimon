@@ -8,6 +8,8 @@ HERE, in its own lane, and never cuts a string it composed itself.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Any
 
 from . import marks
 from .surfaces import ledger_hint  # noqa: F401 — the cure rule lives in the registry
@@ -112,6 +114,54 @@ def withheld_json(withheld) -> dict:
     if out["reason"] == "quarantine" and withheld.quarantine_id:
         out["quarantine_id"] = withheld.quarantine_id
     return out
+
+
+# ---- #1132 PR 11b: the one candidate printer ---------------------------------
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One row a binding verb could have bound. `verdict` is None for a row
+    the reader may see and the `view.Withheld` for one it may not. `matched` is
+    the value the query named when that differs from `text` (a record that
+    holds several)."""
+
+    id: str
+    label: str
+    text: str
+    matched: str | None = None
+    verdict: Any = None
+
+
+def candidate_lines(rows, *, query, pointer, closed: bool = False) -> list[str]:
+    """The lines a binding verb prints when it cannot bind. Visible rows print
+    as `  <id>  [<label>] <text>` (with the matched value when it differs);
+    quarantined and closed rows are counted in one line and never named; a
+    forgotten row is absent. The count is not printed when the trust ledger is
+    unreadable (`closed`): then every hit counts as withheld and the number
+    would be a membership oracle, while the refusal the verb prints already
+    says why. `pointer` is the verb's own "how to name it exactly" line."""
+    visible = [r for r in rows if r.verdict is None]
+    counted = 0 if closed else sum(
+        1 for r in rows
+        if r.verdict is not None and r.verdict.reason in ("quarantine", "closed"))
+    lines: list[str] = []
+    if visible:
+        lines.append(f"ambiguous — matches {query!r}; candidates:")
+        for r in visible:
+            line = f"  {r.id}  [{r.label}] {r.text}"
+            if r.matched is not None and r.matched != r.text:
+                line += f" — matched: {r.matched}"
+            lines.append(line)
+    elif counted:
+        lines.append(f"no visible item matches {query!r}")
+    else:
+        lines.append(f"no item matches {query!r}")
+    if counted:
+        lines.append(f"{counted} withheld item(s) also match; use the exact id "
+                     "(daimon status --suppressed lists them)")
+    lines.append(pointer)
+    return lines
 
 
 # ---- #1132 PR 9a: the one recall note ---------------------------------------
