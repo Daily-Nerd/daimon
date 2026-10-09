@@ -91,7 +91,8 @@ def _reads(fn):
 def _is_mask(call):
     f = call.func
     name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
-    return "masked" in name
+    return name in ("masked", "_masked", "_masked_lane", "_masked_record",
+                    "_masked_records")
 
 
 def _rel(path):
@@ -152,3 +153,19 @@ def test_only_the_briefing_count_asks_the_queue_for_unmasked_rows():
                         and kw.value.value is False):
                     offenders.append(path.relative_to(PKG).as_posix())
     assert offenders == ["briefing.py"], offenders
+
+
+def test_every_masking_helper_the_scan_trusts_calls_masked_itself():
+    """`_is_mask` accepts `masked` and a fixed set of one-line helpers; each
+    helper must be defined in the scanned modules and reach `view.masked`
+    (directly, or through another helper in the set)."""
+    helpers = {"_masked", "_masked_lane", "_masked_record", "_masked_records"}
+    found = {}
+    for path in MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in _functions(tree):
+            if fn.name in helpers:
+                names = {c.func.attr if isinstance(c.func, ast.Attribute)
+                         else getattr(c.func, "id", "") for c in _calls(fn)}
+                found[fn.name] = bool(names & ({"masked"} | helpers))
+    assert set(found) == helpers and all(found.values()), found
