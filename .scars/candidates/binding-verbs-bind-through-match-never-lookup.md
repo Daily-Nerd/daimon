@@ -25,7 +25,7 @@ tombstoned id with a `Withheld(forgotten)`, which is right for a question
 
 `resolve`, `reverify` and `amend propose` therefore bind through
 `view.match`, which drops a forgotten candidate and counts it nowhere, so a
-tombstone-only id reads as no match on every channel. `forget` is the one
-exception, for a person: deleting is its job. Do not "simplify" a binding verb
+tombstone-only id reads as no match on every channel. `forget` follows the
+same rule: re-forgetting is not a need, `ledger repair` scrubs residue. Do not "simplify" a binding verb
 onto `lookup` to share code with `why`. `daimon log` takes no id, so it cannot
 lift a tombstone today; the general rule is PR 12's.

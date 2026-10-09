@@ -219,26 +219,25 @@ def test_a_closed_exact_id_still_works_on_every_channel(tmp_checkpoint_dir,
     assert not _held(VISIBLE)
 
 
-def test_a_forgotten_exact_id_is_no_match_to_an_agent_and_a_target_to_a_person(
-        tmp_checkpoint_dir, capsys, monkeypatch):
-    """The id is tombstoned while the value is still on disk (a sibling-id
-    shape): a person can finish the deletion, an agent learns nothing."""
+@pytest.mark.parametrize("human", [False, True], ids=["agent", "person"])
+def test_a_forgotten_exact_id_is_no_match_on_every_channel(
+        tmp_checkpoint_dir, capsys, monkeypatch, human):
+    """A tombstoned id is never a target and never named, whoever asks and
+    with or without --dry-run. Standing residue is `daimon ledger repair`'s
+    and `forget --republish`'s job, not a second forget."""
     _write()
     item_id = _id(DEC)
     store.append_event(item_id, "forgotten:" + normalize.content_key("other"),
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
                        writer=Writer.HUMAN)
-    _tty(monkeypatch, False)
-    rc, out, err = _run(capsys, item_id)
-    assert rc == 1 and out.splitlines()[0] == f"no item matches {item_id!r}"
-    assert "forgotten" not in out + err and DEC not in out + err
+    before = store.ledger_file(PROJECT, "events.jsonl").read_bytes()
+    _tty(monkeypatch, human)
+    for extra in ([], ["--dry-run"]):
+        rc, out, err = _run(capsys, item_id, *extra)
+        assert rc == 1 and out.splitlines()[0] == f"no item matches {item_id!r}"
+        assert "forgotten" not in out + err and DEC not in out + err
     assert _held(DEC)
-    _tty(monkeypatch, True)
-    rc, out, _err = _run(capsys, item_id, "--dry-run")
-    assert rc == 0
-    assert out.splitlines()[0] == (
-        f"would forget {item_id} [recent_decisions] [withheld: forgotten]")
-    assert DEC not in out
+    assert store.ledger_file(PROJECT, "events.jsonl").read_bytes() == before
 
 
 # ---- what did not change -----------------------------------------------------------

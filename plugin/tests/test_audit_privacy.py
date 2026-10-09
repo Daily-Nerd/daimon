@@ -514,8 +514,9 @@ def test_cli_audit_privacy_runs_and_exits_by_contract(tmp_checkpoint_dir):
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
                        project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 1
-    # After a REAL forget (which scrubs), audit proves clean.
-    _forget(CANARY)
+    # After the scrub forget runs (a standing tombstone is not a forget
+    # target any more), audit proves clean.
+    store.scrub_content_key(key, project_dir=PROJECT)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 0
 
 
@@ -973,7 +974,7 @@ def test_usage_tag_distinguishes_the_three_outcomes(tmp_checkpoint_dir):
     assert cli.main(["audit", "privacy", "--project", "/p/never-existed"]) == 3
     assert usage.read_text(encoding="utf-8").rstrip().endswith(
         "audit-privacy:unproven")
-    _forget(CANARY)
+    store.scrub_content_key(key, project_dir=PROJECT)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 0
     assert usage.read_text(encoding="utf-8").rstrip().endswith("audit-privacy")
 

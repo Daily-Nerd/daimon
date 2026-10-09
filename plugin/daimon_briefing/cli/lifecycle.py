@@ -401,8 +401,9 @@ def _cmd_forget(args) -> int:
                   f"({_withheld_reason(verdict)}); a person must judge a "
                   "value an agent cannot see", file=sys.stderr)
             return 2
-        if verdict is not None and verdict.reason == "forgotten" and not human:
-            # nothing an agent may learn: a tombstoned id reads as no match
+        if verdict is not None and verdict.reason == "forgotten":
+            # a tombstoned id is never a target and never named, on any
+            # channel: it reads as no match
             target = None
             exact = []
     if target is None:

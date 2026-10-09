@@ -277,13 +277,15 @@ value a character at a time.
 | visible | binds | binds (open loops only) | binds |
 | quarantined | a person binds it, no echo; an agent is refused (exit 2) | refused on every channel (exit 2) | a person binds it; an agent is refused (exit 2) |
 | withheld because the trust ledger cannot be read | refused on every channel with `daimon trust repair` (exit 2) | refused on every channel (exit 2) | binds on every channel |
-| forgotten | not found | not found | a person can finish a deletion that left plaintext behind; an agent gets no match |
+| forgotten | not found | not found | not found |
 
 A forgotten id is never a write target for `resolve`, `reverify` or
 `amend propose`: any later event on an id lifts its tombstone, so writing one
-would bring the value back. `forget` is the exception because deleting is its
-job, and an exact id outranks an outage of the trust ledger for the same
-reason: the id names no value.
+would bring the value back. `forget` does not take one either, so a tombstoned
+id reads as no match for a person and an agent alike; plaintext a forget left
+behind is `daimon ledger repair`'s to scrub and `forget --republish`'s to
+publish. An exact id on `forget` does outrank an outage of the trust ledger,
+because the id names no value.
 
 **Nothing writes the value.** The event `resolve` and `reverify` append holds
 the id, the status and the note, never the item's text, and the serializer's

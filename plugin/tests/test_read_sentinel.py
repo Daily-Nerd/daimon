@@ -389,10 +389,9 @@ case("cli:forget", "republish", A("forget", "--republish"), tty=True,
 # value the person chose (no sentinel key is ever printable here)
 case("cli:forget", "receipt", A("forget", I("other_question"), "--reason", "r"),
      tty=True, rc=(0, 4), shows="forgot ")
-# a tombstoned id whose value is still on disk: a person may finish the
-# deletion and sees the marker, an agent sees a miss
+# a tombstoned id whose value is still on disk is no match on either channel
 case("cli:forget", "idforgot", A("forget", I("idforgot"), "--dry-run"),
-     tty=True, shows="[withheld: forgotten]", dests=("dry_run",))
+     tty=True, rc=(1,), shows="no item matches", dests=("dry_run",))
 case("cli:forget", "idforgot-agent", A("forget", I("idforgot"), "--dry-run"),
      tty=False, rc=(1,), shows="no item matches", dests=("dry_run",))
 case("cli:reverify", "id", A("reverify", I("question"), "--evidence",
