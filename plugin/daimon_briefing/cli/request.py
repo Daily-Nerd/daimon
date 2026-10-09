@@ -18,7 +18,8 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import config, render, requests, store
+from .. import config, render, requests, store, view
+from ._ledger import _snap
 
 # Verdicts land under their own verb names; the ledger's event vocabulary
 # spells one of them with an underscore.
@@ -60,6 +61,13 @@ _CHECKPOINT_HINT = (
     " Durable facts learned while composing this belong in a checkpoint "
     "(the daimon-end skill, `daimon write-checkpoint`), not in the request."
 )
+
+
+def _masked(project, rows, *, snap=None) -> list:
+    """`rows` of the requests ledger as a reader may see them (11c): every
+    prose column judged over the bucket's snapshot, and a join row also by the
+    buckets it names. `snap` is the one a write verb took before it appended."""
+    return view.masked(project, "requests.jsonl", rows, snap=snap)
 
 
 def _refusal_message(prefix: str, exc: requests.RequestError) -> str:
@@ -244,10 +252,11 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
     return lines
 
 
+@_cli.guarded
 def _cmd_request_inbox(args) -> int:
     project = _cli._resolve_project(args.project)
     got = requests.inbox(project)
-    rows = got.rows
+    rows = _masked(project, got.rows)
     _cli._note_usage("request:inbox")
     return _print_listing(args, rows, got.notes,
                           "no requests addressed to this project",
@@ -390,14 +399,21 @@ def _cmd_request_inject(args) -> int:
         rows = entry["rows"]
         if not rows and not verdicts["rows"] and not owed["rows"]:
             return 0
+        # Judged before anything is rendered, so a judge that fails prints
+        # nothing and stamps nothing. One call for the three lanes, over the
+        # light snapshot of the bucket (never a full fold on this path).
+        every = _masked(project, [*verdicts["rows"], *rows, *owed["rows"]])
+        shown_verdicts = every[:len(verdicts["rows"])]
+        shown_rows = every[len(verdicts["rows"]):len(verdicts["rows"]) + len(rows)]
+        shown_owed = every[len(verdicts["rows"]) + len(rows):]
         out = []
-        for record in verdicts["rows"]:
+        for record in shown_verdicts:
             out.extend(_verdict_inject_lines(record))
         if verdicts["overflow"]:
             plural = "s" if verdicts["overflow"] != 1 else ""
             out.append(f"(+{verdicts['overflow']} more decided{plural}, "
                        "not shown here)")
-        for record in rows:
+        for record in shown_rows:
             out.extend(_inject_lines(record))
         # #800: name what the cap withheld, in the panel's own words. Without
         # it a fourth addressed ask is dropped and reads as an absence, which
@@ -412,7 +428,7 @@ def _cmd_request_inject(args) -> int:
         # verdicts has nothing awaiting a decision to point at.
         if rows:
             out.append("Undecided. Full records: `daimon request inbox`")
-        for record in owed["rows"]:
+        for record in shown_owed:
             out.extend(_owed_inject_lines(record))
         if owed["overflow"]:
             out.append(f"(+{owed['overflow']} more owed, not shown here)")
@@ -459,9 +475,11 @@ def _is_bare_word(raw) -> bool:
         sep in text for sep in ("/", "\\"))
 
 
+@_cli.guarded(writes=True)
 def _cmd_request_open(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
     to = _resolve_to(args.to)
     known = {b["slug"] for b in store.list_buckets()}
     names: set = set()
@@ -516,14 +534,17 @@ def _cmd_request_open(args) -> int:
              "`daimon request list` until that project serializes a session"])
     record = requests.get(q_id, project_dir=project)
     render.render_ledger_lines(
-        _request_lines(record, project_dir=project) if record else
+        _request_lines(_masked(project, [record], snap=snap)[0],
+                       project_dir=project) if record else
         [f"request {q_id} recorded"])
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_request_revise(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
     try:
         requests.revise(args.request_id, channel=_request_channel(args),
                         ask=args.ask, why=args.why, evidence=args.evidence,
@@ -548,15 +569,18 @@ def _cmd_request_revise(args) -> int:
              "  the record is not readable from this bucket right now — the "
              "revision is on the ledger and renders with the request"])
         return 0
-    render.render_ledger_lines(_request_lines(record, project_dir=project))
+    render.render_ledger_lines(_request_lines(
+        _masked(project, [record], snap=snap)[0], project_dir=project))
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_request_verdict(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
     _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
     verb = args.request_cmd
     try:
         channel = _request_channel(args, human_only=True)
@@ -568,11 +592,11 @@ def _cmd_request_verdict(args) -> int:
         print(_refusal_message(f"request {verb} refused", exc))
         return 1
     _cli._note_usage(f"request:{verb}")
-    _report(args.request_id, project, verb)
+    _report(args.request_id, project, verb, snap)
     return 0
 
 
-def _report(request_id: str, project, verb: str) -> None:
+def _report(request_id: str, project, verb: str, snap) -> None:
     """Print the answered record, or say plainly that this bucket cannot see
     it. A recipient's answer to a foreign ask is written here and pairs with
     its origin only at the read-time join (PR 2).
@@ -590,11 +614,13 @@ def _report(request_id: str, project, verb: str) -> None:
     bucket is itself unreadable or gone) still prints the plain line below."""
     record = requests.get(request_id, project_dir=project)
     if record is not None:
-        render.render_ledger_lines(_request_lines(record, project_dir=project))
+        render.render_ledger_lines(_request_lines(
+            _masked(project, [record], snap=snap)[0], project_dir=project))
         return
     record = requests.recipient_join(project_dir=project).get(request_id)
     if record is not None:
-        render.render_ledger_lines(_inbox_lines(record, project_dir=project))
+        render.render_ledger_lines(_inbox_lines(
+            _masked(project, [record], snap=snap)[0], project_dir=project))
         return
     render.render_ledger_lines(
         [f"{request_id}: {verb} recorded in this project's ledger",
@@ -603,9 +629,11 @@ def _report(request_id: str, project, verb: str) -> None:
          "it renders nowhere"])
 
 
+@_cli.guarded(writes=True)
 def _cmd_request_done(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
     try:
         requests.done(args.request_id, channel=_request_channel(args),
                       evidence=args.evidence, project_dir=project)
@@ -614,7 +642,7 @@ def _cmd_request_done(args) -> int:
         print(_refusal_message("request done refused", exc))
         return 1
     _cli._note_usage("request:done")
-    _report(args.request_id, project, "done")
+    _report(args.request_id, project, "done", snap)
     # #978 review round 1 (F2): `requests.get()` is the bucket-LOCAL fold —
     # on the ordinary cross-bucket path (this project answering a FOREIGN
     # ask), the `opened` row lives in the sender's bucket and this project's
@@ -639,11 +667,13 @@ def _cmd_request_done(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_request_reply(args) -> int:
     # #1117: routed like `done` (`_resolve_project`), NOT the human-only
     # verdict verbs' `_slug_route`. No `--slug`.
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
     try:
         requests.reply(args.request_id, args.note, args.evidence,
                        channel=_request_channel(args), project_dir=project)
@@ -652,15 +682,16 @@ def _cmd_request_reply(args) -> int:
         print(_refusal_message("request reply refused", exc))
         return 1
     _cli._note_usage("request:reply")
-    _report(args.request_id, project, "reply")
+    _report(args.request_id, project, "reply", snap)
     return 0
 
 
+@_cli.guarded
 def _cmd_request_list(args) -> int:
     project = _cli._resolve_project(args.project)
     got = requests.listed(project)
     _cli._note_usage("request:list")
-    return _print_listing(args, got.rows, got.notes,
+    return _print_listing(args, _masked(project, got.rows), got.notes,
                           "no requests for this project",
                           lambda row: _request_lines(row, project_dir=project))
 

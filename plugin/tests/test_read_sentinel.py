@@ -360,9 +360,9 @@ case("cli:request reply", "id", A("request", "reply",
 case("cli:request revise", "id", A("request", "revise",
      lambda w: w.request_id, "--ask", "revised"), tty=True, rc=(0, 1, 2),
      dests=("request_id",))
-case("cli:request open", "default", A("request", "open", "--to", slug,
-     "--ask", "an unrelated ask", "--why", "because"), tty=True,
-     rc=(0, 1, 2))
+case("cli:request open", "default", A("request", "open",
+     lambda w: f"--to={slug(w)}", "--ask", "an unrelated ask", "--why",
+     "because"), tty=True, rc=(0, 1, 2))
 case("cli:relations list", "default", A("relations", "list"),
      dests=("state", "project", "json"), axes=("DAIMON_PLAIN",))
 case("cli:relations show", "id", A("relations", "show",
@@ -597,20 +597,6 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 KNOWN_LEAKS: set = {
     *{("cli:amend list", k) for k in ("contradiction", "question",)},
     *{("cli:decide", k) for k in ("peerforgot", "question", "topic",)},
-    *{("cli:request accept", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request done", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request inbox", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-    *{("cli:request list", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-    *{("cli:request needs-info", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request reject", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request reply", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request suppress", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request-inject", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-    *{("cli:ruling list", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:ruling ratify", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:ruling retire", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:ruling revise", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:ruling show", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:trust list", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:trust show", k) for k in ("contradiction", "topic",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
@@ -921,6 +907,18 @@ CONVERTED = {
     **{f"cli:refute {verb}": ("cli/_ledger.py", frozenset({"masked"}))
        for verb in ("list", "show", "search", "guard", "ratify", "revise",
                     "overturn")},
+    **{f"cli:ruling {verb}": ("cli/_ledger.py", frozenset({"masked"}))
+       for verb in ("list", "show", "ratify", "revise", "retire")},
+    **{f"cli:request {verb}": ("cli/request.py", frozenset({"masked"}))
+       for verb in ("list", "inbox", "accept", "reject", "needs-info",
+                    "suppress", "done", "reply", "revise", "open")},
+}
+
+# A per-prompt hook is rc 0 and silent on every failure by design, so it cannot
+# meet the uniform contract (rc 2, one line). It has its own: when the judge
+# fails it prints nothing and stamps nothing.
+CONVERTED_HOOK = {
+    "cli:request-inject": ("cli/request.py", frozenset({"masked"})),
 }
 
 # The recall surfaces: they do not open a checkpoint, they query the derived
@@ -936,7 +934,8 @@ CONVERTED_RECALL = {
 
 # Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
 # 7a onward deletes entries as readers convert; an empty set is the goal.
-UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED) - set(CONVERTED_RECALL)
+UNCONVERTED = ({s for s, _ in CASES} - set(CONVERTED)
+               - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
 
 
 # Cases of a converted surface that never read a checkpoint item: the status
@@ -967,12 +966,19 @@ def test_unconverted_is_a_subset_of_the_registry():
     assert not UNCONVERTED & set(CONVERTED)
     assert not UNCONVERTED & set(CONVERTED_RECALL)
     assert not set(CONVERTED) & set(CONVERTED_RECALL)
+    assert not set(CONVERTED_HOOK) & (set(CONVERTED) | set(CONVERTED_RECALL)
+                                      | UNCONVERTED)
     assert (UNCONVERTED | set(CONVERTED) | set(CONVERTED_RECALL)
-            == {s for s, _ in CASES})
+            | set(CONVERTED_HOOK) == {s for s, _ in CASES})
 
 
 def test_a_converted_surface_reaches_the_view():
     for surface, (rel, names) in CONVERTED.items():
+        assert _calls_view(rel, names), (surface, rel)
+
+
+def test_a_hook_surface_reaches_the_view():
+    for surface, (rel, names) in CONVERTED_HOOK.items():
         assert _calls_view(rel, names), (surface, rel)
 
 
@@ -985,7 +991,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         world_run, monkeypatch):
     from daimon_briefing import view
     world, _l, _d = world_run
-    converted = {s for s, _ in CASES} - UNCONVERTED - set(CONVERTED_RECALL)
+    converted = ({s for s, _ in CASES} - UNCONVERTED
+                 - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
     assert converted == set(CONVERTED)
 
     def boom(*_a, **_k):
@@ -1024,6 +1031,34 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
                 assert res.rc == 500, (surface, tag, label, res.rc)
             else:
                 assert res.chunks == ["None"], (surface, tag, label)
+
+
+def test_the_request_hook_prints_nothing_and_stamps_nothing_when_masked_raises(
+        world_run, monkeypatch):
+    """`request-inject` sits on the per-prompt path: every failure is silent
+    and rc 0. The print comes after the judgement and the stamps after the
+    print, so a judge that fails leaves no output and no delivery record."""
+    from daimon_briefing import view
+    world, _l, _d = world_run
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    tmp = world.root
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
+    _found, results = drive_case("cli:request-inject", "prompt", world,
+                                 pristine)
+    # anti-vacuity: delivery is on in one variant and it does print an ask
+    assert any("daimon request" in res.text() or "daimon verdict" in res.text()
+               for _label, res in results)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("view.masked failed")
+
+    monkeypatch.setattr(view, "masked", boom)
+    _found, results = drive_case("cli:request-inject", "prompt", world,
+                                 pristine)
+    for label, res in results:
+        assert res.rc == 0, label
+        assert res.text().strip() == "", label
+        assert res.written == [], label
 
 
 def _drive_recall_surfaces(world, monkeypatch):

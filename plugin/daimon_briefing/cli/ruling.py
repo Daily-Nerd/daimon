@@ -19,6 +19,8 @@ from ._ledger import (
     _check_ceremony_lines,
     _inherited_ceremony_lines,
     _layer_overcap_warning,
+    _masked_record,
+    _masked_records,
     _policy_args,
     _policy_ceremony_lines,
     _render_consequence_line,
@@ -28,10 +30,13 @@ from ._ledger import (
     _refutation_json,
     _report_vanished_write,
     _refute_channel,
+    _refuses_withheld,
     _ruling_lines,
+    _snap,
 )
 
 
+@_cli.guarded(writes=True)
 def _cmd_ruling_propose(args) -> int:
     # #1092: `propose` is a write verb, so it opts into the extra guard that
     # refuses a `--project` whose target only resolved elsewhere because
@@ -48,6 +53,7 @@ def _cmd_ruling_propose(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not recorded", exc))
         return 1
+    snap = _snap(project)
     # #1094: `propose --ratify` activates through this same `assert_ruling`
     # call as ever, but on a human channel it now gets the SAME disclosure
     # discipline `ratify` already holds — the full text, what already
@@ -58,15 +64,25 @@ def _cmd_ruling_propose(args) -> int:
         # Ceremony text goes to stderr under --json, the same split ratify's
         # own ceremony already holds, so stdout stays parseable.
         ceremony = sys.stderr if args.json else sys.stdout
+        # What the person typed is shown back through the same mask as any
+        # other text: a value withheld from them is not one to sign.
+        typed = {"verdict": args.verdict, "subject": args.subject,
+                 "scope": args.scope}
+        if check:
+            typed["check"] = {"match": check.get("match"),
+                              "body": check.get("body")}
+        if _refuses_withheld(project, "ruling propose", typed, snap=snap):
+            return 2
+        shown = _masked_record(project, typed, snap=snap)
         print("About to found and ratify this ruling:", file=ceremony)
         if not args.json:
             render.render_ledger_lines([
-                f"  {args.verdict}",
-                f"  Governs: {args.subject}",
-                f"  Scope: {args.scope}",
+                f"  {shown['verdict']}",
+                f"  Governs: {shown['subject']}",
+                f"  Scope: {shown['scope']}",
             ])
         else:
-            print(f"  {args.verdict}", file=ceremony)
+            print(f"  {shown['verdict']}", file=ceremony)
         for line in _inherited_ceremony_lines(project):
             print(line, file=ceremony)
         if check:
@@ -117,6 +133,7 @@ def _cmd_ruling_propose(args) -> int:
     if record is None:
         _report_vanished_write(ruling_id, "propose", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -133,11 +150,13 @@ def _cmd_ruling_propose(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_ruling_ratify(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
     _cli.require_ledger(project, "refutations.jsonl")
+    snap = _snap(project)
     try:
         channel = _refute_channel(args)
     except refutations.RefutationError as exc:
@@ -172,6 +191,13 @@ def _cmd_ruling_ratify(args) -> int:
         print(f"ruling not ratified: ruling {args.ruling_id} is already "
               "active and has no pending revision to accept")
         return 1
+    # A signature covers the FULL text. A record with a field the person
+    # cannot read is not one they can sign, so the ceremony stops before it
+    # shows anything; the signature below still binds the stored record.
+    if _refuses_withheld(project, "ruling ratify", record, snap=snap):
+        return 2
+    shown_record = _masked_record(project, record, snap=snap)
+    shown_pending = shown_record.get("revision_proposed") or {}
     # Ratification is a signature, not an id-typing exercise: print the FULL
     # text, disclose the render consequence, and bind the append to the key
     # of the text DISPLAYED — the fold refuses to activate any other text.
@@ -184,13 +210,15 @@ def _cmd_ruling_ratify(args) -> int:
         print("About to accept a pending revision on this ruling:",
               file=ceremony)
         if not args.json:
-            _print_ruling(record, detailed=True)
-            if pending.get("verdict"):
-                print(f"  New text: {pending['verdict']}", file=ceremony)
-            if pending.get("subject"):
-                print(f"  New governs: {pending['subject']}", file=ceremony)
+            _print_ruling(shown_record, detailed=True)
+            if shown_pending.get("verdict"):
+                print(f"  New text: {shown_pending['verdict']}",
+                      file=ceremony)
+            if shown_pending.get("subject"):
+                print(f"  New governs: {shown_pending['subject']}",
+                      file=ceremony)
         else:
-            print(f"  {pending.get('verdict') or record.get('verdict', '')}",
+            print(f"  {shown_pending.get('verdict') or shown_record.get('verdict', '')}",
                   file=ceremony)
         displayed_key = (normalize.content_key(pending["verdict"])
                          if pending.get("verdict") else "")
@@ -204,9 +232,9 @@ def _cmd_ruling_ratify(args) -> int:
     else:
         print("About to ratify this ruling:", file=ceremony)
         if not args.json:
-            _print_ruling(record, detailed=True)
+            _print_ruling(shown_record, detailed=True)
         else:
-            print(f"  {record.get('verdict', '')}", file=ceremony)
+            print(f"  {shown_record.get('verdict', '')}", file=ceremony)
         displayed_key = normalize.content_key(record.get("verdict") or "")
         check = record.get("check") if isinstance(record.get("check"), dict) else None
         # #961 slice 4: same pin discipline as `check` just above — the
@@ -264,6 +292,7 @@ def _cmd_ruling_ratify(args) -> int:
         print("not activated: the text changed during confirmation; "
               "re-run to review the current text")
         return 1
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -271,9 +300,11 @@ def _cmd_ruling_ratify(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_ruling_revise(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "refutations.jsonl")
+    snap = _snap(project)
     record = refutations.get(args.ruling_id, project_dir=project)
     if record is None:
         # #1094: same pointer as `ratify` — covers a `--check` attach too,
@@ -310,6 +341,8 @@ def _cmd_ruling_revise(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("ruling not revised", exc))
         return 1
+    if _refuses_withheld(project, "ruling revise", record, snap=snap):
+        return 2
     clear_request_policy = bool(getattr(args, "no_request_policy", False))
     if request_policy is not None and clear_request_policy:
         print(_refusal_message(
@@ -323,12 +356,23 @@ def _cmd_ruling_revise(args) -> int:
                  or clear_request_policy)):
         # Rewriting what renders is the same power ratification has, and it
         # earns trust the same way: show the change, disclose, confirm.
+        # What the person typed goes through the same mask: a value withheld
+        # from them is not one to apply.
+        typed = {key: value for key, value in (
+            ("verdict", args.verdict), ("subject", args.subject)) if value}
+        if check is not None:
+            typed["check"] = {"match": check.get("match"),
+                              "body": check.get("body")}
+        if _refuses_withheld(project, "ruling revise", typed, snap=snap):
+            return 2
+        shown = _masked_record(project, typed, snap=snap)
         print("About to change the ACTIVE text of this ruling:")
-        _print_ruling(record, detailed=True)
+        _print_ruling(_masked_record(project, record, snap=snap),
+                      detailed=True)
         if args.verdict is not None:
-            print(f"  New text: {args.verdict}")
+            print(f"  New text: {shown.get('verdict', '')}")
         if args.subject is not None:
-            print(f"  New governs: {args.subject}")
+            print(f"  New governs: {shown.get('subject', '')}")
         if check is not None:
             for line in _check_ceremony_lines(check, label="New check",
                                               verb="Applying"):
@@ -387,6 +431,7 @@ def _cmd_ruling_revise(args) -> int:
     if record is None:
         _report_vanished_write(args.ruling_id, "revise", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -402,11 +447,13 @@ def _cmd_ruling_revise(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_ruling_retire(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
     _cli.require_ledger(project, "refutations.jsonl")
+    snap = _snap(project)
     try:
         event = refutations.retire(
             args.ruling_id, channel=_refute_channel(args),
@@ -421,6 +468,7 @@ def _cmd_ruling_retire(args) -> int:
     if record is None:
         _report_vanished_write(args.ruling_id, "retire", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -432,6 +480,7 @@ def _cmd_ruling_retire(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_ruling_list(args) -> int:
     project = _cli._resolve_project(args.project)
     # #1095: `--inherited` is a caller-chosen widening of the read scope —
@@ -518,7 +567,10 @@ def _cmd_ruling_list(args) -> int:
         wanted_states = set(args.state or refutations.STATES)
         inherited_rows = [row for row in refutations.inherited_active(project)
                           if row.get("state") in wanted_states]
-    rows_out = rows + inherited_rows
+    # The whole listing is judged once: own rows by this bucket, each
+    # inherited row by the layer it was read from (scar 0075: this verb reads
+    # the ledger twice, so the mask is not applied per row).
+    rows_out = _masked_records(project, rows + inherited_rows)
     if args.json:
         print(_refutation_json(rows_out))
         active_j = sum(1 for r in rows if r.get("state") == "active")
@@ -543,6 +595,7 @@ def _cmd_ruling_list(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_ruling_show(args) -> int:
     project = _cli._resolve_project(args.project)
     # #1095: resolved across the merged view — own bucket first, then a
@@ -561,6 +614,7 @@ def _cmd_ruling_show(args) -> int:
         print(f"{args.ruling_id} is a refutation; use `daimon refute show`")
         return 1
     _cli._note_usage("ruling:show")
+    record = _masked_record(project, record)
     if args.json:
         print(_refutation_json(record))
     else:
