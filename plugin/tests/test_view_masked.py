@@ -259,3 +259,10 @@ def test_the_briefing_mask_also_judges_a_row_by_the_buckets_it_names(
     assert mask.for_row(row)(QUARANTINED) == f"[withheld: quarantine {QID}]"
     assert mask.for_row({"to": SLUG})(QUARANTINED) == QUARANTINED
     assert briefing.prose_mask(None).for_row(row)(QUARANTINED) == QUARANTINED
+
+
+def test_withheld_in_sees_an_event_status_that_was_only_a_marker():
+    marker = store._FORGOTTEN_FIELD_MARKER.format("0123456789abcdef")
+    got = view.withheld_in(PROJECT, "events.jsonl", {"status": marker},
+                           snap=snap())
+    assert [w.reason for w in got] == ["forgotten"]

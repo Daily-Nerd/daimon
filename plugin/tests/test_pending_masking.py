@@ -139,3 +139,60 @@ def test_queue_typed_carries_masked_rows_and_the_notes(tmp_checkpoint_dir):
     typed = pending.queue_typed(project_dir=m.PROJECT)
     assert typed.rows and "SECRET" not in json.dumps(typed.rows)
     assert isinstance(typed.notes, tuple)
+
+
+def test_an_unreadable_lane_is_dropped_but_the_others_stay(tmp_checkpoint_dir,
+                                                           monkeypatch):
+    _plant()
+
+    def broken(*_a, **_k):
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(refutations, "records", broken)
+    kinds = {r["kind"] for r in _rows()}
+    assert "request" in kinds and not kinds & {"ruling", "refutation"}
+
+
+def test_a_foreign_bucket_that_cannot_be_read_is_left_out_not_failed(
+        tmp_checkpoint_dir, monkeypatch):
+    _plant()
+    real = pending.queue
+
+    def flaky(*, project_dir=None, masked=True):
+        if project_dir == OTHER_SLUG:
+            raise OSError("unreadable")
+        return real(project_dir=project_dir, masked=masked)
+
+    monkeypatch.setattr(pending, "queue", flaky)
+    typed = pending.foreign_queues_typed(project_dir=m.PROJECT)
+    assert OTHER_SLUG not in [slug for slug, _r in typed.queues]
+
+
+def test_a_masker_failing_in_a_later_lane_fails_the_call_too(
+        tmp_checkpoint_dir, monkeypatch):
+    _plant()
+    real = view.masked
+
+    def only_refutations(project, ledger, rows, **kw):
+        if ledger == "refutations.jsonl":
+            raise RuntimeError("no")
+        return real(project, ledger, rows, **kw)
+
+    monkeypatch.setattr(view, "masked", only_refutations)
+    with pytest.raises(pending.MaskFailed):
+        pending.queue(project_dir=m.PROJECT)
+
+
+def test_a_masker_failing_in_a_foreign_bucket_fails_the_call(
+        tmp_checkpoint_dir, monkeypatch):
+    _plant()
+    real = pending.queue
+
+    def failing(*, project_dir=None, masked=True):
+        if project_dir == OTHER_SLUG:
+            raise pending.MaskFailed("RuntimeError")
+        return real(project_dir=project_dir, masked=masked)
+
+    monkeypatch.setattr(pending, "queue", failing)
+    with pytest.raises(pending.MaskFailed):
+        pending.foreign_queues_typed(project_dir=m.PROJECT)
