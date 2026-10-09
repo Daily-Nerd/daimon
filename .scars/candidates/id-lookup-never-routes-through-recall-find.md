@@ -1,7 +1,7 @@
 ---
 id: 0
 type: fence
-title: An exact-id lookup reads the recall index through index_locate (read-only, never refreshed), never through recall.find, because find stats the whole store and rebuilds the index on a withheld row
+title: An exact-id lookup reads the recall index through index_locate (read-only, never refreshed), not through recall.find, which stats the whole store and rebuilds on a withheld row
 severity: high
 confidence: 0.8
 created: 2026-10-09
@@ -18,18 +18,17 @@ expires:
 status: candidate
 ---
 
-`recall.find` calls `_ensure_fresh`, which stats every checkpoint, ledger and
-team file on the machine and rebuilds the index when any moved, and it calls
-`_rebuild_forced` when the newest row for the id is withheld. A `why` on a
-quarantined id therefore rebuilt the whole index, and a `why` on an id nobody
-holds paid for the stat of the whole store. `view.lookup_many` locates an id
-with `index_locate.locate` instead: the index is opened `mode=ro`, the schema
-version is checked, one indexed query runs per chunk of 500 ids, and the file
-is never refreshed or written. The price is that an id serialized since the
-last build is found through the pointer window only.
+`view.lookup_many` locates an id with `index_locate.locate`: the index is
+opened `mode=ro`, the schema version is checked, one indexed query runs per
+chunk of 500 ids, and the file is never refreshed or written. The value of a
+located item comes from the named session file through the view. A row whose
+file is not local (a teammate's mirror) or has no project stamp is answered
+from the row and classified at read time; a torn file or one stamped for
+another project gives `Absent` with an `unreadable` or `foreign-stamp` note.
+An id serialized since the last index build is found through the pointer
+window only.
 
-Do not "simplify" the locator into a call to `recall.find`, and do not add a
-refresh to it. `recall.find` stays for `pending._loop_text`, which has its own
-reasons. The value of a located item always comes from the named session file
-through the view; the one exception is a row whose file is not local, which is
-classified at read time before it is shown.
+`recall.find` stats every checkpoint, ledger and team file (`_ensure_fresh`)
+and rebuilds on a withheld row (`_rebuild_forced`), so an id lookup must not
+call it and the locator must not gain a refresh. `recall.find` stays for
+`pending._loop_text`, which has its own reasons.

@@ -186,8 +186,12 @@ unreadable]` (nothing can be proven not quarantined; run `daimon status`) and
 `ranking`, `receipt`, `source` and `preceding_tool_context` are `null`, and
 `current_support` is `withheld`. No value, key, quote, tool context or
 transcript window is in the document. The evidence axes that rest on the
-item's own receipt report `unknown` for a withheld item, because reading them
-would mean reading the item.
+item's quote receipt (capture, provenance, locator, bytes, verifier) still
+report: the view keeps a textless projection of the receipt when it withholds
+a copy, so a quarantine or a teammate's forget does not blank how the item
+was captured. The receipt, the source and the quote themselves are not
+published. An id that is only a tombstone has no copy to project and reports
+`unknown`.
 
 Forgotten is announced only here: `daimon why`, `daimon blame` and the
 viewer's why page say `[withheld: forgotten]` for the one exact id you asked
@@ -216,15 +220,19 @@ rebuilds the recall index:
 3. the forgotten-id and quarantine records;
 4. nothing.
 
-An item answered from the index alone (a teammate's mirrored checkpoint, or a
-legacy file with no project stamp) is judged at read time like any other copy
-and is marked `index_only` in the JSON.
+An item answered from the index alone (a teammate's mirrored checkpoint with
+no local file, or a legacy file with no project stamp) is judged at read time
+like any other copy and is marked `index_only` in the JSON. A row whose local
+file is torn, or is stamped for another project, is not used at all: the
+answer is `no item`.
 
 What this changes, each in the safe direction (it can under-announce, never
 leak):
 
 - A quarantined item older than the pointer window, whose quarantine record
-  was opened without `--item-id`, reads `no item`.
+  was opened without `--item-id`, reads `no item`: the record names a value,
+  not an id, and the value is no longer in any copy the lookup reads. The
+  internal answer says `outside_window`, which is where it looked.
 - The same id can read `[withheld: quarantine …]` while the index still holds
   its pre-quarantine row and `no item` after the next index rebuild, so the
   answer can change with the timing of `daimon recall` or any other call that
