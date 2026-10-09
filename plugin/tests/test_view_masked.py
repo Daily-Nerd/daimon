@@ -245,3 +245,17 @@ def test_withheld_in_sees_a_field_that_is_only_a_deleter_marker():
     got = view.withheld_in(PROJECT, "refutations.jsonl",
                            {"undeclared": marker}, snap=snap())
     assert [w.reason for w in got] == ["forgotten"]
+
+
+def test_the_briefing_mask_also_judges_a_row_by_the_buckets_it_names(
+        monkeypatch):
+    from daimon_briefing import briefing
+    peer = snap(quarantined=[QUARANTINED])
+    monkeypatch.setattr(view, "judge", lambda slug, **_k: view.Judge(
+        peer if slug == OTHER else snap()))
+    mask = briefing.prose_mask(snap())
+    assert mask(QUARANTINED) == QUARANTINED                 # own: nothing
+    row = {"from_slug": OTHER, "to": SLUG}
+    assert mask.for_row(row)(QUARANTINED) == f"[withheld: quarantine {QID}]"
+    assert mask.for_row({"to": SLUG})(QUARANTINED) == QUARANTINED
+    assert briefing.prose_mask(None).for_row(row)(QUARANTINED) == QUARANTINED

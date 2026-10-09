@@ -50,6 +50,11 @@ ID_TOKEN = token("idforgot")
 ID_TEXT = f"{ID_TOKEN} the id-forgotten sentinel text"
 
 
+# Words only the peer project quarantines (see `_write_peer_requests`).
+PEER_ASK = f"{TEXTS['question']} as the peer worded its ask"
+PEER_NOTE = f"{TEXTS['topic']} as the peer worded its note"
+
+
 # A value forgotten by ANOTHER project (a tombstone in the peer's events
 # ledger) after this project's ledgers already hold it. Writers re-scrub a
 # forgotten value as they append (`jsonl.reaching`), so a ledger prose column
@@ -400,6 +405,22 @@ def _write_peer_requests(world: World, tmp_path, project: str) -> None:
         channel="cli-tty", project_dir=project)
     requests.accept(ours, channel="cli-tty", note=TEXTS["contradiction"],
                     project_dir=world.peer)
+    # Two texts only the PEER quarantined (its bucket holds the record, this
+    # one holds none): the ask it sends us, and the note it answers ours with.
+    # This project's own snapshot cannot mask either, so a reader that judges
+    # a joined row by the own snapshot alone leaks them.
+    requests.open_request(
+        to=own, ask=PEER_ASK, why="the peer's own words", channel="cli-agent",
+        project_dir=world.peer)
+    ours_two = requests.open_request(
+        to=theirs, ask="please look at the second census ask", why="again",
+        channel="cli-tty", project_dir=project)
+    requests.accept(ours_two, channel="cli-tty", note=PEER_NOTE,
+                    project_dir=world.peer)
+    for text, kind in ((PEER_ASK, "question"), (PEER_NOTE, "topic")):
+        trust.propose(text=text, kind=kind, reason=TEXTS["contradiction"],
+                      evidence=["issue:1"], channel="cli-tty",
+                      project_dir=world.peer)
 
 
 def _plant_quarantined_line(world: World) -> None:

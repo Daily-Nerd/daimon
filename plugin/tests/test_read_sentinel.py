@@ -405,6 +405,10 @@ for _surface, _tag in (
         ("cli:request inbox", "default")):
     _json_variant(_surface, _tag)
 
+# `trust list --json` hands evidence to a tty and omits it for anyone else
+case("cli:trust list", "json-tty", A("trust", "list", "--json"),
+     dests=("json",), axes=("STDIN_TTY",))
+
 # ---- verbs that bind a target in the live checkpoint ----------------------
 case("cli:resolve", "no-match", A("resolve", "zzzqqq"), tty=True, rc=(0, 1),
      dests=("target",))
@@ -755,6 +759,21 @@ def test_the_prose_columns_are_planted_in_the_world(world_run, monkeypatch):
             name, sorted(missing))
 
 
+def test_the_peer_quarantines_live_in_the_peer_bucket_only(world_run):
+    """Anti-vacuity for the cross-bucket judge: the own snapshot holds no
+    quarantine for these words, so only the peer's snapshot can mask them."""
+    from daimon_briefing import normalize
+    world, _leaks, _details = world_run
+    peer_dir = world.bucket.parent / store.project_slug(world.peer)
+    own = (world.bucket / "trust.jsonl").read_text()
+    peer = (peer_dir / "trust.jsonl").read_text()
+    rows = (peer_dir / "requests.jsonl").read_text()
+    for text in (sw.PEER_ASK, sw.PEER_NOTE):
+        key = normalize.content_key(text)
+        assert key not in own and key in peer
+        assert text in rows
+
+
 def test_the_forgotten_keys_are_stored_in_the_world(world_run):
     """Anti-vacuity: the tombstones the scan looks for are on disk."""
     world, _leaks, _details = world_run
@@ -800,6 +819,8 @@ HUMAN_CHANNEL = {
         "a human reads the quarantined evidence they are about to confirm",
     ("cli:trust show", "id-json"):
         "the same record as JSON; evidence is omitted for the agent channel",
+    ("cli:trust list", "json-tty"):
+        "the listing as JSON; evidence is omitted for the agent channel",
     ("cli:trust propose", "text"):
         "echoes the text the human just typed; the agent channel is refused",
     ("cli:forget", "dry"):
@@ -813,6 +834,7 @@ HUMAN_CHANNEL = {
 HUMAN_RAW = {
     ("cli:trust show", "id"): {"topic"},
     ("cli:trust show", "id-json"): {"topic"},
+    ("cli:trust list", "json-tty"): {"topic"},
 }
 # Bytes that carry a checkpoint forward on purpose: not read output.
 WRITE_CARRY = {

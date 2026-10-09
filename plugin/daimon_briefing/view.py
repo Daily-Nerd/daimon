@@ -1882,6 +1882,28 @@ def _leaf(text: str, snaps, seen: list | None = None):
     return _mask_text(text, snaps, False, seen)
 
 
+def named_snapshots(row: dict, cache: dict, *, skip=None) -> list[Snapshot]:
+    """The light snapshots of the OTHER buckets a requests row names (its
+    sender and its recipient), memoized in `cache` by slug. A request is a
+    join, so a value its other party quarantined is withheld here too."""
+    out: list[Snapshot] = []
+    for key in _REQUEST_SLUG_FIELDS:
+        slug = row.get(key)
+        if (not isinstance(slug, str) or not _is_bare_slug(slug)
+                or slug == skip):
+            continue
+        if slug not in cache:
+            cache[slug] = judge(slug).snap
+        if cache[slug] not in out:
+            out.append(cache[slug])
+    return out
+
+
+def prose_verdict_over(text, snaps, *, closed_masks: bool) -> Withheld | None:
+    """`prose_verdict` over several buckets' snapshots: the strictest wins."""
+    return _strictest(str(text or ""), snaps, closed_masks)
+
+
 def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
                seen: list | None) -> list[dict]:
     """The body of `masked`; `seen` collects the verdicts it handed out."""
@@ -1892,19 +1914,9 @@ def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
     others: dict[str, Snapshot] = {}
 
     def snaps_of(row: dict) -> list[Snapshot]:
-        out = [own]
         if ledger_name != "requests.jsonl":
-            return out
-        for key in _REQUEST_SLUG_FIELDS:
-            slug = row.get(key)
-            if (not isinstance(slug, str) or not _is_bare_slug(slug)
-                    or slug == own_slug):
-                continue
-            if slug not in others:
-                others[slug] = judge(slug).snap
-            if others[slug] not in out:
-                out.append(others[slug])
-        return out
+            return [own]
+        return [own, *named_snapshots(row, others, skip=own_slug)]
 
     result = []
     for row in rows:
