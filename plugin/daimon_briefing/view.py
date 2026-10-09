@@ -795,8 +795,11 @@ def classify(field: schema.ItemField, item, snap: Snapshot) -> Visible | Withhel
     value (value-only, any field), then a quarantine (scoped to the field's
     kind). An item whose id is in `snap.forgotten_ids` is forgotten too, even
     when its value is no longer the one that was tombstoned. A value that is
-    both forgotten and quarantined is reported as forgotten: a forgotten item
-    must stay indistinguishable from absent."""
+    both forgotten and quarantined is reported as forgotten: there is nothing
+    left to review. The reason is returned so the exact-id history verbs
+    (`why`, `blame`, the viewer's why page) can say `forgotten` for the one id
+    asked about; every listing (`open`, `match`, `diff`, recall) drops a
+    forgotten item as if it were absent."""
     entry = _entry(item)
     raw_id = entry.get("id")
     item_id = str(raw_id) if raw_id else None
@@ -1185,6 +1188,14 @@ def events(project, *, snap: Snapshot | None = None) -> tuple[Event, ...]:
                  if isinstance(row, dict))
 
 
+def latest_event(snap: Snapshot, item_id: str) -> Event | None:
+    """The judged latest lifecycle event of a ref, the one `snap.resolutions`
+    folded to (None for a ref with none). The lifecycle word of the same ref
+    comes from the same row (`lifecycle_word(snap.resolutions.get(ref))`)."""
+    row = snap.resolutions.get(item_id)
+    return _event(row, snap) if row is not None else None
+
+
 def item_events(project, item_id: str, *,
                 snap: Snapshot | None = None) -> tuple[Event, ...]:
     """The `events.jsonl` rows addressed to EXACTLY `item_id`, judged like
@@ -1485,7 +1496,10 @@ class Lineage:
     `resolved`, `superseded`, `forgotten`; `verdict` the `lookup_many` answer
     (it can name a copy older than the pointer window). `refs` lists every
     pointer file of the window newest first, `unreadable` the torn ones and
-    `sessions` the sessions the readable ones belong to."""
+    `sessions` the sessions the readable ones belong to. `latest` is the
+    judged event the lifecycle word came from (None for an id with none),
+    `corroboration` the snapshot's fold for the id and `snapshot` the one
+    snapshot everything above was judged by."""
 
     appearances: tuple
     events: tuple
@@ -1494,6 +1508,9 @@ class Lineage:
     refs: tuple = ()
     unreadable: tuple = ()
     sessions: frozenset = frozenset()
+    latest: Event | None = None
+    corroboration: Mapping = field(default_factory=dict)
+    snapshot: Snapshot | None = None
 
 
 def lifecycle_word(event) -> str:
@@ -1546,7 +1563,9 @@ def lineage(project, item_id: str) -> Lineage:
         tuple(p.ref for p in window),
         tuple(p.ref for p in window if not p.readable),
         frozenset(p.meta.session_id for p in window
-                  if p.readable and p.meta and p.meta.session_id))
+                  if p.readable and p.meta and p.meta.session_id),
+        latest_event(snap, item_id),
+        snap.corroborations.get(item_id, {}), snap)
 
 
 def source_ref(session_id) -> dict | None:

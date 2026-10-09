@@ -5,6 +5,8 @@ one hand-shaped file is an events ledger whose rows are out of order."""
 
 import json
 
+import pytest
+
 from daimon_briefing import carry, config, normalize, store, trust, view
 from daimon_briefing.surfaces import Writer
 
@@ -238,3 +240,54 @@ def test_lineage_pays_one_full_snapshot_and_one_window(tmp_checkpoint_dir,
         monkeypatch.setattr(view, name, spy)
     view.lineage(PROJECT, ITEM)
     assert calls == {"snapshot": 1, "pointers": 1, "judge": 0}
+
+
+# ---- what the inspector composes from -------------------------------------
+
+
+def test_latest_is_the_judged_event_the_lifecycle_word_came_from(
+        tmp_checkpoint_dir):
+    _restated()
+    assert view.lineage(PROJECT, ITEM).latest is None
+    key = normalize.content_key("a value that was forgotten earlier on")
+    _rows({"ts": "2026-09-05T10:00:00Z", "kind": "tombstone",
+           "item_ref": ITEM, "status": f"forgotten:{key}", "source": "cli"})
+    latest = view.lineage(PROJECT, ITEM).latest
+    assert (latest.status, latest.tombstone, latest.source) == (
+        "forgotten", True, "cli")
+    assert key not in repr(latest)
+
+
+def test_corroboration_is_the_snapshots_fold_for_the_id(tmp_checkpoint_dir):
+    _restated()
+    assert view.lineage(PROJECT, ITEM).corroboration == {}
+    _rows({"ts": "2026-09-05T10:00:00Z", "kind": "resolution",
+           "item_ref": store.corroboration_ref(ITEM),
+           "status": "corroborated-by:S-witness-1", "source": "capture"})
+    got = view.lineage(PROJECT, ITEM).corroboration
+    assert got["origins"] == {"S-witness-1"}
+
+
+def test_the_lineage_carries_the_snapshot_it_was_built_from(tmp_checkpoint_dir):
+    _restated()
+    trust.propose(text=OLD, kind="decision", reason="fabricated",
+                  evidence=["issue:1"], channel="cli-tty", project_dir=PROJECT)
+    snap = view.lineage(PROJECT, ITEM).snapshot
+    assert snap.quarantined and not snap.closed
+
+
+@pytest.mark.parametrize("status, expected", [
+    ("resolved", "resolved"),
+    ("superseded-by:o-fedcba", "superseded"),
+    ("forgotten:abc", "forgotten"),
+    ("reopen", "active"),
+    ("resolving-candidate", "active"),
+    ("supersede-candidate:o-fedcba", "active"),
+])
+def test_lifecycle_word_values(status, expected):
+    assert view.lifecycle_word({"status": status}) == expected
+
+
+def test_lifecycle_word_of_no_event_is_active():
+    assert view.lifecycle_word(None) == "active"
+    assert view.lifecycle_word("not a dict") == "active"
