@@ -372,6 +372,39 @@ for verb in ("confirm", "reject", "retract"):
          lambda w: w.relation_id), tty=True, rc=(0, 1, 2),
          dests=("relation_id",))
 
+# the folded prose of 11c: an anchor the guard matches, a state the default
+# listing leaves out, and the --json form of every prose verb that has one (a
+# printer that masks the text lines and dumps the record raw leaks here)
+case("cli:refute guard", "anchor", A("refute", "guard", "zzzz", "--anchor",
+     lambda w: sw.TEXTS["topic"]), dests=("anchor",))
+case("cli:refute list", "overturned", A("refute", "list", "--state",
+     "overturned"), dests=("state",))
+case("cli:ruling list", "overturned", A("ruling", "list", "--state",
+     "overturned"), dests=("state",))
+
+
+def _json_variant(surface, tag="default"):
+    base = CASES[(surface, tag)]
+    CASES[(surface, "json" if tag == "default" else tag + "-json")] = Case(
+        (lambda b: lambda w: [*b.args(w), "--json"])(base), stdin=base.stdin,
+        tty=base.tty, dests=("json",), rc=base.rc, shows=None,
+        axes=tuple(a for a in base.axes if a == "STDIN_TTY"))
+
+
+for _surface, _tag in (
+        ("cli:refute list", "default"), ("cli:refute list", "overturned"),
+        ("cli:refute show", "id"), ("cli:refute search", "default"),
+        ("cli:refute guard", "default"), ("cli:refute guard", "anchor"),
+        ("cli:refute ratify", "id"), ("cli:refute revise", "id"),
+        ("cli:refute overturn", "id"), ("cli:ruling list", "default"),
+        ("cli:ruling list", "inherited"), ("cli:ruling list", "overturned"),
+        ("cli:ruling show", "id"), ("cli:ruling ratify", "id"),
+        ("cli:ruling revise", "id"), ("cli:ruling retire", "id"),
+        ("cli:amend list", "default"), ("cli:trust list", "default"),
+        ("cli:trust show", "id"), ("cli:request list", "default"),
+        ("cli:request inbox", "default")):
+    _json_variant(_surface, _tag)
+
 # ---- verbs that bind a target in the live checkpoint ----------------------
 case("cli:resolve", "no-match", A("resolve", "zzzqqq"), tty=True, rc=(0, 1),
      dests=("target",))
@@ -562,31 +595,33 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 # ===========================================================================
 # {(surface, kind)}: seeded from the run, each must still leak, nothing else may
 KNOWN_LEAKS: set = {
-    *{("cli:amend list", k) for k in ("question",)},
-    *{("cli:decide", k) for k in ("question", "topic",)},
-    *{("cli:refute list", k) for k in ("topic",)},
+    *{("cli:amend list", k) for k in ("contradiction", "question",)},
+    *{("cli:decide", k) for k in ("peerforgot", "question", "topic",)},
+    *{("cli:refute guard", k) for k in ("question", "topic",)},
+    *{("cli:refute list", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
     *{("cli:refute overturn", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:refute ratify", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:refute revise", k) for k in ("question", "topic",)},
-    *{("cli:refute search", k) for k in ("question", "topic",)},
+    *{("cli:refute search", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
     *{("cli:refute show", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request accept", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request done", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request inbox", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request list", k) for k in ("contradiction", "question", "topic",)},
+    *{("cli:request inbox", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
+    *{("cli:request list", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
     *{("cli:request needs-info", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request reject", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request reply", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request suppress", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request-inject", k) for k in ("contradiction", "topic",)},
-    *{("cli:ruling list", k) for k in ("question",)},
+    *{("cli:request-inject", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
+    *{("cli:ruling list", k) for k in ("contradiction", "question", "topic",)},
+    *{("cli:ruling ratify", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling retire", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling revise", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling show", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:trust list", k) for k in ("contradiction", "question",)},
-    *{("cli:trust show", k) for k in ("contradiction",)},
-    *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
-    *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
+    *{("cli:trust list", k) for k in ("contradiction", "question", "topic",)},
+    *{("cli:trust show", k) for k in ("contradiction", "topic",)},
+    *{("http:/api/refutations", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
+    *{("mcp:requests_inbox", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
 }
 
 
@@ -708,6 +743,41 @@ def test_no_surface_hands_back_a_forgotten_key(world_run):
     seen = {(s, kind) for (s, kind) in leaks if kind.startswith("key:")}
     print("KEY LEAKS", sorted(seen))
     assert seen == KNOWN_KEY_LEAKS
+
+
+def test_the_prose_columns_are_planted_in_the_world(world_run, monkeypatch):
+    """Anti-vacuity for 11c: every declared folded prose path of a refutation
+    or request in the world carries a sentinel (so a printer that skips it
+    leaks), except `revision_proposed.note`, which no writer can set."""
+    from daimon_briefing import refutations, requests, surfaces
+    from tests.test_folded_prose_census import _leaves
+    world, _leaks, _details = world_run
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    seen = {name: set() for name in ("refutations.jsonl", "requests.jsonl")}
+    folded = {
+        "refutations.jsonl": list(refutations.records(
+            project_dir=world.project).values()) + refutations.guard(
+                "zzzz", anchors=[sw.TEXTS["topic"]],
+                project_dir=world.project),
+        "requests.jsonl": list(requests.records(
+            project_dir=world.project).values())}
+    for name, records in folded.items():
+        for record in records:
+            for path, value in _leaves(record):
+                if any(tok.lower() in value.lower()
+                       for tok in [*sw.TOKENS.values(), sw.PEER_TOKEN]):
+                    seen[name].add(path)
+    for name, planted in seen.items():
+        s = surfaces.bucket_ledger(name)
+        declared = {surfaces.path_string(fp)
+                    for fp in s.prose + s.folded_prose}
+        missing = declared - planted
+        # `note` and `act_author` are row fields a fold renames or does not
+        # keep, `revision_proposed.note` has no writer and `from_label` would
+        # name the bucket itself
+        assert missing <= {"revision_proposed.note", "note", "act_author",
+                           "from_label"}, (
+            name, sorted(missing))
 
 
 def test_the_forgotten_keys_are_stored_in_the_world(world_run):

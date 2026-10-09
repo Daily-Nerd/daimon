@@ -181,4 +181,4 @@ def test_a_damaged_ledger_leaks_nothing_new_and_says_so(health_runs, name):
 
 
 def test_the_known_leak_list_is_unchanged_by_this_axis():
-    assert len(rs.KNOWN_LEAKS) == 62
+    assert len(rs.KNOWN_LEAKS) == 84
