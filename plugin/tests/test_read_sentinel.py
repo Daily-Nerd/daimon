@@ -385,9 +385,9 @@ case("cli:forget", "dry", A("forget", I("question"), "--dry-run"), tty=True,
      rc=(0, 1, 2), dests=("dry_run", "project"), axes=("STDIN_TTY",))
 case("cli:forget", "republish", A("forget", "--republish"), tty=True,
      rc=(0, 1, 4), dests=("project", "republish"))
-# a real forget of a visible item: its receipt names the content hash of the
-# value the person chose (no sentinel key is ever printable here)
-case("cli:forget", "receipt", A("forget", I("other_question"), "--reason", "r"),
+# a real forget of the quarantined sentinel by its exact id, from a person's
+# terminal: the receipt prints the content hash of the value just forgotten
+case("cli:forget", "receipt", A("forget", I("question"), "--reason", "r"),
      tty=True, rc=(0, 4), shows="forgot ")
 # a tombstoned id whose value is still on disk is no match on either channel
 case("cli:forget", "idforgot", A("forget", I("idforgot"), "--dry-run"),
@@ -521,6 +521,8 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
     for env, tty, label in variants:
         pristine.restore()
         before = drive.snapshot_sizes(world.root)
+        lines_before = (drive.snapshot_lines(world.root)
+                        if (surface, tag) in WRITE_CARRY else None)
         tty_now = c.tty if tty is None else tty
         if tty_override is not None:
             tty_now = tty_override
@@ -537,12 +539,17 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
                                  world.bucket.name, env=envs)
         else:
             res = drive.run_hook(name, c.args(world), env=envs)
-        res.written = drive.written_since(world.root, before)
-        # a declared write-carry case keeps withheld bytes in its rewrite on
-        # purpose: only what it PRINTED is read output
-        written = b"" if (surface, tag) in WRITE_CARRY else b"\n".join(
-            res.written)
-        blob = res.text() + "\n" + written.decode("utf-8", errors="replace")
+        # a declared write-carry case keeps withheld bytes in the checkpoint
+        # files it rewrites on purpose: those files are not read output. The
+        # ledger bytes it writes (events, trust sidecar, team sidecar, usage
+        # log) are scanned like any other run's.
+        carry = (surface, tag) in WRITE_CARRY
+        res.written = drive.written_since(
+            world.root, before,
+            skip=(lambda p: p.suffix == ".json") if carry else None,
+            lines=lines_before)
+        blob = res.text() + "\n" + b"\n".join(res.written).decode(
+            "utf-8", errors="replace")
         leaks |= {(surface, tag, k) for k in sw.leaked_kinds(blob)}
         if (surface, tag) not in KEY_EXEMPT:
             leaks |= {(surface, tag, k) for k in sw.leaked_keys(blob)}
@@ -680,16 +687,17 @@ def test_the_drive_runs_and_nothing_unexpected_leaks(world_run):
 # raw tombstone status or scrub marker printed by a reader brings it back
 # without the value sentinel noticing. Every case is scanned for the keys too.
 # `KNOWN_KEY_LEAKS` is shrink-only like KNOWN_LEAKS. `KEY_EXEMPT` declares the
-# cases whose job is to name a key: a person-run proof or publish tool. The
-# forget receipt needs no entry: it prints the key of the value a person just
-# chose to forget, and a forgotten row never binds for an agent, so no
-# sentinel key is printable there (the `receipt` and `idforgot` cases prove it).
+# cases whose job is to name a key: a person-run proof or publish tool.
 KNOWN_KEY_LEAKS: set = set()
 KEY_EXEMPT = {
     ("cli:audit privacy", "default"):
         "the residue audit names the content hash of each residue it proves",
     ("cli:audit privacy", "all"):
         "the residue audit names the content hash of each residue it proves",
+    ("cli:forget", "receipt"):
+        "the receipt prints the content hash of the value just forgotten, "
+        "which is the tombstone key the team sidecar carries too; it is a "
+        "person's command (the agent run is refused)",
     ("cli:forget", "republish"):
         "re-publishing a tombstone writes its key into the team sidecar",
 }
@@ -749,6 +757,8 @@ HUMAN_CHANNEL = {
         "echoes the text the human just typed; the agent channel is refused",
     ("cli:forget", "dry"):
         "dry run names the target the human is about to forget",
+    ("cli:forget", "receipt"):
+        "forgets a quarantined value by exact id; an agent is refused",
 }
 # Bytes that carry a checkpoint forward on purpose: not read output.
 WRITE_CARRY = {
@@ -1022,9 +1032,8 @@ def _id_leaking_surfaces(details):
     out = set()
     for (surface, tag), results in details.items():
         for _label, res in results:
-            written = b"" if (surface, tag) in WRITE_CARRY else b"\n".join(
-                res.written)
-            blob = res.text() + "\n" + written.decode("utf-8", errors="replace")
+            blob = res.text() + "\n" + b"\n".join(res.written).decode(
+                "utf-8", errors="replace")
             if sw.leaked_id(blob):
                 out.add(surface)
     return out
