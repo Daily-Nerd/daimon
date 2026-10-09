@@ -28,8 +28,18 @@ def _write(session_id, *texts, project_dir=PROJECT):
     }, project_dir=project_dir, writer=Writer.HUMAN)
 
 
+@pytest.fixture(autouse=True)
+def _human(monkeypatch):
+    """Finishing the deletion of an id whose tombstone already stands is a
+    person's call, by exact id (#1132 PR 11b)."""
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+
 def _forget(value):
-    assert cli.main(["forget", value, "--project", PROJECT]) == 0
+    target = next((item["id"] for _p, _s, _k, item in
+                   store.items_for_project(PROJECT) if item["text"] == value),
+                  value)
+    assert cli.main(["forget", target, "--project", PROJECT]) == 0
 
 
 def test_hashes_covers_text_quote_and_scene():
@@ -504,8 +514,9 @@ def test_cli_audit_privacy_runs_and_exits_by_contract(tmp_checkpoint_dir):
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
                        project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 1
-    # After a REAL forget (which scrubs), audit proves clean.
-    _forget(CANARY)
+    # After the scrub forget runs (a standing tombstone is not a forget
+    # target any more), audit proves clean.
+    store.scrub_content_key(key, project_dir=PROJECT)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 0
 
 
@@ -963,7 +974,7 @@ def test_usage_tag_distinguishes_the_three_outcomes(tmp_checkpoint_dir):
     assert cli.main(["audit", "privacy", "--project", "/p/never-existed"]) == 3
     assert usage.read_text(encoding="utf-8").rstrip().endswith(
         "audit-privacy:unproven")
-    _forget(CANARY)
+    store.scrub_content_key(key, project_dir=PROJECT)
     assert cli.main(["audit", "privacy", "--project", PROJECT]) == 0
     assert usage.read_text(encoding="utf-8").rstrip().endswith("audit-privacy")
 

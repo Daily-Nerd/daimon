@@ -395,34 +395,40 @@ def test_forget_item_id_keeps_uninterpretable_rows_byte_identical(bucket):
 def test_erased_comes_from_tombstones_not_absence(bucket):
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
                        kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
-    erased = relations.tombstoned_item_ids(project_dir=bucket)
+    erased = store.tombstoned_item_ids(project_dir=bucket)
     assert "r-abc123456789" in erased
     # absent-but-never-tombstoned is NOT erased
     assert "r-def123456789" not in erased
 
 
-# -- shared listing: one presentation fold for CLI and viewer (#678 P3) --
+# -- shared listing: the ledger side of one presentation fold (#678 P3) --
+# The text join and the erased-edge rule live in `view.relations`
+# (tests/test_view_relations.py); the ledger only sorts and filters.
 
-def test_listing_sorts_candidates_first_and_withholds_erased(bucket):
+def test_listing_sorts_candidates_first(bucket):
     kept = _propose(bucket)
     relations.confirm(kept, channel="cli-tty", project_dir=bucket)
     second = _propose(bucket, frm=_endpoint("S3", item="r-aaa111222333"),
                       to=_endpoint("S1", item="r-bbb444555666"))
+    rows = relations.listing(project_dir=bucket)
+    assert [r["relation_id"] for r in rows] == [second, kept]
+
+
+def test_listing_no_longer_withholds_an_erased_edge(bucket):
+    """The erased-edge rule moved to `view.relations`."""
     doomed = _propose(bucket, frm=_endpoint("S4", item="r-ccc777888999"),
                       to=_endpoint("S1", item="r-ddd000111222"))
     store.append_event("r-ccc777888999", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
-    rows, withheld = relations.listing(project_dir=bucket)
-    ids = [r["relation_id"] for r in rows]
-    assert doomed not in ids
-    assert withheld == 1
-    assert ids == [second, kept]  # candidate first, then confirmed
+                       kind="tombstone", project_dir=bucket, tombstone=True,
+                       writer=Writer.HUMAN)
+    assert [r["relation_id"] for r in relations.listing(project_dir=bucket)] \
+        == [doomed]
 
 
 def test_listing_state_filter_and_unknown_state_refusal(bucket):
     rel_id = _propose(bucket)
     relations.reject(rel_id, channel="cli-tty", project_dir=bucket)
-    rows, _ = relations.listing(states={"rejected"}, project_dir=bucket)
+    rows = relations.listing(states={"rejected"}, project_dir=bucket)
     assert [r["relation_id"] for r in rows] == [rel_id]
     with pytest.raises(relations.RelationError):
         relations.listing(states={"vibes"}, project_dir=bucket)
@@ -433,33 +439,10 @@ def test_for_item_returns_confirmed_edges_only(bucket):
     relations.confirm(confirmed, channel="cli-tty", project_dir=bucket)
     _propose(bucket, frm=_endpoint("S3", item="r-abc123456789"),
              to=_endpoint("S1", item="r-bbb444555666"))  # stays candidate
-    rows, withheld = relations.for_item("r-abc123456789", project_dir=bucket)
+    rows = relations.for_item("r-abc123456789", project_dir=bucket)
     assert [r["relation_id"] for r in rows] == [confirmed]
-    assert withheld == 0
-    other, _ = relations.for_item("r-feedbeef1234", project_dir=bucket)
-    assert other == []
-
-
-def test_for_item_withholds_chains_touching_erased_endpoints(bucket):
-    rel_id = _propose(bucket)
-    relations.confirm(rel_id, channel="cli-tty", project_dir=bucket)
-    store.append_event("r-def123456789", "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
-    rows, withheld = relations.for_item("r-abc123456789", project_dir=bucket)
-    assert rows == [] and withheld == 1
-
-
-def test_endpoint_texts_joins_over_project_surfaces(bucket):
-    from daimon_briefing import policy
-    cp = {"session_id": "S1", "created": "2026-08-01T00:00:00Z",
-          "project_slug": store.project_slug(bucket),
-          "working_context": {"recent_decisions": [
-              {"text": "keep the fold deterministic", "trust": "inferred"}]}}
-    policy.stamp_item_ids(cp)
-    store.write_checkpoint("S1", cp, project_dir=bucket, writer=Writer.HUMAN)
-    item_id = cp["working_context"]["recent_decisions"][0]["id"]
-    texts = relations.endpoint_texts(project_dir=bucket)
-    assert texts[item_id] == "keep the fold deterministic"
+    assert relations.for_item("r-feedbeef1234", project_dir=bucket) == []
+    assert relations.for_item("", project_dir=bucket) == []
 
 
 # -- registry (fork A) --
@@ -675,7 +658,7 @@ def test_reopen_lifts_the_tombstone(bucket):
     store.append_event("r-abc123456789", "forgotten:deadbeef01234567",
                        kind="tombstone", project_dir=bucket, tombstone=True, writer=Writer.HUMAN)
     store.append_event("r-abc123456789", "reopen", project_dir=bucket, writer=Writer.HUMAN)
-    assert "r-abc123456789" not in relations.tombstoned_item_ids(
+    assert "r-abc123456789" not in store.tombstoned_item_ids(
         project_dir=bucket)
 
 
@@ -814,7 +797,8 @@ def test_only_declared_consumers_import_relations():
 
     import daimon_briefing
     package = pathlib.Path(daimon_briefing.__file__).parent
-    allowed = {"privacy.py", "cli/relations_cmd.py", "ledger_repair.py"}
+    allowed = {"privacy.py", "cli/relations_cmd.py", "ledger_repair.py",
+               "view.py"}
     import_re = re.compile(
         r"^\s*(?:from\s+\.\.?\s+import\s+"
         r"(?:\([^)]*\brelations\b|[^\n(]*\brelations\b)"

@@ -168,11 +168,15 @@ def _emit_supersede_candidates(pairs, events: dict, project,
         candidate-changed case (prior candidate names a DIFFERENT new_id —
         the carry target moved, so a fresh candidate replaces it as latest).
 
+    The row names ids only: the old wording is NOT written (`item_text` is
+    absent), because an id-shaped ref never reads it and an append-only file
+    would otherwise hold a copy of a value a later forget has to scrub.
+
     Forget gate (#419): `old_text` is a PREV item's raw text, and this runs
     BEFORE write_checkpoint's forget gate — so a forgotten value surviving in
     the prev checkpoint under a never-tombstoned id (sibling-id shape, #418)
-    would land as plaintext `item_text` in append-only events.jsonl, forever.
-    A pair whose old_text canonicalizes into the forgotten set (the same
+    must not get a candidate row at all, whatever the row carries. A pair
+    whose old_text canonicalizes into the forgotten set (the same
     normalize.content_key keying store._drop_forgotten uses) is skipped
     entirely. Fail-safe direction: an events ledger that is not proven
     (TRANSIENT or any UNREADABLE) SKIPS every EMITTER write (#1132 PR 10b,
@@ -204,8 +208,8 @@ def _emit_supersede_candidates(pairs, events: dict, project,
         if prior and prior.get("status") == f"supersede-candidate:{new_id}":
             continue  # idempotent — same candidate already latest
         if store.append_event(old_id, f"supersede-candidate:{new_id}",
-                              source="serializer", item_text=old_text,
-                              project_dir=project, writer=Writer.EMITTER):
+                              source="serializer", project_dir=project,
+                              writer=Writer.EMITTER):
             appended += 1
     return appended
 

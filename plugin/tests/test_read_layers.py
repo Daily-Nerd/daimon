@@ -152,26 +152,14 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "daimon's own plugin manifest file, not a bucket path",
     ("daimon_briefing/cli/action_recall.py", "_cmd_action_recall", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/amend.py", "_cmd_amend_propose", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/audit.py", "_audit_item_source", "store.read_checkpoint"):
-        "audits the provenance of the stored copy of an item; needs the raw checkpoint",
-    ("daimon_briefing/cli/audit.py", "_cmd_audit_quotes", "json.loads"):
-        "quote audit parses stored checkpoint files raw to check their bytes",
-    ("daimon_briefing/cli/brief.py", "_cmd_anchor", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_cmd_recall_inject", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):
         "the per-session seen/cooldown state file, not a checkpoint",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.items_for_project"):
-        "forget binds its target across every surface copy",
+        "forget's pool builder (write layer) binds across every surface copy; the registry in PR 12",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.read_latest_body"):
-        "forget binds its target in the live checkpoint; view.match in PR 9",
-    ("daimon_briefing/cli/lifecycle.py", "_cmd_resolve", "store.read_latest_body"):
-        "resolve binds its target in the live checkpoint; view.match in PR 9",
-    ("daimon_briefing/cli/lifecycle.py", "_cmd_reverify", "store.read_latest_body"):
-        "reverify binds its target in the live checkpoint; view.match in PR 9",
+        "forget's pool builder reads the live checkpoint to splice it; the registry in PR 12",
     ("daimon_briefing/cli/stats.py", "_stats_resolutions", "jsonl.read"):
         "counts events rows for the stats credit rollup, no content shown",
     ("daimon_briefing/cli/stats.py", "_stats_stitching", "json.loads"):

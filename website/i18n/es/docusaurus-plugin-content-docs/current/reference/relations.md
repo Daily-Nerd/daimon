@@ -29,12 +29,14 @@ es una que una persona avaló.
 ## Contrato de borrado
 
 Una edge es en sí misma una afirmación sobre contenido, así que las relaciones
-honran `daimon forget`: una edge que toca un item olvidado se retiene fuera de
-las superficies renderizadas, y solo se muestra un conteo de edges retenidas —
-la redacción en la CLI y en el visor es la misma, y no nombra ningún id. Un
-endpoint que simplemente envejeció fuera de la ventana de retención de
-checkpoints es distinto: se renderiza como `[unresolved]` y sigue siendo un
-registro válido.
+honran `daimon forget`: una edge que toca un item olvidado queda fuera de toda
+superficie renderizada y no se cuenta en ningún lado, de modo que una lista
+nunca dice que un item fue olvidado. Un endpoint que una persona puso en
+cuarentena, o cualquier endpoint mientras el ledger de confianza no se puede
+leer, conserva su edge y se renderiza como el marcador de retenido en lugar de
+su texto. Un endpoint que simplemente envejeció fuera de la ventana de
+retención de checkpoints es distinto: se renderiza como `[unresolved]` y sigue
+siendo un registro válido.
 
 ## Consejos para decidir
 

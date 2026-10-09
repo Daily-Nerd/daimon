@@ -62,16 +62,64 @@ def snapshot_sizes(root: Path) -> dict:
     return sizes
 
 
-def written_since(root: Path, before: dict) -> list:
+def snapshot_lines(root: Path) -> dict:
+    """The lines of every `.jsonl` ledger under `root`, per file."""
+    out = {}
+    for path in root.rglob("*.jsonl"):
+        if path.is_file() and ".git" not in path.parts:
+            try:
+                out[path] = path.read_bytes().split(b"\n")
+            except OSError:
+                continue
+    return out
+
+
+def _new_ledger_bytes(old: list, new: list) -> list:
+    """What a ledger run ADDED or CHANGED. When the file only grew (an append,
+    or an append plus an in-place redaction) rows are compared by position: a
+    changed row contributes only the fields whose value changed, since the rest
+    of the row is carried forward as it was, and appended rows are all new.
+    When it shrank, any row not in the old file."""
+    import json
+    if len(new) < len(old):
+        seen = set(old)
+        return [ln for ln in new if ln not in seen]
+    out = []
+    for was, now in zip(old, new):
+        if was == now:
+            continue
+        try:
+            a, b = json.loads(was), json.loads(now)
+            out.append(json.dumps({k: v for k, v in b.items()
+                                   if a.get(k) != v}).encode())
+        except (ValueError, AttributeError):
+            out.append(now)
+    out.extend(new[len(old):])
+    return out
+
+
+def written_since(root: Path, before: dict, skip=None, lines=None) -> list:
+    """The new bytes under `root` since `before`. `skip(path)` leaves a file
+    out and `lines` (from `snapshot_lines`) keeps only the lines of a changed
+    ledger that were not there before: a declared write-carry case rewrites
+    checkpoints and ledgers whole and carries every other row forward
+    byte for byte, and only the rows it ADDS or changes are its output."""
     out = []
     for path in root.rglob("*"):
         if not path.is_file() or ".git" in path.parts:
+            continue
+        if skip is not None and skip(path):
             continue
         try:
             size = path.stat().st_size
         except OSError:
             continue
         old = before.get(path)
+        if lines is not None and path in lines:
+            kept = _new_ledger_bytes(lines[path], path.read_bytes().split(b"\n"))
+            if kept:
+                out.append(b"\n".join(kept))
+            continue
         if old is None:
             out.append(path.read_bytes())
         elif size != old:

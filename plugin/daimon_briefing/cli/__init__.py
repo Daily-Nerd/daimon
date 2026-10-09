@@ -244,29 +244,41 @@ def _slug_route(args) -> tuple:
     return (slug or _resolve_project(project_arg)), 0
 
 
-def guarded(fn):
-    """Decorate a read verb that answers through the view: any exception it
-    raises (a view that cannot be built is a bug, never an empty answer)
-    becomes one `error:` line on stderr and exit 2, with nothing rendered
-    around it. The line names the verb and the exception type, never the
-    message, which can carry content. `jsonl.Refused` passes through: `main`
-    already prints it and turns it into exit 2 (10b's refusal path)."""
+def guarded(fn=None, *, writes: bool = False):
+    """Decorate a verb that answers through the view: any exception it raises
+    (a view that cannot be built is a bug, never an empty answer) becomes one
+    `error:` line on stderr and exit 2, with nothing rendered around it. The
+    line names the verb and the exception type, never the message, which can
+    carry content. `jsonl.Refused` passes through: `main` already prints it and
+    turns it into exit 2 (10b's refusal path).
 
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except jsonl.Refused:
-            raise
-        # reported as one line, never shown around
-        except Exception as exc:  # noqa: BLE001
-            verb = fn.__name__.removeprefix("_cmd_").replace("_", " ")
-            print(f"error: {verb} could not be read "
-                  f"({type(exc).__name__}); nothing was shown",
-                  file=sys.stderr)
-            return 2
+    A read verb says nothing was shown. A write verb (`writes=True`) may have
+    written part of its work before it stopped, so it says it stopped and
+    points at `daimon status`."""
 
-    return wrapper
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except jsonl.Refused:
+                raise
+            # reported as one line, never shown around
+            except Exception as exc:  # noqa: BLE001
+                verb = fn.__name__.removeprefix("_cmd_").replace("_", " ")
+                if writes:
+                    print(f"error: {verb} stopped ({type(exc).__name__}); "
+                          "run daimon status to see the ledgers",
+                          file=sys.stderr)
+                else:
+                    print(f"error: {verb} could not be read "
+                          f"({type(exc).__name__}); nothing was shown",
+                          file=sys.stderr)
+                return 2
+
+        return wrapper
+
+    return decorate(fn) if fn is not None else decorate
 
 
 # ---- resolve/log: zero-LLM append-only event writers (#102) ----
@@ -477,7 +489,6 @@ from .relations_cmd import (  # noqa: E402
     _cmd_relations_show,  # noqa: F401 — re-exported for compat
     _cmd_relations_verdict,  # noqa: F401 — re-exported for compat
     _relations_channel,  # noqa: F401 — re-exported for compat
-    _relations_endpoint_texts,  # noqa: F401 — re-exported for compat
 )
 from .projects import (  # noqa: E402
     _TOPIC_TEASER_CHARS,  # noqa: F401 — re-exported for compat

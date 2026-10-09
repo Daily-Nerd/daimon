@@ -10,7 +10,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import relations, render
+from .. import relations, render, view
 
 
 def _relations_channel() -> str:
@@ -29,41 +29,35 @@ def _relations_channel() -> str:
     return "cli-tty"
 
 
-def _relations_endpoint_texts(project_dir) -> dict:
-    """Stable cli seam over the engine's read-time id→text join."""
-    return relations.endpoint_texts(project_dir)
-
-
+@_cli.guarded
 def _cmd_relations_list(args) -> int:
     project = _cli._resolve_project(args.project)
-    # Sort, state filter, and erased-edge withholding all live in
-    # relations.listing — the presentation contract shared with the viewer
-    # lane, so the two surfaces cannot drift. argparse `choices` already
-    # gates unknown states.
-    rows, withheld = relations.listing(
-        states=set(args.state or relations.STATES), project_dir=project)
+    # The sort, the state filter, the endpoint-text join and the rule that
+    # drops an edge touching a forgotten item all live in `view.relations`:
+    # one presentation contract for this verb and the viewer. argparse
+    # `choices` already gates unknown states.
+    got = view.relations(project, states=set(args.state or relations.STATES))
     _cli._note_usage("relations:list")
     if args.json:
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
-        if withheld:
-            print(f"{withheld} edge(s) withheld (erased endpoint)")
+        print(json.dumps(list(got.rows), ensure_ascii=False, indent=2))
     else:
-        texts = _relations_endpoint_texts(project) if rows else {}
-        render.render_relations_list(rows, texts, withheld)
+        render.render_relations_list(got.rows, got.texts, got.withheld)
     return 0
 
 
+@_cli.guarded
 def _cmd_relations_show(args) -> int:
     project = _cli._resolve_project(args.project)
-    record = relations.get(args.relation_id, project_dir=project)
-    if record is None:
+    got = view.relations(project, relation_id=args.relation_id)
+    if not got.rows:
         print(f"unknown relation: {args.relation_id}")
         return 1
+    record = got.rows[0]
     _cli._note_usage("relations:show")
     if args.json:
         print(json.dumps(record, ensure_ascii=False, indent=2))
     else:
-        render.render_relation(record, _relations_endpoint_texts(project))
+        render.render_relation(record, got.texts)
     return 0
 
 

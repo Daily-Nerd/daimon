@@ -28,8 +28,9 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping, NamedTuple
 
 from . import (amendments, carry, config, display, index_locate, jsonl,
-               multihash, normalize, provenance, refutations, requests, schema,
-               store, surfaces, trust)
+               multihash, normalize, provenance, refutations)
+from . import relations as relation_ledger
+from . import requests, schema, store, surfaces, trust
 from .jsonl import Health
 from .surfaces import ReadPosture
 
@@ -221,7 +222,10 @@ class Found:
     per distinct session, newest first. `meta` is the envelope of the file the
     copy came from (or the index row's), `source` says which tier answered
     (`pointer` window, `session` file, `index` row) and `notes` are advisory
-    codes: `index_only:<reason>` for a row answered from the index."""
+    codes: `index_only:<reason>` for a row answered from the index. `at` is
+    set only by `match`: the `(section, key, index)` of the item in the raw own
+    body (`index` is None for the singleton), the locator a write that must
+    keep every other byte in place uses; it is not part of equality."""
 
     item: dict
     field: schema.ItemField
@@ -229,6 +233,7 @@ class Found:
     meta: store.Meta | None = None
     source: Literal["pointer", "session", "index"] = "pointer"
     notes: tuple = ()
+    at: tuple | None = dataclasses.field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -247,11 +252,28 @@ class Absent:
 
 @dataclass(frozen=True)
 class Match:
-    """`hits` are the visible candidates; `withheld` counts the candidates the
-    reader may not see, so `len(hits) + withheld` is the raw match count."""
+    """What a binding verb finds for a query in the live own body. `hits` are
+    the visible candidates; `withheld` counts the quarantined and closed ones
+    the reader may not see (a forgotten candidate is in no count: it is
+    absent); `exact` is set when the query is an exact id that the body holds
+    and that is quarantined or closed; `closed` says the trust ledger cannot
+    be read, in which case `withheld` and `exact` cover every candidate and
+    the caller prints no count (it would be a membership oracle). `sole` is
+    the one candidate a verb may bind without guessing."""
 
     hits: tuple
     withheld: int
+    exact: "Withheld | None" = None
+    closed: bool = False
+
+    @property
+    def sole(self) -> "Found | None":
+        """The never-guess rule: a bind happens only when exactly one candidate
+        is visible and none is withheld. A visible hit beside a withheld one is
+        ambiguous, never a bind."""
+        if len(self.hits) == 1 and self.withheld == 0:
+            return self.hits[0]
+        return None
 
 
 # ---- the snapshot ---------------------------------------------------------
@@ -338,10 +360,7 @@ def forgotten_ids(resolutions) -> frozenset:
     lifts it). A free-form status that merely starts with the word
     ("forgotten about it") is a resolution, not a tombstone. The one id rule,
     shared by `snapshot` and `judge`."""
-    return frozenset(
-        ref for ref, evt in resolutions.items()
-        if store.is_resolved(evt)
-        and store.is_tombstone_status(evt.get("status")))
+    return store.tombstone_refs(resolutions)
 
 
 def posture(name: str, health: Health, *, foreign: bool = False) -> ReadPosture:
@@ -1636,21 +1655,51 @@ def source_ref(session_id) -> dict | None:
     return ref if isinstance(ref, dict) else None
 
 
-def match(project, query: str) -> Match:
-    """The candidates `resolve` and `reverify` would bind a query to: an exact
-    id, else every id-bearing item `carry._same_item` says is the same as the
-    query (terms common to all of the checkpoint's texts ignored). The count of
-    withheld candidates is returned instead of the candidates."""
-    snap = snapshot(project)
+_MATCH_HOW = ("terms", "id", "substring")
+
+
+def match(project, query: str, *, how: str = "terms") -> Match:
+    """The candidates a binding verb would bind a query to, in the live OWN
+    body (scar 0063). `how="terms"`: an exact id, else every id-bearing item
+    `carry._same_item` says is the same as the query (terms common to all of
+    the checkpoint's texts ignored). `how="id"`: the exact id only.
+    `how="substring"`: case-insensitive containment over the visible items,
+    the topic singleton and id-less dicts included; a withheld match is not
+    looked at, so `withheld` is always 0 (a substring plus a count is a
+    character oracle).
+
+    A forgotten candidate is dropped and counted nowhere. `withheld` counts
+    quarantine and closed candidates; `exact` carries the one withheld
+    candidate an exact id named (no value, no forgotten key)."""
+    if how not in _MATCH_HOW:
+        raise ValueError(f"unknown match mode: {how!r}")
+    slug = store.project_slug(config.resolve_project_dir(project))
+    snap = judge(slug).snap
     raw = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                  admit=store.Admit.ANY)
     if not isinstance(raw, dict):
-        return Match((), 0)
+        return Match((), 0, None, snap.closed)
+    if how == "substring":
+        needle = str(query).lower()
+        hits = []
+        for fld, value in schema.iter_fields(raw):
+            entries = ([(None, value)] if fld.singleton
+                       else list(enumerate(value)) if isinstance(value, list)
+                       else [])
+            for index, item in entries:
+                if (isinstance(item, dict)
+                        and needle in str(item.get("text", "")).lower()
+                        and isinstance(classify(fld, item, snap), Visible)):
+                    hits.append(Found(item, fld, (_occurrence(raw),),
+                                      at=(fld.section, fld.key, index)))
+        return Match(tuple(hits), 0, None, snap.closed)
     items = [(fld, item) for fld, item in schema.iter_items(raw)
              if not fld.singleton and item.get("id")]
     exact = [(fld, item) for fld, item in items if item["id"] == query]
     if exact:
         candidates = exact[:1]
+    elif how == "id":
+        candidates = []
     else:
         generic = carry._generic_terms(
             [str(item.get("text") or "") for _fld, item in items])
@@ -1659,12 +1708,98 @@ def match(project, query: str) -> Match:
                                           generic)]
     hits = []
     withheld = 0
+    named = None
     for fld, item in candidates:
-        if isinstance(classify(fld, item, snap), Withheld):
+        verdict = classify(fld, item, snap)
+        if isinstance(verdict, Withheld):
+            if verdict.reason == "forgotten":
+                continue
             withheld += 1
+            if exact:
+                named = _lookup_withheld(verdict, str(item["id"]))
         else:
             hits.append(Found(item, fld, (_occurrence(raw),)))
-    return Match(tuple(hits), withheld)
+    return Match(tuple(hits), withheld, named, snap.closed)
+
+
+_FIELD_BY_PATH = {(f.section, f.key): f for f in schema.ITEM_FIELDS}
+
+
+def label(project, row, snap: Snapshot) -> display.Candidate:
+    """A `forget` candidate row as the reader may see it. `row` is
+    `(section, key, item, matched)`: a checkpoint item (`section` is the
+    checkpoint block, judged by `classify` in the field found from
+    `(section, key)`) or a ledger record (`section` is None; the item is
+    `{"id", "text"}` with the printed subject as its text). A ledger row is
+    judged on BOTH the printed subject and the value the query matched (a
+    record's subject often restates a quarantined claim while its evidence is
+    what matched), and a closed snapshot withholds all of it. The result has
+    `verdict` None for a row the reader may see and the `Withheld` otherwise;
+    the caller drops `forgotten` ones and counts the rest."""
+    section, key, item, matched = row
+    item_id = str(item.get("id") or "")
+    text = str(item.get("text") or "")
+    if section is not None:
+        fld = _FIELD_BY_PATH.get((section, key)) or _field_for(None)
+        judged = classify(fld, item, snap)
+        withheld = judged if isinstance(judged, Withheld) else None
+    else:
+        withheld = prose_verdict(text, snap)
+        if withheld is None and matched is not None:
+            withheld = prose_verdict(matched, snap)
+    return display.Candidate(item_id, str(key), text, matched, withheld)
+
+
+@dataclass(frozen=True)
+class RelationView:
+    """Relation edges a reader may see, with the text of their endpoints.
+    `texts` maps an item id to its visible text or to the withheld marker
+    (a quarantined or closed endpoint); an endpoint nothing holds is absent
+    from it (the renderers print `[unresolved]`). `withheld` is 0: an edge
+    that touches a forgotten item is dropped and counted nowhere."""
+
+    rows: tuple
+    texts: Mapping
+    withheld: int = 0
+
+
+def relations(project, *, states=None, item_id=None,
+              relation_id=None) -> RelationView:
+    """The relation edges of a project joined with their endpoint text, the
+    one place the ledger (which holds no text) meets the checkpoints.
+
+    The rows come from the relations ledger: every record in `states`, or the
+    confirmed edges touching `item_id`, or the one record `relation_id`. The
+    endpoint ids of those rows go through `lookup_many` ONCE (one light
+    snapshot, one pointer window, chunked index seeks), so the join is bounded
+    by the edge count and never walks the machine. An edge with a forgotten
+    endpoint is dropped silently (H7): the list never says an item was
+    forgotten. A quarantined or closed endpoint keeps its edge and reads as
+    the marker."""
+    if relation_id is not None:
+        record = relation_ledger.get(relation_id, project_dir=project)
+        rows = [record] if record is not None else []
+    elif item_id is not None:
+        rows = relation_ledger.for_item(item_id, project_dir=project)
+    else:
+        rows = relation_ledger.listing(states=states, project_dir=project)
+    ids = list(dict.fromkeys(
+        i for row in rows for i in sorted(relation_ledger.row_item_ids(row))))
+    found = lookup_many(project, ids) if ids else {}
+    erased = {i for i, v in found.items()
+              if isinstance(v, Withheld) and v.reason == "forgotten"}
+    kept = tuple(row for row in rows
+                 if not relation_ledger.row_item_ids(row) & erased)
+    named = {i for row in kept for i in relation_ledger.row_item_ids(row)}
+    texts: dict[str, str] = {}
+    for i, v in found.items():
+        if i not in named:
+            continue
+        if isinstance(v, Found):
+            texts[i] = str(v.item.get("text") or "")
+        elif isinstance(v, Withheld):
+            texts[i] = display.withheld_marker(v)
+    return RelationView(kept, texts, 0)
 
 
 def suppressed(project, now: float) -> Suppression:

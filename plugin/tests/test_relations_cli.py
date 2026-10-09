@@ -169,22 +169,23 @@ def test_rich_list_marks_contradictions(seeded, monkeypatch, capsys):
     assert "CONTRADICTION" in capsys.readouterr().out
 
 
-def test_list_withholds_edges_touching_erased_endpoints(seeded, capsys):
+def test_list_leaves_out_an_edge_touching_a_forgotten_item_and_counts_nothing(
+        seeded, capsys):
     doomed = seeded["item_ids"][0]
     store.append_event(doomed, "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
+                       kind="tombstone", project_dir=PROJECT, tombstone=True,
+                       writer=Writer.HUMAN)
     assert cli.main(["relations", "list"]) == 0
     out = capsys.readouterr().out
     assert seeded["rel_id"] not in out
-    assert "withheld" in out
+    assert "withheld" not in out and "forgotten" not in out
 
 
-def test_list_json_says_how_many_edges_were_withheld(seeded, capsys):
-    """An edge touching a forgotten item is withheld from the listing and the
-    JSON output still reports that it was."""
+def test_list_json_leaves_the_edge_out_and_prints_no_count(seeded, capsys):
     store.append_event(seeded["item_ids"][0], "forgotten:deadbeef",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT,
+                       writer=Writer.HUMAN)
     capsys.readouterr()
     assert cli.main(["relations", "list", "--json"]) == 0
     out = capsys.readouterr().out
-    assert "edge(s) withheld (erased endpoint)" in out
+    assert out.strip() == "[]"

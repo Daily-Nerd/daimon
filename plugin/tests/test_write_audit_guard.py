@@ -76,6 +76,7 @@ from daimon_briefing import (amendments, buckets, cli, config, policy,
                              refutations, relations, requests, schema, store,
                              teamsync, trust)
 
+from daimon_briefing.surfaces import Writer
 from tests import _leaves
 from tests.conftest import FIXTURES, FakeChat
 import pytest as _pytest
@@ -154,7 +155,7 @@ SKIPPED: dict = {
         "harness cannot drive it to completion. Its write surface is bounded "
         "by construction — the handler defines only do_GET, and its engine "
         "calls (recall.search, inspector.inspect_item, refutations.listing, "
-        "relations.for_item/endpoint_texts) are the same paths the `recall`, "
+        "view.relations) are the same paths the `recall`, "
         "`refute`, and `relations` recipes already audit "
         "(tests/ui/test_server_engines.py covers the dispatch). The one "
         "write is /api/recall refreshing the derived recall index."
@@ -773,11 +774,16 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["resolve", ctx["ids"][_T_KEEP], "--note", "shipped"], 0)
 
     def r_forget():
-        # #599: resolve first so events.jsonl holds the target's text as
-        # `item_text` — the forget below must REWRITE the ledger (the one
-        # ratified rewrite of the append-only file), not just append its
-        # tombstone, so that write is observed and asserted governed.
+        # #599: events.jsonl holds the target's text as `item_text`, so the
+        # forget below must REWRITE the ledger (the one ratified rewrite of
+        # the append-only file), not just append its tombstone, so that write
+        # is observed and asserted governed. `resolve` no longer writes the
+        # text (the id is the reference), so the row is the one a ledger
+        # written before that holds, planted through the real appender.
         run(["resolve", ctx["ids"][_T_FORGET], "--note", "obsolete"], 0)
+        assert store.append_event(
+            ctx["ids"][_T_FORGET], "resolved", item_text=_T_FORGET,
+            project_dir=proj, writer=Writer.HUMAN)
         run(["forget", ctx["ids"][_T_FORGET], "--reason", "stale"], 0)
 
     def r_reverify():

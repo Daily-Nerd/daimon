@@ -96,7 +96,7 @@ def checkpoint(sid, created):
         "working_context": {
             "active_topic": {"text": t["topic"], "trust": "inferred"},
             "open_questions": [
-                {"text": t["question"], "trust": "inferred",
+                {"text": t["question"], "trust": "verbatim",
                  "quote": t["question"]},
                 {"text": "an unrelated open question stays visible",
                  "trust": "inferred"}],
@@ -126,6 +126,21 @@ class World:
     root: Path = None                             # the tmp root being watched
 
 
+def _plant_transcripts(world: World, tmp_path, monkeypatch) -> None:
+    """A resolvable transcript for each session that does NOT hold the
+    question's quote: the question is a verbatim item whose quote fails, so
+    `audit quotes` has a failure to print if it reads the item at all."""
+    import json
+    projects = tmp_path / ".claude" / "projects"
+    monkeypatch.setenv("DAIMON_CLAUDE_PROJECTS_DIR", str(projects))
+    slug_dir = projects / world.bucket.name
+    slug_dir.mkdir(parents=True)
+    for sid in ("S-1", "S-2"):
+        (slug_dir / f"{sid}.jsonl").write_text(
+            json.dumps({"role": "user", "content": "an unrelated chat"}) + "\n",
+            encoding="utf-8")
+
+
 def _item_ids(project):
     cp = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
@@ -143,6 +158,8 @@ def build_world(tmp_path, monkeypatch) -> World:
         pytest.skip("git not on PATH: the sidecar needs it")
     proj = tmp_path / "proj"
     proj.mkdir()
+    # `daimon anchor mod.py fn` resolves a real symbol (the anchor verb cases)
+    (proj / "mod.py").write_text("def fn():\n    return 1\n")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(proj))
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
@@ -174,6 +191,7 @@ def build_world(tmp_path, monkeypatch) -> World:
     world = World(project=project,
                   bucket=config.checkpoint_dir() / store.project_slug(project),
                   root=tmp_path)
+    _plant_transcripts(world, tmp_path, monkeypatch)
     by_text = _item_ids(project)
     for kind in KINDS:
         for (k, text), item_id in by_text.items():

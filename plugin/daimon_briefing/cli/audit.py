@@ -16,6 +16,7 @@ from .. import (
     serializer,
     store,
     transcript,
+    view,
 )
 
 
@@ -59,12 +60,32 @@ def _audit_item_source(item):
     origin = item.get("origin_session")
     if not provenance.valid_session_id(origin):
         return None, None
-    origin_cp = store.read_checkpoint(origin)
-    if isinstance(origin_cp, dict):
-        source = origin_cp.get("source_ref")
-        if provenance.valid_source_ref(source):
-            return source, None
+    # the origin session's non-item `source_ref` envelope key: it names where
+    # a transcript lives and holds no item, so it needs no judgement
+    source = view.source_ref(origin)
+    if provenance.valid_source_ref(source):
+        return source, None
     return _legacy_audit_source(origin, item.get("origin_author")), None
+
+
+def _corpus(project, want_all: bool):
+    """`(session_id, checkpoint, notes)` for every session file the reader may
+    audit, oldest id first: this project's, or with `want_all` every bucket
+    `view.buckets` lists (the tenant rule is the view's). Each checkpoint is
+    the view's copy: a quarantined, forgotten or closed item is not in it, so
+    it is neither audited, counted nor printed. One `view.sessions` listing and
+    one `view.open_sessions` per bucket; the listing parses each file once more
+    than the open does, which is accepted."""
+    own = store.project_slug(project)
+    slugs = view.buckets(own) if (want_all or own is None) else (own,)
+    for slug in slugs:
+        listed = view.sessions(slug)
+        ids = sorted(row.session_id for row in listed.rows)
+        opened = view.open_sessions(slug, ids, live=False)
+        for sid in ids:
+            got = opened.get(sid)
+            if got is not None and got.checkpoint is not None:
+                yield sid, got.checkpoint, listed.notes
 
 def _resolve_audit_source(source, resolver, cache: dict):
     """Resolve and parse one strict source once per complete source identity."""
@@ -106,6 +127,7 @@ def _cmd_audit_quotes_deprecated(args) -> int:
         ["note: 'daimon audit-quotes' is deprecated — use 'daimon audit quotes'"])
     return _cmd_audit_quotes(args)
 
+@_cli.guarded
 def _cmd_audit_quotes(args) -> int:
     """Read-only audit (#125): re-check every stored verbatim quote against its
     source transcript with the SAME tier-f matcher serialize uses, and REPORT.
@@ -134,12 +156,6 @@ def _cmd_audit_quotes(args) -> int:
     is a small minority. Default scope is the current project; --all spans
     the whole corpus."""
     project = _cli._resolve_project(args.project)
-    want_slug = store.project_slug(project)
-    d = config.checkpoint_dir()
-    try:
-        files = store._session_files(d)
-    except OSError:
-        files = []
     scanned = paired = unpaired = items = verified = failed = id_resolved = 0
     origin_resolved = 0
     # #944: the three conditions that skip an item, counted rather than
@@ -152,18 +168,11 @@ def _cmd_audit_quotes(args) -> int:
         claude_projects=config.claude_projects_dir(),
         current_author=config.author())
     failures: list[tuple[str, str]] = []
-    for f in sorted(files):
-        try:
-            cp = json.loads(f.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(cp, dict):
-            continue
-        slug = cp.get("project_slug")
-        if not args.all and want_slug is not None and slug != want_slug:
-            continue
+    notes: tuple = ()
+    for stem, cp, notes_here in _corpus(project, args.all):
+        notes = notes or notes_here
         scanned += 1
-        session_id = str(cp.get("session_id") or f.stem)
+        session_id = str(cp.get("session_id") or stem)
         own_source = cp.get("source_ref")
         if not provenance.valid_source_ref(own_source):
             own_source = _legacy_audit_source(session_id, cp.get("author"))
@@ -236,6 +245,7 @@ def _cmd_audit_quotes(args) -> int:
         lines.append(f"  WARNING: zero verbatim quotes checkable ({seen} "
                      f"items: {exempt}) — cannot distinguish an all-exempt "
                      "checkpoint from a clean one")
+    lines.extend(notes)
     if failures:
         top = max(0, args.top)
         lines.append(f"  top {min(top, len(failures))} failures (item text prefix):")

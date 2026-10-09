@@ -255,46 +255,20 @@ def test_match_by_text_binds_every_candidate_the_resolver_would(
 
 
 def test_match_withheld_candidates_are_counted_not_returned(tmp_checkpoint_dir):
+    """A quarantined candidate is counted; a forgotten one is in no count
+    (`tests/test_match.py` pins the rest)."""
     _write()
-    _forget(S_DECISION)
+    _quarantine(S_DECISION, "decision")
     got = view.match(PROJECT, "adopt the strangler pattern")
     assert got.hits == () and got.withheld == 1
-    exact = view.match(PROJECT, _id_of(S_DECISION))
-    assert exact.hits == () and exact.withheld == 1
+    _forget(S_BELIEF)
+    assert view.match(PROJECT, "cache write through") == view.Match((), 0)
 
 
 def test_match_with_no_checkpoint_or_no_candidate_is_empty(tmp_checkpoint_dir):
     assert view.match(PROJECT, "anything") == view.Match((), 0)
     _write()
     assert view.match(PROJECT, "zzz qqq www") == view.Match((), 0)
-
-
-def test_hits_plus_withheld_is_the_raw_match_count(tmp_checkpoint_dir):
-    """I4 over generated forget/quarantine subsets."""
-    import itertools
-    from daimon_briefing import carry
-    queries = ["strangler pattern", "cache write through", "migration owns",
-               "index restarts", "unrelated decision visible"]
-    kinds = ["question", "decision", "belief", "uncertainty"]
-    texts = {"question": S_QUESTION, "decision": S_DECISION,
-             "belief": S_BELIEF, "uncertainty": S_UNCERTAIN}
-    for mask in itertools.product([0, 1, 2], repeat=len(kinds)):
-        _reset()
-        _write()
-        for flag, kind in zip(mask, kinds):
-            if flag == 1:
-                _forget(texts[kind])
-            elif flag == 2:
-                _quarantine(texts[kind], kind)
-        raw = _raw_latest()
-        items = [(f, i) for f, i in schema.iter_items(raw)
-                 if not f.singleton and i.get("id")]
-        generic = carry._generic_terms([str(i.get("text") or "") for _f, i in items])
-        for query in queries:
-            raw_count = sum(1 for _f, i in items if carry._same_item(
-                query, str(i.get("text") or ""), generic))
-            got = view.match(PROJECT, query)
-            assert len(got.hits) + got.withheld == raw_count, (mask, query)
 
 
 def _reset():

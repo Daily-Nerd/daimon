@@ -6,6 +6,8 @@ stayed readable in quarantine prose. The deleter REDACTS in place and never
 drops a record: dropping one would lift the quarantine and let the withheld
 value show again, so the hash latch (`value_key`) has to survive.
 """
+import pytest
+
 from daimon_briefing import cli, ledger_census, normalize, privacy, store, trust
 from daimon_briefing.surfaces import Writer
 
@@ -37,8 +39,26 @@ def _ledger():
     return trust._path(PROJECT)
 
 
+@pytest.fixture(autouse=True)
+def _human(monkeypatch):
+    """A quarantined value is forgotten by its exact id, from a person's
+    terminal (#1132 PR 11b, H6): a text query never binds a withheld one."""
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+
+def _target(value):
+    """The id of the checkpoint item holding `value` (the one item when the
+    stored wording was redacted at write)."""
+    items = {item["id"]: item["text"] for _p, _s, _k, item in
+             store.items_for_project(PROJECT)}
+    for item_id, text in items.items():
+        if text == value:
+            return item_id
+    return next(iter(items)) if len(items) == 1 else value
+
+
 def _forget(value):
-    assert cli.main(["forget", value, "--project", PROJECT]) == 0
+    assert cli.main(["forget", _target(value), "--project", PROJECT]) == 0
 
 
 def _record(tid):
@@ -141,7 +161,7 @@ def test_torn_and_non_json_lines_survive_verbatim(tmp_checkpoint_dir):
             handle.write(line + b"\n")
     # The ledger holds lines forget cannot read, so it says so (exit 4,
     # #1132 PR 10b) while still redacting every row it could.
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    assert cli.main(["forget", _target(CANARY), "--project", PROJECT]) == 4
     lines = _ledger().read_bytes().split(b"\n")
     for line in junk:
         assert line in lines

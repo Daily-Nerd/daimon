@@ -244,3 +244,66 @@ leak):
 
 `occurrences` counts the distinct sessions the window and the index know to
 hold the id, not every copy on disk.
+
+## Verbs that act on an id
+
+`daimon resolve`, `reverify`, `amend propose`, `anchor --attach` and `forget`
+choose their target through the same judgement as every read. None of them
+prints, counts or writes a value the reader may not see.
+
+**A text query never guesses.** `resolve <text>` and `forget <text>` bind only
+when exactly one visible item matches and no withheld item also does. A visible
+hit beside a withheld one is ambiguous, because binding it would be a guess
+about a value you cannot see. The refusal says `ambiguous` and lists the
+visible candidates, then one count line and the verb's own pointer:
+
+```console
+  o-3f8a2c  [open_questions] the release pipeline needs a rollback step
+1 withheld item(s) also match; use the exact id (daimon status --suppressed lists them)
+resolve by exact id: daimon resolve <id>; daimon loops lists the open items
+```
+
+A miss prints `no item matches '<query>'` and the same pointer line, never a
+list of everything. The count line is not printed while the trust ledger cannot
+be read, since then every item is withheld and a number would only say which
+queries matched. `anchor --attach` is stricter: it looks at visible items only
+and prints no count, because a substring plus a count lets one find a hidden
+value a character at a time.
+
+**By exact id:**
+
+| the id is | `resolve`, `reverify` | `amend propose` | `forget` |
+| --- | --- | --- | --- |
+| visible | binds | binds (open loops only) | binds |
+| quarantined | a person binds it, no echo; an agent is refused (exit 2) | refused on every channel (exit 2) | a person binds it; an agent is refused (exit 2) |
+| withheld because the trust ledger cannot be read | refused on every channel with `daimon trust repair` (exit 2) | refused on every channel (exit 2) | binds on every channel |
+| forgotten | not found | not found | not found |
+
+A forgotten id is never a write target for `resolve`, `reverify` or
+`amend propose`: any later event on an id lifts its tombstone, so writing one
+would bring the value back. `forget` does not take one either, so a tombstoned
+id reads as no match for a person and an agent alike; plaintext a forget left
+behind is `daimon ledger repair`'s to scrub and `forget --republish`'s to
+publish. An exact id on `forget` does outrank an outage of the trust ledger,
+because the id names no value.
+
+**Nothing writes the value.** The event `resolve` and `reverify` append holds
+the id, the status and the note, never the item's text, and the serializer's
+supersede candidate holds the two ids and nothing else. `--dry-run` prints
+`would resolve <id>: <text>` for a visible target and the marker for a withheld
+one. `forget` judges a ledger record on both the subject it prints and the
+value your query matched, so a refutation whose evidence restates a
+quarantined claim is counted, not listed.
+
+**`anchor --attach` keeps every other byte.** It patches one item by its
+position in the stored checkpoint and writes the rest back as it was, so a
+quarantined item the briefing hides is still there afterwards. The topic is a
+valid target.
+
+**Relations and the quote audit.** `daimon relations list` and `show`, and the
+viewer's relations panel, read each edge's endpoint text through one lookup: a
+visible endpoint prints its text, a quarantined one (or any endpoint while the
+trust ledger cannot be read) prints the marker, and an edge that touches a
+forgotten item is left out and counted nowhere. `daimon audit quotes` audits the
+copies a reader may see, so a quarantined or forgotten item is neither checked
+nor printed.
