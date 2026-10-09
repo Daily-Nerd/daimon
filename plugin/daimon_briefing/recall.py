@@ -369,8 +369,11 @@ def _fingerprint() -> str:
         # runs, and the index keeps serving the value read_team already
         # withholds. Naming the file .jsonl to dodge the *.json walks is
         # exactly what made this easy to miss.
+        # PR 13: the quarantine ledger is index content the same way, in both
+        # directions: an activation removes rows and a release restores them.
         paths.extend(store._team_ledger_paths(
-            (store._TOMBSTONE_NAME,), include_own=True, include_local=True))
+            (store._TOMBSTONE_NAME, store._QUARANTINE_NAME),
+            include_own=True, include_local=True))
     except OSError:
         pass
     # #963: the bucket-migration receipt is index CONTENT for the same reason

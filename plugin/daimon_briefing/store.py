@@ -1455,11 +1455,14 @@ def _team_ledger_paths(names, *, include_own: bool = False,
 
 
 def forgotten_stamp() -> tuple:
-    """A cheap key that changes whenever the machine-wide forgotten set can:
-    each local bucket's `events.jsonl` (inode, mtime, size) and each foreign
-    tombstone ledger's. A reader that memoizes a judgement of the set keys on
-    this, so a forget in ANOTHER bucket or a pulled tombstone drops its memo.
-    Plain `os` calls: a build asks for it once per bucket it judges."""
+    """A cheap key that changes whenever the machine-wide withheld sets can:
+    each local bucket's `events.jsonl` (inode, mtime, size) and each team
+    author directory's tombstone and quarantine ledger (own author included,
+    the `local` mirror not: `_team_ledger_paths` never resolves the author for
+    this). A reader that memoizes a judgement of the sets keys on this, so a
+    forget in ANOTHER bucket, a pulled tombstone or a pulled quarantine or
+    release drops its memo. Plain `os` calls: a build asks for it once per
+    bucket it judges. The name stays: callers outside this package key on it."""
     root = config.checkpoint_dir()
     base = str(root)
     try:
@@ -1475,7 +1478,8 @@ def forgotten_stamp() -> tuple:
         except OSError:
             local.append((name, None, None, None, None))
     foreign: list[tuple] = []
-    for path in _team_ledger_paths((_TOMBSTONE_NAME,), include_own=True):
+    for path in _team_ledger_paths((_TOMBSTONE_NAME, _QUARANTINE_NAME),
+                                   include_own=True):
         try:
             st = os.stat(path)
             foreign.append((str(path), st.st_mtime_ns, st.st_ctime_ns,
