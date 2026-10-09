@@ -30,7 +30,7 @@ from ..effects import Effects
 from ..ledger import _format_age
 
 
-@_cli.guarded
+@_cli.guarded(writes=True)
 def _cmd_anchor(args) -> int:
     project = _cli._resolve_project(args.project)
     a = anchor.resolve(project, args.file, args.symbol)

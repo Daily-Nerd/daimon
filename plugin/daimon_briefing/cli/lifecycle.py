@@ -60,7 +60,7 @@ def _withheld_reason(withheld) -> str:
     return display.withheld_marker(withheld)[len("[withheld: "):-1]
 
 
-@_cli.guarded
+@_cli.guarded(writes=True)
 def _cmd_resolve(args) -> int:
     """Append a resolution event for ONE checkpoint item (#102). Exact id
     first; else a fuzzy query that must match uniquely — an ambiguous bind
@@ -253,7 +253,7 @@ def _cmd_forget_republish(args) -> int:
     return 4 if published.failed else 0
 
 
-@_cli.guarded
+@_cli.guarded(writes=True)
 def _cmd_forget(args) -> int:
     """Deliberate item removal (#321): append a tombstone event whose status
     carries a content HASH, never the text — removal means the content leaves
@@ -893,7 +893,7 @@ def _is_supersede_candidate(item_id: str, project) -> bool:
     source = str(prior.get("source") or "")
     return status.startswith("supersede-candidate") and source == "serializer"
 
-@_cli.guarded
+@_cli.guarded(writes=True)
 def _cmd_reverify(args) -> int:
     """Evidence-gated reopen (#103): re-stamping a resolved item without
     evidence would mark an unchecked claim verified — the one thing this

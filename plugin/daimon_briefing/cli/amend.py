@@ -50,7 +50,7 @@ def _amend_channel(args) -> str:
     return "cli-tty"
 
 
-@_cli.guarded
+@_cli.guarded(writes=True)
 def _cmd_amend_propose(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "amendments.jsonl")
