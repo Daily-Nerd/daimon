@@ -204,3 +204,18 @@ def test_a_checkpoint_that_changes_between_match_and_write_is_refused(
                    "--project", str(proj)])
     assert rc == 1
     assert "changed while matching" in capsys.readouterr().err
+
+
+def test_a_closed_trust_ledger_refuses_with_the_cure(tmp_checkpoint_dir, proj,
+                                                      capsys):
+    _store(proj)
+    ledger = store.ledger_file(proj, "trust.jsonl")
+    ledger.write_bytes(b"<<<<<<< conflict\n")
+    before = store.project_latest_path(proj).read_bytes()
+    rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "weekly sync",
+                   "--project", str(proj)])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "trust ledger unreadable" in err and "daimon trust repair" in err
+    assert "no cognitive item" not in err and TOPIC not in err
+    assert store.project_latest_path(proj).read_bytes() == before

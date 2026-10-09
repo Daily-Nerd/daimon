@@ -58,7 +58,11 @@ def _cmd_anchor(args) -> int:
     # patches the raw body by position and keeps every withheld byte in place.
     found = view.match(project, args.attach, how="substring")
     if not found.hits:
-        if view.open(project, live=False).checkpoint is None and not found.closed:
+        if found.closed:
+            print("error: items are withheld (trust ledger unreadable); "
+                  "daimon trust repair", file=sys.stderr)
+            return 2
+        if view.open(project, live=False).checkpoint is None:
             print(f"error: no checkpoint found for {project} — nothing to "
                   "attach to", file=sys.stderr)
             return 1
