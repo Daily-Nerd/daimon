@@ -71,11 +71,19 @@ def test_projects_takes_the_forgotten_stamp_and_set_once(tmp_checkpoint_dir,
         _write(f"/p/many-{i}", [f"decision number {i}"])
     stamps, foreign = [], []
     real_stamp = store.forgotten_stamp
-    real_foreign = store.foreign_forgotten_content_keys
+    # A real walk of the teammates' ledgers resolves the author and lists the
+    # foreign paths; a hit on the stat-keyed memo only stats the superset.
+    real_paths = store._team_ledger_paths
+
+    def counting_paths(names, *, include_own=False, include_local=False):
+        if not include_own:
+            foreign.append(1)
+        return real_paths(names, include_own=include_own,
+                          include_local=include_local)
+
     monkeypatch.setattr(store, "forgotten_stamp",
                         lambda: stamps.append(1) or real_stamp())
-    monkeypatch.setattr(store, "foreign_forgotten_content_keys",
-                        lambda: foreign.append(1) or real_foreign())
+    monkeypatch.setattr(store, "_team_ledger_paths", counting_paths)
     listed = view.projects(None)
     assert len(listed) == 6
     assert len(stamps) == 1

@@ -49,9 +49,11 @@ class Snapshot:
 
     `forgotten` is the set recall uses (every local project plus what
     teammates published); it is derived from the events ledgers too, so a
-    fold that raises there empties it and marks events.jsonl UNREADABLE. `quarantined` is this project's own active
-    `(kind, value_key)` pairs and `quarantine_ids` names each one's record;
-    there is no foreign source yet. `health` maps a ledger file name to what
+    fold that raises there empties it and marks events.jsonl UNREADABLE.
+    `quarantined` is this project's own active `(kind, value_key)` pairs plus
+    the pairs teammates published and still claim (D6, machine-wide like
+    `forgotten`, kind-scoped); `quarantine_ids` names the record of each OWN
+    pair only, so a quarantine verdict with no id is a teammate's. `health` maps a ledger file name to what
     `jsonl.read` judged it, or UNREADABLE when its fold raised, for EVERY
     bucket ledger the registry declares (`surfaces.bucket_ledger_names`).
     `unscannable` holds, for a ledger the read could not vouch for, why
@@ -117,6 +119,12 @@ class Snapshot:
         if self.forgotten_incomplete:
             out.append(display.forget_incomplete_note())
         return display.cap_notes(out)
+
+    @cached_property
+    def quarantined_keys(self) -> frozenset:
+        """The value keys of every quarantined pair, whatever its kind: the
+        membership test prose masking uses, so it never scans the pairs."""
+        return frozenset(value_key for _kind, value_key in self.quarantined)
 
     @cached_property
     def resolved_refs(self) -> frozenset:
@@ -345,12 +353,30 @@ def read_scopes(project, *, all_projects: bool = False) -> list[str] | None:
     return scopes
 
 
+def machine_sets() -> tuple[frozenset, frozenset]:
+    """`(forgotten, foreign_pairs)`, the two machine-wide sets every verdict
+    reads, from ONE walk of the teammates' published ledgers. `forgotten` is
+    every local project's tombstones plus what teammates published;
+    `foreign_pairs` is the `(kind, value_key)` pairs teammates still claim
+    quarantined (own author and the `local` mirror excluded). Memoized in
+    `store`, so a caller that needs them for many buckets asks once."""
+    team = store.foreign_team()
+    return (frozenset(store.all_forgotten_content_keys() | team.keys),
+            team.quarantines)
+
+
+def foreign_pairs() -> frozenset:
+    """The `(kind, value_key)` pairs teammates still claim quarantined: the
+    second half of `machine_sets` for a caller that already holds the
+    forgotten set (a judge given one) and must not walk the local ledgers
+    again."""
+    return store.foreign_team().quarantines
+
+
 def forgotten_keys() -> frozenset:
     """The machine-wide forgotten set, the one `snapshot` reads: every local
-    project's tombstones plus what teammates published. Memoized in `store`,
-    so a caller that needs it for many buckets (`projects`) asks once."""
-    return frozenset(store.all_forgotten_content_keys()
-                     | store.foreign_forgotten_content_keys())
+    project's tombstones plus what teammates published."""
+    return machine_sets()[0]
 
 
 def forgotten_ids(resolutions) -> frozenset:
@@ -455,13 +481,15 @@ def snapshot(project) -> Snapshot:
         return briefing.rulings_read(project, read=refut)
 
     rulings = folded("refutations.jsonl", read_rulings, None)
-    forgotten = folded("events.jsonl", forgotten_keys, frozenset())
+    forgotten, foreign = folded(
+        "events.jsonl", machine_sets, (frozenset(), frozenset()))
     ids = folded("events.jsonl", lambda: forgotten_ids(resolutions),
                  frozenset())
     incomplete = folded("events.jsonl", store.forgotten_incomplete,
                         frozenset())
     return Snapshot(
-        forgotten=forgotten, quarantined=frozenset(quarantine_ids),
+        forgotten=forgotten,
+        quarantined=frozenset(quarantine_ids) | foreign,
         quarantine_ids=_frozen(quarantine_ids),
         quarantine_items=_frozen(quarantine_items),
         resolutions=_frozen(resolutions), amendments=_frozen(amend),
@@ -569,18 +597,24 @@ def _is_bare_slug(slug) -> bool:
 
 def _read_judge(slug, forgotten=None) -> tuple[Judge, bool]:
     """`(judge, memoizable)` for a bucket slug, read fresh. A fold that raises
-    (the machine forgotten set, this bucket's forgotten ids) cannot prove that
-    nothing is forgotten, so the judge is closed and not memoized."""
+    (the machine forgotten set, the teammates' pairs, this bucket's forgotten
+    ids) cannot prove that nothing is forgotten or quarantined, so the judge
+    is closed and not memoized. Both branches, the bucket's and the slug-less
+    one, take the same machine-wide sets."""
     bucket = _bucket(slug) if slug else None
     proven = True
-    if forgotten is None:
-        try:
-            forgotten = forgotten_keys()
-        except Exception:  # noqa: BLE001
-            forgotten, proven = frozenset(), False
+    try:
+        if forgotten is None:
+            forgotten, foreign = machine_sets()
+        else:
+            foreign = foreign_pairs()
+    except Exception:  # noqa: BLE001
+        forgotten, foreign, proven = (frozenset() if forgotten is None
+                                      else forgotten), frozenset(), False
     if bucket is None:
         return (Judge(dataclasses.replace(Snapshot.empty(),
                                           forgotten=forgotten,
+                                          quarantined=foreign,
                                           closed=not proven)), proven)
     trust_read = jsonl.read(bucket / "trust.jsonl")
     events_read = jsonl.read(bucket / "events.jsonl")
@@ -595,7 +629,8 @@ def _read_judge(slug, forgotten=None) -> tuple[Judge, bool]:
              "events.jsonl": (events_read.health, events_read.detail,
                               events_read.cannot_scan)}
     snap = dataclasses.replace(
-        Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
+        Snapshot.empty(), forgotten=forgotten,
+        quarantined=frozenset(ids) | foreign,
         quarantine_ids=_frozen(ids), quarantine_items=_frozen(items),
         forgotten_ids=folded,
         health=_frozen({**Snapshot.empty().health,
@@ -893,10 +928,12 @@ def prose_verdict(text, snap: Snapshot, *,
     key = normalize.content_key(stripped)
     if key in snap.forgotten:
         return Withheld(None, "prose", "forgotten", None, key)
-    for kind, value_key in snap.quarantined:
-        if key == value_key:
-            return Withheld(None, "prose", "quarantine",
-                            snap.quarantine_ids.get((kind, value_key)), key)
+    if key in snap.quarantined_keys:
+        # Membership by key, whatever the kind; the id is the reader's own
+        # record's when it holds the pair, and None for a teammate's.
+        own = next((qid for (_kind, value_key), qid
+                    in snap.quarantine_ids.items() if value_key == key), None)
+        return Withheld(None, "prose", "quarantine", own, key)
     return None
 
 
