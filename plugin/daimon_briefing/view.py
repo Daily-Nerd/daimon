@@ -56,7 +56,11 @@ class Snapshot:
     (`jsonl.Read.cannot_scan`: an errno name, `undecodable`). `closed` is True
     when any ledger's registry read posture is CLOSED: today the trust ledger
     UNREADABLE or TRANSIENT, where nothing can be proven not quarantined.
-    `forgotten_incomplete` holds the slugs whose events ledger cannot be read
+    `quarantine_items` maps an item id to `(kind, quarantine_id, value_key)`
+    for each active quarantine whose record names one (a human passed
+    `--item-id`): the hint a lookup uses for an id whose checkpoint copy has
+    left the retained window. `forgotten_incomplete` holds the slugs whose
+    events ledger cannot be read
     (the machine-wide forget set may miss a tombstone); notes name no slug.
     `index_closed` is True when this bucket's OWN events ledger is unproven:
     only the recall index consults it. `forgotten_ids` are this bucket's item ids whose latest
@@ -78,13 +82,15 @@ class Snapshot:
     unscannable: Mapping = field(default_factory=dict)
     forgotten_incomplete: frozenset = frozenset()
     index_closed: bool = False
+    quarantine_items: Mapping = field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> "Snapshot":
         """Nothing forgotten, quarantined or resolved, every ledger absent."""
         return cls(
             forgotten=frozenset(), quarantined=frozenset(),
-            quarantine_ids=_frozen({}), resolutions=_frozen({}),
+            quarantine_ids=_frozen({}), quarantine_items=_frozen({}),
+            resolutions=_frozen({}),
             amendments=_frozen({}), corroborations=_frozen({}),
             rulings=None, requests=_frozen({}),
             health=_frozen({name: Health.ABSENT
@@ -329,9 +335,10 @@ def unproven(health: Health) -> bool:
 
 
 def _trust_index(project, read: jsonl.Read) -> tuple:
-    """`(quarantine_ids, health, detail)` for one bucket's trust ledger: the
-    active quarantines as `{(kind, value_key): quarantine_id}`, and what the
-    ledger is. `read` is `jsonl.read` of trust.jsonl; a fold that raises marks
+    """`(quarantine_ids, quarantine_items, health, detail)` for one bucket's
+    trust ledger: the active quarantines as `{(kind, value_key):
+    quarantine_id}`, the active ones that name an item id as `{item_id: (kind,
+    quarantine_id, value_key)}`, and what the ledger is. `read` is `jsonl.read` of trust.jsonl; a fold that raises marks
     the ledger UNREADABLE, which closes the view. The one place the quarantine
     rule and that closing rule live, for `snapshot` and `_light` alike; the
     fold is `trust.records`, never a copy of it."""
@@ -341,10 +348,12 @@ def _trust_index(project, read: jsonl.Read) -> tuple:
     except Exception as exc:  # noqa: BLE001 — a fold's raise is a health state
         records = {}
         health, detail = Health.UNREADABLE, f"fold raised {type(exc).__name__}"
-    ids = {(r["kind"], r["value_key"]): r["quarantine_id"]
-           for r in records.values()
-           if r.get("state") == "active" and r.get("value_key")}
-    return ids, health, detail
+    active = [r for r in records.values()
+              if r.get("state") == "active" and r.get("value_key")]
+    ids = {(r["kind"], r["value_key"]): r["quarantine_id"] for r in active}
+    items = {r["item_id"]: (r["kind"], r["quarantine_id"], r["value_key"])
+             for r in active if r.get("item_id")}
+    return ids, items, health, detail
 
 
 def snapshot(project) -> Snapshot:
@@ -376,8 +385,8 @@ def snapshot(project) -> Snapshot:
                          lambda: store.fold_resolutions(rows), {})
     corroborations = folded("events.jsonl",
                             lambda: store.fold_corroborations(rows), {})
-    quarantine_ids, health["trust.jsonl"], detail = _trust_index(
-        project, reads["trust.jsonl"])
+    (quarantine_ids, quarantine_items, health["trust.jsonl"],
+     detail) = _trust_index(project, reads["trust.jsonl"])
     if detail:
         details["trust.jsonl"] = detail
     refut = reads["refutations.jsonl"]
@@ -410,6 +419,7 @@ def snapshot(project) -> Snapshot:
     return Snapshot(
         forgotten=forgotten, quarantined=frozenset(quarantine_ids),
         quarantine_ids=_frozen(quarantine_ids),
+        quarantine_items=_frozen(quarantine_items),
         resolutions=_frozen(resolutions), amendments=_frozen(amend),
         corroborations=_frozen(corroborations), rulings=rulings,
         requests=_frozen(asks), health=_frozen(health),
@@ -530,7 +540,7 @@ def _read_judge(slug, forgotten=None) -> tuple[Judge, bool]:
                                           closed=not proven)), proven)
     trust_read = jsonl.read(bucket / "trust.jsonl")
     events_read = jsonl.read(bucket / "events.jsonl")
-    ids, health, detail = _trust_index(slug, trust_read)
+    ids, items, health, detail = _trust_index(slug, trust_read)
     try:
         folded = forgotten_ids(store.fold_resolutions(events_read.rows))
     except Exception:  # noqa: BLE001
@@ -542,7 +552,8 @@ def _read_judge(slug, forgotten=None) -> tuple[Judge, bool]:
                               events_read.cannot_scan)}
     snap = dataclasses.replace(
         Snapshot.empty(), forgotten=forgotten, quarantined=frozenset(ids),
-        quarantine_ids=_frozen(ids), forgotten_ids=folded,
+        quarantine_ids=_frozen(ids), quarantine_items=_frozen(items),
+        forgotten_ids=folded,
         health=_frozen({**Snapshot.empty().health,
                         **{n: r[0] for n, r in reads.items()}}),
         details=_frozen({n: r[1] for n, r in reads.items() if r[1]}),
