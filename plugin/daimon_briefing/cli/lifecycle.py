@@ -149,7 +149,7 @@ def _cmd_resolve(args) -> int:
             return 2
         bound = found.exact
     elif target is None:
-        # #303: a refused attempt must leave its own trace — otherwise
+        # #303: a refused attempt must leave its own trace, otherwise
         # "no agent ever tried resolve" and "an agent tried and was
         # refused" are indistinguishable in `daimon stats`, and the two
         # have opposite fixes (teaching vs UX).
@@ -932,7 +932,7 @@ def _cmd_reverify(args) -> int:
         # readable here, so only a person's evidence vouches for it
         if not evidence:
             print("re-stamping without evidence would mark an unchecked "
-                  "claim verified — supply --evidence")
+                  "claim verified; supply --evidence")
             return 1
         note = f"evidence: {evidence}"
         item_id = str(bound.item_id)
@@ -959,13 +959,13 @@ def _cmd_reverify(args) -> int:
             note = f"evidence: {evidence}"
         elif _is_supersede_candidate(item_id, project):
             # #111: the target is an unconfirmed machine SUGGESTION, never a
-            # withheld/suppressed item — rejecting a guess needs no proof. The
+            # withheld/suppressed item, so rejecting a guess needs no proof. The
             # reopened event below is a human verdict, so the human-speaks-once
             # gate (#14) silences re-detection of this candidate permanently.
             note = "candidate rejected"
         else:
             print("re-stamping without evidence would mark an unchecked claim "
-                  "verified — supply --evidence, or fix the anchored code "
+                  "verified; supply --evidence, or fix the anchored code "
                   "and retry")
             return 1
     ok = store.append_event(item_id, "reopened", note=note,

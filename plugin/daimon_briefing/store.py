@@ -1709,7 +1709,7 @@ def attach_anchor(project_dir, locator: tuple, anchor: dict, *,
         raise LookupError("item changed")
     session_id = str(body.get("session_id", "")).strip()
     if not session_id:
-        raise ValueError("latest checkpoint has no session_id — cannot re-write")
+        raise ValueError("latest checkpoint has no session_id; cannot re-write")
     item["anchored_to"] = anchor
     return write_checkpoint(session_id, body, project_dir=project_dir,
                             writer=Writer.HUMAN)

@@ -63,14 +63,14 @@ def _cmd_anchor(args) -> int:
                   "daimon trust repair", file=sys.stderr)
             return 2
         if view.open(project, live=False).checkpoint is None:
-            print(f"error: no checkpoint found for {project} — nothing to "
+            print(f"error: no checkpoint found for {project}; nothing to "
                   "attach to", file=sys.stderr)
             return 1
         print(f"error: no cognitive item text contains {args.attach!r} "
               "in the latest checkpoint", file=sys.stderr)
         return 1
     if len(found.hits) > 1:
-        print(f"error: {len(found.hits)} items match {args.attach!r} — "
+        print(f"error: {len(found.hits)} items match {args.attach!r}; "
               "narrow the match:", file=sys.stderr)
         for hit in found.hits:
             print(f"  - {hit.item.get('text')}", file=sys.stderr)
@@ -80,7 +80,7 @@ def _cmd_anchor(args) -> int:
         written = store.attach_anchor(project, hit.at, a,
                                       text=str(hit.item.get("text", "")))
     except LookupError:
-        print("error: the checkpoint changed while matching — run it again",
+        print("error: the checkpoint changed while matching; run it again",
               file=sys.stderr)
         return 1
     except ValueError as exc:

@@ -150,11 +150,11 @@ def candidate_lines(rows, *, query, pointer, closed: bool = False,
         if r.verdict is not None and r.verdict.reason in ("quarantine", "closed"))
     lines: list[str] = []
     if visible:
-        lines.append(f"ambiguous — matches {query!r}; candidates:")
+        lines.append(f"ambiguous: matches {query!r}; candidates:")
         for r in visible:
             line = f"  {r.id}  [{r.label}] {r.text}"
             if r.matched is not None and r.matched != r.text:
-                line += f" — matched: {r.matched}"
+                line += f" (matched: {r.matched})"
             lines.append(line)
     elif counted:
         lines.append(f"no visible item matches {query!r}")

@@ -563,7 +563,7 @@ def audit_project(project_dir=None) -> dict:
     # tombstones — amendments.forget_item_id removes rows about a forgotten
     # item, so a surviving one means the scrub was missed or raced.
     # `tombstoned` is the set the RELATIONS block above computed
-    # (store.tombstoned_item_ids) — a deliberate shared read, named here
+    # (store.tombstoned_item_ids): a deliberate shared read, named here
     # so reordering these blocks does not silently sever it.
     amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
     scanned = _scan_rows(amend_path, result)

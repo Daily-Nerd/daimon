@@ -774,7 +774,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["resolve", ctx["ids"][_T_KEEP], "--note", "shipped"], 0)
 
     def r_forget():
-        # #599: events.jsonl holds the target's text as `item_text` — the
+        # #599: events.jsonl holds the target's text as `item_text`, so the
         # forget below must REWRITE the ledger (the one ratified rewrite of
         # the append-only file), not just append its tombstone, so that write
         # is observed and asserted governed. `resolve` no longer writes the

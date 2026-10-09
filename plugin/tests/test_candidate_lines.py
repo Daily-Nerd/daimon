@@ -21,9 +21,9 @@ def _w(reason):
 def test_visible_rows_print_with_the_label_and_the_matched_value():
     rows = [_row("o-1", "first"), _row("o-2", "second", matched="other")]
     assert display.candidate_lines(rows, query="q", pointer=POINTER) == [
-        "ambiguous — matches 'q'; candidates:",
+        "ambiguous: matches 'q'; candidates:",
         "  o-1  [question] first",
-        "  o-2  [question] second — matched: other",
+        "  o-2  [question] second (matched: other)",
         POINTER]
 
 
@@ -42,7 +42,7 @@ def test_withheld_rows_are_counted_never_printed():
     rows = [_row("o-1", "visible"), _row("o-2", "hidden", verdict=_w("quarantine")),
             _row("o-3", "hidden too", verdict=_w("closed"))]
     lines = display.candidate_lines(rows, query="q", pointer=POINTER)
-    assert lines == ["ambiguous — matches 'q'; candidates:",
+    assert lines == ["ambiguous: matches 'q'; candidates:",
                      "  o-1  [question] visible", COUNT.format(n=2), POINTER]
     assert "hidden" not in "\n".join(lines) and "o-2" not in "\n".join(lines)
 

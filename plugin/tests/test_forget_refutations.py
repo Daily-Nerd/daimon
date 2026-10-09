@@ -561,7 +561,7 @@ def test_forget_selector_never_offers_a_shared_anchor_token(
 
     # The REASON must be the pool excluding the token, never the ambiguity
     # gate masking an over-reach: with the token in the pool both records
-    # would hit and the refusal would read "ambiguous — matches" instead.
+    # would hit and the refusal would read "ambiguous: matches" instead.
     assert "no item matches" in capsys.readouterr().out
     assert refutations.get(kept, project_dir=PROJECT) is not None
 
