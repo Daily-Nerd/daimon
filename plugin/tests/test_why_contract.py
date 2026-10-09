@@ -8,7 +8,8 @@ import json
 
 import pytest
 
-from daimon_briefing import api, display, inspector, normalize, store, trust, view
+from daimon_briefing import (api, display, inspector, normalize, provenance,
+                             store, trust, view)
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/why-contract"
@@ -200,3 +201,107 @@ def test_a_short_rendering_prints_the_source_line_it_is_given():
         "ranking": None,
         "source": {"host": "claude-code", "session_id": "S-9"}})
     assert "Source: claude-code session S-9" in lines
+
+
+# ---- the textless evidence axes of a withheld item (H13) --------------------
+
+
+def _receipt():
+    source = {"version": provenance.SOURCE_REF_VERSION, "host": "claude-code",
+              "session_id": "S-source", "locator": "managed",
+              "author": "alice"}
+    return provenance.quote_receipt(
+        source, {"algorithm": "sha256", "scope": "raw-file",
+                 "value": "a" * 64},
+        outcome="verified", checked_at="2026-08-05T10:00:00Z",
+        binding_mode="message-ids", message_ids=("u-1",))
+
+
+def _bound_and_quarantined():
+    store.write_checkpoint("S-1", {
+        "session_id": "S-1", "created": "2026-09-01T10:00:00Z",
+        "author": "alice",
+        "working_context": {
+            "active_topic": {"text": "contract", "trust": "inferred"},
+            "recent_decisions": [{
+                "text": SECRET, "id": ITEM, "trust": "verbatim",
+                "quote": SECRET, "quote_provenance": _receipt(),
+                "quote_verified": True}]},
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
+    return trust.propose(text=SECRET, kind="decision", reason="fabricated",
+                         evidence=["issue:1"], channel="cli-tty",
+                         project_dir=PROJECT)
+
+
+def test_a_withheld_items_bound_receipt_still_reports_its_axes(
+        tmp_checkpoint_dir, tmp_path):
+    _bound_and_quarantined()
+    resolver = provenance.SourceResolver(
+        home=tmp_path, codex_home=tmp_path / ".codex",
+        claude_projects=tmp_path / "none", current_author="alice")
+    got = inspector.inspect_item(PROJECT, ITEM, resolver=resolver)
+    axes = got["axes"]
+    assert axes["capture"] == "verified"
+    assert axes["provenance"] == "bound"
+    assert axes["locator"] == "absent-local"
+    assert axes["bytes"] == "unknown"
+    assert axes["verifier_comparison"] == "same-version"
+    assert axes["current_support"] == "withheld"
+    # the receipt itself, the source and the quote still do not travel
+    assert got["receipt"] is None and got["source"] is None
+    assert got["item"]["quote"]["state"] == "withheld"
+    assert SECRET not in json.dumps(got)
+    lines = inspector.human_lines(got)
+    assert lines[0].startswith("Now: capture verified;")
+    assert "unknown" not in lines[0].split(";")[0]
+
+
+def test_an_unbound_withheld_item_reports_legacy_axes(tmp_checkpoint_dir):
+    _quarantine()
+    axes = inspector.inspect_item(PROJECT, ITEM)["axes"]
+    assert axes["capture"] == "unknown"
+    assert axes["provenance"] in ("legacy-unbound", "legacy-inferred")
+
+
+def test_the_view_projection_carries_no_text(tmp_checkpoint_dir):
+    _bound_and_quarantined()
+    w = view.lookup(PROJECT, ITEM)
+    assert isinstance(w, view.Withheld) and w.receipt is not None
+    assert set(w.receipt) == {"quote_provenance", "origin_session",
+                              "origin_author"}
+    assert SECRET not in repr(w) and "SENTINEL" not in repr(w)
+    assert w.receipt["quote_provenance"]["outcome"] == "verified"
+
+
+def test_a_projection_is_dropped_when_the_receipt_is_not_valid(
+        tmp_checkpoint_dir):
+    store.write_checkpoint("S-1", {
+        "session_id": "S-1", "created": "2026-09-01T10:00:00Z",
+        "working_context": {"recent_decisions": [{
+            "text": SECRET, "id": ITEM, "trust": "inferred",
+            "quote_provenance": {"outcome": SECRET}}]},
+        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
+    trust.propose(text=SECRET, kind="decision", reason="fabricated",
+                  evidence=["issue:1"], channel="cli-tty", project_dir=PROJECT)
+    w = view.lookup(PROJECT, ITEM)
+    assert w.receipt["quote_provenance"] is None
+    assert SECRET not in repr(w)
+
+
+def test_the_human_maps_know_a_withheld_support_and_source_state():
+    assert inspector._SUPPORT_WORDS["withheld"] == "quote withheld"
+    assert inspector._source_state(
+        {"bytes": "withheld", "locator": "x"}) == "source withheld"
+    lines = inspector.human_lines({
+        "item": {"item_id": ITEM, "kind": "decision", "text": "plain"},
+        "axes": {"capture": "verified", "provenance": "bound",
+                 "locator": "absent-local", "bytes": "withheld",
+                 "current_support": "withheld", "verifier_comparison":
+                 "same-version", "lifecycle": "active"},
+        "ranking": {"effective_weight": 0.1, "rules": "recent_decision",
+                    "inputs": {"age_days": None, "importance": 5,
+                               "importance_source": "default",
+                               "trust": None, "trust_ceiling": 1.0}},
+        "corroboration": {"count": 0, "references": []}})
+    assert lines[0] == ("Now: capture verified; source withheld; "
+                        "quote withheld")

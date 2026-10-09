@@ -293,6 +293,45 @@ _INDEX_ONLY_NOTE = ("this project's own checkpoint surfaces do not hold "
                     "on this machine")
 
 
+class _Evidence:
+    """The evidence axes of one item (or of the textless projection of a
+    withheld one): the receipt, the source it names, and what the resolver and
+    the transcript say about it. Nothing here reads a ledger."""
+
+    def __init__(self, item: dict, resolver, *, infer_source: bool = True):
+        receipt: Any = item.get("quote_provenance")
+        self.receipt = receipt
+        self.bound = provenance.valid_quote_receipt(receipt)
+        self.source: Any
+        if self.bound:
+            self.source = receipt["source"]
+            self.provenance = "bound"
+        else:
+            self.source = _legacy_source(item) if infer_source else None
+            self.provenance = ("legacy-inferred" if self.source is not None
+                               else "legacy-unbound")
+        if resolver is None:
+            resolver = provenance.SourceResolver(
+                claude_projects=config.claude_projects_dir(),
+                current_author=config.author())
+        self.resolution = (resolver.resolve(self.source)
+                           if self.source is not None
+                           else provenance.SourceResolution("unsupported"))
+        self.messages = (_messages(self.resolution.path)
+                         if self.resolution.state == "resolved"
+                         and self.resolution.path is not None else None)
+        self.capture = receipt["outcome"] if self.bound else "unknown"
+        self.verifier = "unknown"
+        if self.bound:
+            current = (provenance.QUOTE_VERIFIER_ID,
+                       provenance.QUOTE_VERIFIER_VERSION)
+            recorded = (receipt["verifier"]["id"],
+                        receipt["verifier"]["version"])
+            self.verifier = ("same-version" if recorded == current
+                             else "different-version")
+        self.bytes = _bytes_axis(receipt, self.resolution, self.messages)
+
+
 def _lifecycle_event(latest) -> dict | None:
     """The judged latest lifecycle event, shaped for the result. A tombstone
     is the bare word `forgotten` (the view collapses its status), never the
@@ -312,13 +351,14 @@ def _corroboration(item: dict, entry) -> dict:
     return {"count": len(references), "references": references}
 
 
-def _unknown_axes(lifecycle: str, support: str) -> dict:
+def _events_only_axes(lifecycle: str) -> dict:
+    """An id with no copy has no receipt: every evidence axis is unknown."""
     return {
         "capture": "unknown",
         "provenance": "legacy-unbound",
         "locator": "unsupported",
         "bytes": "unknown",
-        "current_support": support,
+        "current_support": "not-checked",
         "verifier_comparison": "unknown",
         "lifecycle": lifecycle,
     }
@@ -339,20 +379,36 @@ def _no_item(item_id: str, kind: str, slug, text) -> dict:
     }
 
 
-def _withheld_result(verdict, lineage, slug, include_source: bool) -> dict:
+def _withheld_result(verdict, lineage, slug, include_source: bool,
+                     resolver=None) -> dict:
     """The `why` payload for an item the reader may not see. It is built from
     the `Withheld` and the lineage only and never receives an item, so no
-    value, quote, receipt, tool context or transcript window can reach it. The
-    id, the kind and the lifecycle still print: a person has to see that a
-    quarantine or a forget exists to act on it. The evidence axes that rest on
-    the item's own receipt cannot be read without the item, so they report
-    unknown rather than inventing a value."""
+    value, quote, tool context or transcript window can reach it. The id, the
+    kind and the lifecycle still print: a person has to see that a quarantine
+    or a forget exists to act on it. The evidence axes keep reporting from the
+    textless projection the view took when it withheld the copy
+    (`Withheld.receipt`: the quote receipt and the origin stamps), so a
+    teammate's forget does not blank how the item was captured (#1070, H13).
+    The receipt and the source themselves are not published."""
+    projection = verdict.receipt or {}
+    evidence = _Evidence(
+        {"quote_provenance": projection.get("quote_provenance"),
+         "origin_session": projection.get("origin_session"),
+         "origin_author": projection.get("origin_author")}, resolver)
     marker = display.withheld_json(verdict)
     result = {
         "schema_version": SCHEMA_VERSION,
         "item": _no_item(verdict.item_id, verdict.kind, slug, marker),
         "preceding_tool_context": None,
-        "axes": _unknown_axes(lineage.lifecycle, "withheld"),
+        "axes": {
+            "capture": evidence.capture,
+            "provenance": evidence.provenance,
+            "locator": evidence.resolution.state,
+            "bytes": evidence.bytes,
+            "current_support": "withheld",
+            "verifier_comparison": evidence.verifier,
+            "lifecycle": lineage.lifecycle,
+        },
         "corroboration": {"count": 0, "references": []},
         "ranking": None,
         "receipt": None,
@@ -376,7 +432,7 @@ def _events_only_result(item_id: str, lineage, slug, include_source: bool
         "schema_version": SCHEMA_VERSION,
         "item": _no_item(item_id, "unknown", slug, None),
         "preceding_tool_context": _preceding_tool_context({}),
-        "axes": _unknown_axes(lineage.lifecycle, "not-checked"),
+        "axes": _events_only_axes(lineage.lifecycle),
         "corroboration": _corroboration({}, lineage.corroboration),
         "ranking": None,
         "receipt": None,
@@ -410,7 +466,8 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
     verdict = lineage.verdict
     slug = store.project_slug(project_dir)
     if isinstance(verdict, view.Withheld):
-        return _withheld_result(verdict, lineage, slug, include_source)
+        return _withheld_result(verdict, lineage, slug, include_source,
+                                resolver)
     if not isinstance(verdict, view.Found):
         if not lineage.events:
             return None
@@ -420,37 +477,11 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
     kind = verdict.field.kind
     meta = verdict.meta
     index_only = verdict.source == "index"
-    receipt: Any = item.get("quote_provenance")
-    bound = provenance.valid_quote_receipt(receipt)
-    source: Any
-    if bound:
-        source = receipt["source"]
-        provenance_axis = "bound"
-    else:
-        # An index row names the session that held a copy, which can be a
-        # teammate's mirror or a carrier: not an origin, so nothing is inferred.
-        source = None if index_only else _legacy_source(item)
-        provenance_axis = ("legacy-inferred" if source is not None
-                           else "legacy-unbound")
-
-    if resolver is None:
-        resolver = provenance.SourceResolver(
-            claude_projects=config.claude_projects_dir(),
-            current_author=config.author())
-    resolution = (resolver.resolve(source) if source is not None
-                  else provenance.SourceResolution("unsupported"))
-    messages = (_messages(resolution.path)
-                if resolution.state == "resolved" and resolution.path is not None
-                else None)
-
-    capture = receipt["outcome"] if bound else "unknown"
-    verifier = "unknown"
-    if bound:
-        current = (provenance.QUOTE_VERIFIER_ID,
-                   provenance.QUOTE_VERIFIER_VERSION)
-        recorded = (receipt["verifier"]["id"],
-                    receipt["verifier"]["version"])
-        verifier = "same-version" if recorded == current else "different-version"
+    # An index row names the session that held a copy, which can be a
+    # teammate's mirror or a carrier: not an origin, so nothing is inferred.
+    ev = _Evidence(item, resolver, infer_source=not index_only)
+    receipt, bound, source = ev.receipt, ev.bound, ev.source
+    resolution, messages = ev.resolution, ev.messages
 
     result = {
         "schema_version": SCHEMA_VERSION,
@@ -469,13 +500,13 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         },
         "preceding_tool_context": _preceding_tool_context(item),
         "axes": {
-            "capture": capture,
-            "provenance": provenance_axis,
+            "capture": ev.capture,
+            "provenance": ev.provenance,
             "locator": resolution.state,
-            "bytes": _bytes_axis(receipt, resolution, messages),
+            "bytes": ev.bytes,
             "current_support": _support_axis(
                 item, receipt, resolution, messages),
-            "verifier_comparison": verifier,
+            "verifier_comparison": ev.verifier,
             "lifecycle": lineage.lifecycle,
         },
         "corroboration": _corroboration(item, lineage.corroboration),
@@ -587,23 +618,32 @@ def _short_lines(result: dict, item: dict, axes: dict) -> list[str]:
     return lines
 
 
+_SUPPORT_WORDS = {
+    "message-id-match": "quote supported by its bound message",
+    "transcript-scan-match": "quote supported by transcript scan",
+    "not-reproduced": "quote not reproduced",
+    "not-checked": "quote not checked",
+    "withheld": "quote withheld",
+}
+
+
+def _source_state(axes: dict) -> str:
+    return {
+        "unchanged": "source unchanged",
+        "changed": "source changed",
+        "unknown": f"source bytes unknown ({axes['locator']})",
+        "withheld": "source withheld",
+    }[axes["bytes"]]
+
+
 def human_lines(result: dict) -> list[str]:
     """Compact human rendering; JSON intentionally has no derived summary."""
     item = result["item"]
     axes = result["axes"]
     if result.get("ranking") is None:
         return _short_lines(result, item, axes)
-    support = {
-        "message-id-match": "quote supported by its bound message",
-        "transcript-scan-match": "quote supported by transcript scan",
-        "not-reproduced": "quote not reproduced",
-        "not-checked": "quote not checked",
-    }[axes["current_support"]]
-    source_state = ({
-        "unchanged": "source unchanged",
-        "changed": "source changed",
-        "unknown": f"source bytes unknown ({axes['locator']})",
-    }[axes["bytes"]])
+    support = _SUPPORT_WORDS[axes["current_support"]]
+    source_state = _source_state(axes)
     item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
                  f"{item.get('text') or '(content unavailable)'}")
     lines = [

@@ -91,8 +91,8 @@ def test_lineage_of_a_missing_id_pays_one_snapshot_and_one_window(
 def test_the_lookup_is_far_cheaper_than_the_machine_wide_walk(busy_store,
                                                               capsys):
     """Figures for the record (run with -s). The old path parsed every JSON
-    file of every project (`store.project_surfaces`); the bound here is the
-    shape (an order of magnitude), not a wall-clock budget."""
+    file of every project (`store.project_surfaces`). Print-only: the bound
+    is structural (the tests above), never a wall-clock budget."""
     t0 = time.perf_counter()
     surfaces = store.project_surfaces(PROJECT)
     walk_ms = (time.perf_counter() - t0) * 1000
@@ -103,4 +103,3 @@ def test_the_lookup_is_far_cheaper_than_the_machine_wide_walk(busy_store,
         print(f"\nwhy cost: old walk {walk_ms:.1f} ms over {len(surfaces)} "
               f"files in scope ({NOISE + MINE} flat files on disk); "
               f"lookup_many {lookup_ms:.1f} ms")
-    assert lookup_ms < max(walk_ms, 20.0) * 2

@@ -74,27 +74,6 @@ def _endpoint(entry: dict | None) -> dict | None:
     }
 
 
-def _items_by_id(checkpoint: dict) -> dict:
-    """`{item_id: (kind, item)}` for one checkpoint body.
-
-    Keyed on the id `policy.stamp_item_ids` wrote, never on text: text is what
-    a restatement changes, and matching on it would report one item twice (the
-    false-merge lesson, #13). Non-dict entries are skipped —
-    contradictions_flagged may hold bare strings, which carry no id."""
-    out: dict = {}
-    for field in schema.ITEM_FIELDS:
-        if field.singleton:
-            continue
-        for item in ((checkpoint.get(field.section) or {}).get(
-                field.key) or []):
-            if not isinstance(item, dict):
-                continue
-            item_id = item.get("id")
-            if isinstance(item_id, str) and item_id and item_id not in out:
-                out[item_id] = (field.kind, item)
-    return out
-
-
 def _gone_reason(lifecycle: str, event) -> tuple[str, str]:
     """Why an item present in the older checkpoint is absent from the newer
     one, read off the project's own lifecycle ledger. `lifecycle` is the
@@ -159,8 +138,15 @@ def changes(older, newer, snap) -> list[dict]:
     where the item is visible. A released quarantine is therefore never a
     false `added`, and a new one never a false `gone`. A forgotten item has
     no row at all."""
-    before = _items_by_id(older.checkpoint or {})
-    after = _items_by_id(newer.checkpoint or {})
+    # Keyed on the id `policy.stamp_item_ids` wrote, never on text: text is
+    # what a restatement changes, and matching on it would report one item
+    # twice (the false-merge lesson, #13). A singleton or a bare string
+    # (contradictions_flagged) carries no id and is skipped.
+    before, after = ({
+        item["id"]: (fld.kind, item)
+        for fld, item in reversed(list(schema.iter_items(body or {})))
+        if not fld.singleton and isinstance(item.get("id"), str)
+        and item["id"]} for body in (older.checkpoint, newer.checkpoint))
     held_before, held_after = _withheld_in(older), _withheld_in(newer)
     rows: list[dict] = []
     for item_id in {*before, *after, *held_before, *held_after}:

@@ -292,15 +292,24 @@ def test_the_window_of_an_unnameable_project_is_empty(tmp_checkpoint_dir):
     assert view.pointers("   ") == ()
 
 
-def test_items_by_id_skips_a_bare_string_contradiction(tmp_checkpoint_dir):
+def test_diff_skips_a_bare_string_contradiction(tmp_checkpoint_dir, capsys):
     """contradictions_flagged may hold plain strings, which carry no id."""
     checkpoint = _checkpoint("S-1", "2026-09-01T10:00:00Z",
                              decisions=[_item("alpha fact")])
     checkpoint["epistemic_snapshot"]["contradictions_flagged"] = [
         "a legacy bare-string contradiction"]
-    assert store.write_checkpoint("S-1", checkpoint, project_dir=_PROJECT, writer=Writer.HUMAN)
-    by_id = history._items_by_id(checkpoint)
-    assert list(by_id) == [_ids(checkpoint)["alpha fact"]]
+    assert store.write_checkpoint("S-1", checkpoint, project_dir=_PROJECT,
+                                  writer=Writer.HUMAN)
+    second = _checkpoint("S-2", "2026-09-01T11:00:00Z",
+                         decisions=[_item("alpha fact"), _item("beta fact")])
+    second["epistemic_snapshot"]["contradictions_flagged"] = [
+        "a legacy bare-string contradiction"]
+    assert store.write_checkpoint("S-2", second, project_dir=_PROJECT,
+                                  writer=Writer.HUMAN)
+    assert cli.main(["diff", "--project", _PROJECT, "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)["changes"]
+    assert [r["change"] for r in rows] == ["added"]
+    assert rows[0]["item_id"] == _ids(second)["beta fact"]
 
 
 def test_diff_refuses_slug_and_project_together(tmp_checkpoint_dir, capsys):

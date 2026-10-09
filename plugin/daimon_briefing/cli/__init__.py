@@ -258,7 +258,8 @@ def guarded(fn):
             return fn(*args, **kwargs)
         except jsonl.Refused:
             raise
-        except Exception as exc:  # noqa: BLE001 — reported, never shown around
+        # reported as one line, never shown around
+        except Exception as exc:  # noqa: BLE001
             verb = fn.__name__.removeprefix("_cmd_").replace("_", " ")
             print(f"error: {verb} could not be read "
                   f"({type(exc).__name__}); nothing was shown",

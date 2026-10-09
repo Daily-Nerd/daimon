@@ -28,8 +28,8 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping, NamedTuple
 
 from . import (amendments, carry, config, display, index_locate, jsonl,
-               multihash, normalize, refutations, requests, schema, store,
-               surfaces, trust)
+               multihash, normalize, provenance, refutations, requests, schema,
+               store, surfaces, trust)
 from .jsonl import Health
 from .surfaces import ReadPosture
 
@@ -151,7 +151,11 @@ class Snapshot:
 @dataclass(frozen=True)
 class Withheld:
     """An item the reader may not see. It carries identity and the reason, and
-    deliberately no text, quote or scene attribute."""
+    deliberately no text, quote or scene attribute. `receipt` is the textless
+    projection of the item's evidence (`_projection`: a valid quote receipt and
+    the origin stamps, never a value) that the pointer-window filter takes
+    before it removes the item; it is None where no copy was filtered (a
+    tombstone-only id, an index row) and is not part of equality."""
 
     item_id: str | None
     kind: str
@@ -159,6 +163,7 @@ class Withheld:
     quarantine_id: str | None
     value_key: str
     notes: tuple = ()
+    receipt: Mapping | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -231,7 +236,11 @@ class Absent:
     """No copy, no row, no tombstone and no quarantine hint for the id. `notes`
     say what could not be looked at: `pointer_unreadable` (a torn pointer),
     `index_unavailable` (no usable index), `index_closed` (the trust ledger
-    cannot be read, so the index and the hints were not consulted)."""
+    cannot be read, so the index and the hints were not consulted),
+    `outside_window` (the pointer window and the index hold no copy, so a
+    quarantine of the value that names no item id is not visible from here),
+    `unreadable` and `foreign-stamp` (an index row whose session file is torn
+    or stamped for another project; nothing of the row is used)."""
 
     notes: tuple = ()
 
@@ -881,6 +890,27 @@ def prose_withheld(text, snap: Snapshot) -> bool:
 # ---- projections ----------------------------------------------------------
 
 
+def _projection(item) -> dict | None:
+    """What a withheld item may still say about how it was captured, with no
+    text: its quote receipt when that is structurally valid (outcome, verifier,
+    source locator, digest and bound message ids, none of which is the value)
+    and the origin stamps. An invalid receipt is dropped whole, since its
+    fields are unchecked."""
+    if not isinstance(item, dict):
+        return None
+    receipt = item.get("quote_provenance")
+
+    def stamp(name):
+        value = item.get(name)
+        return value if isinstance(value, str) else None
+
+    return {"quote_provenance": (copy.deepcopy(receipt)
+                                 if provenance.valid_quote_receipt(receipt)
+                                 else None),
+            "origin_session": stamp("origin_session"),
+            "origin_author": stamp("origin_author")}
+
+
 def _filter(raw: dict, snap: Snapshot, live_only: bool):
     """A copy of one checkpoint with withheld items removed; returns
     (copy, withheld, suppressed)."""
@@ -894,7 +924,8 @@ def _filter(raw: dict, snap: Snapshot, live_only: bool):
                 continue
             verdict = classify(fld, value, snap)
             if isinstance(verdict, Withheld):
-                withheld.append(verdict)
+                withheld.append(dataclasses.replace(
+                    verdict, receipt=_projection(value)))
                 del block[fld.key]
             continue
         if not isinstance(value, list):
@@ -903,7 +934,8 @@ def _filter(raw: dict, snap: Snapshot, live_only: bool):
         for item in value:
             verdict = classify(fld, item, snap)
             if isinstance(verdict, Withheld):
-                withheld.append(verdict)
+                withheld.append(dataclasses.replace(
+                    verdict, receipt=_projection(item)))
             elif live_only and not live(item, snap):
                 suppressed += 1
             else:
@@ -1290,23 +1322,37 @@ def _lookup_withheld(verdict: Withheld, item_id: str, notes: tuple = ()) -> With
     return Withheld(item_id, verdict.kind, verdict.reason,
                     verdict.quarantine_id,
                     "" if verdict.reason == "forgotten" else verdict.value_key,
-                    notes)
+                    notes, verdict.receipt)
 
 
-def _index_only_reason(session_id) -> str:
-    """Why an index row is answered without a project file (#674): a local
-    flat file named for its session means recall attributed it through the
-    pointer fallback (a stampless legacy file); no such file means the row came
-    from the team mirror. Display only, never a claim about forget reach."""
-    if (isinstance(session_id, str) and session_id
-            and session_id == store._safe_name(session_id)
-            and (config.checkpoint_dir() / f"{session_id}.json").is_file()):
-        return "pointer-attributed-legacy"
-    return "team-mirror"
+def _session_state(session_id, slug) -> str:
+    """What an index row's session file is to this project, for a row the
+    session-file reader did not open: `missing` (no local file under that
+    name: a teammate's mirrored checkpoint, H12), `stampless` (a local file
+    with no project stamp: a legacy file recall attributed through the bucket
+    pointer, H12), `torn` (a local file that does not parse), `foreign` (a
+    file stamped for another project). Only the first two are answered from
+    the row; the last two name nothing of the value."""
+    if not (isinstance(session_id, str) and session_id
+            and session_id == store._safe_name(session_id)):
+        return "missing"
+    if not (config.checkpoint_dir() / f"{session_id}.json").is_file():
+        return "missing"
+    raw = store.read_checkpoint(session_id)
+    if not isinstance(raw, dict):
+        return "torn"
+    stamp = raw.get("project_slug")
+    if not stamp:
+        return "stampless"
+    return "foreign" if stamp != slug else "missing"
+
+
+_INDEX_ONLY = {"missing": "team-mirror", "stampless": "pointer-attributed-legacy"}
+_ROW_NOTES = {"torn": "unreadable", "foreign": "foreign-stamp"}
 
 
 def _answer_from_row(row: dict, item_id: str, snap: Snapshot,
-                     occurrences: tuple) -> Found | Withheld:
+                     occurrences: tuple, state: str) -> Found | Withheld:
     """An index row whose file the view cannot open, classified at read time
     like any other copy (H12): the row is never handed out as it stands."""
     fld = _field_for(row.get("kind"))
@@ -1321,7 +1367,7 @@ def _answer_from_row(row: dict, item_id: str, snap: Snapshot,
         row.get("session_id"), _iso(row.get("created")), row.get("author"),
         None, row.get("project_slug"), None, None, None, None, None, None)
     return Found(item, fld, occurrences, meta, "index",
-                 (f"index_only:{_index_only_reason(row.get('session_id'))}",))
+                 (f"index_only:{_INDEX_ONLY[state]}",))
 
 
 def lookup_many(project, ids, *, snap: Snapshot | None = None,
@@ -1413,6 +1459,7 @@ def lookup_many(project, ids, *, snap: Snapshot | None = None,
             r["session_id"] for i in todo for r in located[i]
             if r.get("session_id")))
         opened = open_sessions(project, sids, live=False, snap=snap)
+    row_notes: dict[str, tuple] = {}
     for item_id in todo:
         rows = located[item_id]
         verified = []
@@ -1427,16 +1474,22 @@ def lookup_many(project, ids, *, snap: Snapshot | None = None,
                 verified.append((sid, (file.checkpoint or {}).get("created")))
                 if answer is None:
                     answer = ("file", hold, file)
-            else:
-                verified.append((sid, _iso(row.get("created"))))
-                if answer is None:
-                    answer = ("row", row, None)
+                continue
+            state = _session_state(sid, slug)
+            if state in _ROW_NOTES:
+                # a torn file or another project's: nothing of the row is used
+                row_notes[item_id] = (*row_notes.get(item_id, ()),
+                                      _ROW_NOTES[state])
+                continue
+            verified.append((sid, _iso(row.get("created"))))
+            if answer is None:
+                answer = ("row", row, state)
         if answer is None:
             continue
         kind, hold, file = answer
         if kind == "row":
             out[item_id] = _answer_from_row(hold, item_id, snap,
-                                            tuple(verified))
+                                            tuple(verified), file)
         elif isinstance(hold, Withheld):
             out[item_id] = _lookup_withheld(hold, item_id)
         else:
@@ -1453,15 +1506,20 @@ def lookup_many(project, ids, *, snap: Snapshot | None = None,
         if not snap.closed:
             if item_id in snap.forgotten_ids:
                 out[item_id] = Withheld(item_id, "unknown", "forgotten", None,
-                                        "", notes)
+                                        "", notes + row_notes.get(item_id, ()))
                 continue
             hint = snap.quarantine_items.get(item_id)
             if hint is not None:
                 kind, quarantine_id, value_key = hint
                 out[item_id] = Withheld(item_id, kind, "quarantine",
-                                        quarantine_id, value_key, notes)
+                                        quarantine_id, value_key,
+                                        notes + row_notes.get(item_id, ()))
                 continue
-        out[item_id] = Absent(notes)
+        # Nothing holds the id. A quarantine of its value that no record tied
+        # to this id cannot be seen from here, so the answer says where it
+        # looked: the window and the index.
+        out[item_id] = Absent(notes + row_notes.get(item_id, ())
+                              + (() if snap.closed else ("outside_window",)))
     return {i: out[i] for i in wanted}
 
 

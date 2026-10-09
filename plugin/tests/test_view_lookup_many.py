@@ -244,7 +244,8 @@ def test_a_stale_index_row_is_skipped(aged_out):
     body = json.loads(path.read_text())
     body["working_context"]["open_questions"] = []
     path.write_text(json.dumps(body))
-    assert view.lookup_many(PROJECT, [QID])[QID] == view.Absent()
+    got = view.lookup_many(PROJECT, [QID])[QID]
+    assert got == view.Absent(("outside_window",))
 
 
 def test_a_located_item_is_judged_at_read_time(aged_out):
@@ -287,6 +288,38 @@ def test_a_stampless_local_file_is_answered_as_index_only_legacy(aged_out):
     assert "index_only:pointer-attributed-legacy" in got.notes
 
 
+def test_a_torn_local_file_is_unreadable_never_a_team_mirror(aged_out):
+    (config.checkpoint_dir() / "T-2.json").write_text("{torn")
+    _plant_row("T-2", "o-ffffffffff11", "a row whose file is torn")
+    got = view.lookup_many(PROJECT, ["o-ffffffffff11"])["o-ffffffffff11"]
+    assert isinstance(got, view.Absent)
+    assert "unreadable" in got.notes
+    assert "a row whose file is torn" not in repr(got)
+
+
+def test_a_file_stamped_for_another_project_is_a_foreign_stamp(aged_out):
+    foreign = {"session_id": "F-1", "created": "2026-07-01T00:00:00Z",
+               "project_slug": "-some-other-project",
+               "working_context": {"open_questions": [
+                   {"text": "another project's question",
+                    "id": "o-ffffffffff22"}]}}
+    (config.checkpoint_dir() / "F-1.json").write_text(json.dumps(foreign))
+    _plant_row("F-1", "o-ffffffffff22", "another project's question")
+    got = view.lookup_many(PROJECT, ["o-ffffffffff22"])["o-ffffffffff22"]
+    assert isinstance(got, view.Absent)
+    assert "foreign-stamp" in got.notes
+    assert "another project" not in repr(got)
+
+
+def test_a_row_note_does_not_hide_a_hint(aged_out):
+    (config.checkpoint_dir() / "T-2.json").write_text("{torn")
+    _plant_row("T-2", "o-ffffffffff33", "a row whose file is torn")
+    _forget_id("o-ffffffffff33", "a row whose file is torn")
+    got = view.lookup_many(PROJECT, ["o-ffffffffff33"])["o-ffffffffff33"]
+    assert isinstance(got, view.Withheld) and got.reason == "forgotten"
+    assert "unreadable" in got.notes
+
+
 def test_an_index_only_row_is_classified_at_read_time(aged_out):
     _plant_row("T-1", "o-dddddddddddd", TEXT_Q)
     _quarantine(TEXT_Q, "question")
@@ -297,7 +330,7 @@ def test_an_index_only_row_is_classified_at_read_time(aged_out):
 def test_an_unusable_index_is_a_note_not_a_failure(aged_out):
     config.recall_db().write_bytes(b"not a database" * 50)
     got = view.lookup_many(PROJECT, [QID])[QID]
-    assert got == view.Absent(("index_unavailable",))
+    assert got == view.Absent(("index_unavailable", "outside_window"))
 
 
 # ---- tier 3: hints ----------------------------------------------------------
@@ -384,3 +417,16 @@ def test_an_index_row_with_no_usable_stamp_has_no_created():
     assert view._iso(1_785_000_000.0) == "2026-07-25T17:20:00Z"
     for bad in (None, "not a number", float("inf"), 1e300):
         assert view._iso(bad) is None
+
+
+def test_a_quarantine_without_an_item_id_is_invisible_once_the_copy_aged_out(
+        aged_out):
+    """The value is quarantined but no record names the id: while the index
+    still holds the pre-quarantine row the session file is reopened and
+    classified by value, and after the next rebuild the row is gone and the
+    answer is Absent, with a note that says where it looked."""
+    _quarantine(TEXT_Q, "question")                     # no item_id
+    assert isinstance(view.lookup_many(PROJECT, [QID])[QID], view.Withheld)
+    recall.rebuild()
+    got = view.lookup_many(PROJECT, [QID])[QID]
+    assert got == view.Absent(("outside_window",))
