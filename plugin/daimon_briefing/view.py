@@ -1722,6 +1722,34 @@ def match(project, query: str, *, how: str = "terms") -> Match:
     return Match(tuple(hits), withheld, named, snap.closed)
 
 
+_FIELD_BY_PATH = {(f.section, f.key): f for f in schema.ITEM_FIELDS}
+
+
+def label(project, row, snap: Snapshot) -> display.Candidate:
+    """A `forget` candidate row as the reader may see it. `row` is
+    `(section, key, item, matched)`: a checkpoint item (`section` is the
+    checkpoint block, judged by `classify` in the field found from
+    `(section, key)`) or a ledger record (`section` is None; the item is
+    `{"id", "text"}` with the printed subject as its text). A ledger row is
+    judged on BOTH the printed subject and the value the query matched (a
+    record's subject often restates a quarantined claim while its evidence is
+    what matched), and a closed snapshot withholds all of it. The result has
+    `verdict` None for a row the reader may see and the `Withheld` otherwise;
+    the caller drops `forgotten` ones and counts the rest."""
+    section, key, item, matched = row
+    item_id = str(item.get("id") or "")
+    text = str(item.get("text") or "")
+    if section is not None:
+        fld = _FIELD_BY_PATH.get((section, key)) or _field_for(None)
+        judged = classify(fld, item, snap)
+        withheld = judged if isinstance(judged, Withheld) else None
+    else:
+        withheld = prose_verdict(text, snap)
+        if withheld is None and matched is not None:
+            withheld = prose_verdict(matched, snap)
+    return display.Candidate(item_id, str(key), text, matched, withheld)
+
+
 @dataclass(frozen=True)
 class RelationView:
     """Relation edges a reader may see, with the text of their endpoints.

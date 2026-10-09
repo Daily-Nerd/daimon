@@ -161,9 +161,9 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):
         "the per-session seen/cooldown state file, not a checkpoint",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.items_for_project"):
-        "forget binds its target across every surface copy",
+        "forget's pool builder (write layer) binds across every surface copy; the registry in PR 12",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.read_latest_body"):
-        "forget binds its target in the live checkpoint; view.match in PR 9",
+        "forget's pool builder reads the live checkpoint to splice it; the registry in PR 12",
     ("daimon_briefing/cli/stats.py", "_stats_resolutions", "jsonl.read"):
         "counts events rows for the stats credit rollup, no content shown",
     ("daimon_briefing/cli/stats.py", "_stats_stitching", "json.loads"):

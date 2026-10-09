@@ -253,6 +253,7 @@ def _cmd_forget_republish(args) -> int:
     return 4 if published.failed else 0
 
 
+@_cli.guarded
 def _cmd_forget(args) -> int:
     """Deliberate item removal (#321): append a tombstone event whose status
     carries a content HASH, never the text — removal means the content leaves
@@ -378,8 +379,32 @@ def _cmd_forget(args) -> int:
     # forget's never-guess contract decides it: an ambiguous id is refused, not
     # resolved by preferring a store.
     candidates = items + ledger + amend_pool + request_pool
+    # What the reader may see of each candidate is judged ONCE, before any
+    # deletion, by the view's light snapshot (forgotten set, quarantines,
+    # closed). `human` is the observed channel: a quarantined target is a
+    # person's call, a closed one is not (the deletion promise outranks the
+    # outage, H6).
+    snap = view.judge(store.project_slug(config.resolve_project_dir(project))).snap
+    human = sys.stdin.isatty()
     exact = [it for _, _, it in candidates if it["id"] == args.target]
     target = exact[0] if len(exact) == 1 else None
+    verdict = None              # the Withheld a bound exact id carries
+    shown_kind = ""
+    if target is not None:
+        bound_row = next((s_, k_, it_, None) for s_, k_, it_ in candidates
+                         if it_ is target)
+        cand = view.label(project, bound_row, snap)
+        verdict, shown_kind = cand.verdict, cand.label
+        if verdict is not None and verdict.reason == "quarantine" and not human:
+            _cli._note_usage("forget:withheld")
+            print(f"error: {args.target} is withheld "
+                  f"({_withheld_reason(verdict)}); a person must judge a "
+                  "value an agent cannot see", file=sys.stderr)
+            return 2
+        if verdict is not None and verdict.reason == "forgotten" and not human:
+            # nothing an agent may learn: a tombstoned id reads as no match
+            target = None
+            exact = []
     if target is None:
         # `_generic_terms` is a DOCUMENT-FREQUENCY statistic over texts "of one
         # kind" (carry.py's own wording): terms shared by >= _GENERIC_DF of them
@@ -444,6 +469,13 @@ def _cmd_forget(args) -> int:
             hits = [(s, k, it, m) for s, k, it, m in hits
                     if not (k == "amendment"
                             and it.get("_target") in item_hit_ids)]
+        # What each hit is to the reader: a forgotten one is absent (named and
+        # counted nowhere), a quarantined or closed one is counted, only a
+        # visible one is printed and only a visible, sole value is bound.
+        judged = [(h, view.label(project, h, snap)) for h in hits]
+        judged = [(h, c) for h, c in judged
+                  if c.verdict is None or c.verdict.reason != "forgotten"]
+        hits = [h for h, _c in judged]
         # Ambiguity is about distinct MATCHED values, not hit count and never
         # the display text. The same sentence carried by sibling ids, held on
         # several surfaces, or held in both the checkpoint and the refutation
@@ -452,11 +484,13 @@ def _cmd_forget(args) -> int:
         # shared display subject are two things — collapsing them over the
         # display text silently under-deleted (#698 review). Only genuinely
         # different matched values leave the user a choice, and there
-        # never-guess still refuses.
+        # never-guess still refuses. A withheld hit beside a visible one is a
+        # second thing too: binding the visible one would guess about a value
+        # the reader cannot see.
         distinct = {normalize.content_key(
             m if m is not None else str(it.get("text") or ""))
             for _, _, it, m in hits}
-        if len(distinct) == 1:
+        if len(distinct) == 1 and all(c.verdict is None for _h, c in judged):
             _, _, target, matched = hits[0]
             # #691: a record can hold several values (evidence, note,
             # historical rows). The tombstone must key on the value the QUERY
@@ -466,19 +500,19 @@ def _cmd_forget(args) -> int:
                 target = dict(target, text=matched)
         else:
             _cli._note_usage("forget:no-match" if not hits else "forget:ambiguous")
-            label = "no item matches" if not hits else "ambiguous — matches"
-            print(f"{label} {args.target!r}; candidates:")
             # A never-guess refusal is only useful if the user can make the
             # choice: when the matched value differs from the display text,
             # show it, or two candidates separated by their verdicts render
-            # as identical lines (#698 review).
-            rows = hits or [(s, k, it, None) for s, k, it in candidates]
-            for _, key, it, m in rows:
-                line = f"  {it['id']}  [{key}] {it.get('text', '')}"
-                if m is not None and m != it.get("text"):
-                    line += f" — matched: {m}"
+            # as identical lines (#698 review). Visible rows only; the
+            # withheld ones are one count (never the pools, never a name).
+            for line in display.candidate_lines(
+                    [c for _h, c in judged], query=args.target,
+                    closed=snap.closed,
+                    pointer="forget by exact id: daimon forget <id>"):
                 print(line)
-            print("forget by exact id: daimon forget <id>")
+            if snap.closed:
+                print("the trust ledger cannot be read, so no item can be "
+                      "judged; daimon trust repair")
             return 1
     if getattr(args, "dry_run", False):
         _cli._note_usage("forget:dry-run")
@@ -518,7 +552,11 @@ def _cmd_forget(args) -> int:
             str(row.get("request_id") or "")
             for row in requests.events(project_dir=project)
             if value_key in requests.row_content_keys(row)})
-        preview = [f"would forget {target['id']}: {target.get('text', '')}"]
+        if verdict is not None:
+            preview = [f"would forget {target['id']} [{shown_kind}] "
+                       f"{display.withheld_marker(verdict)}"]
+        else:
+            preview = [f"would forget {target['id']}: {target.get('text', '')}"]
         active_rulings = refutations.active_rulings_reached(
             {value_key}, item_ids={str(target["id"])}, project_dir=project)
         if active_rulings:

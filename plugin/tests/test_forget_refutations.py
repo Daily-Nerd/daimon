@@ -83,10 +83,12 @@ _NOISE = ("the retry policy was wrong for tenants",
           "budget accounting by retry count is refuted")
 
 
-def _fuzzy_arm(project, with_refutations):
-    # A project per arm: the control's tombstone would otherwise scrub the
-    # treatment's checkpoint at write time (#418's forget gate), so the two
-    # arms would not differ only by the refutations.
+def _fuzzy_arm(project, with_refutations, root, monkeypatch):
+    # A project AND a store per arm: the forgotten set is machine-wide, so the
+    # control's tombstone would otherwise scrub the treatment's checkpoint at
+    # write time (#418's forget gate) and read as forgotten, hiding the item
+    # from the candidate list. The two arms differ only by the refutations.
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(root))
     _checkpoint(_FUZZY_TARGET, "an unrelated decision about logging",
                 project_dir=project)
     if with_refutations:
@@ -102,7 +104,7 @@ def _fuzzy_arm(project, with_refutations):
 
 
 def test_refutations_never_make_a_checkpoint_item_unreachable_by_text(
-        tmp_checkpoint_dir, monkeypatch, capsys):
+        tmp_checkpoint_dir, monkeypatch, capsys, tmp_path):
     """`carry._generic_terms` is a DOCUMENT-FREQUENCY statistic: terms carried
     by >= _GENERIC_DF texts of ONE KIND are that kind's shared vocabulary and
     are subtracted from the matcher. Counting the checkpoint and the ledger in
@@ -117,12 +119,14 @@ def test_refutations_never_make_a_checkpoint_item_unreachable_by_text(
     the store claiming nothing matched while the value sits in it."""
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
 
-    control_rc, control_left = _fuzzy_arm("/repo/fuzzy-control", False)
+    control_rc, control_left = _fuzzy_arm(
+        "/repo/fuzzy-control", False, tmp_path / "control", monkeypatch)
     assert control_rc == 0
     assert _FUZZY_TARGET not in control_left, "control never forgot the item"
     capsys.readouterr()
 
-    treatment_rc, treatment_left = _fuzzy_arm("/repo/fuzzy-treatment", True)
+    treatment_rc, treatment_left = _fuzzy_arm(
+        "/repo/fuzzy-treatment", True, tmp_path / "treatment", monkeypatch)
     out = capsys.readouterr().out
     assert "no item matches" not in out, (
         "forget denied a value it holds, because unrelated refutations "

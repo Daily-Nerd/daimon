@@ -382,9 +382,19 @@ case("cli:resolve", "dry", A("resolve", I("question"), "--dry-run"),
 case("cli:forget", "no-match", A("forget", "zzzqqq"), tty=True, rc=(0, 1),
      dests=("target",))
 case("cli:forget", "dry", A("forget", I("question"), "--dry-run"), tty=True,
-     rc=(0, 1), dests=("dry_run", "project"), axes=("STDIN_TTY",))
+     rc=(0, 1, 2), dests=("dry_run", "project"), axes=("STDIN_TTY",))
 case("cli:forget", "republish", A("forget", "--republish"), tty=True,
      rc=(0, 1, 4), dests=("project", "republish"))
+# a real forget of a visible item: its receipt names the content hash of the
+# value the person chose (no sentinel key is ever printable here)
+case("cli:forget", "receipt", A("forget", I("other_question"), "--reason", "r"),
+     tty=True, rc=(0, 4), shows="forgot ")
+# a tombstoned id whose value is still on disk: a person may finish the
+# deletion and sees the marker, an agent sees a miss
+case("cli:forget", "idforgot", A("forget", I("idforgot"), "--dry-run"),
+     tty=True, shows="[withheld: forgotten]", dests=("dry_run",))
+case("cli:forget", "idforgot-agent", A("forget", I("idforgot"), "--dry-run"),
+     tty=False, rc=(1,), shows="no item matches", dests=("dry_run",))
 case("cli:reverify", "id", A("reverify", I("question"), "--evidence",
      "checked"), tty=True, rc=(0, 1), dests=("target", "project"))
 
@@ -548,7 +558,6 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 KNOWN_LEAKS: set = {
     *{("cli:amend list", k) for k in ("question",)},
     *{("cli:decide", k) for k in ("question", "topic",)},
-    *{("cli:forget", k) for k in ("question", "topic",)},
     *{("cli:refute list", k) for k in ("topic",)},
     *{("cli:refute overturn", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:refute ratify", k) for k in ("contradiction", "question", "topic",)},
@@ -673,7 +682,9 @@ def test_the_drive_runs_and_nothing_unexpected_leaks(world_run):
 # without the value sentinel noticing. Every case is scanned for the keys too.
 # `KNOWN_KEY_LEAKS` is shrink-only like KNOWN_LEAKS. `KEY_EXEMPT` declares the
 # cases whose job is to name a key: a person-run proof or publish tool. The
-# forget receipt joins them when the forget verb converts.
+# forget receipt needs no entry: it prints the key of the value a person just
+# chose to forget, and a forgotten row never binds for an agent, so no
+# sentinel key is printable there (the `receipt` and `idforgot` cases prove it).
 KNOWN_KEY_LEAKS: set = set()
 KEY_EXEMPT = {
     ("cli:audit privacy", "default"):
@@ -748,6 +759,9 @@ WRITE_CARRY = {
         "copies the checkpoint into the author's team mirror",
     ("cli:team sync", "publish"):
         "publishes own author dirs to the sidecar remote",
+    ("cli:forget", "receipt"):
+        "rewrites the live checkpoint without the forgotten value; every other "
+        "byte, the withheld ones included, stays (tests/test_forget_*.py)",
     ("cli:anchor", "attach-withheld"):
         "rewrites the checkpoint whole; the bytes the view withholds stay in "
         "place, which is the point (tests/test_attach_anchor.py)",
@@ -824,6 +838,7 @@ CONVERTED = {
     "cli:reverify": ("cli/lifecycle.py", frozenset({"match"})),
     "cli:amend propose": ("cli/amend.py", frozenset({"match"})),
     "cli:anchor": ("cli/brief.py", frozenset({"match"})),
+    "cli:forget": ("cli/lifecycle.py", frozenset({"label"})),
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
     "cli:relations show": ("cli/relations_cmd.py", frozenset({"relations"})),
     "http:/api/relations": ("../daimon_ui/server.py", frozenset({"relations"})),
@@ -855,6 +870,8 @@ NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json"),
 # `anchor` without `--attach` prints the resolved anchor block and reads no item
 NO_ITEM_READ |= {(s, t) for (s, t) in CASES
                  if s == "cli:anchor" and t != "attach"}
+# `forget --republish` publishes tombstone keys already recorded; it binds no item
+NO_ITEM_READ |= {("cli:forget", "republish")}
 
 
 def _calls_view(rel, names):
@@ -897,7 +914,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
 
     for name in ("open", "peek", "projects", "pointers", "sessions",
                  "open_sessions", "events", "verifications", "snapshot",
-                 "judge", "lookup_many", "lineage", "match", "relations"):
+                 "judge", "lookup_many", "lineage", "match", "relations", "label"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
@@ -995,12 +1012,8 @@ def test_a_recall_surface_shows_nothing_when_the_judge_withholds_everything(
 # it. It is asserted absent on every surface that reads through the view or the
 # judged recall core. The surfaces that still read the store themselves are
 # listed (shrink-only, like KNOWN_LEAKS): each converts in a later PR.
-# These two print the raw bind candidates of the live checkpoint (the same
-# leak they already carry in KNOWN_LEAKS for the quarantined sentinels); the
-# view.match conversion deletes them.
-KNOWN_ID_LEAKS: set = {"cli:forget"}
-
-
+# The binding verbs (`resolve`, `reverify`, `amend propose`, `anchor`,
+# `forget`) judge every candidate through the view, so no surface prints it.
 def _id_leaking_surfaces(details):
     out = set()
     for (surface, tag), results in details.items():
@@ -1022,7 +1035,7 @@ def test_the_id_forgotten_sentinel_exists_and_is_absent_where_judged(
     leaking = _id_leaking_surfaces(details)
     judged = set(CONVERTED) | set(CONVERTED_RECALL)
     assert leaking & judged == set(), sorted(leaking & judged)
-    assert leaking == KNOWN_ID_LEAKS, sorted(leaking ^ KNOWN_ID_LEAKS)
+    assert leaking == set(), sorted(leaking)
 
 
 def test_the_built_index_holds_no_sentinel_byte_after_an_upgrade(
