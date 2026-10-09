@@ -1,4 +1,4 @@
-"""`view.open`, `team`, `chain`, `lookup` and `match` (#1132 PR 6a). Stores are
+"""`view.open`, `team`, `lookup` and `match` (#1132 PR 6a). Stores are
 written by the real writers (`store.write_checkpoint`, `store.append_event`,
 `trust.propose`)."""
 
@@ -197,33 +197,6 @@ def test_team_is_empty_without_teammates(tmp_checkpoint_dir):
     assert view.team(PROJECT, live=True) == ()
 
 
-# ---- chain ----------------------------------------------------------------
-
-
-def test_chain_is_newest_first_one_entry_per_session(tmp_checkpoint_dir):
-    _write(sid="S-old", created="2026-08-01T00:00:00Z")
-    _write(sid="S-new", created="2026-08-02T00:00:00Z")
-    got = list(view.chain(PROJECT, live=False))
-    assert [o.checkpoint["session_id"] for o in got] == ["S-new", "S-old"]
-
-
-def test_chain_withholds_in_every_retained_copy(tmp_checkpoint_dir):
-    _write(sid="S-old", created="2026-08-01T00:00:00Z")
-    _write(sid="S-new", created="2026-08-02T00:00:00Z")
-    _forget(S_BELIEF)
-    for opened in view.chain(PROJECT, live=False):
-        assert S_BELIEF not in _all_texts(opened.checkpoint)
-        assert [w.kind for w in opened.withheld] == ["belief"]
-
-
-def test_chain_skips_torn_and_session_less_files(tmp_checkpoint_dir):
-    _write(sid="S-1")
-    bucket = config.checkpoint_dir() / store.project_slug(PROJECT)
-    (bucket / "prev-9.json").write_text("{torn")
-    (bucket / "prev-8.json").write_text('{"working_context": {}}')
-    assert len(list(view.chain(PROJECT, live=False))) == 1
-
-
 # ---- lookup ---------------------------------------------------------------
 
 
@@ -258,8 +231,9 @@ def test_lookup_of_a_withheld_item_is_withheld_and_carries_no_text(
 
 def test_lookup_of_an_unknown_id_is_absent(tmp_checkpoint_dir):
     _write()
-    assert view.lookup(PROJECT, "o-ffffffffffff") == view.Absent()
-    assert view.lookup("/p/no-such-project", "o-ffffffffffff") == view.Absent()
+    assert isinstance(view.lookup(PROJECT, "o-ffffffffffff"), view.Absent)
+    assert isinstance(view.lookup("/p/no-such-project", "o-ffffffffffff"),
+                      view.Absent)
 
 
 # ---- match ----------------------------------------------------------------

@@ -135,7 +135,8 @@ def test_the_singleton_is_classified_like_any_item():
 
 def test_withheld_has_no_text_quote_or_scene_attribute():
     names = {f.name for f in dataclasses.fields(view.Withheld)}
-    assert names == {"item_id", "kind", "reason", "quarantine_id", "value_key"}
+    assert names == {"item_id", "kind", "reason", "quarantine_id", "value_key",
+                     "notes"}
     got = view.classify(FIELDS[2], _item("text"), _snap(
         forgotten=frozenset({KEY})))
     for attr in schema.VALUE_FIELDS + ("item",):

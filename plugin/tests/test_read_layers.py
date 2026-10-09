@@ -513,3 +513,48 @@ def test_the_direction_scan_sees_an_upward_import(tmp_path):
 def test_jsonl_and_surfaces_are_leaves():
     for rel, allowed in LEAVES.items():
         assert _package_imports(PLUGIN / rel) == allowed, rel
+
+
+# ---- the view's import direction (#1132 PR 11a) ------------------------------
+#
+# The view sits above the ledgers and the write layer and below every reader:
+# it imports no read, index or entry module except the three listed here. The
+# index locator is a leaf below it (`recall`, which sits above the view, is not
+# importable from it), `display` is the stdlib-only presenter, and `briefing`
+# is imported inside functions only (it imports the view at module level).
+VIEW_MAY_IMPORT_ABOVE = {
+    "index_locate": "read-only id locator, a leaf that imports nothing of the package",
+    "display": "stdlib-only presenter, one wording for every channel",
+    "briefing": "imported inside functions only; briefing imports the view at module level",
+}
+
+
+def _view_crossings(layer_table, root) -> set:
+    found = set()
+    for mod in _package_imports(root / "daimon_briefing/view.py"):
+        target = layer_table.get(f"daimon_briefing/{mod}.py")
+        if target in UPWARD:
+            found.add(mod)
+    return found
+
+
+def test_the_view_imports_nothing_above_it_but_the_listed_modules():
+    assert _view_crossings(LAYER, PLUGIN) == set(VIEW_MAY_IMPORT_ABOVE)
+    assert "recall" not in _package_imports(PLUGIN / "daimon_briefing/view.py")
+
+
+def test_the_briefing_import_in_the_view_is_never_at_module_level():
+    tree = ast.parse((PLUGIN / "daimon_briefing/view.py").read_text(
+        encoding="utf-8"))
+    top = {a.name for n in tree.body if isinstance(n, ast.ImportFrom)
+           and n.level == 1 and not n.module for a in n.names}
+    assert "briefing" not in top
+    assert "index_locate" in top
+
+
+def test_the_view_scan_sees_an_upward_import(tmp_path):
+    (tmp_path / "daimon_briefing").mkdir()
+    (tmp_path / "daimon_briefing" / "view.py").write_text(
+        "from . import recall\n")
+    assert _view_crossings({"daimon_briefing/recall.py": "index"},
+                           tmp_path) == {"recall"}

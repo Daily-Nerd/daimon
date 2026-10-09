@@ -3,15 +3,15 @@
 `snapshot(project)` reads every ledger a withhold decision needs, once, as
 data. `classify` turns one checkpoint item and a snapshot into `Visible` or
 `Withheld`, and `live` says whether a loop is still open. The projections
-(`open`, `team`, `chain`, `lookup`, `match`) are the only shapes a reader is
+(`open`, `team`, `lookup_many`, `match`) are the only shapes a reader is
 handed, so a value that must not be shown never leaves this module as text.
 
 Pure and read-only: it never writes, never creates a directory and never
 touches the bucket's pointers. A ledger that cannot be read is a HEALTH value
 in the snapshot, not an exception; a raise from `view` is a bug.
 
-Nothing imports this yet (PR 6a). `briefing` is imported lazily inside
-functions because the briefing path will import `view` later.
+`briefing` is imported lazily inside functions because it imports `view` at
+module level.
 """
 
 from __future__ import annotations
@@ -22,13 +22,14 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import cached_property
 from types import MappingProxyType
-from typing import Any, Iterator, Literal, Mapping, NamedTuple
+from typing import Any, Literal, Mapping, NamedTuple
 
-from . import (amendments, carry, config, display, jsonl, multihash,
-               normalize, refutations, requests, schema, store, surfaces,
-               trust)
+from . import (amendments, carry, config, display, index_locate, jsonl,
+               multihash, normalize, refutations, requests, schema, store,
+               surfaces, trust)
 from .jsonl import Health
 from .surfaces import ReadPosture
 
@@ -157,6 +158,7 @@ class Withheld:
     reason: Reason
     quarantine_id: str | None
     value_key: str
+    notes: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -210,14 +212,28 @@ class Suppression:
 
 @dataclass(frozen=True)
 class Found:
+    """A readable item. `occurrences` are `(session_id, created)` pairs, one
+    per distinct session, newest first. `meta` is the envelope of the file the
+    copy came from (or the index row's), `source` says which tier answered
+    (`pointer` window, `session` file, `index` row) and `notes` are advisory
+    codes: `index_only:<reason>` for a row answered from the index."""
+
     item: dict
     field: schema.ItemField
     occurrences: tuple
+    meta: store.Meta | None = None
+    source: Literal["pointer", "session", "index"] = "pointer"
+    notes: tuple = ()
 
 
 @dataclass(frozen=True)
 class Absent:
-    pass
+    """No copy, no row, no tombstone and no quarantine hint for the id. `notes`
+    say what could not be looked at: `pointer_unreadable` (a torn pointer),
+    `index_unavailable` (no usable index), `index_closed` (the trust ledger
+    cannot be read, so the index and the hints were not consulted)."""
+
+    notes: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -934,10 +950,11 @@ def _pointer_order(path) -> int:
     return 0 if ref == "latest" else int(ref.split("-")[1])
 
 
-def pointers(project) -> tuple[Pointer, ...]:
+def pointers(project, *, snap: Snapshot | None = None) -> tuple[Pointer, ...]:
     """The project's pointer window, `latest` then `prev-1`, `prev-2`, ..., each
-    through the view with one shared snapshot. Torn pointers are listed
-    unreadable; a project with no bucket has none."""
+    through the view with one shared snapshot (`snap`, or a fresh full one: a
+    caller that already holds the snapshot of its read passes it). Torn
+    pointers are listed unreadable; a project with no bucket has none."""
     bucket = _bucket(project)
     if bucket is None:
         return ()
@@ -947,7 +964,7 @@ def pointers(project) -> tuple[Pointer, ...]:
                        key=_pointer_order)
     except OSError:
         return ()
-    snap = snapshot(project)
+    snap = snap if snap is not None else snapshot(project)
     out = []
     for path in paths:
         try:
@@ -1018,13 +1035,14 @@ def sessions(project) -> Sessions:
     return Sessions(tuple(rows), unreadable, snap.notes())
 
 
-def open_sessions(project, session_ids, *, live: bool) -> dict:
+def open_sessions(project, session_ids, *, live: bool,
+                  snap: Snapshot | None = None) -> dict:
     """`{session_id: Opened}` for the named session files that exist, parse and
-    belong to the project, one snapshot for all. An id that names nothing the
-    caller may open (a torn file, another project's, an escape from the store)
-    is absent from the result."""
+    belong to the project, one snapshot for all (`snap`, or a fresh full one).
+    An id that names nothing the caller may open (a torn file, another
+    project's, an escape from the store) is absent from the result."""
     slug = store.project_slug(config.resolve_project_dir(project))
-    snap = snapshot(project)
+    snap = snap if snap is not None else snapshot(project)
     out = {}
     for sid in session_ids:
         raw = (store.read_checkpoint(sid)
@@ -1188,64 +1206,251 @@ def team(project, *, live: bool) -> tuple:
                  for author, raw in store.read_team(project_dir=project))
 
 
-def _chain_raw(project) -> list[dict]:
-    """Every distinct session's checkpoint, newest first. A session appears
-    as a flat file and as pointer copies; the flat file wins when it survives
-    garbage collection, else the highest-ranked pointer."""
-    root = config.checkpoint_dir()
-    chosen: dict = {}
-    for path in store.project_surfaces(project):
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        sid = raw.get("session_id") if isinstance(raw, dict) else None
-        if not isinstance(sid, str) or not sid:
-            continue
-        rank = (int(path.parent == root and path.name == f"{sid}.json"),
-                str(path))
-        if sid not in chosen or rank > chosen[sid][0]:
-            chosen[sid] = (rank, raw)
-
-    def recency(raw: dict):
-        return (store._created_epoch(raw.get("created")) or 0.0,
-                str(raw.get("session_id") or ""))
-
-    return sorted((entry[1] for entry in chosen.values()),
-                  key=recency, reverse=True)
-
-
-def chain(project, *, live: bool) -> Iterator[Opened]:
-    """Every retained checkpoint of the project through the view, newest
-    first by the `created` stamp (the order `inspector` walks, so a lookup
-    sees the latest wording of an item first)."""
-    snap = snapshot(project)
-    return iter([_opened(raw, snap, live) for raw in _chain_raw(project)])
-
-
 def _occurrence(raw: dict) -> tuple:
     return (raw.get("session_id"), raw.get("created"))
 
 
-def lookup(project, item_id: str) -> Found | Withheld | Absent:
-    """The item with this id: Found (the newest copy, plus where every copy
-    sits), Withheld when that copy may not be shown, Absent otherwise. The
-    occurrences carry session id and created stamp only."""
-    snap = snapshot(project)
-    newest = None
-    occurrences = []
-    for raw in _chain_raw(project):
-        for fld, item in schema.iter_items(raw, dicts_only=False):
-            if isinstance(item, dict) and item.get("id") == item_id:
-                occurrences.append(_occurrence(raw))
-                if newest is None:
-                    newest = (fld, item)
-    if newest is None:
-        return Absent()
-    verdict = classify(newest[0], newest[1], snap)
+_FIELD_BY_KIND = {f.kind: f for f in schema.ITEM_FIELDS}
+
+
+def _field_for(kind) -> schema.ItemField:
+    """The field of an index row's kind. A kind the table does not know is
+    judged by value alone (no quarantine is scoped to it), never skipped."""
+    got = _FIELD_BY_KIND.get(kind)
+    return got if got is not None else schema.ItemField(
+        "", "", False, str(kind), None, False, False)
+
+
+def _iso(epoch) -> str | None:
+    """The `created` stamp of an index row's epoch, in the checkpoint format."""
+    try:
+        return datetime.fromtimestamp(
+            float(epoch), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _epoch(created) -> float:
+    """Sort key of a `created` stamp: its epoch, or 0.0 when it has none (an
+    unstamped copy is the oldest)."""
+    return store._created_epoch(created) or 0.0
+
+
+def _meta_of(checkpoint: dict) -> store.Meta:
+    return store.Meta(*(checkpoint.get(n) for n in store.Meta._fields))
+
+
+def _holds(opened: Opened, wanted) -> dict:
+    """What one opened checkpoint holds of `wanted` ids: `(field, item)` for a
+    copy the reader may see, the `Withheld` for one it may not. A visible copy
+    comes first when an id is held twice."""
+    out: dict = {}
+    if isinstance(opened.checkpoint, dict):
+        for fld, item in schema.iter_items(opened.checkpoint):
+            item_id = item.get("id")
+            if isinstance(item_id, str) and item_id in wanted \
+                    and item_id not in out:
+                out[item_id] = (fld, item)
+    for verdict in opened.withheld:
+        if verdict.item_id in wanted and verdict.item_id not in out:
+            out[verdict.item_id] = verdict
+    return out
+
+
+def _lookup_withheld(verdict: Withheld, item_id: str, notes: tuple = ()) -> Withheld:
+    """A `Withheld` as a lookup hands it out. A forgotten value's key never
+    travels (scar 0119): it names the value it tombstones."""
+    return Withheld(item_id, verdict.kind, verdict.reason,
+                    verdict.quarantine_id,
+                    "" if verdict.reason == "forgotten" else verdict.value_key,
+                    notes)
+
+
+def _index_only_reason(session_id) -> str:
+    """Why an index row is answered without a project file (#674): a local
+    flat file named for its session means recall attributed it through the
+    pointer fallback (a stampless legacy file); no such file means the row came
+    from the team mirror. Display only, never a claim about forget reach."""
+    if (isinstance(session_id, str) and session_id
+            and session_id == store._safe_name(session_id)
+            and (config.checkpoint_dir() / f"{session_id}.json").is_file()):
+        return "pointer-attributed-legacy"
+    return "team-mirror"
+
+
+def _answer_from_row(row: dict, item_id: str, snap: Snapshot,
+                     occurrences: tuple) -> Found | Withheld:
+    """An index row whose file the view cannot open, classified at read time
+    like any other copy (H12): the row is never handed out as it stands."""
+    fld = _field_for(row.get("kind"))
+    item = {"id": item_id, "text": row.get("text"), "trust": row.get("trust"),
+            "quote": row.get("quote") or None,
+            "origin_session": row.get("session_id"),
+            "project_slug": row.get("project_slug")}
+    verdict = classify(fld, item, snap)
     if isinstance(verdict, Withheld):
-        return verdict
-    return Found(newest[1], newest[0], tuple(occurrences))
+        return _lookup_withheld(verdict, item_id)
+    meta = store.Meta(
+        row.get("session_id"), _iso(row.get("created")), row.get("author"),
+        None, row.get("project_slug"), None, None, None, None, None, None)
+    return Found(item, fld, occurrences, meta, "index",
+                 (f"index_only:{_index_only_reason(row.get('session_id'))}",))
+
+
+def lookup_many(project, ids, *, snap: Snapshot | None = None,
+                window: tuple | None = None
+                ) -> dict[str, Found | Withheld | Absent]:
+    """Exact-id read of this project's own items, in four tiers, bounded by
+    the bucket and never by the machine.
+
+    1. The pointer window (`pointers`, bucket-local, DAIMON_CHECKPOINT_HISTORY
+       deep): a visible copy is found by walking the opened body, a withheld
+       one in `Opened.withheld`. The newest `created` epoch wins; a copy with
+       no usable stamp is the oldest.
+    2. The index locator (`index_locate`, read-only, never refreshed): the
+       ids tier 1 did not find are located, their session files opened in one
+       `open_sessions` call and each id classified from the newest file that
+       still holds it (a stale row is skipped). A row whose file is not local
+       or carries no slug stamp is answered from the row (`source="index"`),
+       classified at read time.
+    3. Hints: `snap.forgotten_ids` (a tombstone that still stands) and
+       `snap.quarantine_items` (an active quarantine that named the id).
+    4. `Absent`.
+
+    A closed snapshot (the trust ledger cannot be read) skips tiers 2 and 3
+    and says so in `Absent.notes`. `snap` defaults to the bucket's light
+    judge snapshot; `window` is a pointer window the caller already holds.
+    Every asked id is a key of the result, once."""
+    wanted = list(dict.fromkeys(i for i in ids if isinstance(i, str) and i))
+    if not wanted:
+        return {}
+    slug = store.project_slug(config.resolve_project_dir(project))
+    snap = snap if snap is not None else judge(slug).snap
+    window = (window if window is not None
+              else pointers(project, snap=snap))
+    notes: tuple = ("pointer_unreadable",) if any(
+        not p.readable for p in window) else ()
+    want = frozenset(wanted)
+
+    # tier 1: the window. id -> [(epoch, order, session id, created, hold)]
+    seen: dict[str, list] = {}
+    for order, ptr in enumerate(window):
+        if not ptr.readable or ptr.meta is None:
+            continue
+        stamp = (ptr.opened.checkpoint or {}).get("created", ptr.meta.created)
+        for item_id, hold in _holds(ptr.opened, want).items():
+            seen.setdefault(item_id, []).append(
+                (_epoch(stamp), order, ptr.meta.session_id or ptr.ref, stamp,
+                 hold, ptr))
+    out: dict = {}
+    for item_id, copies in seen.items():
+        copies.sort(key=lambda c: (-c[0], c[1]))
+        best = copies[0]
+        if isinstance(best[4], Withheld):
+            out[item_id] = _lookup_withheld(best[4], item_id)
+            continue
+        distinct: dict = {}
+        for epoch, _o, sid, created, _h, _p in copies:
+            distinct.setdefault(sid, (epoch, created))
+        fld, item = best[4]
+        out[item_id] = Found(
+            item, fld, tuple((sid, c) for sid, (_e, c) in distinct.items()),
+            best[5].meta, "pointer")
+
+    # tier 2: the locator, once for the batch
+    located: dict = {}
+    if not snap.closed:
+        got = index_locate.locate(config.recall_db(), slug or "", wanted)
+        located, notes_index = got.rows, got.notes
+        notes = notes + notes_index
+        for item_id, hit in list(out.items()):
+            if not isinstance(hit, Found):
+                continue
+            known = {sid for sid, _c in hit.occurrences}
+            extra = []
+            for row in located.get(item_id, ()):
+                sid = row.get("session_id")
+                if sid and sid not in known:
+                    known.add(sid)
+                    extra.append((sid, _iso(row.get("created"))))
+            if extra:
+                out[item_id] = dataclasses.replace(
+                    hit, occurrences=tuple(sorted(
+                        (*hit.occurrences, *extra),
+                        key=lambda o: -_epoch(o[1]))))
+    unresolved = [i for i in wanted if i not in out]
+    todo = [i for i in unresolved if i in located]
+    opened = {}
+    if todo:
+        sids = list(dict.fromkeys(
+            r["session_id"] for i in todo for r in located[i]
+            if r.get("session_id")))
+        opened = open_sessions(project, sids, live=False, snap=snap)
+    for item_id in todo:
+        rows = located[item_id]
+        verified = []
+        answer = None
+        for row in rows:
+            sid = row.get("session_id")
+            file = opened.get(sid)
+            if file is not None:
+                hold = _holds(file, frozenset((item_id,))).get(item_id)
+                if hold is None:
+                    continue                     # stale: the file lost it
+                verified.append((sid, (file.checkpoint or {}).get("created")))
+                if answer is None:
+                    answer = ("file", hold, file)
+            else:
+                verified.append((sid, _iso(row.get("created"))))
+                if answer is None:
+                    answer = ("row", row, None)
+        if answer is None:
+            continue
+        kind, hold, file = answer
+        if kind == "row":
+            out[item_id] = _answer_from_row(hold, item_id, snap,
+                                            tuple(verified))
+        elif isinstance(hold, Withheld):
+            out[item_id] = _lookup_withheld(hold, item_id)
+        else:
+            fld, item = hold
+            out[item_id] = Found(item, fld, tuple(verified),
+                                 _meta_of(file.checkpoint or {}), "session")
+
+    # tiers 3 and 4: what is left
+    if snap.closed:
+        notes = notes + ("index_closed",)
+    for item_id in wanted:
+        if item_id in out:
+            continue
+        if not snap.closed:
+            if item_id in snap.forgotten_ids:
+                out[item_id] = Withheld(item_id, "unknown", "forgotten", None,
+                                        "", notes)
+                continue
+            hint = snap.quarantine_items.get(item_id)
+            if hint is not None:
+                kind, quarantine_id, value_key = hint
+                out[item_id] = Withheld(item_id, kind, "quarantine",
+                                        quarantine_id, value_key, notes)
+                continue
+        out[item_id] = Absent(notes)
+    return {i: out[i] for i in wanted}
+
+
+def lookup(project, item_id: str) -> Found | Withheld | Absent:
+    """The item with this id: `lookup_many` of one."""
+    return lookup_many(project, [item_id])[item_id]
+
+
+def source_ref(session_id) -> dict | None:
+    """The non-item `source_ref` envelope key of the named session file, or
+    None when the file is missing, torn or carries none. It names where the
+    transcript lives and holds no item, so it needs no judgement."""
+    raw = store.read_checkpoint(session_id) if isinstance(
+        session_id, str) and session_id else None
+    ref = raw.get("source_ref") if isinstance(raw, dict) else None
+    return ref if isinstance(ref, dict) else None
 
 
 def match(project, query: str) -> Match:
