@@ -268,3 +268,166 @@ def test_the_enumerator_survives_a_clone_that_cannot_be_walked(
 
 def test_a_failure_outside_the_team_dir_names_no_remote():
     assert store.PublishFailure("/elsewhere/q.jsonl", "why").remote == ""
+
+
+# ---- the trust hooks ---------------------------------------------------------
+
+from daimon_briefing import cli, trust  # noqa: E402
+
+VALUE = "the deploy key rotation runbook was fabricated by the agent"
+
+
+def _propose(channel="cli-tty", text=VALUE, **kw):
+    return trust.propose(
+        text=text, kind="decision", reason="PROSE-REASON-CANARY looks fabricated",
+        evidence=["issue:1109"], item_id="o-1234567890ab", channel=channel,
+        project_dir=PROJECT, **kw)
+
+
+def _states(path):
+    return [(r["state"], r["quarantine_id"]) for r in _rows(path)]
+
+
+def test_human_propose_publishes_active(tmp_checkpoint_dir):
+    _clone()
+    tid = _propose()
+    assert isinstance(tid, str) and tid.startswith("tr-")
+    assert len(tid.published) == 1 and tid.published.failed == ()
+    assert _states(_file(None)) == [("active", tid)]
+    [row] = _rows(_file(None))
+    assert row["value_key"] == trust.value_key(VALUE)
+    assert row["kind"] == "decision"
+    local = trust.events(project_dir=PROJECT)[-1]
+    assert (row["order"], row["event_id"], row["ts"]) == (
+        local["order"], local["event_id"], local["ts"])
+    assert "PROSE-REASON-CANARY" not in _file(None).read_text()
+
+
+def test_agent_propose_publishes_nothing(tmp_checkpoint_dir):
+    _clone()
+    tid = _propose(channel="cli-agent")
+    assert tid.published == [] and not _file(None).exists()
+
+
+def test_confirm_publishes_active(tmp_checkpoint_dir):
+    _clone()
+    tid = _propose(channel="cli-agent")
+    out = trust.confirm(tid, channel="cli-tty", project_dir=PROJECT)
+    assert len(out) == 1 and _states(_file(None)) == [("active", tid)]
+
+
+def test_dismiss_publishes_nothing(tmp_checkpoint_dir):
+    _clone()
+    tid = _propose(channel="cli-agent")
+    out = trust.dismiss(tid, channel="cli-tty", project_dir=PROJECT)
+    assert out == [] and not _file(None).exists()
+
+
+def test_release_publishes_released(tmp_checkpoint_dir):
+    _clone()
+    tid = _propose()
+    out = trust.release(tid, channel="cli-tty", project_dir=PROJECT)
+    assert len(out) == 1
+    assert _states(_file(None)) == [("active", tid), ("released", tid)]
+    assert policy.fold_published_quarantines(_rows(_file(None))) == frozenset()
+
+
+def test_reproposing_after_a_release_publishes_a_new_active_on_the_same_id(
+        tmp_checkpoint_dir):
+    _clone()
+    tid = _propose()
+    trust.release(tid, channel="cli-tty", project_dir=PROJECT)
+    again = _propose()
+    assert again == tid
+    assert [s for s, _ in _states(_file(None))] == [
+        "active", "released", "active"]
+    assert policy.fold_published_quarantines(_rows(_file(None)))
+
+
+def test_team_disabled_the_hook_publishes_nothing(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    _clone()
+    monkeypatch.delenv("DAIMON_TEAM")
+    tid = _propose()
+    assert tid.published == [] and not _file(None).exists()
+    assert trust.get(tid, project_dir=PROJECT)["state"] == "active"
+
+
+def test_a_failed_publish_leaves_the_local_transition_and_reports(
+        tmp_checkpoint_dir):
+    _clone()
+    path = _file(None)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"<<<<<<< conflict\n")
+    tid = _propose()
+    assert trust.get(tid, project_dir=PROJECT)["state"] == "active"
+    assert tid.published == [] and len(tid.published.failed) == 1
+
+
+def test_propose_still_behaves_as_a_plain_string(tmp_checkpoint_dir):
+    tid = _propose(channel="cli-agent")
+    assert tid == str(tid) and tid.published == []
+    assert trust.get(tid, project_dir=PROJECT) is not None
+
+
+# ---- the verbs say what did not publish --------------------------------------
+
+
+def _args(*extra):
+    return ["trust", "propose", "--text", VALUE, "--kind", "decision",
+            "--reason", "looks fabricated", "--evidence", "issue:1109",
+            "--project", PROJECT, *extra]
+
+
+def test_cli_propose_exit_4_names_the_failed_sidecar_and_the_direction(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    path = _file(None)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"<<<<<<< conflict\n")
+    assert cli.main(_args()) == 4
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "r1" in text
+    assert "teammates still see" in text
+    assert "daimon trust republish" in text
+
+
+def test_cli_release_exit_4_says_teammates_keep_masking(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    tid = _propose()
+    path = _file(None)
+    path.write_text(path.read_text() + "<<<<<<< conflict\n")
+    assert cli.main(["trust", "release", tid, "--project", PROJECT]) == 4
+    text = "".join(capsys.readouterr())
+    assert "keep masking" in text and "r1" in text
+
+
+def test_cli_propose_exit_0_when_published(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    assert cli.main(_args()) == 0
+    assert _file(None).exists()
+
+
+def test_cli_dismiss_is_unchanged(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    tid = _propose(channel="cli-agent")
+    assert cli.main(["trust", "dismiss", tid, "--project", PROJECT]) == 0
+    assert not _file(None).exists()
+
+
+def test_a_transition_that_does_not_move_the_state_publishes_nothing(
+        tmp_checkpoint_dir):
+    _clone()
+    event = {"event": "confirmed", "quarantine_id": TID, "kind": "decision",
+             "value_key": KEY, "order": 1, "event_id": "a" * 32,
+             "ts": "2026-10-09T12:00:00Z", "channel": "cli-tty",
+             "author": "ada"}
+    assert trust._publish_after(TID, "active", event, PROJECT) == []
+    assert not _file(None).exists()
+    assert trust._publish_after(TID, "candidate", event, PROJECT) != []

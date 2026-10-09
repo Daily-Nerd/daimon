@@ -384,12 +384,52 @@ def _require_writable(project_dir) -> None:
         jsonl.require_writable(path, Writer.HUMAN, error=TrustError)
 
 
+class Proposed(str):
+    """The id `propose` returns (so every caller that treats it as a string
+    keeps working) plus what the team publish did: `published` is the
+    `store.Published` of that call, empty when nothing was due."""
+
+    published: "store.Published"
+
+    def __new__(cls, tid: str, published=None):
+        self = super().__new__(cls, tid)
+        self.published = published if published is not None \
+            else store.Published()
+        return self
+
+
+def _publish_after(tid: str, before, event: dict, project_dir):
+    """Publish the transition `event` just wrote, when the quarantine moved
+    into `active` or `released`: a human propose, a confirm, a release, and a
+    re-propose after a release. `before` is the state the caller's fold
+    already held (None for a new id), so there is no second fold. `event` is
+    the appended ledger row plus the record's `kind` and `value_key`. An agent
+    candidate and a dismissal publish nothing. Gated on the team being
+    enabled inside `store.publish_quarantine`; the local transition already
+    happened and stays whatever this returns."""
+    name = event.get("event")
+    if name == "released":
+        after = "released"
+    elif name == "confirmed" or (name == "quarantined" and event.get("ratified")
+                                 is True and CHANNEL_AUTHORITY.get(
+                                     str(event.get("channel") or "")) == "human"):
+        after = "active"
+    else:
+        return store.Published()
+    if after == before:
+        return store.Published()
+    claim = {**event, "state": after}
+    return store.publish_quarantine([claim], project_dir=project_dir)
+
+
 def propose(*, text, kind: str, reason, evidence, channel: str,
             item_id: str = "", project_dir=None,
-            now_ns: int | None = None) -> str:
+            now_ns: int | None = None) -> "Proposed":
     """Open a quarantine. Any channel may propose; a human channel lands it
     active immediately (mirrors `amendments.propose`'s direct-ratify
-    posture, and `refutations`'s `ruled` immediate activation)."""
+    posture, and `refutations`'s `ruled` immediate activation). A human
+    propose is published to the team (PR 13); `Proposed.published` says how
+    that went."""
     if kind not in KINDS:
         raise TrustError(f"kind must be one of: {', '.join(sorted(KINDS))}")
     if item_id and not _ITEM_ID_RE.fullmatch(str(item_id)):
@@ -427,11 +467,12 @@ def propose(*, text, kind: str, reason, evidence, channel: str,
         raise TrustError(
             "quarantine not written (daimon disabled, project unknown, or "
             "ledger unwritable)")
-    return tid
+    before = existing["state"] if existing is not None else None
+    return Proposed(tid, _publish_after(tid, before, row, project_dir))
 
 
 def _human_transition(event: str, quarantine_id: str, channel: str,
-                      project_dir, now_ns: int | None) -> None:
+                      project_dir, now_ns: int | None):
     """Every state-moving verb funnels through here, so the human-channel
     gate lives in exactly one place — mirrors `relations._human_transition`
     and `refutations.ratify`'s own fold-level check."""
@@ -460,24 +501,34 @@ def _human_transition(event: str, quarantine_id: str, channel: str,
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise TrustError(f"{event} not written")
+    return _publish_after(
+        quarantine_id, current["state"],
+        {**row, "kind": current["kind"], "value_key": current["value_key"]},
+        project_dir)
 
 
 def confirm(quarantine_id: str, *, channel: str, project_dir=None,
-            now_ns: int | None = None) -> None:
-    _human_transition("confirmed", quarantine_id, channel, project_dir,
-                      now_ns)
+            now_ns: int | None = None):
+    """Activate a candidate. Returns the `store.Published` of the team
+    publish (empty when nothing was due)."""
+    return _human_transition("confirmed", quarantine_id, channel, project_dir,
+                             now_ns)
 
 
 def dismiss(quarantine_id: str, *, channel: str, project_dir=None,
-            now_ns: int | None = None) -> None:
-    _human_transition("dismissed", quarantine_id, channel, project_dir,
-                      now_ns)
+            now_ns: int | None = None):
+    """Reject a candidate. Nothing is published; returns an empty
+    `store.Published`."""
+    return _human_transition("dismissed", quarantine_id, channel, project_dir,
+                             now_ns)
 
 
 def release(quarantine_id: str, *, channel: str, project_dir=None,
-            now_ns: int | None = None) -> None:
-    _human_transition("released", quarantine_id, channel, project_dir,
-                      now_ns)
+            now_ns: int | None = None):
+    """Lift an active quarantine. Returns the `store.Published` of the
+    release the team was sent."""
+    return _human_transition("released", quarantine_id, channel, project_dir,
+                             now_ns)
 
 
 def plaintext_values(row: dict) -> list[str]:

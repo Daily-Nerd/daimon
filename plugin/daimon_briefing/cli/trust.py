@@ -85,6 +85,17 @@ def _masked_records(project, records: list, *, snap, human: bool) -> list:
     return out
 
 
+def _publish_lines(published, *, activating: bool) -> list:
+    """What a failed team publish cost, with the direction: a failed
+    activation leaves the value visible to teammates, a failed release leaves
+    it masked for them. Names the sidecar, never a row."""
+    effect = ("teammates still see the value" if activating
+              else "teammates keep masking the value")
+    return [f"warning: not published to the team sidecar {f.remote or f.path} "
+            f"({f.reason}); {effect}; fix {f.path}, then run: "
+            "daimon trust republish" for f in published.failed]
+
+
 def _record_line(record: dict) -> str:
     mark = {"candidate": "?", "active": "⛔", "dismissed": "×",
            "released": "✓"}.get(record["state"], "?")
@@ -114,7 +125,8 @@ def _cmd_trust_propose(args) -> int:
         render.render_ledger_lines(
             [f"  a human settles it with `daimon trust confirm {tid}` or "
              f"`daimon trust dismiss {tid}`"])
-    return 0
+    render.render_ledger_lines(_publish_lines(tid.published, activating=True))
+    return 4 if tid.published.failed else 0
 
 
 def _cmd_trust_verdict(args) -> int:
@@ -124,14 +136,16 @@ def _cmd_trust_verdict(args) -> int:
               "release": trust.release}[verb]
     try:
         channel = _trust_channel(args)
-        verb_fn(args.quarantine_id, channel=channel, project_dir=project)
+        published = verb_fn(args.quarantine_id, channel=channel,
+                            project_dir=project)
     except trust.TrustError as exc:
         print(_refusal_message(f"quarantine {verb} refused", exc))
         return 1
     record = trust.get(args.quarantine_id, project_dir=project)
     render.render_ledger_lines(
-        [f"{args.quarantine_id}: {record['state'] if record else 'unknown'}"])
-    return 0
+        [f"{args.quarantine_id}: {record['state'] if record else 'unknown'}"]
+        + _publish_lines(published, activating=verb != "release"))
+    return 4 if published.failed else 0
 
 
 @_cli.guarded
