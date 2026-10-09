@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 129
 type: fence
 title: "A snapshot or masker that fails in the decide queue fails the call as MaskFailed; only an unreadable ledger drops a lane"
 severity: medium
 confidence: 0.8
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/pending.py
 evidence:
-  - commit: 3622d7f
-  - note: "tests/test_pending_masking.py::test_a_judge_that_fails_fails_the_call_not_a_lane"
+  - commit: e5aea9e
+  - note: tests/test_pending_masking.py::test_a_judge_that_fails_fails_the_call_not_a_lane
 expires:
   condition: "the lanes stop being fail-open per source"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 Each queue lane is wrapped in `except Exception: pass`, so an unreadable ledger degrades its lane. A snapshot or

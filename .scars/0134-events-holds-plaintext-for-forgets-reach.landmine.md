@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 134
 type: landmine
 title: events.jsonl carries plaintext (item_text, note, status), so forget judges its reach even though writes treat a torn tail as proven
 severity: medium
 confidence: 0.85
 created: 2026-10-08
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/ledger_repair.py
   - pattern: "_event_holds"
 evidence:
-  - note: "#1132 PR 10b: tests/test_forget_reached.py::test_a_torn_events_row_is_not_reached_and_forget_exits_4"
+  - note: #1132 PR 10b: tests/test_forget_reached.py::test_a_torn_events_row_is_not_reached_and_forget_exits_4
 expires:
   condition: "events rows stop carrying item_text, note or free-form status"
   review_after: 2027-04-08
-status: candidate
+status: active
 ---
 
 The ledger is described as "hashes only" in places, and it is not: `resolve` and

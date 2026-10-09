@@ -1,20 +1,21 @@
 ---
-id: 0
+id: 130
 type: landmine
 title: A test that plants a garbage or torn line and THEN calls a writer on that ledger gets the write refused or skipped
 severity: low
 confidence: 0.9
 created: 2026-10-08
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
-  - path: plugin/tests/
   - pattern: "events\.jsonl.*write_bytes"
 evidence:
-  - note: "#1132 PR 10b: four existing tests had to write their rows before planting the junk"
+  - note: #1132 PR 10b: four existing tests had to write their rows before planting the junk
 expires:
   condition: "the write exits stop judging the ledger"
   review_after: 2027-04-08
-status: candidate
+status: active
 ---
 
 Since the write exits judge their ledger, a ledger holding a garbage line (or an

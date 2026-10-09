@@ -1,21 +1,22 @@
 ---
-id: 0
+id: 131
 type: landmine
 title: anchor --attach must patch the raw own body by position, never rewrite the view-filtered body, or every withheld item is deleted
 severity: high
 confidence: 0.85
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
-  - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/cli/brief.py
   - pattern: "def attach_anchor"
 evidence:
-  - note: "#1132 PR 11b: tests/test_attach_anchor.py::test_the_rewrite_keeps_every_withheld_byte_in_place"
+  - note: #1132 PR 11b: tests/test_attach_anchor.py::test_the_rewrite_keeps_every_withheld_byte_in_place
 expires:
   condition: "the checkpoint stops holding withheld items in its own body"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 The view hands a reader a copy of the checkpoint with every quarantined,

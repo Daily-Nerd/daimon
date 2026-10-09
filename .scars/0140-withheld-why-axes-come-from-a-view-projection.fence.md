@@ -1,22 +1,23 @@
 ---
-id: 0
+id: 140
 type: fence
 title: why reports the evidence axes of a withheld item from Withheld.receipt, a textless projection the view takes while it filters the copy, never from a raw read in the inspector
 severity: medium
 confidence: 0.75
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/inspector.py
   - pattern: "def _withheld_result\("
-  - path: plugin/daimon_briefing/view.py
   - pattern: "def _projection\("
 evidence:
-  - note: "#1132 PR 11a: tests/test_why_contract.py::test_a_withheld_items_bound_receipt_still_reports_its_axes and ::test_the_view_projection_carries_no_text"
+  - note: #1132 PR 11a: tests/test_why_contract.py::test_a_withheld_items_bound_receipt_still_reports_its_axes and ::test_the_view_projection_carries_no_text
 expires:
   condition: "the pointer-window filter keeps the removed item reachable to the view, or a person rules the axes may go"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 A `Withheld` carries no item: the pointer-window filter deletes it from the
