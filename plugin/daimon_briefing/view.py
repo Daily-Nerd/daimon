@@ -1876,6 +1876,8 @@ def _leaf(text: str, snaps, seen: list | None = None):
     if not text.strip():
         return text
     if _SCRUBBED.search(text):
+        if seen is not None:
+            seen.append(Withheld(None, "prose", "forgotten", None, ""))
         return None
     return _mask_text(text, snaps, False, seen)
 
@@ -1914,8 +1916,13 @@ def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
                 # a lifecycle word: keep the class token a scrub preserved
                 text = _SCRUBBED.sub("", text).strip()
                 if not text:
+                    if seen is not None:
+                        seen.append(Withheld(None, "prose", "forgotten",
+                                             None, ""))
                     return None
             elif _SCRUBBED.search(text):
+                if seen is not None:
+                    seen.append(Withheld(None, "prose", "forgotten", None, ""))
                 shown = trust.display_text(text)
                 return shown if (ledger_name == "trust.jsonl"
                                  and shown != text) else None

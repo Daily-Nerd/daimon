@@ -327,9 +327,12 @@ so it is judged by every project it names.
 A ceremony does not ask for a signature on text the person cannot read:
 `ruling ratify`, `ruling revise`, `ruling propose --ratify` and the `refute`
 verbs that act on a record stop with exit 2 and write nothing when the record
-(or the words just typed) has a withheld field, and a quarantine names
-`daimon trust show <id>` on a terminal. The signature binds the stored record,
-never what was displayed.
+(or the words just typed) has a withheld field. This holds on every channel,
+a terminal included: a quarantine is a person's latch, so the record stays
+frozen until `daimon trust show <id>` on a terminal and `daimon trust release
+<id>` lift it, which the refusal says. A forgotten field says the record
+cannot be revised. The signature binds the stored record, never what was
+displayed.
 
 `daimon trust show` and `daimon trust list` give the evidence a quarantine cites
 to a person at a terminal. Non-interactive callers see `Evidence: [N withheld]`

@@ -21,7 +21,7 @@ status: candidate
 Ratifying is a signature on the FULL text and binds the stored record's content key. If the ceremony masked
 a field and went on, the person would sign words they could not read. So `ruling ratify`, `ruling revise`,
 `ruling propose --ratify` and the `refute` verbs that act on a record ask `view.withheld_in` first and stop
-with exit 2 and nothing written; a quarantine names `daimon trust show <id>` on a terminal.
+with exit 2 and nothing written, on EVERY channel: a quarantine is a human latch and the record stays frozen until `daimon trust show <id>` on a terminal and `daimon trust release <id>`, which the refusal names. Do not narrow it to the tty.
 
 The signature still binds the stored key (`displayed_key` from the raw record). Do not "fix" the refusal by
 printing the marker and asking for the confirm: that is a blind signature.

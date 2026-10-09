@@ -269,3 +269,36 @@ def test_an_inherited_rule_whose_text_was_forgotten_is_left_out(
     out = capsys.readouterr().out
     assert "Inherited rulings in force here:" in out
     assert m.VISIBLE in out and "SECRET-F" not in out
+
+
+def test_ruling_revise_and_propose_refuse_on_every_channel_with_the_cure(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    held = _ruling(subject="held", scope="held", verdict=m.QUARANTINED)
+    tid = m.quarantine()
+    cure = (f"note: daimon trust show {tid} on a terminal, "
+            f"then daimon trust release {tid}")
+    for tty, extra in ((True, ()), (False, ("--by", "agent"))):
+        m.human(monkeypatch, tty=tty)
+        rc, _, err = m.run(capsys, "ruling", "revise", held, "--verdict", "x",
+                           "--evidence", "issue:1", *extra)
+        assert rc == 2 and "ruling revise refused" in err and cure in err, tty
+    m.human(monkeypatch, tty=True)
+    rc, _, err = m.run(capsys, "ruling", "propose", "--subject", "s",
+                       "--verdict", m.QUARANTINED, "--scope", "sc",
+                       "--evidence", "issue:1", "--ratify")
+    assert rc == 2 and cure in err
+    cand = _ruling(subject="cand", scope="cand", verdict=m.QUARANTINED,
+                   ratify=False)
+    rc, _, err = m.run(capsys, "ruling", "ratify", cand)
+    assert rc == 2 and "ruling ratify refused" in err and cure in err
+
+
+def test_a_forgotten_ruling_field_names_the_forgotten_cure(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    held = _ruling(subject="held2", scope="held2", verdict=m.FORGOTTEN,
+                   ratify=False)
+    m.forget()
+    m.human(monkeypatch, tty=True)
+    rc, _, err = m.run(capsys, "ruling", "ratify", held)
+    assert rc == 2 and ("note: the withheld text was forgotten; the record "
+                        "cannot be revised") in err

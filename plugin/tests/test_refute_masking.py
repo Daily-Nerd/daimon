@@ -156,3 +156,43 @@ def test_the_viewer_route_masks_both_lanes(tmp_checkpoint_dir):
     assert "SECRET" not in json.dumps(payload)
     assert payload["rows"][0]["verdict"].startswith("[withheld: quarantine")
     assert payload["rulings"][0]["verdict"].startswith("[withheld: quarantine")
+
+
+QUARANTINE_CURE = "then daimon trust release"
+FORGOTTEN_CURE = ("note: the withheld text was forgotten; the record cannot "
+                  "be revised")
+
+
+def test_every_refute_verb_refuses_on_every_channel_and_names_the_cure(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    rid = _record(verdict=m.QUARANTINED)
+    tid = m.quarantine()
+    for tty, extra in ((True, ()), (False, ("--by", "agent"))):
+        m.human(monkeypatch, tty=tty)
+        for verb, args in (("ratify", ()),
+                           ("revise", ("--verdict", "new", "--evidence",
+                                       "measurement:x")),
+                           ("overturn", ("--evidence", "measurement:x"))):
+            rc, out, err = m.run(capsys, "refute", verb, rid, *args, *extra)
+            assert rc == 2 and "SECRET" not in out + err, (verb, tty)
+            assert f"refute {verb} refused" in err, (verb, tty)
+            assert (f"note: daimon trust show {tid} on a terminal, "
+                    f"{QUARANTINE_CURE} {tid}") in err, (verb, tty)
+
+
+def test_a_forgotten_field_names_the_forgotten_cure(tmp_checkpoint_dir,
+                                                    capsys, monkeypatch):
+    rid = _record(verdict=m.FORGOTTEN)
+    m.forget()
+    m.human(monkeypatch, tty=True)
+    rc, _, err = m.run(capsys, "refute", "ratify", rid)
+    assert rc == 2 and FORGOTTEN_CURE in err
+
+
+def test_a_field_that_is_only_a_deleter_marker_refuses(tmp_checkpoint_dir,
+                                                       capsys, monkeypatch):
+    from daimon_briefing import store
+    rid = _record(verdict=store._FORGOTTEN_FIELD_MARKER.format("0123456789ab"))
+    m.human(monkeypatch, tty=True)
+    rc, _, err = m.run(capsys, "refute", "ratify", rid)
+    assert rc == 2 and "refute ratify refused" in err and FORGOTTEN_CURE in err

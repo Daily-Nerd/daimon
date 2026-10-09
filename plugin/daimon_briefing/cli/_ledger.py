@@ -135,11 +135,16 @@ def _refuses_withheld(project, verb: str, row: dict, *, snap=None) -> bool:
         return False
     print(f"error: {verb} refused: this record has withheld text; nothing "
           "was written", file=sys.stderr)
+    # A quarantine is a person's latch on every channel; the cure is theirs.
     for verdict in verdicts:
         if verdict.reason == "quarantine" and verdict.quarantine_id:
-            print(f"note: daimon trust show {verdict.quarantine_id} on a "
-                  "terminal", file=sys.stderr)
-            break
+            qid = verdict.quarantine_id
+            print(f"note: daimon trust show {qid} on a terminal, then "
+                  f"daimon trust release {qid}", file=sys.stderr)
+            return True
+    if any(v.reason == "forgotten" for v in verdicts):
+        print("note: the withheld text was forgotten; the record cannot be "
+              "revised", file=sys.stderr)
     return True
 
 

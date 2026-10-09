@@ -235,3 +235,13 @@ def test_an_event_status_that_was_only_a_marker_reads_as_nothing():
     marker = store._FORGOTTEN_FIELD_MARKER.format("0123456789abcdef")
     assert masked("events.jsonl", [{"status": marker}], snap=snap()) == [
         {"status": ""}]
+
+
+def test_withheld_in_sees_a_field_that_is_only_a_deleter_marker():
+    marker = store._FORGOTTEN_FIELD_MARKER.format("0123456789abcdef")
+    got = view.withheld_in(PROJECT, "refutations.jsonl", {"verdict": marker},
+                           snap=snap())
+    assert [w.reason for w in got] == ["forgotten"]
+    got = view.withheld_in(PROJECT, "refutations.jsonl",
+                           {"undeclared": marker}, snap=snap())
+    assert [w.reason for w in got] == ["forgotten"]
