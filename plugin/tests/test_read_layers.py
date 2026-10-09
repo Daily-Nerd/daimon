@@ -14,8 +14,8 @@ index (the derived recall index), view (the read view), read (renders what a
 reader sees), entry (a command, server or hook entry point).
 
 What counts as a raw read, by AST: a call of `store.<primitive>`, `jsonl.read`
-/ `jsonl.read_rows` or `inspector._project_checkpoints` (as an attribute or as
-a name imported from those modules), and `json.load(...)` always, `json.loads(...)` when its argument
+/ `jsonl.read_rows` (as an attribute or as a name imported from those
+modules), and `json.load(...)` always, `json.loads(...)` when its argument
 contains `.read_text(`, `.read_bytes(`, `.read(` or `open(`. The JSON rule is
 deliberately conservative: it flags a host config file as readily as a
 checkpoint, and the allowlist says which is which. It misses a parse whose text
@@ -160,8 +160,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "quote audit parses stored checkpoint files raw to check their bytes",
     ("daimon_briefing/cli/brief.py", "_cmd_anchor", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/history.py", "_read_pointer", "json.loads"):
-        "diff and blame walk pointer files; moves onto view.chain in PR 7",
     ("daimon_briefing/cli/inject.py", "_cmd_recall_inject", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):
@@ -184,14 +182,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "pointer envelope for status; moves onto store.read_meta in PR 7",
     ("daimon_briefing/cli/status.py", "_cmd_verify_receipt", "store.read_latest_body"):
         "verifies the raw bytes a receipt binds",
-    ("daimon_briefing/inspector.py", "_item_occurrences", "inspector._project_checkpoints"):
-        "why walks every retained copy of an item; moves onto view.lookup in PR 7",
-    ("daimon_briefing/inspector.py", "_legacy_source", "store.read_checkpoint"):
-        "legacy source lookup reads a stored session file",
-    ("daimon_briefing/inspector.py", "_project_checkpoints", "store.project_surfaces"):
-        "enumerates every pointer and session copy; moves onto view.chain in PR 7",
-    ("daimon_briefing/inspector.py", "_read_checkpoint", "json.loads"):
-        "parses each retained copy; moves onto view.chain in PR 7",
     ("daimon_briefing/receipts.py", "_ensure_pubkey", "json.loads"):
         "receipt key file, not a bucket path",
     ("daimon_briefing/receipts.py", "_load_pubkey", "json.loads"):
@@ -250,8 +240,6 @@ class _Visitor(ast.NodeVisitor):
                 return f"store.{attr}"
             if owner == "jsonl" and attr in JSONL_PRIMITIVES:
                 return f"jsonl.{attr}"
-            if owner == "inspector" and attr == "_project_checkpoints":
-                return "inspector._project_checkpoints"
             if owner == "json" and attr == "load":
                 return "json.load"
             if owner == "json" and attr == "loads" and _reads_a_file(node):
@@ -262,8 +250,6 @@ class _Visitor(ast.NodeVisitor):
                 return f"store.{func.id}"
             if origin == "jsonl" and func.id in JSONL_PRIMITIVES:
                 return f"jsonl.{func.id}"
-            if func.id == "_project_checkpoints":
-                return "inspector._project_checkpoints"
         return None
 
 
@@ -430,7 +416,7 @@ def test_the_scan_finds_each_kind_of_raw_read():
         "import json\nfrom .store import read_checkpoint\n"
         "def f(p):\n"
         "    store.read_latest_body(); jsonl.read(p); jsonl.read_rows(p)\n"
-        "    inspector._project_checkpoints(p); json.load(h)\n"
+        "    json.load(h)\n"
         "    json.loads(p.read_text()); json.loads(raw)\n"
         "    read_checkpoint(1)\n"
         "class C:\n"
@@ -441,7 +427,7 @@ def test_the_scan_finds_each_kind_of_raw_read():
     visitor.visit(tree)
     assert visitor.sites == {
         ("f", "store.read_latest_body"), ("f", "jsonl.read"),
-        ("f", "jsonl.read_rows"), ("f", "inspector._project_checkpoints"),
+        ("f", "jsonl.read_rows"),
         ("f", "json.load"), ("f", "json.loads"),
         ("f", "store.read_checkpoint"), ("C.g", "store.read_team")}
 

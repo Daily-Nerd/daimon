@@ -158,9 +158,12 @@ CONDITIONS = {
 # standing ruling, a request panel's ask and a verdict note keep showing even
 # when they equal a quarantined value, because nothing can be proven
 # quarantined and the human ratified that text. The same lines show under an
-# UNREADABLE trust ledger today.
+# UNREADABLE trust ledger today. `blame` prints the judged events of one id,
+# and an event note is human prose with the same policy (`view.events`), so
+# a note that equals a quarantined value shows while the ledger is closed.
 ALLOWED = {
     "trust-transient": {
+        ("cli:blame", "contradiction"),
         ("cli:brief", "contradiction"), ("cli:brief", "question"),
         ("cli:brief", "topic"), ("hook:pre_llm_call", "question"),
         ("http:/api/activity", "contradiction"),
@@ -178,4 +181,4 @@ def test_a_damaged_ledger_leaks_nothing_new_and_says_so(health_runs, name):
 
 
 def test_the_known_leak_list_is_unchanged_by_this_axis():
-    assert len(rs.KNOWN_LEAKS) == 73
+    assert len(rs.KNOWN_LEAKS) == 69

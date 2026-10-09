@@ -1,9 +1,10 @@
 """The read-side surface other programs may import (#1132 PR 6a, PR 7b).
 
 Re-exports, plus the one thing daimon owns about its own output: how to read a
-briefing back. A consumer gets the judged read (`view.lookup`, `view.match`),
-the envelope reader, the cheap receipt check, the proposals queue, the requests listings and the pure
-slug transform without reaching into modules whose layout may move, and
+briefing back. A consumer gets the judged read (`view.lookup`, `view.match`), the item
+receipt (`why`, rendered by `why_lines`), the envelope reader, the cheap
+receipt check, the proposals queue, the requests listings and the pure slug
+transform without reaching into modules whose layout may move, and
 `parse_briefing` for the text `daimon brief` prints. Write verbs are not part
 of this surface; callers that write keep importing the write modules.
 
@@ -18,6 +19,8 @@ renderers write with, so the format and its reader cannot drift apart.
 from dataclasses import dataclass
 
 from .display import withheld_json, withheld_marker
+from .inspector import human_lines as why_lines
+from .inspector import inspect_item as why
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
 from .requests import inbox, inbox_listing, join, listing
@@ -25,7 +28,7 @@ from .store import project_slug, read_meta
 from .surfaces import Writer
 from .view import ledger_health, lookup, match, receipt_state
 
-__all__ = ("lookup", "match", "read_meta", "withheld_marker", "withheld_json", "queue", "listing",
+__all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker", "withheld_json", "queue", "listing",
            "inbox_listing", "inbox", "join", "ledger_health", "project_slug",
            "receipt_state", "Writer", "Briefing", "parse_briefing")
 

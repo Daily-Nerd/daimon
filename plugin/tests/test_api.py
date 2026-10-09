@@ -4,9 +4,10 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import api, display, pending, requests, store, surfaces, view
+from daimon_briefing import (api, display, inspector, pending, requests, store,
+                             surfaces, view)
 
-REEXPORTS = ("lookup", "match", "read_meta", "withheld_marker",
+REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing", "inbox",
              "join", "ledger_health", "project_slug", "receipt_state", "Writer")
 OWNED = ("Briefing", "parse_briefing")
@@ -21,6 +22,8 @@ def test_all_is_exactly_the_declared_surface():
 def test_every_name_is_the_source_object():
     assert api.lookup is view.lookup
     assert api.match is view.match
+    assert api.why is inspector.inspect_item
+    assert api.why_lines is inspector.human_lines
     assert api.read_meta is store.read_meta
     assert api.withheld_marker is display.withheld_marker
     assert api.withheld_json is display.withheld_json

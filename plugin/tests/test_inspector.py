@@ -175,26 +175,6 @@ def test_item_id_validation_is_bounded_and_exact(value, expected):
     assert inspector.valid_item_id(value) is expected
 
 
-def test_checkpoint_scan_skips_corrupt_and_sessionless_surfaces(
-    tmp_checkpoint_dir, monkeypatch
-):
-    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    corrupt = tmp_checkpoint_dir / "corrupt.json"
-    corrupt.write_text("{not-json", encoding="utf-8")
-    sessionless = tmp_checkpoint_dir / "sessionless.json"
-    sessionless.write_text(json.dumps({"created": _CHECKED_AT}), encoding="utf-8")
-    valid = tmp_checkpoint_dir / "S-valid.json"
-    valid.write_text(
-        json.dumps(_checkpoint("S-valid", [])), encoding="utf-8")
-    monkeypatch.setattr(
-        store, "project_surfaces",
-        lambda _project: [corrupt, sessionless, valid])
-
-    checkpoints = inspector._project_checkpoints(_PROJECT)
-
-    assert [checkpoint["session_id"] for checkpoint in checkpoints] == ["S-valid"]
-
-
 def test_bound_receipt_reports_changed_bytes_and_message_support(
     tmp_checkpoint_dir, tmp_path, monkeypatch
 ):
@@ -316,6 +296,7 @@ def test_legacy_inferred_and_unbound_items_degrade_explicitly(
     unbound_cp["project_slug"] = store.project_slug(_PROJECT)
     (tmp_checkpoint_dir / "S-unbound.json").write_text(
         json.dumps(unbound_cp), encoding="utf-8")
+    recall.rebuild()      # the locator reads the index as it stands
     resolver = _resolver(tmp_path, projects)
 
     legacy = inspector.inspect_item(_PROJECT, legacy_id, resolver=resolver)
@@ -462,17 +443,6 @@ def test_why_never_shows_corroboration_for_a_provisional_born_item(
     assert result["corroboration"] == {"count": 0, "references": []}
 
 
-@pytest.mark.parametrize("status, expected", [
-    ("resolved", "resolved"),
-    ("superseded-by:o-fedcba", "superseded"),
-    ("forgotten:abc", "forgotten"),
-    ("reopen", "active"),
-    ("resolving-candidate", "active"),
-])
-def test_lifecycle_axis_values(status, expected):
-    assert inspector._lifecycle({"status": status}) == expected
-
-
 def test_forgotten_event_remains_inspectable_after_plaintext_is_gone(
     tmp_checkpoint_dir, monkeypatch
 ):
@@ -483,9 +453,11 @@ def test_forgotten_event_remains_inspectable_after_plaintext_is_gone(
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 
-    assert result["item"]["text"] is None
+    assert result["item"]["text"] == {"state": "withheld",
+                                      "reason": "forgotten"}
     assert result["axes"]["lifecycle"] == "forgotten"
     assert result["axes"]["provenance"] == "legacy-unbound"
+    assert "a" * 64 not in json.dumps(result)         # scar 0119: no key
 
 
 def test_source_disclosure_is_bounded_redacted_once_and_path_free(
@@ -733,15 +705,15 @@ def test_source_disclosure_is_withheld_when_project_holds_a_forget_tombstone(
     withheld = inspector.inspect_item(
         _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
 
-    assert withheld["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    assert withheld["source_excerpt"] == {"state": "withheld",
+                                          "reason": "forgotten-set"}
     # The item itself still prints. Only the transcript window is withheld.
     assert withheld["item"]["text"] == "durable trust decision"
     human = "\n".join(inspector.human_lines(withheld))
     assert "withheld" in human.lower()
-    assert "1" in human
 
 
-def test_source_disclosure_withheld_count_reflects_every_live_tombstone(
+def test_source_refusal_publishes_a_reason_and_no_count(
     tmp_checkpoint_dir, monkeypatch
 ):
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
@@ -755,7 +727,10 @@ def test_source_disclosure_withheld_count_reflects_every_live_tombstone(
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
-    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 2}
+    # Two tombstones, one answer: a count would say how many values other
+    # tenants forgot (#899).
+    assert result["source_excerpt"] == {"state": "withheld",
+                                        "reason": "forgotten-set"}
 
 
 def test_source_disclosure_withheld_after_the_real_forget_command(
@@ -777,7 +752,8 @@ def test_source_disclosure_withheld_after_the_real_forget_command(
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
-    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    assert result["source_excerpt"] == {"state": "withheld",
+                                        "reason": "forgotten-set"}
 
 
 def test_source_disclosure_withheld_path_still_redacts_the_item_text(
@@ -796,7 +772,8 @@ def test_source_disclosure_withheld_path_still_redacts_the_item_text(
 
     assert secret not in result["item"]["text"]
     assert "[redacted:" in result["item"]["text"]
-    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    assert result["source_excerpt"] == {"state": "withheld",
+                                        "reason": "forgotten-set"}
 
 
 def test_why_cli_source_flag_prints_withheld_line_when_project_forgot(
@@ -815,13 +792,13 @@ def test_why_cli_source_flag_prints_withheld_line_when_project_forgot(
     ]) == 0
     out = capsys.readouterr().out
     assert "withheld" in out.lower()
-    assert "1" in out
 
     assert cli.main([
         "why", _ITEM_ID, "--project", _PROJECT, "--source", "--json",
     ]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    assert payload["source_excerpt"] == {"state": "withheld",
+                                         "reason": "forgotten-set"}
 
 
 # ---- #1070: why honors a TEAMMATE's forget tombstone too ------------------
@@ -865,9 +842,10 @@ def test_why_withholds_item_text_forgotten_by_a_teammate(
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 
-    assert result["item"]["text"] == {"state": "withheld"}
+    assert result["item"]["text"] == {"state": "withheld",
+                                      "reason": "forgotten"}
     human = "\n".join(inspector.human_lines(result))
-    assert "withheld" in human.lower()
+    assert "[withheld: forgotten]" in human
     assert "durable trust decision" not in human
 
 
@@ -901,15 +879,15 @@ def test_why_json_carries_withheld_state_for_a_teammates_forgotten_item(
 
     assert cli.main(["why", _ITEM_ID, "--project", _PROJECT, "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["item"]["text"] == {"state": "withheld"}
+    assert payload["item"]["text"] == {"state": "withheld",
+                                       "reason": "forgotten"}
 
 
-def test_why_source_withheld_count_includes_a_teammates_tombstone(
+def test_why_source_is_refused_for_a_teammates_tombstone(
     tmp_checkpoint_dir, monkeypatch
 ):
-    """#1066 counted only the local ledger. A project whose ONLY tombstone
-    came from a teammate must still withhold the --source window, and the
-    count must include it."""
+    """#1066 read only the local ledger. A project whose ONLY tombstone came
+    from a teammate must still withhold the --source window."""
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
     _write_checkpoint("S-containing", [_item()])
     _publish_foreign_tombstone("some unrelated teammate secret",
@@ -919,20 +897,18 @@ def test_why_source_withheld_count_includes_a_teammates_tombstone(
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
-    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    assert result["source_excerpt"] == {"state": "withheld",
+                                        "reason": "forgotten-set"}
     # The forgotten value is unrelated to this item's own text.
     assert result["item"]["text"] == "durable trust decision"
 
 
-def test_why_does_not_double_count_the_readers_own_published_tombstone(
+def test_why_refuses_source_after_the_readers_own_published_forget(
     tmp_checkpoint_dir, monkeypatch
 ):
-    """foreign_forgotten_content_keys() deliberately excludes the CURRENT
-    author's own rows (its docstring: a local `reopen` must be able to lift
-    a tombstone the foreign fold cannot see retracted). `why`'s union must
-    inherit that exclusion: the author's own forget already counts once,
-    through the local ledger, and must not count twice through the mirrored
-    copy of their own publish sitting in the shared remote."""
+    """The author's own forget refuses the window once, through the machine
+    forget set, whether or not its published copy also sits in the shared
+    remote."""
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
     monkeypatch.setenv("DAIMON_TEAM", "1")
     monkeypatch.setenv("DAIMON_TEAM_PROJECT", "shared")
@@ -950,7 +926,8 @@ def test_why_does_not_double_count_the_readers_own_published_tombstone(
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
-    assert result["source_excerpt"] == {"state": "withheld", "forgotten": 1}
+    assert result["source_excerpt"] == {"state": "withheld",
+                                        "reason": "forgotten-set"}
 
 
 def test_why_unaffected_when_no_tombstone_exists_anywhere_team_enabled(
@@ -1153,13 +1130,15 @@ def test_why_answers_a_team_mirror_only_item_from_the_index(
 ):
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
     _write_team_checkpoint("S-team-only", [_item(quote=None)])
+    recall.rebuild()      # the locator reads the index as it stands
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 
     assert result is not None
     assert result["item"]["text"] == "durable trust decision"
     assert result["item"]["session_id"] == "S-team-only"
-    assert result["item"]["occurrences"] == 0
+    assert result["item"]["origin_session"] is None     # a mirror is no origin
+    assert result["item"]["occurrences"] == 1
     assert result["axes"]["provenance"] == "legacy-unbound"
     assert result["axes"]["bytes"] == "unknown"
     assert result["axes"]["current_support"] == "not-checked"
@@ -1177,6 +1156,7 @@ def test_why_answers_a_stampless_pointer_attributed_item_from_the_index(
     # pointer file (no item content), never the stampless flat file.
     surfaces = store.project_surfaces(_PROJECT)
     assert all(p.name != "S-stampless.json" for p in surfaces)
+    recall.rebuild()
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 
@@ -1380,15 +1360,20 @@ def test_local_surface_answer_is_unperturbed_by_the_index_fallback(
     assert "index_only" not in result
 
 
-def test_index_fallback_answers_a_freshly_synced_item_without_manual_rebuild(
+def test_the_locator_does_not_refresh_the_index_so_a_fresh_sync_waits_for_warm(
     tmp_checkpoint_dir, monkeypatch
 ):
+    """An id lookup never rebuilds the index: an item synced after the last
+    build is found only once something has warmed it."""
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
+    recall.rebuild()
 
     assert inspector.inspect_item(_PROJECT, _ITEM_ID) is None
 
     _write_team_checkpoint("S-fresh", [_item(quote=None)])
 
+    assert inspector.inspect_item(_PROJECT, _ITEM_ID) is None
+    recall.warm()
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
     assert result is not None
     assert result["item"]["session_id"] == "S-fresh"

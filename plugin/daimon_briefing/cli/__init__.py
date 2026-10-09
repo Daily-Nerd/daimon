@@ -244,6 +244,30 @@ def _slug_route(args) -> tuple:
     return (slug or _resolve_project(project_arg)), 0
 
 
+def guarded(fn):
+    """Decorate a read verb that answers through the view: any exception it
+    raises (a view that cannot be built is a bug, never an empty answer)
+    becomes one `error:` line on stderr and exit 2, with nothing rendered
+    around it. The line names the verb and the exception type, never the
+    message, which can carry content. `jsonl.Refused` passes through: `main`
+    already prints it and turns it into exit 2 (10b's refusal path)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except jsonl.Refused:
+            raise
+        except Exception as exc:  # noqa: BLE001 — reported, never shown around
+            verb = fn.__name__.removeprefix("_cmd_").replace("_", " ")
+            print(f"error: {verb} could not be read "
+                  f"({type(exc).__name__}); nothing was shown",
+                  file=sys.stderr)
+            return 2
+
+    return wrapper
+
+
 # ---- resolve/log: zero-LLM append-only event writers (#102) ----
 
 

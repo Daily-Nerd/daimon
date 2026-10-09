@@ -137,8 +137,11 @@ def _cmd_recall(args, fx) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_why(args) -> int:
-    """Render one project-scoped, read-side trust receipt (#502)."""
+    """Render one project-scoped, read-side trust receipt (#502). The view
+    decides what may be said of the id; a withheld id answers with its marker
+    and the lifecycle, never the value."""
     _cli._note_usage("why")
     if args.slug and args.project:
         print("error: --slug and --project are two answers to \"which bucket\" "

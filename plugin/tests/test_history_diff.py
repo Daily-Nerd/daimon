@@ -10,7 +10,8 @@ import json
 
 import pytest
 
-from daimon_briefing import carry, cli, config, render, schema, store
+from daimon_briefing import (carry, cli, config, normalize, render, schema,
+                             store, trust, view)
 from daimon_briefing.cli import history
 from daimon_briefing.surfaces import Writer
 
@@ -151,23 +152,34 @@ def test_diff_reports_a_superseded_item_with_the_naming_id(tmp_checkpoint_dir,
     assert "superseded" in out and "d-0123456789ab" in out
 
 
-def test_gone_reason_names_a_forget_tombstone_without_its_text():
-    """The deletion contract scrubs a forgotten item off EVERY surface, so the
-    pointer pair can only reach this branch when a scrub was incomplete. The
-    classifier is exercised directly rather than by faking that state."""
-    reason, detail = history._gone_reason(
-        {"status": "forgotten:abc123", "source": "cli-tty"})
-    assert reason == "forgotten"
-    assert "abc123" not in detail
+def test_there_is_no_forgotten_change_class():
+    """A listing never names a forgotten value (R2): after a real forget the
+    item is in neither body, so no row can say it was forgotten."""
+    assert "forgotten" not in history._CHANGE_ORDER
+    assert history._CHANGE_ORDER[-1] == "withheld"
 
 
 def test_gone_reason_will_not_call_an_open_candidate_closed():
     """A machine's supersede guess keeps the item live (store.is_resolved says
     so), so the absence has to read as unexplained, never as a decision."""
-    reason, detail = history._gone_reason(
-        {"status": "supersede-candidate:d-0123456789ab", "source": "agent"})
+    event = view.Event("2026-09-01T10:00:00Z", "resolution", "d-0123456789ab",
+                       "supersede-candidate:d-0123456789ab", "agent", None,
+                       None)
+    reason, detail = history._gone_reason("active", event)
     assert reason == "dropped"
     assert "does not close it" in detail
+
+
+def test_gone_reason_with_no_event_is_an_unexplained_drop():
+    assert history._gone_reason("active", None) == (
+        "dropped", "no lifecycle event recorded")
+
+
+def test_gone_reason_never_names_a_tombstone_as_a_reason():
+    event = view.Event("2026-09-01T10:00:00Z", "tombstone", "d-0123456789ab",
+                       "forgotten", "cli", None, None, True)
+    reason, detail = history._gone_reason("forgotten", event)
+    assert reason == "dropped" and "forgot" not in detail
 
 
 def test_diff_reports_a_retagged_item(tmp_checkpoint_dir, capsys):
@@ -273,11 +285,11 @@ def test_diff_never_reads_another_projects_checkpoints(tmp_checkpoint_dir,
     assert _ids(other)["a foreign secret fact"] not in out
 
 
-def test_chain_of_an_unnameable_project_is_empty(tmp_checkpoint_dir):
+def test_the_window_of_an_unnameable_project_is_empty(tmp_checkpoint_dir):
     """No slug means no bucket to attribute a pointer to, and the GLOBAL
     latest.json is never a substitute — it may hold any project's session."""
-    assert history.chain("") == []
-    assert history.chain("   ") == []
+    assert view.pointers("") == ()
+    assert view.pointers("   ") == ()
 
 
 def test_items_by_id_skips_a_bare_string_contradiction(tmp_checkpoint_dir):
@@ -319,7 +331,9 @@ def test_diff_json_key_order_is_the_documented_contract(tmp_checkpoint_dir,
     assert list(payload["from"]) == ["index", "pointer", "session_id", "created"]
     assert list(payload["changes"][0]) == [
         "change", "item_id", "kind", "trust", "previous_trust", "text", "detail",
+        "where",
     ]
+    assert payload["changes"][0]["where"] is None
 
 
 def test_diff_json_carries_a_refusal_instead_of_stderr(tmp_checkpoint_dir,
@@ -367,3 +381,199 @@ def test_diff_documents_that_rollback_is_a_non_goal():
     parser = cli.build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["diff", "--restore", "1"])
+
+
+# ---- withheld values (#1132 PR 11a) -------------------------------------------
+
+OLD = "the retry budget stays at six attempts per request"
+NEW = "the retry budget stays six attempts per request overall"
+
+
+def _quarantine(text, kind="decision"):
+    return trust.propose(text=text, kind=kind, reason="fabricated finding",
+                         evidence=["issue:1"], channel="cli-tty",
+                         project_dir=_PROJECT)
+
+
+def _restated_pair():
+    """One id, two wordings: carry's twin path is the only writer that
+    changes an item's text under a stable id."""
+    first = _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item(OLD)])
+    native = _checkpoint("S-2", "2026-09-01T11:00:00Z",
+                         decisions=[_item(NEW)])
+    merged = carry.merge(native, first, now=1_800_000_000.0)
+    assert store.write_checkpoint("S-2", merged, project_dir=_PROJECT,
+                                  writer=Writer.HUMAN)
+    return _ids(first)[OLD]
+
+
+def _diff_json(capsys, *extra):
+    assert cli.main(["diff", "--project", _PROJECT, "--json", *extra]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_a_quarantined_old_wording_is_withheld_from_never_added(
+        tmp_checkpoint_dir, capsys):
+    item_id = _restated_pair()
+    qid = _quarantine(OLD)
+    payload = _diff_json(capsys)
+    (row,) = payload["changes"]
+    assert (row["change"], row["where"], row["item_id"]) == (
+        "withheld", "from", item_id)
+    assert row["text"] == NEW                       # the visible side only
+    assert qid in row["detail"] and OLD not in json.dumps(payload)
+
+
+def test_a_quarantined_new_wording_is_withheld_to_never_gone(
+        tmp_checkpoint_dir, capsys):
+    item_id = _restated_pair()
+    _quarantine(NEW)
+    (row,) = _diff_json(capsys)["changes"]
+    assert (row["change"], row["where"], row["item_id"]) == (
+        "withheld", "to", item_id)
+    assert row["text"] == OLD and NEW not in json.dumps(row)
+
+
+def test_a_new_item_quarantined_at_once_is_withheld_to(tmp_checkpoint_dir,
+                                                       capsys):
+    _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item("one fact")])
+    second = _write("S-2", "2026-09-01T11:00:00Z",
+                    decisions=[_item("one fact"), _item(OLD)])
+    _quarantine(OLD)
+    (row,) = _diff_json(capsys)["changes"]
+    assert (row["change"], row["where"], row["text"]) == ("withheld", "to",
+                                                          None)
+    assert row["item_id"] == _ids(second)[OLD]
+
+
+def test_an_item_withheld_in_both_generations_says_both(tmp_checkpoint_dir,
+                                                        capsys):
+    _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item(OLD)])
+    _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item(OLD)])
+    _quarantine(OLD)
+    (row,) = _diff_json(capsys)["changes"]
+    assert (row["change"], row["where"], row["text"]) == ("withheld", "both",
+                                                          None)
+
+
+def test_a_withheld_row_prints_its_marker_and_never_the_value(
+        tmp_checkpoint_dir, capsys):
+    _restated_pair()
+    qid = _quarantine(OLD)
+    assert cli.main(["diff", "--project", _PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert f"[withheld: quarantine {qid}]" in out
+    assert OLD not in out and "added" not in out
+
+
+def test_every_row_always_has_every_key(tmp_checkpoint_dir, capsys):
+    _restated_pair()
+    _write("S-3", "2026-09-01T12:00:00Z", decisions=[_item("a third fact")])
+    for row in _diff_json(capsys)["changes"]:
+        assert list(row) == ["change", "item_id", "kind", "trust",
+                             "previous_trust", "text", "detail", "where"]
+
+
+def test_a_real_forget_leaves_nothing_in_either_body_or_the_listing(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    first = _write("S-1", "2026-09-01T10:00:00Z",
+                   decisions=[_item("keep this one"), _item(OLD)])
+    _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("keep this one")])
+    item_id = _ids(first)[OLD]
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    assert cli.main(["forget", item_id, "--project", _PROJECT]) == 0
+    capsys.readouterr()
+    payload = _diff_json(capsys)
+    assert payload["changes"] == []
+    blob = json.dumps(payload)
+    assert item_id not in blob and normalize.content_key(OLD) not in blob
+    assert cli.main(["diff", "--project", _PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert item_id not in out and "forgot" not in out.lower()
+
+
+def test_a_residue_copy_withheld_by_the_forget_set_is_absent_on_both_sides(
+        tmp_checkpoint_dir, capsys):
+    """The value was forgotten through another ref: this bucket still holds
+    its copies, and the listing treats them as absent, not as a change."""
+    _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item(OLD)])
+    _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("a later fact")])
+    store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(OLD),
+                       kind="tombstone", tombstone=True, project_dir=_PROJECT,
+                       writer=Writer.HUMAN)
+    payload = _diff_json(capsys)
+    assert [r["change"] for r in payload["changes"]] == ["added"]
+    assert OLD not in json.dumps(payload)
+
+
+def test_a_restated_rows_old_wording_is_masked_when_the_prose_is_withheld(
+        tmp_checkpoint_dir, capsys):
+    """The old wording is quarantined as a belief: the decision copy is still
+    visible to the view (a quarantine is scoped to its kind), but the whole
+    string is a withheld value, so `was` does not print it."""
+    _restated_pair()
+    qid = _quarantine(OLD, kind="belief")
+    (row,) = _diff_json(capsys)["changes"]
+    assert row["change"] == "restated" and row["text"] == NEW
+    assert row["detail"] == f"was [withheld: quarantine {qid}]"
+    assert OLD not in json.dumps(row)
+
+
+def test_a_restated_rows_forgotten_old_wording_is_not_named(
+        tmp_checkpoint_dir, capsys):
+    _restated_pair()
+    store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(OLD),
+                       kind="tombstone", tombstone=True, project_dir=_PROJECT,
+                       writer=Writer.HUMAN)
+    payload = _diff_json(capsys)
+    blob = json.dumps(payload)
+    assert OLD not in blob and normalize.content_key(OLD) not in blob
+    assert "forgotten" not in blob
+
+
+def test_a_closed_trust_ledger_withholds_every_item_and_says_why(
+        tmp_checkpoint_dir, capsys):
+    _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item(OLD)])
+    _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item(OLD)])
+    (config.checkpoint_dir() / store.project_slug(_PROJECT)
+     / "trust.jsonl").write_bytes(b"not json\n")
+    payload = _diff_json(capsys)
+    assert payload["changes"]
+    assert {r["where"] for r in payload["changes"]} == {"both"}
+    assert all("trust ledger unreadable" in r["detail"]
+               for r in payload["changes"])
+    assert OLD not in json.dumps(payload)
+
+
+def test_a_superseded_reason_comes_from_the_judged_status(
+        tmp_checkpoint_dir, capsys):
+    first = _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item(OLD)])
+    item_id = _ids(first)[OLD]
+    assert store.append_event(item_id, "superseded-by:d-0123456789ab",
+                              source="cli-tty", project_dir=_PROJECT,
+                              writer=Writer.HUMAN)
+    _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("a later fact")])
+    rows = {r["change"]: r for r in _diff_json(capsys)["changes"]}
+    assert rows["superseded"]["detail"] == (
+        "superseded by d-0123456789ab (via cli-tty)")
+
+
+def test_diff_pays_one_snapshot(tmp_checkpoint_dir, monkeypatch):
+    _write("S-1", "2026-09-01T10:00:00Z", decisions=[_item("alpha fact")])
+    _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("beta fact")])
+    calls = []
+    real = view.snapshot
+    monkeypatch.setattr(view, "snapshot",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert cli.main(["diff", "--project", _PROJECT]) == 0
+    assert calls == [1]
+
+
+def test_was_masks_a_wording_that_is_a_withheld_value_without_naming_why():
+    snap = view.Snapshot.empty()
+    assert history._was("plain old wording", snap) == (
+        'was "plain old wording"')
+    key = normalize.content_key("an old wording that was forgotten")
+    forgotten = view.dataclasses.replace(snap, forgotten=frozenset({key}))
+    assert history._was("an old wording that was forgotten", forgotten) == (
+        "was (previous wording not shown)")

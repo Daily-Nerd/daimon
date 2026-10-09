@@ -378,3 +378,9 @@ def test_no_ids_is_no_answer_and_no_read(window, monkeypatch):
 def test_every_asked_id_is_a_key_once(window):
     got = view.lookup_many(PROJECT, [DID, DID, GONE])
     assert list(got) == [DID, GONE]
+
+
+def test_an_index_row_with_no_usable_stamp_has_no_created():
+    assert view._iso(1_785_000_000.0) == "2026-07-25T17:20:00Z"
+    for bad in (None, "not a number", float("inf"), 1e300):
+        assert view._iso(bad) is None

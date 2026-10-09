@@ -10,7 +10,7 @@ from urllib.request import urlopen
 
 import pytest
 
-from daimon_briefing import store
+from daimon_briefing import normalize, store, trust
 from daimon_ui import server
 from daimon_briefing.surfaces import Writer
 
@@ -117,6 +117,35 @@ def test_why_missing_id_is_an_error(engine_srv):
     out = _get(engine_srv, "/api/why")
     assert out["ok"] is False
     assert set(out["error"]) == {"what", "why", "fix"}
+
+
+def test_why_of_a_quarantined_id_answers_with_the_marker_and_no_value(
+        engine_srv, tmp_path):
+    qid = trust.propose(text="Adopt sqlite for the recall index",
+                        kind="decision", reason="fabricated finding",
+                        evidence=["issue:1"], channel="cli-tty",
+                        project_dir=tmp_path / "proj")
+    out = _get(engine_srv, "/api/why?id=d-0a1b2c3d4e5f&source=1")
+    assert out["ok"] is True
+    assert out["item"]["text"] == {"state": "withheld", "reason": "quarantine",
+                                   "quarantine_id": qid}
+    assert out["item"]["quote"] == out["item"]["text"]
+    assert out["source_excerpt"] == {"state": "withheld",
+                                     "reason": "quarantine-set"}
+    assert "sqlite" not in json.dumps(out).lower()
+
+
+def test_why_of_a_tombstone_only_id_says_forgotten_and_never_its_key(
+        engine_srv, tmp_path):
+    key = normalize.content_key("a value no checkpoint holds any more")
+    store.append_event("d-aaaaaaaaaaaa", "forgotten:" + key,
+                       kind="tombstone", tombstone=True,
+                       project_dir=tmp_path / "proj", writer=Writer.HUMAN)
+    out = _get(engine_srv, "/api/why?id=d-aaaaaaaaaaaa")
+    assert out["ok"] is True
+    assert out["item"]["text"] == {"state": "withheld", "reason": "forgotten"}
+    assert out["lifecycle_event"]["status"] == "forgotten"
+    assert key not in json.dumps(out)
 
 
 def test_recall_rejects_unknown_project_slug(engine_srv):

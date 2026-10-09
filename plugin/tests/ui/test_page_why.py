@@ -1,8 +1,9 @@
-"""Why view source disclosure (#1065): `/api/why?source=1` can answer with two
-shapes for `source_excerpt` — the disclosed `{kind, text, truncated}` window, or
-the withheld `{state: "withheld", forgotten: N}` refusal a live forget tombstone
-produces. Gating the render on `src.text` alone renders NOTHING for the withheld
-shape, the exact silent-empty failure #1065 exists to prevent."""
+"""Why view source disclosure (#1065, #1132 PR 11a): `/api/why?source=1` can
+answer with two shapes for `source_excerpt` — the disclosed `{kind, text,
+truncated}` window, or the withheld `{state: "withheld", reason}` refusal (the
+reason is one of forgotten-set, quarantine-set, closed, withheld-item; there is
+no count). Gating the render on `src.text` alone renders NOTHING for the
+withheld shape, the exact silent-empty failure #1065 exists to prevent."""
 import urllib.request
 
 
@@ -25,17 +26,18 @@ def _render_why_view_src(srv):
 def test_why_view_renders_a_visible_line_when_the_source_is_withheld(srv):
     src = _render_why_view_src(srv)
     assert 'src.state === "withheld"' in src
-    assert "forget tombstone" in src
+    assert "withheldSourceWords(src)" in src
 
 
-def test_why_view_withheld_branch_carries_the_count_and_stays_out_of_a_pre(srv):
-    """The withheld line is a stated refusal, not a transcript excerpt: it must
-    show the tombstone count and must not render inside a <pre>, which is
-    reserved for text Daimon is actually disclosing."""
+def test_why_view_withheld_branch_reads_the_reason_and_stays_out_of_a_pre(srv):
+    """The withheld line is a stated refusal, not a transcript excerpt: it
+    names the reason (never a count) and must not render inside a <pre>, which
+    is reserved for text Daimon is actually disclosing."""
     src = _render_why_view_src(srv)
     branch = src.split('src.state === "withheld"', 1)[1]
     branch = branch.split("} else if", 1)[0] if "} else if" in branch else branch.split("}", 1)[0]
-    assert "src.forgotten" in branch
+    assert "withheldSourceWords(src)" in branch
+    assert "src.forgotten" not in branch
     assert "<pre>" not in branch
 
 
@@ -60,7 +62,7 @@ def test_why_view_still_renders_a_disclosed_window(srv):
 def test_why_view_renders_a_visible_line_when_item_text_is_withheld(srv):
     src = _render_why_view_src(srv)
     assert 'item.text.state === "withheld"' in src
-    assert "forget tombstone" in src
+    assert "withheldItemWords(item.text)" in src
 
 
 def test_why_view_item_text_withheld_branch_never_reaches_escapeHtml_of_the_object(srv):
@@ -71,6 +73,7 @@ def test_why_view_item_text_withheld_branch_never_reaches_escapeHtml_of_the_obje
     branch = branch.split("} else", 1)[0]
     assert "why-none" in branch
     assert "escapeHtml(item.text" not in branch
+    assert "escapeHtml(withheldItemWords(item.text))" in branch
 
 
 def test_why_view_still_renders_a_plain_item_text(srv):
@@ -89,6 +92,7 @@ def test_why_view_item_quote_withheld_is_not_rendered_as_a_blockquote(srv):
     branch = branch.split("} else if", 1)[0]
     assert "<blockquote>" not in branch
     assert "why-none" in branch
+    assert "withheldItemWords(item.quote)" in branch
 
 
 def test_why_view_still_renders_a_stored_quote_when_not_withheld(srv):
