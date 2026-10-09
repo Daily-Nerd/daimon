@@ -1185,6 +1185,22 @@ def events(project, *, snap: Snapshot | None = None) -> tuple[Event, ...]:
                  if isinstance(row, dict))
 
 
+def item_events(project, item_id: str, *,
+                snap: Snapshot | None = None) -> tuple[Event, ...]:
+    """The `events.jsonl` rows addressed to EXACTLY `item_id`, judged like
+    `events` and in the order the lifecycle fold uses (`store.fold_item_events`:
+    by `ts`, an unstamped row oldest, file position breaking a tie), never in
+    file order. A namespaced ref (a corroboration row) never answers for the
+    bare id. No bucket or no ref is no rows."""
+    bucket = _bucket(project)
+    if bucket is None or not item_id:
+        return ()
+    snap = snap if snap is not None else snapshot(project)
+    rows = store.fold_item_events(
+        jsonl.read(bucket / "events.jsonl").rows, item_id)
+    return tuple(_event(row, snap) for row in rows)
+
+
 def verifications(project) -> tuple[Verification, ...]:
     """The project's `verification.jsonl` rows in file order. The ledger holds
     pointers and reason codes only, so the rows pass through typed."""
@@ -1441,6 +1457,96 @@ def lookup_many(project, ids, *, snap: Snapshot | None = None,
 def lookup(project, item_id: str) -> Found | Withheld | Absent:
     """The item with this id: `lookup_many` of one."""
     return lookup_many(project, [item_id])[item_id]
+
+
+@dataclass(frozen=True)
+class Appearance:
+    """One pointer generation that holds an item. `index` is the number of
+    writes back (0 is `latest`), `ref` the pointer's name and `pointer_file`
+    its file. `verdict` is `Visible` (the copy as that generation held it) or
+    `Withheld`; `trust` and `carried_from` are the visible copy's and None for
+    a withheld one, which never says "stated here"."""
+
+    index: int
+    ref: str
+    pointer_file: str
+    session_id: str | None
+    created: str | None
+    verdict: Visible | Withheld
+    trust: str | None
+    carried_from: str | None
+
+
+@dataclass(frozen=True)
+class Lineage:
+    """How one item got here, over one snapshot. `appearances` are the
+    readable pointers that hold it, newest first; `events` its judged
+    lifecycle rows in the fold's order; `lifecycle` one of `active`,
+    `resolved`, `superseded`, `forgotten`; `verdict` the `lookup_many` answer
+    (it can name a copy older than the pointer window). `refs` lists every
+    pointer file of the window newest first, `unreadable` the torn ones and
+    `sessions` the sessions the readable ones belong to."""
+
+    appearances: tuple
+    events: tuple
+    lifecycle: str
+    verdict: Found | Withheld | Absent
+    refs: tuple = ()
+    unreadable: tuple = ()
+    sessions: frozenset = frozenset()
+
+
+def lifecycle_word(event) -> str:
+    """The lifecycle word of the latest event of a ref: `forgotten` for a
+    tombstone that stands (the event is the latest, so a later reopen has
+    already replaced it), `superseded` for a `superseded-by:` status,
+    `resolved` for any other closing status, else `active`."""
+    if not isinstance(event, dict):
+        return "active"
+    if store.is_tombstone_status(event.get("status")):
+        return "forgotten"
+    if str(event.get("status") or "").strip().lower().startswith(
+            "superseded-by:"):
+        return "superseded"
+    return "resolved" if store.is_resolved(event) else "active"
+
+
+def _pointer_index(ref: str) -> int:
+    return 0 if ref == "latest" else int(ref.split("-")[1])
+
+
+def lineage(project, item_id: str) -> Lineage:
+    """Everything the history verbs say about one id, from ONE full snapshot
+    and ONE pointer window shared with `lookup_many` and `item_events`."""
+    snap = snapshot(project)
+    window = pointers(project, snap=snap)
+    verdict = lookup_many(project, [item_id], snap=snap,
+                          window=window)[item_id]
+    appearances = []
+    for ptr in window:
+        if not ptr.readable or ptr.meta is None:
+            continue
+        hold = _holds(ptr.opened, frozenset((item_id,))).get(item_id)
+        if hold is None:
+            continue
+        if isinstance(hold, Withheld):
+            appearances.append(Appearance(
+                _pointer_index(ptr.ref), ptr.ref, f"{ptr.ref}.json",
+                ptr.meta.session_id, ptr.meta.created,
+                _lookup_withheld(hold, item_id), None, None))
+            continue
+        _fld, item = hold
+        appearances.append(Appearance(
+            _pointer_index(ptr.ref), ptr.ref, f"{ptr.ref}.json",
+            ptr.meta.session_id, ptr.meta.created, Visible(item),
+            item.get("trust"), item.get("carried_from") or None))
+    return Lineage(
+        tuple(appearances), item_events(project, item_id, snap=snap),
+        lifecycle_word(snap.resolutions.get(item_id)), verdict,
+        tuple(p.ref for p in window),
+        tuple(p.ref for p in window if not p.readable),
+        frozenset(p.meta.session_id for p in window
+                  if p.readable and p.meta and p.meta.session_id))
 
 
 def source_ref(session_id) -> dict | None:
