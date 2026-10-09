@@ -221,7 +221,10 @@ class Found:
     per distinct session, newest first. `meta` is the envelope of the file the
     copy came from (or the index row's), `source` says which tier answered
     (`pointer` window, `session` file, `index` row) and `notes` are advisory
-    codes: `index_only:<reason>` for a row answered from the index."""
+    codes: `index_only:<reason>` for a row answered from the index. `at` is
+    set only by `match`: the `(section, key, index)` of the item in the raw own
+    body (`index` is None for the singleton), the locator a write that must
+    keep every other byte in place uses; it is not part of equality."""
 
     item: dict
     field: schema.ItemField
@@ -229,6 +232,7 @@ class Found:
     meta: store.Meta | None = None
     source: Literal["pointer", "session", "index"] = "pointer"
     notes: tuple = ()
+    at: tuple | None = dataclasses.field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -247,11 +251,28 @@ class Absent:
 
 @dataclass(frozen=True)
 class Match:
-    """`hits` are the visible candidates; `withheld` counts the candidates the
-    reader may not see, so `len(hits) + withheld` is the raw match count."""
+    """What a binding verb finds for a query in the live own body. `hits` are
+    the visible candidates; `withheld` counts the quarantined and closed ones
+    the reader may not see (a forgotten candidate is in no count: it is
+    absent); `exact` is set when the query is an exact id that the body holds
+    and that is quarantined or closed; `closed` says the trust ledger cannot
+    be read, in which case `withheld` and `exact` cover every candidate and
+    the caller prints no count (it would be a membership oracle). `sole` is
+    the one candidate a verb may bind without guessing."""
 
     hits: tuple
     withheld: int
+    exact: "Withheld | None" = None
+    closed: bool = False
+
+    @property
+    def sole(self) -> "Found | None":
+        """The never-guess rule: a bind happens only when exactly one candidate
+        is visible and none is withheld. A visible hit beside a withheld one is
+        ambiguous, never a bind."""
+        if len(self.hits) == 1 and self.withheld == 0:
+            return self.hits[0]
+        return None
 
 
 # ---- the snapshot ---------------------------------------------------------
@@ -1636,21 +1657,51 @@ def source_ref(session_id) -> dict | None:
     return ref if isinstance(ref, dict) else None
 
 
-def match(project, query: str) -> Match:
-    """The candidates `resolve` and `reverify` would bind a query to: an exact
-    id, else every id-bearing item `carry._same_item` says is the same as the
-    query (terms common to all of the checkpoint's texts ignored). The count of
-    withheld candidates is returned instead of the candidates."""
-    snap = snapshot(project)
+_MATCH_HOW = ("terms", "id", "substring")
+
+
+def match(project, query: str, *, how: str = "terms") -> Match:
+    """The candidates a binding verb would bind a query to, in the live OWN
+    body (scar 0063). `how="terms"`: an exact id, else every id-bearing item
+    `carry._same_item` says is the same as the query (terms common to all of
+    the checkpoint's texts ignored). `how="id"`: the exact id only.
+    `how="substring"`: case-insensitive containment over the visible items,
+    the topic singleton and id-less dicts included; a withheld match is not
+    looked at, so `withheld` is always 0 (a substring plus a count is a
+    character oracle).
+
+    A forgotten candidate is dropped and counted nowhere. `withheld` counts
+    quarantine and closed candidates; `exact` carries the one withheld
+    candidate an exact id named (no value, no forgotten key)."""
+    if how not in _MATCH_HOW:
+        raise ValueError(f"unknown match mode: {how!r}")
+    slug = store.project_slug(config.resolve_project_dir(project))
+    snap = judge(slug).snap
     raw = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                  admit=store.Admit.ANY)
     if not isinstance(raw, dict):
-        return Match((), 0)
+        return Match((), 0, None, snap.closed)
+    if how == "substring":
+        needle = str(query).lower()
+        hits = []
+        for fld, value in schema.iter_fields(raw):
+            entries = ([(None, value)] if fld.singleton
+                       else list(enumerate(value)) if isinstance(value, list)
+                       else [])
+            for index, item in entries:
+                if (isinstance(item, dict)
+                        and needle in str(item.get("text", "")).lower()
+                        and isinstance(classify(fld, item, snap), Visible)):
+                    hits.append(Found(item, fld, (_occurrence(raw),),
+                                      at=(fld.section, fld.key, index)))
+        return Match(tuple(hits), 0, None, snap.closed)
     items = [(fld, item) for fld, item in schema.iter_items(raw)
              if not fld.singleton and item.get("id")]
     exact = [(fld, item) for fld, item in items if item["id"] == query]
     if exact:
         candidates = exact[:1]
+    elif how == "id":
+        candidates = []
     else:
         generic = carry._generic_terms(
             [str(item.get("text") or "") for _fld, item in items])
@@ -1659,12 +1710,18 @@ def match(project, query: str) -> Match:
                                           generic)]
     hits = []
     withheld = 0
+    named = None
     for fld, item in candidates:
-        if isinstance(classify(fld, item, snap), Withheld):
+        verdict = classify(fld, item, snap)
+        if isinstance(verdict, Withheld):
+            if verdict.reason == "forgotten":
+                continue
             withheld += 1
+            if exact:
+                named = _lookup_withheld(verdict, str(item["id"]))
         else:
             hits.append(Found(item, fld, (_occurrence(raw),)))
-    return Match(tuple(hits), withheld)
+    return Match(tuple(hits), withheld, named, snap.closed)
 
 
 def suppressed(project, now: float) -> Suppression:
