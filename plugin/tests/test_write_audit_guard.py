@@ -657,6 +657,12 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # ctx["trust_id"] is active after r_trust_confirm; release lifts it.
         run(["trust", "release", ctx["trust_id"]], 0)
 
+    def r_trust_republish():
+        # A person at the (patched) terminal re-sends the standing
+        # quarantines; no team is enabled in this drive, so nothing is
+        # written and the verb says so.
+        run(["trust", "republish"], 0)
+
     def _plant_torn(ledger_path):
         # builtin open(), not Path.open: the audit patches the latter, and
         # this is the fixture breaking the ledger, not a daimon write.
@@ -966,6 +972,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("trust", "confirm"): r_trust_confirm,
         ("trust", "dismiss"): r_trust_dismiss,
         ("trust", "release"): r_trust_release,
+        ("trust", "republish"): r_trust_republish,
         ("trust", "repair"): r_trust_repair,
         ("ledger", "repair"): r_ledger_repair,
         ("request", "open"): r_request_open,

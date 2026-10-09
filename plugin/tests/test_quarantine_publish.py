@@ -6,6 +6,7 @@ every own sidecar that still folds the id active (release). Fake clones are a
 directory with a `.git` entry, which is all the router looks for; the rows
 here are built the way `trust` builds them."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -40,6 +41,9 @@ def _clone(name="r1"):
 
 def _row(state="active", *, tid=TID, key=KEY, kind="decision", order=1,
          event_id="e1", **extra):
+    # a real event id is 32 hex; a short label stands for one
+    event_id = (event_id if len(event_id) == 32 and set(event_id) <= set(
+        "0123456789abcdef") else hashlib.md5(event_id.encode()).hexdigest())
     row = {"version": 1, "ts": "2026-10-09T12:00:00Z", "order": order,
            "event_id": event_id, "quarantine_id": tid, "kind": kind,
            "value_key": key, "state": state, "author": "ada"}
@@ -126,10 +130,69 @@ def test_a_retry_is_a_no_op_by_event_id(tmp_checkpoint_dir):
 def test_a_row_without_a_valid_shape_is_not_published(tmp_checkpoint_dir):
     _clone()
     out = store.publish_quarantine(
-        [_row(state="candidate"), _row(kind="nonsense"),
-         _row(key="XYZ"), "x", None], PROJECT)
+        [_row(state="candidate"), "x", None], PROJECT)
     assert out == [] and out.failed == ()
     assert not _file(None).exists()
+    # a claim that is off shape is refused AND reported, never written
+    out = store.publish_quarantine(
+        [_row(kind="nonsense"), _row(key="XYZ"),
+         _row(tid="the text of the secret"), _row(ts="soon"),
+         _row(order="1"), _row(order=float("inf"))], PROJECT)
+    assert out == [] and len(out.failed) == 6
+    assert "hash-only" in out.failed[0].reason
+    assert not _file(None).exists()
+
+
+def test_a_prose_author_is_written_as_its_directory_slug(tmp_checkpoint_dir):
+    _clone()
+    store.publish_quarantine(
+        [_row(author="Ada Lovelace the secret: hunter2")], PROJECT)
+    [written] = _rows(_file(None))
+    assert written["author"] == "Ada-Lovelace-the-secret--hunter2"
+
+
+def test_a_planted_infinite_order_in_the_own_file_cannot_break_a_release(
+        tmp_checkpoint_dir):
+    _clone()
+    path = _file(None)
+    path.parent.mkdir(parents=True)
+    with open(path, "ab") as handle:        # independent byte writer
+        handle.write(json.dumps(_row()).encode() + b"\n"
+                     + b'{"kind":"decision","value_key":"%s","state":'
+                     b'"active","order":Infinity}\n' % KEY.encode())
+    out = store.publish_quarantine(
+        [_row("released", order=2, event_id="e2")], PROJECT)
+    assert len(out) == 1 and out.failed == ()
+
+
+def test_a_raise_while_planning_is_a_reported_failure_not_a_traceback(
+        tmp_checkpoint_dir, monkeypatch):
+    _clone()
+    store.publish_quarantine([_row()], PROJECT)
+
+    def boom(rows, qid):
+        raise RuntimeError("fold failed")
+
+    monkeypatch.setattr(store, "_id_folds_active", boom)
+    out = store.publish_quarantine(
+        [_row("released", order=2, event_id="e2")], PROJECT)
+    assert out == [] and len(out.failed) == 1
+    assert "RuntimeError" in out.failed[0].reason
+
+
+def test_trust_release_exits_4_with_the_direction_when_planning_raises(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    tid = _propose()
+
+    def boom(rows, qid):
+        raise RuntimeError("fold failed")
+
+    monkeypatch.setattr(store, "_id_folds_active", boom)
+    assert cli.main(["trust", "release", tid, "--project", PROJECT]) == 4
+    assert "keep masking" in "".join(capsys.readouterr())
+    assert trust.get(tid, project_dir=PROJECT)["state"] == "released"
 
 
 def test_routed_to_two_clones_writes_both(tmp_checkpoint_dir, tmp_path,
@@ -431,3 +494,156 @@ def test_a_transition_that_does_not_move_the_state_publishes_nothing(
     assert trust._publish_after(TID, "active", event, PROJECT) == []
     assert not _file(None).exists()
     assert trust._publish_after(TID, "candidate", event, PROJECT) != []
+
+
+# ---- trust republish ---------------------------------------------------------
+
+OTHER_PROJECT = "/p/quarantine-publish-other"
+
+
+def _republish(*extra, project=PROJECT):
+    return cli.main(["trust", "republish", "--project", project, *extra])
+
+
+def test_republish_resends_the_latest_active_row_verbatim(tmp_checkpoint_dir,
+                                                          monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.delenv("DAIMON_TEAM")  # made while the team was off
+    tid = _propose()
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    _clone()
+    assert not _file(None).exists()
+    assert _republish() == 0
+    [row] = _rows(_file(None))
+    local = [r for r in trust.events(project_dir=PROJECT)
+             if r["event"] == "quarantined"][-1]
+    assert (row["order"], row["event_id"], row["ts"]) == (
+        local["order"], local["event_id"], local["ts"])
+    assert row["state"] == "active" and row["quarantine_id"] == tid
+    out = capsys.readouterr().out
+    assert "1" in out and "republished" in out
+    assert VALUE not in out and row["value_key"] not in out
+
+
+def test_republish_is_idempotent(tmp_checkpoint_dir, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    _propose()
+    assert _republish() == 0 and _republish() == 0
+    assert len(_rows(_file(None))) == 1
+    assert "republished 0" in capsys.readouterr().out.splitlines()[-1]
+
+
+def test_republish_resends_a_release_to_a_dir_that_still_folds_active(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    tid = _propose()
+    monkeypatch.delenv("DAIMON_TEAM")  # the release happened team-less
+    trust.release(tid, channel="cli-tty", project_dir=PROJECT)
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    assert policy.fold_published_quarantines(_rows(_file(None)))
+    assert _republish() == 0
+    assert policy.fold_published_quarantines(_rows(_file(None))) == frozenset()
+    released = [r for r in _rows(_file(None)) if r["state"] == "released"][0]
+    local = [r for r in trust.events(project_dir=PROJECT)
+             if r["event"] == "released"][0]
+    assert released["event_id"] == local["event_id"]
+
+
+def test_republish_leaves_another_projects_pair_alone(tmp_checkpoint_dir,
+                                                      monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    path = _file(None)
+    path.parent.mkdir(parents=True)
+    foreign_to_this_bucket = _row(tid=TID2, key=OTHER_KEY, event_id="elsewhere")
+    path.write_text(json.dumps(foreign_to_this_bucket) + "\n")
+    _propose()
+    assert _republish() == 0
+    assert foreign_to_this_bucket in _rows(path)
+    assert policy.fold_published_quarantines(_rows(path)) >= {
+        ("decision", OTHER_KEY)}
+
+
+def test_republish_refuses_an_agent(tmp_checkpoint_dir, capsys):
+    _clone()
+    assert _republish("--by", "agent") == 1
+    assert "human" in capsys.readouterr().out
+    assert not _file(None).exists()
+
+
+def test_republish_needs_a_terminal_without_by(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    assert _republish() == 1
+
+
+def test_republish_exit_4_on_a_failed_sidecar(tmp_checkpoint_dir, monkeypatch,
+                                              capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.delenv("DAIMON_TEAM")
+    _propose()
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    _clone()
+    path = _file(None)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"<<<<<<< conflict\n")
+    assert _republish() == 4
+    assert "r1" in capsys.readouterr().out
+
+
+def test_republish_without_a_team_says_so(tmp_checkpoint_dir, monkeypatch,
+                                          capsys):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.delenv("DAIMON_TEAM")
+    assert _republish() == 0
+    assert "no team is enabled" in capsys.readouterr().out
+
+
+def test_republish_ignores_candidates_and_dismissed(tmp_checkpoint_dir,
+                                                    monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _clone()
+    cand = _propose(channel="cli-agent", text="a candidate nobody settled yet")
+    dis = _propose(channel="cli-agent", text="a candidate a human dismissed")
+    trust.dismiss(dis, channel="cli-tty", project_dir=PROJECT)
+    assert cand != dis
+    assert _republish() == 0
+    assert not _file(None).exists()
+
+
+def test_the_library_refuses_a_non_human_channel(tmp_checkpoint_dir):
+    with pytest.raises(trust.TrustError, match="human"):
+        trust.republish(channel="cli-agent", project_dir=PROJECT)
+
+
+def test_ledger_repair_trust_points_at_republish(tmp_checkpoint_dir, capsys,
+                                                 monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    _propose()
+    ledger = config.checkpoint_dir() / store.project_slug(PROJECT) / "trust.jsonl"
+    ledger.write_bytes(ledger.read_bytes() + b'{"torn": ')
+    assert cli.main(["ledger", "repair", "trust", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "daimon trust republish" in out
+    assert out.count("daimon trust republish") == 1
+
+
+def test_ledger_repair_of_another_ledger_has_no_hint(tmp_checkpoint_dir,
+                                                     capsys):
+    assert cli.main(["ledger", "repair", "events", "--project", PROJECT]) == 0
+    assert "republish" not in capsys.readouterr().out
+
+
+def test_a_non_oserror_while_appending_is_that_sidecars_failure(
+        tmp_checkpoint_dir, monkeypatch):
+    _clone()
+
+    def boom(*a, **k):
+        raise RuntimeError("append exploded")
+
+    monkeypatch.setattr(jsonl, "append_lines", boom)
+    out = store.publish_quarantine([_row()], PROJECT)
+    assert out == []
+    [(path, why)] = out.failed
+    assert path == _file(None) and "RuntimeError" in why

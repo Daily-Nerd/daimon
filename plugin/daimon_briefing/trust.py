@@ -267,21 +267,28 @@ def events(project_dir=None, *, read=None) -> list[dict]:
     return rows
 
 
-def fold(rows: list[dict]) -> dict[str, dict]:
-    """Fold lifecycle events into current records, deterministic under
-    reorder."""
-    def _integer(row, key, default=0):
-        try:
-            return int(row.get(key) or default)
-        except (TypeError, ValueError):
-            return default
+def _integer(row, key, default=0):
+    try:
+        return int(row.get(key) or default)
+    except (TypeError, ValueError):
+        return default
 
-    ordered = sorted(rows, key=lambda row: (
+
+def _fold_key(row: dict) -> tuple:
+    """The order the fold applies rows in: ledger order, then event rank,
+    then event id, then line."""
+    return (
         _integer(row, "order"),
         _EVENT_RANK.get(str(row.get("event") or ""), 99),
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
-    ))
+    )
+
+
+def fold(rows: list[dict]) -> dict[str, dict]:
+    """Fold lifecycle events into current records, deterministic under
+    reorder."""
+    ordered = sorted(rows, key=_fold_key)
     out: dict[str, dict] = {}
     for row in ordered:
         tid = row["quarantine_id"]
@@ -398,6 +405,20 @@ class Proposed(str):
         return self
 
 
+def _human_row(row: dict) -> bool:
+    return CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human"
+
+
+def _is_activation(row: dict) -> bool:
+    """Is this row a human act that made its quarantine active?"""
+    return _human_row(row) and (row.get("event") == "confirmed" or (
+        row.get("event") == "quarantined" and row.get("ratified") is True))
+
+
+def _is_release(row: dict) -> bool:
+    return _human_row(row) and row.get("event") == "released"
+
+
 def _publish_after(tid: str, before, event: dict, project_dir):
     """Publish the transition `event` just wrote, when the quarantine moved
     into `active` or `released`: a human propose, a confirm, a release, and a
@@ -407,12 +428,9 @@ def _publish_after(tid: str, before, event: dict, project_dir):
     candidate and a dismissal publish nothing. Gated on the team being
     enabled inside `store.publish_quarantine`; the local transition already
     happened and stays whatever this returns."""
-    name = event.get("event")
-    if name == "released":
+    if _is_release(event):
         after = "released"
-    elif name == "confirmed" or (name == "quarantined" and event.get("ratified")
-                                 is True and CHANNEL_AUTHORITY.get(
-                                     str(event.get("channel") or "")) == "human"):
+    elif _is_activation(event):
         after = "active"
     else:
         return store.Published()
@@ -529,6 +547,42 @@ def release(quarantine_id: str, *, channel: str, project_dir=None,
     release the team was sent."""
     return _human_transition("released", quarantine_id, channel, project_dir,
                              now_ns)
+
+
+def republish(*, channel: str, project_dir=None):
+    """Re-send this project's standing quarantines to the team (`daimon
+    trust republish`): the cure for a publish that failed, a team enabled
+    after the verb ran, a sidecar granted later, or a ledger repair that
+    changed which quarantines are active without a verb.
+
+    For every ACTIVE record the latest local activating row, and for every
+    RELEASED record the latest local release row, goes to the team VERBATIM
+    (its original `order` and `event_id`, never a row stamped now), so
+    presence by `event_id` makes a repeat a no-op and a re-sent row orders
+    exactly where the first would have. Records this bucket does not hold are
+    never touched: a pair published from another project or machine is not
+    this bucket's to retract. A human act; returns the `store.Published`."""
+    if CHANNEL_AUTHORITY.get(channel) != "human":
+        raise TrustError(
+            f"republish requires a human channel; this call arrived through "
+            f"{channel!r}")
+    if not config.team_enabled():
+        return store.Published()
+    _require_writable(project_dir)
+    rows = events(project_dir=project_dir)
+    claims = []
+    for tid, record in fold(rows).items():
+        state = record["state"]
+        if state not in ("active", "released"):
+            continue
+        picks = [r for r in rows if r.get("quarantine_id") == tid
+                 and (_is_activation(r) if state == "active"
+                      else _is_release(r))]
+        if picks:
+            claims.append({**sorted(picks, key=_fold_key)[-1], "state": state,
+                           "kind": record["kind"],
+                           "value_key": record["value_key"]})
+    return store.publish_quarantine(claims, project_dir=project_dir)
 
 
 def plaintext_values(row: dict) -> list[str]:

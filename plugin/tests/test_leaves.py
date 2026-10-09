@@ -9,7 +9,7 @@ from tests import _leaves
 
 def test_the_iterator_yields_every_leaf_once():
     leaves = list(_leaves.iter_commands(cli.build_parser()))
-    assert len(leaves) == len(set(leaves)) == 87
+    assert len(leaves) == len(set(leaves)) == 88
     assert ("serialize",) in leaves and ("hooks", "install") in leaves
 
 

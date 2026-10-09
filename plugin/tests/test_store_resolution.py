@@ -307,7 +307,7 @@ def _public_entry_points(sub: str):
          lambda: store.publish_tombstone("deadbeef", project_dir=sub)),
         ("publish_quarantine",
          lambda: store.publish_quarantine(
-             [{"ts": "2026-10-09T12:00:00Z", "order": 1, "event_id": "e1",
+             [{"ts": "2026-10-09T12:00:00Z", "order": 1, "event_id": "e" * 32,
                "quarantine_id": "tr-0123456789ab", "kind": "decision",
                "value_key": "0123456789abcdef", "state": "active"}],
              project_dir=sub)),

@@ -339,6 +339,10 @@ case("cli:trust propose", "text", A("trust", "propose", "--text",
 for verb in ("confirm", "dismiss", "release"):
     case(f"cli:trust {verb}", "id", A("trust", verb, qid), tty=True,
          rc=(0, 1, 2), dests=("quarantine_id",))
+case("cli:trust republish", "tty", A("trust", "republish"), tty=True,
+     rc=(0, 1, 2, 4))
+case("cli:trust republish", "agent", A("trust", "republish", "--by", "agent"),
+     rc=(0, 1, 2, 4), dests=("by",))
 case("cli:trust repair", "dry", A("trust", "repair", "--dry-run"),
      dests=("dry_run",))
 case("cli:ledger repair", "dry", A("ledger", "repair", "trust", "--dry-run"),
@@ -638,7 +642,7 @@ def test_dests_match_the_parser_and_are_classified():
         dests = {a.dest for a in parser._actions
                  if not isinstance(a, argparse._HelpAction)}
         assert dests == set(DESTS[" ".join(leaf)]), leaf
-    assert sum(len(v) for v in DESTS.values()) == 339
+    assert sum(len(v) for v in DESTS.values()) == 341
     for leaf, row in DESTS.items():
         for name, (cls, code) in row.items():
             assert cls in ("OUT", "INE"), (leaf, name)
@@ -979,7 +983,7 @@ CONVERTED_RECALL = {
 # ids and counts and no ledger prose (amend ratify and reject, trust confirm,
 # dismiss, release and repair, relations confirm, reject and retract, ruling
 # checks, audit privacy, check sync, heal, ledger repair, stats, team status,
-# verify-receipt, the session-end hook, daimon_status). PR 12 deletes the
+# trust republish, verify-receipt, the session-end hook, daimon_status). PR 12 deletes the
 # mechanism itself, the KNOWN_LEAKS set and this table with it.
 UNCONVERTED = ({s for s, _ in CASES} - set(CONVERTED)
                - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
@@ -1025,7 +1029,9 @@ def test_a_converted_surface_reaches_the_view():
 
 
 def test_the_unconverted_surfaces_are_pinned_and_only_shrink():
-    assert len(UNCONVERTED) == 19, sorted(UNCONVERTED)
+    # 19 after 11c; PR 13 adds `cli:trust republish`, which prints counts
+    # and a hash-only publish result and reads no item.
+    assert len(UNCONVERTED) == 20, sorted(UNCONVERTED)
     assert KNOWN_LEAKS == set()
 
 

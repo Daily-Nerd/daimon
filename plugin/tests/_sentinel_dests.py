@@ -295,6 +295,10 @@ DESTS = {
         "by": ("INE", "X-HUMAN"),
         "project": ("OUT", "R1"),
     },
+    "trust republish": {
+        "by": ("INE", "X-HUMAN"),
+        "project": ("OUT", "R1"),
+    },
     "trust list": {
         "project": ("OUT", "R1"),
         "json": ("OUT", "R4"),

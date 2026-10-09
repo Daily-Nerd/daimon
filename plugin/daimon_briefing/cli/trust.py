@@ -148,6 +148,26 @@ def _cmd_trust_verdict(args) -> int:
     return 4 if published.failed else 0
 
 
+@_cli.guarded(writes=True)
+def _cmd_trust_republish(args) -> int:
+    """`trust republish`: re-send this project's standing quarantines to the
+    team. Human channel only; counts, never a value or a key."""
+    project = _resolve_project(args.project)
+    try:
+        channel = _trust_channel(args)
+        published = trust.republish(channel=channel, project_dir=project)
+    except trust.TrustError as exc:
+        print(_refusal_message("quarantine republish refused", exc))
+        return 1
+    if not config.team_enabled():
+        render.render_ledger_lines(["no team is enabled; nothing to republish"])
+        return 0
+    render.render_ledger_lines(
+        [f"republished {len(published.keys)} quarantine(s) to the team "
+         "sidecar"] + _publish_lines(published, activating=True))
+    return 4 if published.failed else 0
+
+
 @_cli.guarded
 def _cmd_trust_list(args) -> int:
     project = _resolve_project(args.project)
@@ -270,6 +290,17 @@ def register(sub, fmt) -> None:
                  "it requires a human channel")
         pt_verb.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
         pt_verb.set_defaults(func=_cli._cmd_trust_verdict)
+
+    pt_rep = trust_sub.add_parser(
+        "republish",
+        help="re-send this project's active and released quarantines to the "
+             "team sidecar; a human act, safe to repeat")
+    pt_rep.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; republish then refuses, because it "
+             "requires a human channel")
+    pt_rep.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pt_rep.set_defaults(func=_cli._cmd_trust_republish)
 
     pt_list = trust_sub.add_parser(
         "list", help="list project quarantines, candidates first")

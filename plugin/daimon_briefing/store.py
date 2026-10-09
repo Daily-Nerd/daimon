@@ -1037,19 +1037,20 @@ def _own_author_dirs_everywhere() -> list:
 
 
 def _publishable(row) -> dict | None:
-    """A caller's row reduced to the declared hash-only fields, or None when
-    it is not a valid active/released claim."""
+    """A caller's row reduced to the declared hash-only fields in their one
+    shape (`policy.strict_published_row`), or None when it is not a valid
+    active/released claim. The author is written as the directory-safe slug,
+    the name the sidecar already shows. A row that is a claim but off shape is
+    refused here, never written."""
     if not isinstance(row, dict):
         return None
     clean = {k: row[k] for k in _QUARANTINE_FIELDS if k in row}
     if clean.get("state") not in ("active", "released"):
         return None
-    # Kind and value key must be inside the vocabulary the fold reads.
-    if not policy.fold_published_quarantines([{**clean, "state": "active"}]):
-        return None
     clean.setdefault("version", 1)
-    clean.setdefault("author", config.author())
-    return clean
+    clean["author"] = project_slug(str(clean.get("author")
+                                       or config.author())) or "unknown"
+    return clean if policy.strict_published_row(clean) else None
 
 
 def _id_folds_active(rows, qid) -> bool:
@@ -1082,10 +1083,32 @@ def publish_quarantine(rows, project_dir=None) -> Published:
     teammates still hold."""
     if not config.team_enabled():
         return Published()
-    clean = [r for r in (_publishable(row) for row in rows) if r is not None]
+    clean = []
+    refused = []
+    for row in rows:
+        got = _publishable(row)
+        if got is not None:
+            clean.append(got)
+        elif isinstance(row, dict) and row.get("state") in ("active",
+                                                           "released"):
+            refused.append((config.team_dir(),
+                            "a quarantine row was refused: it is not the "
+                            "hash-only published shape"))
     if not clean:
-        return Published()
+        return Published((), refused)
     project_dir = _resolved(project_dir)
+    try:
+        out = _publish_planned(clean, project_dir)
+    except Exception as exc:  # noqa: BLE001 - the local transition stands
+        return Published((), [*refused, (config.team_dir(),
+                              f"{type(exc).__name__} while publishing")])
+    return Published(out, [*refused, *out.failed], out.keys) if refused else out
+
+
+def _publish_planned(clean, project_dir) -> Published:
+    """Plan and write the sidecar appends for already-clean rows. A raise
+    inside one sidecar's append is that sidecar's failure; a raise while
+    planning propagates to `publish_quarantine`, which reports it."""
     active = [r for r in clean if r["state"] == "active"]
     released = [r for r in clean if r["state"] == "released"]
     plan: dict = {}  # ledger path -> (author dir, rows wanted there)
@@ -1106,7 +1129,8 @@ def publish_quarantine(rows, project_dir=None) -> Published:
                 plan.setdefault(path, (adir, []))[1].extend(wanted)
     for path, (adir, wanted) in plan.items():
         got = reads.get(path) or _capped_rows(path)
-        have = {r.get("event_id") for r in got.rows if isinstance(r, dict)}
+        have = {r.get("event_id") for r in got.rows
+                if isinstance(r, dict) and isinstance(r.get("event_id"), str)}
         todo = [r for r in wanted
                 if not (r.get("event_id") and r["event_id"] in have)]
         if not todo:
@@ -1127,6 +1151,9 @@ def publish_quarantine(rows, project_dir=None) -> Published:
         except OSError as exc:
             name = errno.errorcode.get(exc.errno or 0, "OSError")
             failed.append((path, f"{name} while writing"))
+            continue
+        except Exception as exc:  # noqa: BLE001 - one sidecar, one failure
+            failed.append((path, f"{type(exc).__name__} while writing"))
             continue
         written.append(str(path))
         wrote.update(r["value_key"] for r in todo)

@@ -98,6 +98,7 @@ trust list
 trust propose
 trust release
 trust repair
+trust republish
 trust show
 verify-receipt
 why
@@ -534,15 +535,17 @@ message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DI
 machine-readable output
 
 === trust ===
-usage: daimon trust [-h] {propose,confirm,dismiss,release,list,repair,show} ... positional
-arguments: {propose,confirm,dismiss,release,list,repair,show} propose propose a quarantine; agent
-proposals stay candidates until a human confirms or dismisses them confirm activate a candidate
-quarantine as a human decision dismiss reject a candidate quarantine as a human decision release
-lift an active quarantine as a human decision list list project quarantines, candidates first repair
-alias for `daimon ledger repair trust`: heal trust.jsonl and re-run forget over it show show one
-quarantine record options: -h, --help show this help message and exit Examples: daimon trust propose
---text "the runbook was fabricated" --kind decision --reason "no matching PR" --evidence issue:1109
---by agent daimon trust confirm tr-0123456789ab daimon trust release tr-0123456789ab
+usage: daimon trust [-h] {propose,confirm,dismiss,release,republish,list,repair,show} ... positional
+arguments: {propose,confirm,dismiss,release,republish,list,repair,show} propose propose a
+quarantine; agent proposals stay candidates until a human confirms or dismisses them confirm
+activate a candidate quarantine as a human decision dismiss reject a candidate quarantine as a human
+decision release lift an active quarantine as a human decision republish re-send this project's
+active and released quarantines to the team sidecar; a human act, safe to repeat list list project
+quarantines, candidates first repair alias for `daimon ledger repair trust`: heal trust.jsonl and
+re-run forget over it show show one quarantine record options: -h, --help show this help message and
+exit Examples: daimon trust propose --text "the runbook was fabricated" --kind decision --reason "no
+matching PR" --evidence issue:1109 --by agent daimon trust confirm tr-0123456789ab daimon trust
+release tr-0123456789ab
 
 === trust propose ===
 usage: daimon trust propose [-h] --text TEXT --kind
@@ -574,6 +577,11 @@ usage: daimon trust release [-h] [--by {agent}] [--project PROJECT] quarantine_i
 arguments: quarantine_id exact tr-… id options: -h, --help show this help message and exit --by
 {agent} declare yourself an agent; release then refuses, because it requires a human channel
 --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+
+=== trust republish ===
+usage: daimon trust republish [-h] [--by {agent}] [--project PROJECT] options: -h, --help show this
+help message and exit --by {agent} declare yourself an agent; republish then refuses, because it
+requires a human channel --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === trust list ===
 usage: daimon trust list [-h] [--project PROJECT] [--json] options: -h, --help show this help
