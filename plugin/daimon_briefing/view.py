@@ -1829,17 +1829,21 @@ def _strictest(text: str, snaps, closed_masks: bool) -> Withheld | None:
     return best
 
 
-def _mask_text(text: str, snaps, closed_masks: bool) -> str | None:
+def _mask_text(text: str, snaps, closed_masks: bool,
+               seen: list | None = None) -> str | None:
     """None for a forgotten whole value, the marker for a quarantined or
-    closed one, else the text."""
+    closed one, else the text. A verdict is also appended to `seen` when the
+    caller asked to collect them."""
     verdict = _strictest(text, snaps, closed_masks)
     if verdict is None:
         return text
+    if seen is not None:
+        seen.append(verdict)
     return None if verdict.reason == "forgotten" else display.withheld_marker(
         verdict)
 
 
-def _mask_tree(node, snaps):
+def _mask_tree(node, snaps, seen: list | None = None):
     """Defence in depth: every string leaf of a folded record judged by value
     (forgotten and quarantined only; a closed ledger masks declared value
     copies, never an undeclared leaf), so a fold key the registry does not
@@ -1848,49 +1852,37 @@ def _mask_tree(node, snaps):
     if isinstance(node, dict):
         for key, value in list(node.items()):
             if isinstance(value, str):
-                leaf = _leaf(value, snaps)
+                leaf = _leaf(value, snaps, seen)
                 node[key] = "" if leaf is None else leaf
             else:
-                _mask_tree(value, snaps)
+                _mask_tree(value, snaps, seen)
     elif isinstance(node, list):
         kept = []
         for member in node:
             if isinstance(member, str):
-                member = _leaf(member, snaps)
+                member = _leaf(member, snaps, seen)
                 if member is None:
                     continue
             else:
-                _mask_tree(member, snaps)
+                _mask_tree(member, snaps, seen)
             kept.append(member)
         node[:] = kept
     return node
 
 
-def _leaf(text: str, snaps):
+def _leaf(text: str, snaps, seen: list | None = None):
     """A string leaf of a record: scrub markers and forgotten values go
     (blank in a dict, dropped from a list), a quarantined one is the marker."""
     if not text.strip():
         return text
     if _SCRUBBED.search(text):
         return None
-    return _mask_text(text, snaps, False)
+    return _mask_text(text, snaps, False, seen)
 
 
-def masked(project, ledger_name: str, rows, *,
-           snap: Snapshot | None = None) -> list[dict]:
-    """`rows` of a bucket ledger as a reader may see them: every declared prose
-    path (`Surface.prose` and `folded_prose`) judged as a whole value against
-    the bucket's light snapshot. A forgotten value is blank (a list member
-    dropped), a quarantined or closed one the withheld marker, per
-    `MASK_POLICY`; a deleter's `[forgotten:<key>]` marker never travels. Rows
-    are copied, never mutated, and the folds that produced them stay raw.
-
-    `snap` is the bucket's `judge(slug).snap` when the caller already holds it
-    (a hook, a loop over buckets, a write verb that judged before it appended);
-    otherwise it is taken once here with the BARE slug, never the path
-    (`judge` routes a non-slug to the forgotten set alone). A requests row is a
-    join, so it is also judged by the snapshot of every bucket it names, one
-    judge per slug per call."""
+def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
+               seen: list | None) -> list[dict]:
+    """The body of `masked`; `seen` collects the verdicts it handed out."""
     surface = surfaces.bucket_ledger(ledger_name)
     paths = surface.prose + surface.folded_prose
     own_slug = store.project_slug(config.resolve_project_dir(project))
@@ -1927,11 +1919,40 @@ def masked(project, ledger_name: str, rows, *,
                 shown = trust.display_text(text)
                 return shown if (ledger_name == "trust.jsonl"
                                  and shown != text) else None
-            return _mask_text(text, _snaps, MASK_POLICY[(ledger_name, path)])
+            return _mask_text(text, _snaps, MASK_POLICY[(ledger_name, path)],
+                              seen)
 
         out = surfaces.map_prose(paths, row, fn)
-        result.append(_mask_tree(out, snaps))
+        result.append(_mask_tree(out, snaps, seen))
     return result
+
+
+def masked(project, ledger_name: str, rows, *,
+           snap: Snapshot | None = None) -> list[dict]:
+    """`rows` of a bucket ledger as a reader may see them: every declared prose
+    path (`Surface.prose` and `folded_prose`) judged as a whole value against
+    the bucket's light snapshot. A forgotten value is blank (a list member
+    dropped), a quarantined or closed one the withheld marker, per
+    `MASK_POLICY`; a deleter's `[forgotten:<key>]` marker never travels. Rows
+    are copied, never mutated, and the folds that produced them stay raw.
+
+    `snap` is the bucket's `judge(slug).snap` when the caller already holds it
+    (a hook, a loop over buckets, a write verb that judged before it appended);
+    otherwise it is taken once here with the BARE slug, never the path
+    (`judge` routes a non-slug to the forgotten set alone). A requests row is a
+    join, so it is also judged by the snapshot of every bucket it names, one
+    judge per slug per call."""
+    return _mask_rows(project, ledger_name, rows, snap, None)
+
+
+def withheld_in(project, ledger_name: str, row: dict, *,
+                snap: Snapshot | None = None) -> tuple[Withheld, ...]:
+    """The verdicts `masked` would hand out for one row: what is withheld in
+    it, without the text. A ceremony asks this before it asks a person to sign
+    a record whose words they could not read."""
+    seen: list[Withheld] = []
+    _mask_rows(project, ledger_name, [row], snap, seen)
+    return tuple(seen)
 
 
 @dataclass(frozen=True)

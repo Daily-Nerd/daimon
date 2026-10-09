@@ -207,3 +207,18 @@ def test_a_foreign_bucket_is_masked_by_the_snapshot_it_was_read_from():
     own = view.masked(PROJECT, "refutations.jsonl", [{"verdict": QUARANTINED}],
                       snap=snap())
     assert own == [{"verdict": QUARANTINED}]
+
+
+def test_withheld_in_names_what_is_withheld_without_the_text():
+    both = snap(forgotten=[FORGOTTEN], quarantined=[QUARANTINED])
+    row = {"verdict": QUARANTINED, "evidence": [FORGOTTEN, "issue:1"],
+           "revision_proposed": {"verdict": "fine"}}
+    got = view.withheld_in(PROJECT, "refutations.jsonl", row, snap=both)
+    assert sorted(w.reason for w in got) == ["forgotten", "quarantine"]
+    assert next(w for w in got if w.reason == "quarantine"
+                ).quarantine_id == QID
+    assert view.withheld_in(PROJECT, "refutations.jsonl", {"verdict": "ok"},
+                            snap=both) == ()
+    assert [w.reason for w in view.withheld_in(
+        PROJECT, "trust.jsonl", {"reason": "r"},
+        snap=snap(closed=True))] == ["closed"]

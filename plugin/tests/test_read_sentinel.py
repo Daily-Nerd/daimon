@@ -597,13 +597,6 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 KNOWN_LEAKS: set = {
     *{("cli:amend list", k) for k in ("contradiction", "question",)},
     *{("cli:decide", k) for k in ("peerforgot", "question", "topic",)},
-    *{("cli:refute guard", k) for k in ("question", "topic",)},
-    *{("cli:refute list", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-    *{("cli:refute overturn", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:refute ratify", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:refute revise", k) for k in ("question", "topic",)},
-    *{("cli:refute search", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
-    *{("cli:refute show", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request accept", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request done", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request inbox", k) for k in ("contradiction", "peerforgot", "question", "topic",)},
@@ -923,6 +916,11 @@ CONVERTED = {
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
     "cli:relations show": ("cli/relations_cmd.py", frozenset({"relations"})),
     "http:/api/relations": ("../daimon_ui/server.py", frozenset({"relations"})),
+    # 11c: the prose verbs print what they read through `view.masked`. The
+    # call sits in the helper the verb modules share, `cli/_ledger.py`.
+    **{f"cli:refute {verb}": ("cli/_ledger.py", frozenset({"masked"}))
+       for verb in ("list", "show", "search", "guard", "ratify", "revise",
+                    "overturn")},
 }
 
 # The recall surfaces: they do not open a checkpoint, they query the derived
@@ -995,7 +993,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
 
     for name in ("open", "peek", "projects", "pointers", "sessions",
                  "open_sessions", "events", "verifications", "snapshot",
-                 "judge", "lookup_many", "lineage", "match", "relations", "label"):
+                 "judge", "lookup_many", "lineage", "match", "relations", "label",
+                 "masked"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
