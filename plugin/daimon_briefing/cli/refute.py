@@ -11,6 +11,8 @@ import daimon_briefing.cli as _cli
 
 from .. import refutations, render
 from ._ledger import (
+    _masked_record,
+    _masked_records,
     _print_refutation,
     _refusal_message,
     _refutation_json,
@@ -18,12 +20,16 @@ from ._ledger import (
     _refutation_lines,
     _refuse_ruling_id,
     _refute_channel,
+    _refuses_withheld,
     _ruling_lines,
+    _snap,
 )
 
 
+@_cli.guarded(writes=True)
 def _cmd_refute_add(args) -> int:
     project = _cli._resolve_project(args.project)
+    snap = _snap(project)
     try:
         ref_id = refutations.assert_refutation(
             subject=args.subject, verdict=args.verdict, scope=args.scope,
@@ -39,6 +45,7 @@ def _cmd_refute_add(args) -> int:
     if record is None:
         _report_vanished_write(ref_id, "add", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -57,14 +64,19 @@ def _cmd_refute_add(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_refute_ratify(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
     _cli.require_ledger(project, "refutations.jsonl")
-    if _refuse_ruling_id(refutations.get(args.refutation_id,
-                                         project_dir=project), "ratify"):
+    snap = _snap(project)
+    current = refutations.get(args.refutation_id, project_dir=project)
+    if _refuse_ruling_id(current, "ratify"):
         return 1
+    if current is not None and _refuses_withheld(
+            project, "refute ratify", current, snap=snap):
+        return 2
     try:
         refutations.ratify(args.refutation_id, channel=_refute_channel(args),
                            note=args.note or "", project_dir=project)
@@ -76,6 +88,7 @@ def _cmd_refute_ratify(args) -> int:
     if record is None:
         _report_vanished_write(args.refutation_id, "ratify", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -83,12 +96,17 @@ def _cmd_refute_ratify(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_refute_revise(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "refutations.jsonl")
-    if _refuse_ruling_id(refutations.get(args.refutation_id,
-                                         project_dir=project), "revise"):
+    snap = _snap(project)
+    current = refutations.get(args.refutation_id, project_dir=project)
+    if _refuse_ruling_id(current, "revise"):
         return 1
+    if current is not None and _refuses_withheld(
+            project, "refute revise", current, snap=snap):
+        return 2
     anchors = args.anchor if args.anchor is not None else None
     try:
         refutations.revise(
@@ -104,6 +122,7 @@ def _cmd_refute_revise(args) -> int:
     if record is None:
         _report_vanished_write(args.refutation_id, "revise", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -114,14 +133,19 @@ def _cmd_refute_revise(args) -> int:
     return 0
 
 
+@_cli.guarded(writes=True)
 def _cmd_refute_overturn(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
     _cli.require_ledger(project, "refutations.jsonl")
-    if _refuse_ruling_id(refutations.get(args.refutation_id,
-                                         project_dir=project), "retire"):
+    snap = _snap(project)
+    current = refutations.get(args.refutation_id, project_dir=project)
+    if _refuse_ruling_id(current, "retire"):
         return 1
+    if current is not None and _refuses_withheld(
+            project, "refute overturn", current, snap=snap):
+        return 2
     try:
         event = refutations.overturn(
             args.refutation_id, channel=_refute_channel(args),
@@ -135,6 +159,7 @@ def _cmd_refute_overturn(args) -> int:
     if record is None:
         _report_vanished_write(args.refutation_id, "overturn", as_json=args.json)
         return 0
+    record = _masked_record(project, record, snap=snap)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -145,6 +170,7 @@ def _cmd_refute_overturn(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_refute_show(args) -> int:
     project = _cli._resolve_project(args.project)
     record = refutations.get(args.refutation_id, project_dir=project)
@@ -154,6 +180,7 @@ def _cmd_refute_show(args) -> int:
     if _refuse_ruling_id(record, "show"):
         return 1
     _cli._note_usage("refute:show")
+    record = _masked_record(project, record)
     if args.json:
         print(_refutation_json(record))
     else:
@@ -161,11 +188,13 @@ def _cmd_refute_show(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_refute_list(args) -> int:
     project = _cli._resolve_project(args.project)
     rows = refutations.listing(states=set(args.state or refutations.STATES),
                                polarity="refutation", project_dir=project)
     _cli._note_usage("refute:list")
+    rows = _masked_records(project, rows)
     if args.json:
         print(_refutation_json(rows))
     elif not rows:
@@ -175,6 +204,7 @@ def _cmd_refute_list(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_refute_search(args) -> int:
     project = _cli._resolve_project(args.project)
     try:
@@ -185,6 +215,7 @@ def _cmd_refute_search(args) -> int:
         print(_refusal_message("refutation search refused", exc))
         return 1
     _cli._note_usage("refute:search")
+    rows = _masked_records(project, rows)
     if args.json:
         print(_refutation_json(rows))
     elif not rows:
@@ -203,6 +234,7 @@ def _cmd_refute_search(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_refute_guard(args) -> int:
     project = _cli._resolve_project(args.project)
     try:
@@ -219,6 +251,7 @@ def _cmd_refute_guard(args) -> int:
     # fired: an aggregate cannot say which rail generates the noise.
     _cli._note_usage(f"refute:guard:hit:{rows[0]['guard_match']['rail']}"
                      if rows else "refute:guard:miss")
+    rows = _masked_records(project, rows)
     if args.json:
         print(_refutation_json(rows))
     elif not rows:

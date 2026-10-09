@@ -31,7 +31,9 @@ def _forget(value):
 
 
 def test_trust_show_prints_value_forgotten_not_the_marker(
-        tmp_checkpoint_dir, capsys):
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # a person at a terminal reads the evidence; anyone else gets a count
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     _checkpoint_with(CANARY, EVIDENCE_CANARY)
     tid = _quarantine(CANARY, ["issue:1109", EVIDENCE_CANARY])
     _forget(CANARY)

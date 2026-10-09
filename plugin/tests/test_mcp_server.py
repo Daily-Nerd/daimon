@@ -113,6 +113,15 @@ def test_tools_list_exposes_five_read_only_tools():
         assert t["annotations"]["readOnlyHint"] is True
 
 
+def test_no_tool_takes_an_item_id():
+    """The MCP tools take no item id by design: item-id verbs exist on the
+    CLI, the viewer and the in-process api only (#1132 PR 11c)."""
+    _, out = rpc(_init(), {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+    for t in out[1]["result"]["tools"]:
+        properties = set(t["inputSchema"].get("properties", {}))
+        assert not properties & {"id", "item_id"}, t["name"]
+
+
 def test_tools_call_unknown_tool_yields_invalid_params():
     _, out = rpc(_init(),
                  {"jsonrpc": "2.0", "id": 4, "method": "tools/call",

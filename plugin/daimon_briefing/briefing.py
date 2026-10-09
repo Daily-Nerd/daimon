@@ -1298,15 +1298,30 @@ def prose_mask(snap):
     masks nothing. A closed snapshot is NOT applied to prose here: the
     standing rulings and the panels are human-ratified furniture that must
     keep rendering when the trust ledger is unreadable (the items are what
-    the closed view withholds)."""
-    if snap is None:
-        return lambda text: text
-    from . import view
+    the closed view withholds).
 
-    def mask(text):
-        verdict = view.prose_verdict(text, snap, closed_masks=False)
-        return display.withheld_marker(verdict) if verdict else text
-    return mask
+    A request row is a join, so `mask.for_row(row)` returns the same mapper
+    that also judges by the snapshot of each bucket the row names (its sender
+    and recipient): a value only the other project quarantined is withheld in
+    this panel too."""
+    if snap is None:
+        def identity(text):
+            return text
+        identity.for_row = lambda row: identity   # type: ignore[attr-defined]
+        return identity
+    from . import view
+    others: dict = {}
+
+    def mapper(snaps):
+        def mask(text):
+            verdict = view.prose_verdict_over(text, snaps, closed_masks=False)
+            return display.withheld_marker(verdict) if verdict else text
+        return mask
+
+    own_only = mapper([snap])
+    own_only.for_row = (   # type: ignore[attr-defined]
+        lambda row: mapper([snap, *view.named_snapshots(row, others)]))
+    return own_only
 
 
 def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
@@ -1441,7 +1456,11 @@ def decision_count_line(project_dir=None) -> str | None:
     if project_dir is None:
         return None
     try:
-        here = len(pending.queue(project_dir=project_dir)["rows"])
+        # A count of rows, no text rendered: the lanes skip the prose masking
+        # (and the judge) so a masker that fails can never break the briefing
+        # count, and this path takes no new judge call.
+        here = len(pending.queue(project_dir=project_dir,
+                                 masked=False)["rows"])
     except Exception:
         return None
     elsewhere = 0
@@ -1548,7 +1567,7 @@ def request_panel(project_dir=None, *, mask=None):
         # ask so the id stays in its own span.
         claim_marker = "  [done claimed]" if row.get("done_pending") else ""
         lines.append(f"→ {row['request_id']}  "
-                     f"{_truncate_request_ask(mask(row.get('ask', '')))}"
+                     f"{_truncate_request_ask(_row_mask(mask, row)(row.get('ask', '')))}"
                      f"{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1595,7 +1614,7 @@ def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
         kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
         lines.append(f"✓ {row['request_id']}  "
-                     f"{_truncate_request_ask(mask(row.get('ask', '')))}"
+                     f"{_truncate_request_ask(_row_mask(mask, row)(row.get('ask', '')))}"
                      f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1616,6 +1635,13 @@ _VERDICT_PANEL_HEADER = "Decisions on requests you sent:"
 # package (the dependency runs the other way: cli imports briefing/render).
 _VERDICT_MARKS = {"needs-info": "?", "accepted": "✓", "rejected": "×",
                   "done": "✔"}
+
+
+def _row_mask(mask, row: dict):
+    """The panel's mapper bound to one request row (it also judges by the
+    buckets the row names), or the mapper itself when it cannot."""
+    bind = getattr(mask, "for_row", None)
+    return bind(row) if bind is not None else mask
 
 
 def _mask_reply(row: dict, mask) -> dict:
@@ -1677,18 +1703,19 @@ def verdict_panel(project_dir=None, *, mask=None):
         state_label = ("accepted (by agent)"
                        if state == "accepted" and row.get("accepted_by") == "agent"
                        else state)
+        rmask = _row_mask(mask, row)
         lines.append(f"{mark} {state_label}  {row['request_id']}  "
-                     f"{_truncate_request_ask(mask(row.get('ask', '')))}")
+                     f"{_truncate_request_ask(rmask(row.get('ask', '')))}")
         lines.append(f"  To: {row.get('to') or '?'}")
         note = str(row.get("note") or "").strip()
         if note:
-            lines.append(f"  Note: {_truncate_request_ask(mask(note))}")
+            lines.append(f"  Note: {_truncate_request_ask(rmask(note))}")
         done_evidence = str(row.get("done_evidence") or "").strip()
         if done_evidence:
             lines.append(
-                f"  Done: {_truncate_request_ask(mask(done_evidence))}")
+                f"  Done: {_truncate_request_ask(rmask(done_evidence))}")
         # #1117: ONE capped line (skeleton the trimmer keeps).
-        reply_line = requests.latest_reply_line(_mask_reply(row, mask))
+        reply_line = requests.latest_reply_line(_mask_reply(row, rmask))
         if reply_line:
             lines.append(f"  {reply_line}")
     overflow = entry.get("overflow") or 0

@@ -156,6 +156,7 @@ def _cmd_amend_verdict(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_amend_list(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli._note_usage("amend:list")
@@ -163,6 +164,9 @@ def _cmd_amend_list(args) -> int:
         amendments.records(project_dir=project).values(),
         key=lambda r: (r["state"] != "candidate",
                        r.get("updated_at") or "", r["amendment_id"]))
+    # The quote is a copy of an item's text, so it is masked while the trust
+    # ledger cannot be read; the note is the person's own words.
+    rows = view.masked(project, "amendments.jsonl", rows)
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0

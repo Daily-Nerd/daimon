@@ -23,10 +23,11 @@ specific shapes come before the generic ones they would otherwise shadow.
 """
 from __future__ import annotations
 
+import copy
 import enum
 import fnmatch
 import re
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 # rewrite            — forget reaches it by rewriting the file (atomic replace)
 # append-tombstone   — append-only ledger; forget appends a tombstone and the
@@ -120,6 +121,10 @@ class Surface(NamedTuple):
     #    read, write, deleter and phase stay empty until theirs do. --
     fold: str = ""                    # dotted pure fold, e.g. "trust.fold"
     prose: tuple[FieldPath, ...] = ()  # plaintext row fields
+    # Prose a FOLD derives outside the row paths above: a proposal's copy of
+    # the text, an overturn's note, a reply's note. A printer shows the
+    # folded record, so the masker walks `prose + folded_prose` (11c).
+    folded_prose: tuple[FieldPath, ...] = ()
     # Read posture per state, in READ_STATES order (absent, degraded,
     # transient, unreadable); `foreign_read` is the same for a ledger read
     # across buckets or authors. `write` is the same per writer class.
@@ -249,6 +254,18 @@ SURFACES: tuple[Surface, ...] = (
                            "note") + (
                 FieldPath(("anchors",), True), FieldPath(("evidence",), True),
                 FieldPath(("check", "match")), FieldPath(("check", "body"))),
+            folded_prose=(
+                FieldPath(("revision_proposed", "subject")),
+                FieldPath(("revision_proposed", "verdict")),
+                FieldPath(("revision_proposed", "note")),
+                FieldPath(("revision_proposed", "evidence"), True),
+                FieldPath(("revision_proposed", "check", "match")),
+                FieldPath(("revision_proposed", "check", "body")),
+                FieldPath(("overturn_proposed", "note")),
+                FieldPath(("overturn_proposed", "evidence"), True),
+                FieldPath(("overturn_note",)),
+                FieldPath(("overturn_evidence",), True),
+                FieldPath(("guard_match", "anchors"), True)),
             mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN,
             write=_W_HUMAN),
     # -- the amendment ledger (#691): the fourth bucket ledger — evidence
@@ -301,7 +318,16 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/requests.jsonl", "requests.append",
             True, "rewrite", "forget", fold="requests.fold",
             prose=_scalars("ask", "why", "note", "evidence", "from_label",
-                           "act_author"), mergeable=True, read=_READ_NOTED,
+                           "act_author"),
+            folded_prose=(
+                FieldPath(("done_evidence",)),
+                FieldPath(("replies[]", "note")),
+                FieldPath(("replies[]", "evidence")),
+                FieldPath(("replies[]", "act_author")),
+                FieldPath(("opened_act_author",)),
+                FieldPath(("verdict_act_author",)),
+                FieldPath(("done_act_author",))),
+            mergeable=True, read=_READ_NOTED,
             foreign_read=_READ_FOREIGN, write=_W_HUMAN_EMITTER),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
@@ -810,6 +836,56 @@ def prose_values(prose: tuple[FieldPath, ...], row: dict, *,
         else:
             values = [holder]
         out.extend(v for v in values if isinstance(v, str) and v.strip())
+    return out
+
+
+def path_string(fp: FieldPath) -> str:
+    """The canonical text of a prose path: `check.match`, `evidence[]`,
+    `replies[].note`. The key a per-column policy table is written in."""
+    return ".".join(fp.path) + ("[]" if fp.is_list else "")
+
+
+def _map_at(holder: object, path: tuple[str, ...], fp: FieldPath,
+            fn: Callable[[str, FieldPath], str | None]) -> None:
+    if not isinstance(holder, dict) or not path:
+        return
+    head, rest = path[0], path[1:]
+    if head.endswith("[]") and rest:       # each dict of a list of dicts
+        members = holder.get(head[:-2])
+        for member in (members if isinstance(members, list) else ()):
+            _map_at(member, rest, fp, fn)
+        return
+    if rest:
+        _map_at(holder.get(head), rest, fp, fn)
+        return
+    value = holder.get(head)
+    if fp.is_list:
+        if not isinstance(value, list):
+            return
+        kept: list = []
+        for one in value:
+            if isinstance(one, str) and one.strip():
+                mapped = fn(one, fp)
+                if mapped is None:
+                    continue
+                one = mapped
+            kept.append(one)
+        holder[head] = kept
+    elif isinstance(value, str) and value.strip():
+        mapped = fn(value, fp)
+        holder[head] = "" if mapped is None else mapped
+
+
+def map_prose(prose: tuple[FieldPath, ...], row: dict,
+              fn: Callable[[str, FieldPath], str | None]) -> dict:
+    """A deep copy of `row` with `fn(text, path)` applied to every non-blank
+    string at the declared prose paths (list members and nested paths
+    included; a path segment written `replies[]` means each dict of that
+    list). `fn` returning None drops a list member and blanks a scalar. The
+    walk is `prose_values`', so the two cannot disagree on what is prose."""
+    out = copy.deepcopy(row)
+    for fp in prose:
+        _map_at(out, fp.path, fp, fn)
     return out
 
 

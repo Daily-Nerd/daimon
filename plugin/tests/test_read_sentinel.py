@@ -360,9 +360,9 @@ case("cli:request reply", "id", A("request", "reply",
 case("cli:request revise", "id", A("request", "revise",
      lambda w: w.request_id, "--ask", "revised"), tty=True, rc=(0, 1, 2),
      dests=("request_id",))
-case("cli:request open", "default", A("request", "open", "--to", slug,
-     "--ask", "an unrelated ask", "--why", "because"), tty=True,
-     rc=(0, 1, 2))
+case("cli:request open", "default", A("request", "open",
+     lambda w: f"--to={slug(w)}", "--ask", "an unrelated ask", "--why",
+     "because"), tty=True, rc=(0, 1, 2))
 case("cli:relations list", "default", A("relations", "list"),
      dests=("state", "project", "json"), axes=("DAIMON_PLAIN",))
 case("cli:relations show", "id", A("relations", "show",
@@ -371,6 +371,43 @@ for verb in ("confirm", "reject", "retract"):
     case(f"cli:relations {verb}", "id", A("relations", verb,
          lambda w: w.relation_id), tty=True, rc=(0, 1, 2),
          dests=("relation_id",))
+
+# the folded prose of 11c: an anchor the guard matches, a state the default
+# listing leaves out, and the --json form of every prose verb that has one (a
+# printer that masks the text lines and dumps the record raw leaks here)
+case("cli:refute guard", "anchor", A("refute", "guard", "zzzz", "--anchor",
+     lambda w: sw.TEXTS["topic"]), dests=("anchor",))
+case("cli:refute list", "overturned", A("refute", "list", "--state",
+     "overturned"), dests=("state",))
+case("cli:ruling list", "overturned", A("ruling", "list", "--state",
+     "overturned"), dests=("state",))
+
+
+def _json_variant(surface, tag="default"):
+    base = CASES[(surface, tag)]
+    CASES[(surface, "json" if tag == "default" else tag + "-json")] = Case(
+        (lambda b: lambda w: [*b.args(w), "--json"])(base), stdin=base.stdin,
+        tty=base.tty, dests=("json",), rc=base.rc, shows=None,
+        axes=tuple(a for a in base.axes if a == "STDIN_TTY"))
+
+
+for _surface, _tag in (
+        ("cli:refute list", "default"), ("cli:refute list", "overturned"),
+        ("cli:refute show", "id"), ("cli:refute search", "default"),
+        ("cli:refute guard", "default"), ("cli:refute guard", "anchor"),
+        ("cli:refute ratify", "id"), ("cli:refute revise", "id"),
+        ("cli:refute overturn", "id"), ("cli:ruling list", "default"),
+        ("cli:ruling list", "inherited"), ("cli:ruling list", "overturned"),
+        ("cli:ruling show", "id"), ("cli:ruling ratify", "id"),
+        ("cli:ruling revise", "id"), ("cli:ruling retire", "id"),
+        ("cli:amend list", "default"), ("cli:trust list", "default"),
+        ("cli:trust show", "id"), ("cli:request list", "default"),
+        ("cli:request inbox", "default")):
+    _json_variant(_surface, _tag)
+
+# `trust list --json` hands evidence to a tty and omits it for anyone else
+case("cli:trust list", "json-tty", A("trust", "list", "--json"),
+     dests=("json",), axes=("STDIN_TTY",))
 
 # ---- verbs that bind a target in the live checkpoint ----------------------
 case("cli:resolve", "no-match", A("resolve", "zzzqqq"), tty=True, rc=(0, 1),
@@ -550,7 +587,10 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
             lines=lines_before)
         blob = res.text() + "\n" + b"\n".join(res.written).decode(
             "utf-8", errors="replace")
-        leaks |= {(surface, tag, k) for k in sw.leaked_kinds(blob)}
+        found = {(surface, tag, k) for k in sw.leaked_kinds(blob)}
+        if tty_now and (surface, tag) in HUMAN_RAW:
+            found = {f for f in found if f[2] not in HUMAN_RAW[(surface, tag)]}
+        leaks |= found
         if (surface, tag) not in KEY_EXEMPT:
             leaks |= {(surface, tag, k) for k in sw.leaked_keys(blob)}
         results.append((label, res))
@@ -561,33 +601,7 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 # Allowlists (seeded from the run; shrink-only)
 # ===========================================================================
 # {(surface, kind)}: seeded from the run, each must still leak, nothing else may
-KNOWN_LEAKS: set = {
-    *{("cli:amend list", k) for k in ("question",)},
-    *{("cli:decide", k) for k in ("question", "topic",)},
-    *{("cli:refute list", k) for k in ("topic",)},
-    *{("cli:refute overturn", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:refute ratify", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:refute revise", k) for k in ("question", "topic",)},
-    *{("cli:refute search", k) for k in ("question", "topic",)},
-    *{("cli:refute show", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request accept", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request done", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request inbox", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request list", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request needs-info", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request reject", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request reply", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request suppress", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:request-inject", k) for k in ("contradiction", "topic",)},
-    *{("cli:ruling list", k) for k in ("question",)},
-    *{("cli:ruling retire", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:ruling revise", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:ruling show", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:trust list", k) for k in ("contradiction", "question",)},
-    *{("cli:trust show", k) for k in ("contradiction",)},
-    *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
-    *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
-}
+KNOWN_LEAKS: set = set()
 
 
 @pytest.fixture(scope="module")
@@ -710,6 +724,56 @@ def test_no_surface_hands_back_a_forgotten_key(world_run):
     assert seen == KNOWN_KEY_LEAKS
 
 
+def test_the_prose_columns_are_planted_in_the_world(world_run, monkeypatch):
+    """Anti-vacuity for 11c: every declared folded prose path of a refutation
+    or request in the world carries a sentinel (so a printer that skips it
+    leaks), except `revision_proposed.note`, which no writer can set."""
+    from daimon_briefing import refutations, requests, surfaces
+    from tests.test_folded_prose_census import _leaves
+    world, _leaks, _details = world_run
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    seen = {name: set() for name in ("refutations.jsonl", "requests.jsonl")}
+    folded = {
+        "refutations.jsonl": list(refutations.records(
+            project_dir=world.project).values()) + refutations.guard(
+                "zzzz", anchors=[sw.TEXTS["topic"]],
+                project_dir=world.project),
+        "requests.jsonl": list(requests.records(
+            project_dir=world.project).values())}
+    for name, records in folded.items():
+        for record in records:
+            for path, value in _leaves(record):
+                if any(tok.lower() in value.lower()
+                       for tok in [*sw.TOKENS.values(), sw.PEER_TOKEN]):
+                    seen[name].add(path)
+    for name, planted in seen.items():
+        s = surfaces.bucket_ledger(name)
+        declared = {surfaces.path_string(fp)
+                    for fp in s.prose + s.folded_prose}
+        missing = declared - planted
+        # `note` and `act_author` are row fields a fold renames or does not
+        # keep, `revision_proposed.note` has no writer and `from_label` would
+        # name the bucket itself
+        assert missing <= {"revision_proposed.note", "note", "act_author",
+                           "from_label"}, (
+            name, sorted(missing))
+
+
+def test_the_peer_quarantines_live_in_the_peer_bucket_only(world_run):
+    """Anti-vacuity for the cross-bucket judge: the own snapshot holds no
+    quarantine for these words, so only the peer's snapshot can mask them."""
+    from daimon_briefing import normalize
+    world, _leaks, _details = world_run
+    peer_dir = world.bucket.parent / store.project_slug(world.peer)
+    own = (world.bucket / "trust.jsonl").read_text()
+    peer = (peer_dir / "trust.jsonl").read_text()
+    rows = (peer_dir / "requests.jsonl").read_text()
+    for text in (sw.PEER_ASK, sw.PEER_NOTE):
+        key = normalize.content_key(text)
+        assert key not in own and key in peer
+        assert text in rows
+
+
 def test_the_forgotten_keys_are_stored_in_the_world(world_run):
     """Anti-vacuity: the tombstones the scan looks for are on disk."""
     world, _leaks, _details = world_run
@@ -753,12 +817,24 @@ def test_cases_ran_and_said_what_they_should(world_run):
 HUMAN_CHANNEL = {
     ("cli:trust show", "id"):
         "a human reads the quarantined evidence they are about to confirm",
+    ("cli:trust show", "id-json"):
+        "the same record as JSON; evidence is omitted for the agent channel",
+    ("cli:trust list", "json-tty"):
+        "the listing as JSON; evidence is omitted for the agent channel",
     ("cli:trust propose", "text"):
         "echoes the text the human just typed; the agent channel is refused",
     ("cli:forget", "dry"):
         "dry run names the target the human is about to forget",
     ("cli:forget", "receipt"):
         "forgets a quarantined value by exact id; an agent is refused",
+}
+# What a person at a terminal is shown raw on purpose, by kinds. `trust show`
+# prints the evidence a quarantine cites to a tty so the person can judge it;
+# the agent run of the same case is held to nothing (the test below).
+HUMAN_RAW = {
+    ("cli:trust show", "id"): {"topic"},
+    ("cli:trust show", "id-json"): {"topic"},
+    ("cli:trust list", "json-tty"): {"topic"},
 }
 # Bytes that carry a checkpoint forward on purpose: not read output.
 WRITE_CARRY = {
@@ -780,15 +856,23 @@ WRITE_CARRY = {
 def test_exemptions_name_real_cases():
     for key in HUMAN_CHANNEL:
         assert key in CASES, key
+    for key in HUMAN_RAW:
+        assert key in CASES and key[0] in {k[0] for k in HUMAN_CHANNEL}, key
     for surface, tag in WRITE_CARRY:
         assert (surface in NO_ITEMS or surface.startswith("store.")
                 or (surface, tag) in CASES), (surface, tag)
 
 
-def test_the_human_channel_exemption_is_closed_to_the_agent(world_run):
+def test_the_human_channel_exemption_is_closed_to_the_agent(
+        world_run, monkeypatch):
+    """Run on the world's own clean copy, not a copy of the root the drive has
+    already dirtied: after the drive, `trust release` and `forget receipt` have
+    redacted the quarantine this reads, and the agent channel then finds
+    nothing to show, which proves nothing."""
     world, _leaks, _details = world_run
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
     tmp = world.root
-    pristine = drive.Pristine(tmp, tmp.parent / (tmp.name + "-keep2"))
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
     for key in HUMAN_CHANNEL:
         for label, tty in (("human", True), ("agent", False)):
             found, results = drive_case(key[0], key[1], world, pristine,
@@ -853,6 +937,30 @@ CONVERTED = {
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
     "cli:relations show": ("cli/relations_cmd.py", frozenset({"relations"})),
     "http:/api/relations": ("../daimon_ui/server.py", frozenset({"relations"})),
+    # 11c: the prose verbs print what they read through `view.masked`. The
+    # call sits in the helper the verb modules share, `cli/_ledger.py`.
+    **{f"cli:refute {verb}": ("cli/_ledger.py", frozenset({"masked"}))
+       for verb in ("list", "show", "search", "guard", "ratify", "revise",
+                    "overturn")},
+    **{f"cli:ruling {verb}": ("cli/_ledger.py", frozenset({"masked"}))
+       for verb in ("list", "show", "ratify", "revise", "retire")},
+    "cli:decide": ("pending.py", frozenset({"masked"})),
+    "mcp:requests_inbox": ("mcp_tools.py", frozenset({"masked"})),
+    "http:/api/refutations": ("../daimon_ui/server.py", frozenset({"masked"})),
+    "cli:amend list": ("cli/amend.py", frozenset({"masked"})),
+    "cli:trust list": ("cli/trust.py", frozenset({"masked"})),
+    "cli:trust show": ("cli/trust.py", frozenset({"masked"})),
+    "cli:trust propose": ("cli/trust.py", frozenset({"masked"})),
+    **{f"cli:request {verb}": ("cli/request.py", frozenset({"masked"}))
+       for verb in ("list", "inbox", "accept", "reject", "needs-info",
+                    "suppress", "done", "reply", "revise", "open")},
+}
+
+# A per-prompt hook is rc 0 and silent on every failure by design, so it cannot
+# meet the uniform contract (rc 2, one line). It has its own: when the judge
+# fails it prints nothing and stamps nothing.
+CONVERTED_HOOK = {
+    "cli:request-inject": ("cli/request.py", frozenset({"masked"})),
 }
 
 # The recall surfaces: they do not open a checkpoint, they query the derived
@@ -866,9 +974,15 @@ CONVERTED_RECALL = {
     "http:/api/recall": ("../daimon_ui/server.py", frozenset({"query"})),
 }
 
-# Shrink-only: surfaces that do not yet read through `view.open`. Each PR from
-# 7a onward deletes entries as readers convert; an empty set is the goal.
-UNCONVERTED = {s for s, _ in CASES} - set(CONVERTED) - set(CONVERTED_RECALL)
+# Shrink-only: surfaces that do not yet read through the view. Each PR from 7a
+# onward deleted entries as readers converted. What is left prints state words,
+# ids and counts and no ledger prose (amend ratify and reject, trust confirm,
+# dismiss, release and repair, relations confirm, reject and retract, ruling
+# checks, audit privacy, check sync, heal, ledger repair, stats, team status,
+# verify-receipt, the session-end hook, daimon_status). PR 12 deletes the
+# mechanism itself, the KNOWN_LEAKS set and this table with it.
+UNCONVERTED = ({s for s, _ in CASES} - set(CONVERTED)
+               - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
 
 
 # Cases of a converted surface that never read a checkpoint item: the status
@@ -899,12 +1013,24 @@ def test_unconverted_is_a_subset_of_the_registry():
     assert not UNCONVERTED & set(CONVERTED)
     assert not UNCONVERTED & set(CONVERTED_RECALL)
     assert not set(CONVERTED) & set(CONVERTED_RECALL)
+    assert not set(CONVERTED_HOOK) & (set(CONVERTED) | set(CONVERTED_RECALL)
+                                      | UNCONVERTED)
     assert (UNCONVERTED | set(CONVERTED) | set(CONVERTED_RECALL)
-            == {s for s, _ in CASES})
+            | set(CONVERTED_HOOK) == {s for s, _ in CASES})
 
 
 def test_a_converted_surface_reaches_the_view():
     for surface, (rel, names) in CONVERTED.items():
+        assert _calls_view(rel, names), (surface, rel)
+
+
+def test_the_unconverted_surfaces_are_pinned_and_only_shrink():
+    assert len(UNCONVERTED) == 19, sorted(UNCONVERTED)
+    assert KNOWN_LEAKS == set()
+
+
+def test_a_hook_surface_reaches_the_view():
+    for surface, (rel, names) in CONVERTED_HOOK.items():
         assert _calls_view(rel, names), (surface, rel)
 
 
@@ -917,7 +1043,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         world_run, monkeypatch):
     from daimon_briefing import view
     world, _l, _d = world_run
-    converted = {s for s, _ in CASES} - UNCONVERTED - set(CONVERTED_RECALL)
+    converted = ({s for s, _ in CASES} - UNCONVERTED
+                 - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
     assert converted == set(CONVERTED)
 
     def boom(*_a, **_k):
@@ -925,7 +1052,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
 
     for name in ("open", "peek", "projects", "pointers", "sessions",
                  "open_sessions", "events", "verifications", "snapshot",
-                 "judge", "lookup_many", "lineage", "match", "relations", "label"):
+                 "judge", "lookup_many", "lineage", "match", "relations", "label",
+                 "masked"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
@@ -955,6 +1083,34 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
                 assert res.rc == 500, (surface, tag, label, res.rc)
             else:
                 assert res.chunks == ["None"], (surface, tag, label)
+
+
+def test_the_request_hook_prints_nothing_and_stamps_nothing_when_masked_raises(
+        world_run, monkeypatch):
+    """`request-inject` sits on the per-prompt path: every failure is silent
+    and rc 0. The print comes after the judgement and the stamps after the
+    print, so a judge that fails leaves no output and no delivery record."""
+    from daimon_briefing import view
+    world, _l, _d = world_run
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    tmp = world.root
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
+    _found, results = drive_case("cli:request-inject", "prompt", world,
+                                 pristine)
+    # anti-vacuity: delivery is on in one variant and it does print an ask
+    assert any("daimon request" in res.text() or "daimon verdict" in res.text()
+               for _label, res in results)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("view.masked failed")
+
+    monkeypatch.setattr(view, "masked", boom)
+    _found, results = drive_case("cli:request-inject", "prompt", world,
+                                 pristine)
+    for label, res in results:
+        assert res.rc == 0, label
+        assert res.text().strip() == "", label
+        assert res.written == [], label
 
 
 def _drive_recall_surfaces(world, monkeypatch):

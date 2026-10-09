@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from .. import config, refutations, render, store
+from .. import config, refutations, render, store, view
 from . import _cap_refusal
 
 # #920: over-cap `subject`/`verdict`/`scope`/`evidence` name where the
@@ -86,6 +86,66 @@ def _report_vanished_write(record_id: str, verb: str, *,
             [f"{record_id}: {verb} recorded in this project's ledger",
              "  the record was not readable here at render time — the write "
              "landed and renders with the record"])
+
+
+# ---- 11c: every record a printer shows is judged first ----------------------
+
+_LEDGER = "refutations.jsonl"
+
+
+def _snap(project):
+    """The bucket's light snapshot, taken BEFORE a write verb appends, so the
+    echo is judged by what was true when the person acted and a failure to
+    judge refuses before the row lands."""
+    return view.judge(store.project_slug(config.resolve_project_dir(project))).snap
+
+
+def _masked_records(project, records, *, snap=None) -> list:
+    """`records` as a reader may see them. A ruling inherited from a layer was
+    read from that layer's bucket, so its own quarantines judge it; everything
+    else is judged by `project` (with `snap` when the caller took it before a
+    write). One `view.masked` call per origin, never one per row."""
+    out: list = [None] * len(records)
+    # the own group is judged even when empty, so a judge that fails fails here
+    groups: dict = {"": []}
+    for index, record in enumerate(records):
+
+        groups.setdefault(record.get("inherited_from") or "", []).append(index)
+    for origin, indexes in groups.items():
+        rows = view.masked(origin or project, _LEDGER,
+                           [records[i] for i in indexes],
+                           snap=None if origin else snap)
+        for index, row in zip(indexes, rows):
+            out[index] = row
+    return out
+
+
+def _masked_record(project, record, *, snap=None) -> dict:
+    return _masked_records(project, [record], snap=snap)[0]
+
+
+def _refuses_withheld(project, verb: str, row: dict, *, snap=None) -> bool:
+    """True, after saying so on stderr, when any prose field a ceremony would
+    show of `row` is withheld. A person signs the whole text or nothing, so a
+    record with a field they cannot read is not one they can sign: the verb
+    stops before it appends, and a quarantine names the terminal command that
+    shows it. The signature still binds the stored record, never a display."""
+    verdicts = view.withheld_in(project, _LEDGER, row, snap=snap)
+    if not verdicts:
+        return False
+    print(f"error: {verb} refused: this record has withheld text; nothing "
+          "was written", file=sys.stderr)
+    # A quarantine is a person's latch on every channel; the cure is theirs.
+    for verdict in verdicts:
+        if verdict.reason == "quarantine" and verdict.quarantine_id:
+            qid = verdict.quarantine_id
+            print(f"note: daimon trust show {qid} on a terminal, then "
+                  f"daimon trust release {qid}", file=sys.stderr)
+            return True
+    if any(v.reason == "forgotten" for v in verdicts):
+        print("note: the withheld text was forgotten; the record cannot be "
+              "revised", file=sys.stderr)
+    return True
 
 
 def _refutation_json(record) -> str:
@@ -451,14 +511,16 @@ def _inherited_ceremony_lines(project_dir) -> list:
     prompt (`ratify`, `propose --ratify`), so a human ratifying INTO a
     child sees what already binds it from above. [] when no layer holds
     anything, so nothing extra prints."""
-    rows = refutations.inherited_active(project_dir)
+    rows = _masked_records(project_dir, refutations.inherited_active(project_dir))
     if not rows:
         return []
     lines = ["Inherited rulings in force here:"]
     for row in rows:
+        if not row.get("verdict"):   # a forgotten rule is shown as nothing
+            continue
         home = config.home_relative(row.get("inherited_from") or "")
         lines.append(f"  § {row.get('verdict', '')}  [from {home}]")
-    return lines
+    return lines if len(lines) > 1 else []
 
 
 def _is_layer_project(project_dir) -> bool:

@@ -1750,6 +1750,230 @@ def label(project, row, snap: Snapshot) -> display.Candidate:
     return display.Candidate(item_id, str(key), text, matched, withheld)
 
 
+# ---- ledger prose, masked (11c) ----------------------------------------------
+
+# One closed-trust policy per declared prose path, `(ledger, path)` to
+# `closed_masks`. `True` is a VALUE COPY (an item's text or quote carried into a
+# ledger): it is masked while the trust ledger cannot be read. `False` is
+# something a person wrote (an ask, a verdict, a note): 7a keeps it readable
+# under a closed ledger and still masks a whole value that is provably
+# forgotten or quarantined. Two-way against the registry
+# (tests/test_masked_policy.py), so a new prose column cannot ship unpoliced.
+MASK_POLICY: dict[tuple[str, str], bool] = {
+    ("events.jsonl", "note"): False,
+    ("events.jsonl", "item_text"): True,
+    ("events.jsonl", "status"): False,
+    ("refutations.jsonl", "subject"): False,
+    ("refutations.jsonl", "verdict"): False,
+    ("refutations.jsonl", "scope"): False,
+    ("refutations.jsonl", "revisit_when"): False,
+    ("refutations.jsonl", "note"): False,
+    ("refutations.jsonl", "anchors[]"): False,
+    ("refutations.jsonl", "evidence[]"): False,
+    ("refutations.jsonl", "check.match"): False,
+    ("refutations.jsonl", "check.body"): False,
+    ("refutations.jsonl", "revision_proposed.subject"): False,
+    ("refutations.jsonl", "revision_proposed.verdict"): False,
+    ("refutations.jsonl", "revision_proposed.note"): False,
+    ("refutations.jsonl", "revision_proposed.evidence[]"): False,
+    ("refutations.jsonl", "revision_proposed.check.match"): False,
+    ("refutations.jsonl", "revision_proposed.check.body"): False,
+    ("refutations.jsonl", "overturn_proposed.note"): False,
+    ("refutations.jsonl", "overturn_proposed.evidence[]"): False,
+    ("refutations.jsonl", "overturn_note"): False,
+    ("refutations.jsonl", "overturn_evidence[]"): False,
+    ("refutations.jsonl", "guard_match.anchors[]"): False,
+    ("amendments.jsonl", "evidence"): True,
+    ("amendments.jsonl", "note"): False,
+    ("requests.jsonl", "ask"): False,
+    ("requests.jsonl", "why"): False,
+    ("requests.jsonl", "note"): False,
+    ("requests.jsonl", "evidence"): False,
+    ("requests.jsonl", "from_label"): False,
+    ("requests.jsonl", "act_author"): False,
+    ("requests.jsonl", "done_evidence"): False,
+    ("requests.jsonl", "replies[].note"): False,
+    ("requests.jsonl", "replies[].evidence"): False,
+    ("requests.jsonl", "replies[].act_author"): False,
+    ("requests.jsonl", "opened_act_author"): False,
+    ("requests.jsonl", "verdict_act_author"): False,
+    ("requests.jsonl", "done_act_author"): False,
+    ("trust.jsonl", "reason"): True,
+    ("trust.jsonl", "evidence[]"): True,
+}
+
+_REASON_RANK = {"forgotten": 0, "quarantine": 1, "closed": 2}
+# A requests row is a join across buckets: the sender's `opened` row, the
+# recipient's verdicts. These are the fields that name the other bucket.
+_REQUEST_SLUG_FIELDS = ("from_slug", "to", "_origin_slug")
+
+
+def _speaks(snap: Snapshot) -> bool:
+    """Can this snapshot withhold anything at all? A quiet one is skipped, so
+    a clean bucket pays no hashing."""
+    return bool(snap.closed or snap.forgotten or snap.quarantined)
+
+
+def _strictest(text: str, snaps, closed_masks: bool) -> Withheld | None:
+    """The first-ranked verdict over several buckets' snapshots: forgotten,
+    then quarantine, then closed. None when none of them withholds it."""
+    best: Withheld | None = None
+    for one in snaps:
+        if not _speaks(one):
+            continue
+        verdict = prose_verdict(text, one, closed_masks=closed_masks)
+        if verdict is not None and (
+                best is None
+                or _REASON_RANK[verdict.reason] < _REASON_RANK[best.reason]):
+            best = verdict
+    return best
+
+
+def _mask_text(text: str, snaps, closed_masks: bool,
+               seen: list | None = None) -> str | None:
+    """None for a forgotten whole value, the marker for a quarantined or
+    closed one, else the text. A verdict is also appended to `seen` when the
+    caller asked to collect them."""
+    verdict = _strictest(text, snaps, closed_masks)
+    if verdict is None:
+        return text
+    if seen is not None:
+        seen.append(verdict)
+    return None if verdict.reason == "forgotten" else display.withheld_marker(
+        verdict)
+
+
+def _mask_tree(node, snaps, seen: list | None = None):
+    """Defence in depth: every string leaf of a folded record judged by value
+    (forgotten and quarantined only; a closed ledger masks declared value
+    copies, never an undeclared leaf), so a fold key the registry does not
+    know cannot carry a withheld value out through a payload that dumps the
+    whole record."""
+    if isinstance(node, dict):
+        for key, value in list(node.items()):
+            if isinstance(value, str):
+                leaf = _leaf(value, snaps, seen)
+                node[key] = "" if leaf is None else leaf
+            else:
+                _mask_tree(value, snaps, seen)
+    elif isinstance(node, list):
+        kept = []
+        for member in node:
+            if isinstance(member, str):
+                member = _leaf(member, snaps, seen)
+                if member is None:
+                    continue
+            else:
+                _mask_tree(member, snaps, seen)
+            kept.append(member)
+        node[:] = kept
+    return node
+
+
+def _leaf(text: str, snaps, seen: list | None = None):
+    """A string leaf of a record: scrub markers and forgotten values go
+    (blank in a dict, dropped from a list), a quarantined one is the marker."""
+    if not text.strip():
+        return text
+    if _SCRUBBED.search(text):
+        if seen is not None:
+            seen.append(Withheld(None, "prose", "forgotten", None, ""))
+        return None
+    return _mask_text(text, snaps, False, seen)
+
+
+def named_snapshots(row: dict, cache: dict, *, skip=None) -> list[Snapshot]:
+    """The light snapshots of the OTHER buckets a requests row names (its
+    sender and its recipient), memoized in `cache` by slug. A request is a
+    join, so a value its other party quarantined is withheld here too."""
+    out: list[Snapshot] = []
+    for key in _REQUEST_SLUG_FIELDS:
+        slug = row.get(key)
+        if (not isinstance(slug, str) or not _is_bare_slug(slug)
+                or slug == skip):
+            continue
+        if slug not in cache:
+            cache[slug] = judge(slug).snap
+        if cache[slug] not in out:
+            out.append(cache[slug])
+    return out
+
+
+def prose_verdict_over(text, snaps, *, closed_masks: bool) -> Withheld | None:
+    """`prose_verdict` over several buckets' snapshots: the strictest wins."""
+    return _strictest(str(text or ""), snaps, closed_masks)
+
+
+def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
+               seen: list | None) -> list[dict]:
+    """The body of `masked`; `seen` collects the verdicts it handed out."""
+    surface = surfaces.bucket_ledger(ledger_name)
+    paths = surface.prose + surface.folded_prose
+    own_slug = store.project_slug(config.resolve_project_dir(project))
+    own = snap if snap is not None else judge(own_slug).snap
+    others: dict[str, Snapshot] = {}
+
+    def snaps_of(row: dict) -> list[Snapshot]:
+        if ledger_name != "requests.jsonl":
+            return [own]
+        return [own, *named_snapshots(row, others, skip=own_slug)]
+
+    result = []
+    for row in rows:
+        snaps = snaps_of(row)
+
+        def fn(text: str, fp: surfaces.FieldPath, _snaps=snaps):
+            path = surfaces.path_string(fp)
+            if ledger_name == "events.jsonl" and path == "status":
+                # a lifecycle word: keep the class token a scrub preserved
+                text = _SCRUBBED.sub("", text).strip()
+                if not text:
+                    if seen is not None:
+                        seen.append(Withheld(None, "prose", "forgotten",
+                                             None, ""))
+                    return None
+            elif _SCRUBBED.search(text):
+                if seen is not None:
+                    seen.append(Withheld(None, "prose", "forgotten", None, ""))
+                shown = trust.display_text(text)
+                return shown if (ledger_name == "trust.jsonl"
+                                 and shown != text) else None
+            return _mask_text(text, _snaps, MASK_POLICY[(ledger_name, path)],
+                              seen)
+
+        out = surfaces.map_prose(paths, row, fn)
+        result.append(_mask_tree(out, snaps, seen))
+    return result
+
+
+def masked(project, ledger_name: str, rows, *,
+           snap: Snapshot | None = None) -> list[dict]:
+    """`rows` of a bucket ledger as a reader may see them: every declared prose
+    path (`Surface.prose` and `folded_prose`) judged as a whole value against
+    the bucket's light snapshot. A forgotten value is blank (a list member
+    dropped), a quarantined or closed one the withheld marker, per
+    `MASK_POLICY`; a deleter's `[forgotten:<key>]` marker never travels. Rows
+    are copied, never mutated, and the folds that produced them stay raw.
+
+    `snap` is the bucket's `judge(slug).snap` when the caller already holds it
+    (a hook, a loop over buckets, a write verb that judged before it appended);
+    otherwise it is taken once here with the BARE slug, never the path
+    (`judge` routes a non-slug to the forgotten set alone). A requests row is a
+    join, so it is also judged by the snapshot of every bucket it names, one
+    judge per slug per call."""
+    return _mask_rows(project, ledger_name, rows, snap, None)
+
+
+def withheld_in(project, ledger_name: str, row: dict, *,
+                snap: Snapshot | None = None) -> tuple[Withheld, ...]:
+    """The verdicts `masked` would hand out for one row: what is withheld in
+    it, without the text. A ceremony asks this before it asks a person to sign
+    a record whose words they could not read."""
+    seen: list[Withheld] = []
+    _mask_rows(project, ledger_name, [row], snap, seen)
+    return tuple(seen)
+
+
 @dataclass(frozen=True)
 class RelationView:
     """Relation edges a reader may see, with the text of their endpoints.

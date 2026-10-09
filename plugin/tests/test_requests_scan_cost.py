@@ -19,13 +19,21 @@ scan it triggers runs together, not the sum of the isolated numbers.
 """
 import time
 
-from daimon_briefing import pending, refutations, requests, store
+from daimon_briefing import pending, refutations, requests, store, view
 from daimon_briefing.surfaces import Writer
 
 RECIPIENT = "/p/scan-cost-recipient"
 N_BUCKETS = 50          # "a realistic multi-bucket store" per the PR brief
 N_ADDRESSED = 8         # buckets that actually address RECIPIENT
 
+# Why the combined test above asserts no time: the budget it used to hold
+# (150ms) tripped on a CI runner while the same branch costs ~83ms locally,
+# because the queue now judges each addressing sender's bucket (the
+# cross-bucket privacy fix). Wall-clock cannot tell that from a regression,
+# so it pins the shape instead (judge calls, bucket listings), as
+# tests/test_why_cost.py did in #1132 PR 11a. The reasoning below is the
+# original budget's, kept for the isolated tests that still use one.
+#
 # Budget reasoning: measured on this machine at ~35-45ms for 50 buckets (8
 # addressed) — see the printed line this test emits; dominated by the 50
 # individual file reads (`_bucket_slugs` + one `events()` read per matching
@@ -38,7 +46,6 @@ N_ADDRESSED = 8         # buckets that actually address RECIPIENT
 # slower disk or CI runner that a healthy run never trips it, tight enough
 # that a regression (e.g. an accidental full-fold-and-refold per bucket
 # instead of one read) would still fail it.
-_BUDGET_MS = 150.0
 
 
 def _seed(n_buckets=N_BUCKETS, n_addressed=N_ADDRESSED):
@@ -73,19 +80,47 @@ def _d3_shaped_stub_scan(rows) -> None:
         store.list_buckets()
 
 
-def test_combined_brief_time_cost_stays_within_budget(tmp_checkpoint_dir,
-                                                       capsys):
+def test_combined_brief_cost_has_the_algorithmic_shape_we_pin(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    """The combined pass is pinned by what it DOES, not by the clock: the
+    wall-clock budget this test used to assert tripped on a CI runner at
+    157ms against 150ms while the same branch measures ~83ms locally (the
+    same class of flake the deep-ruling test below already moved off the
+    clock; see also the structural bound in tests/test_why_cost.py, #1132
+    PR 11a). The timing is still printed, and nothing asserts on it.
+
+    Derived from the code, then measured: `pending.queue` takes one
+    `view.judge` for the own bucket (before any lane runs) and its request
+    lane asks `view.named_snapshots` for each DISTINCT sender bucket of the
+    joined rows it masks, so at most 1 + N_ADDRESSED judges, and the 42
+    buckets that address nobody are never judged. `inbox_renderable` and
+    `foreign_counts` judge nothing. No part of the pass walks the bucket
+    directory (`store.list_buckets`) except the D3 stand-in, once per
+    rendered card, capped at 3."""
     _seed()
+    judged = []
+    real_judge = view.judge
+    monkeypatch.setattr(
+        view, "judge",
+        lambda slug, **kw: judged.append(slug) or real_judge(slug, **kw))
+    listed = []
+    real_list = store.list_buckets
+    monkeypatch.setattr(
+        store, "list_buckets",
+        lambda *a, **kw: listed.append(1) or real_list(*a, **kw))
+
     start = time.perf_counter()
     entry = requests.inbox_renderable(project_dir=RECIPIENT)
     for row in entry["rows"]:
         if requests.needs_surfaced_stamp(row):
             requests.stamp_surfaced(row["request_id"], project_dir=RECIPIENT)
     _d3_shaped_stub_scan(entry["rows"])
+    stub_listings = len(listed)
+    judged_before_decide = len(judged)
     # #766 slice 5: the count line's two fleet-wide reads ride in the SAME
-    # brief cycle as the panel scan above — budgeted here together, not only
-    # in each read's own isolated test below.
+    # brief cycle as the panel scan above.
     decide_result = pending.queue(project_dir=RECIPIENT)
+    judged_by_decide = list(judged[judged_before_decide:])
     foreign_result = pending.foreign_counts(project_dir=RECIPIENT)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -94,12 +129,20 @@ def test_combined_brief_time_cost_stays_within_budget(tmp_checkpoint_dir,
     assert foreign_result, "measurement is void if nothing waits elsewhere"
     with capsys.disabled():
         print(f"\n#694 PR 2 combined scan cost: {elapsed_ms:.2f}ms over "
-             f"{N_BUCKETS} buckets ({N_ADDRESSED} addressed) — "
-             f"budget {_BUDGET_MS}ms")
-    assert elapsed_ms <= _BUDGET_MS, (
-        f"combined composer+panel+stamp+decide+foreign-counts cost "
-        f"{elapsed_ms:.2f}ms exceeds the {_BUDGET_MS}ms budget over "
-        f"{N_BUCKETS} buckets")
+              f"{N_BUCKETS} buckets ({N_ADDRESSED} addressed), "
+              f"{len(judged)} judges, {len(listed)} bucket listings "
+              f"(timing is not asserted)")
+    # the panel scan judges nothing; the queue judges the own bucket and each
+    # distinct addressing sender once; the foreign counts judge nothing
+    assert judged_before_decide == 0
+    assert len(judged_by_decide) <= 1 + N_ADDRESSED
+    assert len(set(judged_by_decide)) == len(judged_by_decide), (
+        "a bucket was judged twice in one queue call")
+    assert len(judged) == len(judged_by_decide), (
+        "foreign_counts must add no judge call")
+    assert store.project_slug(RECIPIENT) in judged_by_decide
+    # no bucket walk beyond the stand-in's own (<= 3 rendered cards)
+    assert len(listed) == stub_listings <= 3
 
 
 # The fix for the polarity bug: `daimon decide`'s request lane now sources

@@ -11,7 +11,9 @@ import functools
 import json
 import sys
 
-from .. import render, trust
+import daimon_briefing.cli as _cli
+
+from .. import config, render, store, trust, view
 from . import _cap_refusal, ledger_cmd
 
 # #920-style destination for an over-cap field: `reason` is the human's own
@@ -55,6 +57,34 @@ def _trust_channel(args) -> str:
     return "cli-tty"
 
 
+def _human_channel() -> bool:
+    """Is this read at a terminal? The evidence a quarantine cites is the
+    value being judged, so only a person at a terminal is shown it raw. Not
+    `lifecycle._human_cli_channel`: that prints a refusal to stdout, which
+    would corrupt `--json`."""
+    return sys.stdin.isatty()
+
+
+def _masked_records(project, records: list, *, snap, human: bool) -> list:
+    """`records` as this channel may read them. `reason` is a value copy and
+    is masked on every channel; a deleter's marker reads "(value forgotten)".
+    A quarantine whose value was forgotten has no key to show. Evidence is raw
+    for a person at a terminal and counted, never shown, for anyone else."""
+    rows = view.masked(project, "trust.jsonl", records, snap=snap)
+    out = []
+    for raw, row in zip(records, rows):
+        row = dict(row)
+        if raw.get("value_key") in snap.forgotten:
+            row.pop("value_key", None)
+        if human:
+            row["evidence"] = [trust.display_text(e)
+                               for e in raw.get("evidence") or []]
+        else:
+            row.pop("evidence", None)
+        out.append(row)
+    return out
+
+
 def _record_line(record: dict) -> str:
     mark = {"candidate": "?", "active": "⛔", "dismissed": "×",
            "released": "✓"}.get(record["state"], "?")
@@ -63,8 +93,10 @@ def _record_line(record: dict) -> str:
             f"{trust.display_text(record.get('reason', ''))}")
 
 
+@_cli.guarded(writes=True)
 def _cmd_trust_propose(args) -> int:
     project = _resolve_project(args.project)
+    snap = view.judge(_slug_of(project)).snap
     try:
         tid = trust.propose(
             text=args.text, kind=args.kind, reason=args.reason,
@@ -74,7 +106,9 @@ def _cmd_trust_propose(args) -> int:
         print(_refusal_message("quarantine not recorded", exc))
         return 1
     record = trust.get(tid, project_dir=project)
-    render.render_ledger_lines([_record_line(record)] if record else
+    shown = (view.masked(project, "trust.jsonl", [record], snap=snap)[0]
+             if record else None)
+    render.render_ledger_lines([_record_line(shown)] if shown else
                                [f"quarantine {tid} recorded"])
     if record and record["state"] == "candidate":
         render.render_ledger_lines(
@@ -100,12 +134,15 @@ def _cmd_trust_verdict(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_trust_list(args) -> int:
     project = _resolve_project(args.project)
-    rows = sorted(
+    records = sorted(
         trust.records(project_dir=project).values(),
         key=lambda r: (r["state"] != "candidate",
                        r.get("updated_at") or "", r["quarantine_id"]))
+    rows = _masked_records(project, records, snap=view.judge(_slug_of(project)).snap,
+                  human=_human_channel())
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
@@ -116,21 +153,31 @@ def _cmd_trust_list(args) -> int:
     return 0
 
 
+@_cli.guarded
 def _cmd_trust_show(args) -> int:
     project = _resolve_project(args.project)
     record = trust.get(args.quarantine_id, project_dir=project)
     if record is None:
         print(f"no quarantine found for {args.quarantine_id!r}")
         return 1
+    human = _human_channel()
+    cited = len(record.get("evidence") or [])
+    record = _masked_records(project, [record], snap=view.judge(_slug_of(project)).snap,
+                    human=human)[0]
     if args.json:
         print(json.dumps(record, ensure_ascii=False, indent=2))
         return 0
-    lines = [_record_line(record), f"  Value key: {record['value_key']}"]
+    lines = [_record_line(record)]
+    if record.get("value_key"):
+        lines.append(f"  Value key: {record['value_key']}")
     if record.get("item_id"):
         lines.append(f"  Item: {record['item_id']}")
     lines.append(f"  Scope: {record.get('scope_slug', '')}")
-    for item in record.get("evidence") or []:
-        lines.append(f"  Evidence: {trust.display_text(item)}")
+    if human:
+        for item in record.get("evidence") or []:
+            lines.append(f"  Evidence: {item}")
+    elif cited:
+        lines.append(f"  Evidence: [{cited} withheld]")
     render.render_ledger_lines(lines)
     return 0
 
@@ -138,6 +185,10 @@ def _cmd_trust_show(args) -> int:
 def _cmd_trust_repair(args) -> int:
     """`daimon trust repair` is `daimon ledger repair trust`, nothing more."""
     return ledger_cmd._cmd_ledger_repair(args)
+
+
+def _slug_of(project) -> str:
+    return store.project_slug(config.resolve_project_dir(project)) or ""
 
 
 def _resolve_project(project):

@@ -12,7 +12,7 @@ def _where(world):
             continue
         rel = path.relative_to(world.root).as_posix().replace(slug, "<slug>")
         for kind in sw.leaked_kinds(path.read_bytes()):
-            where[kind].add(rel)
+            where.setdefault(kind, set()).add(rel)
     return where
 
 
@@ -34,5 +34,9 @@ def test_the_world_holds_what_it_claims(tmp_path, monkeypatch):
     assert {"events.jsonl", "refutations.jsonl", "requests.jsonl",
             "amendments.jsonl", "trust.jsonl",
             "forget-hits.quarantined-lines"} <= ledgers
+    # the value another project forgot after this one wrote it (11c): it is
+    # in this project's ledgers and nowhere else
+    assert {p.rsplit("/", 1)[-1] for p in where["peerforgot"]} == {
+        "refutations.jsonl", "requests.jsonl"}
     assert all(world.quarantine_ids[k] for k in sw.QUARANTINED)
     assert world.ruling_id and world.relation_id and world.request_id

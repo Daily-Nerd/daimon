@@ -37,11 +37,32 @@ TOKENS = {kind: token(kind) for kind in KINDS}
 TEXTS = {kind: f"{TOKENS[kind]} the {kind} sentinel text" for kind in KINDS}
 
 
+# Evidence is a typed source (`artifact:<path>`), so a whole value in an
+# evidence column is `artifact:<sentinel text>`. Each is quarantined by its own
+# record, which is what makes the column's value withheld.
+EVIDENCE = {kind: f"artifact:{TEXTS[kind]}" for kind in QUARANTINED}
+
+
 # A seventh sentinel that is not a schema kind: a decision whose ID is
 # tombstoned while no tombstone key matches its VALUE (a sibling id, or a
 # value redacted differently at capture). Only the id rule withholds it.
 ID_TOKEN = token("idforgot")
 ID_TEXT = f"{ID_TOKEN} the id-forgotten sentinel text"
+
+
+# Words only the peer project quarantines (see `_write_peer_requests`).
+PEER_ASK = f"{TEXTS['question']} as the peer worded its ask"
+PEER_NOTE = f"{TEXTS['topic']} as the peer worded its note"
+
+
+# A value forgotten by ANOTHER project (a tombstone in the peer's events
+# ledger) after this project's ledgers already hold it. Writers re-scrub a
+# forgotten value as they append (`jsonl.reaching`), so a ledger prose column
+# keeps a whole forgotten value only when the forget happened elsewhere AFTER
+# the write. The tombstone key is in the peer's bucket, not this one, so it is
+# not one of KEY_TOKENS.
+PEER_TOKEN = token("peerforgot")
+PEER_TEXT = f"{PEER_TOKEN} the peer-forgotten sentinel text"
 
 
 def leaked_id(blob) -> bool:
@@ -75,7 +96,10 @@ def leaked_kinds(blob) -> set[str]:
     if isinstance(blob, bytes):
         blob = blob.decode("utf-8", errors="replace")
     low = blob.lower()
-    return {kind for kind, tok in TOKENS.items() if tok.lower() in low}
+    found = {kind for kind, tok in TOKENS.items() if tok.lower() in low}
+    if PEER_TOKEN.lower() in low:
+        found.add("peerforgot")
+    return found
 
 
 class TtyStdin(io.StringIO):
@@ -123,6 +147,7 @@ class World:
     relation_id: str = ""
     amendment_id: str = ""
     request_id: str = ""
+    peer: str = ""                                # a second project's directory
     root: Path = None                             # the tmp root being watched
 
 
@@ -220,12 +245,20 @@ def build_world(tmp_path, monkeypatch) -> World:
             world.ids["idforgot"] = item_id
 
     # quarantine three, by a human
+    for kind in QUARANTINED:       # the evidence-shaped copies, quarantined
+        trust.propose(
+            text=EVIDENCE[kind], kind=kind, reason=TEXTS["contradiction"],
+            evidence=["issue:1"], channel="cli-tty", project_dir=project)
     for kind in QUARANTINED:
         world.quarantine_ids[kind] = trust.propose(
             text=TEXTS[kind], kind=kind, reason=TEXTS["contradiction"],
-            evidence=["issue:1"], channel="cli-tty", project_dir=project)
+            evidence=["issue:1", EVIDENCE["topic"]], channel="cli-tty",
+            project_dir=project)
 
     _write_ledger_prose(world, project)
+    _write_folded_prose(world, project)
+    _write_peer_requests(world, tmp_path, project)
+    _write_forgotten_prose(world, project)
     _plant_quarantined_line(world)
     return world
 
@@ -270,6 +303,124 @@ def _write_ledger_prose(world: World, project: str) -> None:
     trust.propose(text="an unrelated value that stays visible",
                   kind="decision", reason=q, evidence=["issue:2"],
                   channel="cli-agent", project_dir=project)
+
+
+def _write_folded_prose(world: World, project: str) -> None:
+    """The prose a FOLD derives outside the row paths (11c): a ruling's
+    pending revision and retirement, an overturn's note, a refutation's
+    anchors and evidence, a request's replies, completion and per-act
+    authors. Every one is a whole quarantined value, planted by the real
+    writer. `revision_proposed.note` has no writer (`revise` takes no note);
+    `from_label` is the sender's directory name, which would put the
+    sentinel into the bucket name itself (see tests/test_request_masking.py)."""
+    t, q, c = TEXTS["topic"], TEXTS["question"], TEXTS["contradiction"]
+    ev = EVIDENCE
+    # the standing ruling takes an agent's pending revision: subject, verdict,
+    # evidence and a check, every one a quarantined whole value
+    refutations.revise(
+        world.ruling_id, channel="cli-agent", evidence=[ev["question"]],
+        subject=t, verdict=q,
+        check={"match": t, "body": q, "intent": "warn"}, project_dir=project)
+    # a second standing ruling an agent proposes to retire
+    pending_retire = refutations.assert_ruling(
+        subject="census ruling kept", verdict="a standing rule that stays",
+        scope="census-kept", evidence=["issue:693"], channel="cli-tty",
+        ratified=False, project_dir=project)
+    refutations.ratify(pending_retire, channel="cli-tty", project_dir=project)
+    refutations.retire(pending_retire, channel="cli-agent",
+                       evidence=[ev["topic"]], note=c, project_dir=project)
+    # a third a person retired: overturn note and evidence
+    retired = refutations.assert_ruling(
+        subject="census ruling retired", verdict="a rule that was retired",
+        scope="census-retired", evidence=["issue:693"], channel="cli-tty",
+        ratified=False, project_dir=project)
+    refutations.ratify(retired, channel="cli-tty", project_dir=project)
+    refutations.retire(retired, channel="cli-tty", evidence=[ev["question"]],
+                       note=q, project_dir=project)
+    # a candidate ruling carrying a check whose match and body are quarantined
+    refutations.assert_ruling(
+        subject="census ruling with a check", verdict="a rule with a check",
+        scope="census-check", evidence=["issue:693"], channel="cli-agent",
+        check={"match": q, "body": t, "intent": "warn"}, project_dir=project)
+    # a refutation with anchors and evidence, active so the guard can match it
+    anchored = refutations.assert_refutation(
+        subject="census anchored refutation", verdict="it was measured",
+        scope="census-anchored", evidence=[ev["question"]], anchors=[t],
+        channel="cli-agent", project_dir=project)
+    refutations.ratify(anchored, channel="cli-tty", project_dir=project)
+    # a refutation a person overturned
+    overturned = refutations.assert_refutation(
+        subject="census overturned refutation", verdict="it was wrong",
+        scope="census-overturned", evidence=["measurement:replay"],
+        channel="cli-agent", project_dir=project)
+    refutations.ratify(overturned, channel="cli-tty", project_dir=project)
+    refutations.overturn(overturned, channel="cli-tty",
+                         evidence=[ev["contradiction"]], note=c,
+                         project_dir=project)
+    # a request carrying every per-act author, a reply and a completion
+    slug = store.project_slug(project)
+    rid = requests.open_request(
+        to=slug, ask="a second census ask", why="because", evidence="e",
+        channel="ui", author=t, project_dir=project)
+    requests.accept(rid, channel="ui", note="ok", author=q,
+                    project_dir=project)
+    requests.reply(rid, t, q, channel="ui", author=c, project_dir=project)
+    requests.done(rid, channel="ui", evidence=c, author=t,
+                  project_dir=project)
+
+
+def _write_forgotten_prose(world: World, project: str) -> None:
+    """A whole forgotten value in a ledger prose column. The deleters drop
+    whole records and writers re-scrub as they append, so the only way one
+    exists is a forget made in ANOTHER project after this project wrote the
+    value: the rows go in first, then the peer's tombstone."""
+    f = PEER_TEXT
+    refutations.assert_refutation(
+        subject=f, verdict=f, scope=f, evidence=["measurement:replay"],
+        anchors=[f], channel="cli-agent", project_dir=project)
+    rid = requests.open_request(
+        to=store.project_slug(project), ask=f, why=f, evidence=f,
+        channel="cli-agent", project_dir=project)
+    requests.accept(rid, channel="cli-tty", note=f, project_dir=project)
+    store.append_event(
+        "o-peer-forgot", "forgotten:" + normalize.content_key(f),
+        kind="tombstone", tombstone=True, project_dir=world.peer,
+        writer=Writer.HUMAN)
+
+
+def _write_peer_requests(world: World, tmp_path, project: str) -> None:
+    """A second project: it sends this one an ask whose text is a quarantined
+    value, and answers an ask of ours with a quarantined note. Both rows live
+    in the PEER's bucket, so a reader must judge them across the join."""
+    peer = tmp_path / "peer"
+    peer.mkdir()
+    world.peer = str(peer)
+    own, theirs = store.project_slug(project), store.project_slug(world.peer)
+    requests.open_request(
+        to=own, ask=TEXTS["question"], why=TEXTS["topic"],
+        evidence=TEXTS["contradiction"], channel="cli-agent",
+        project_dir=world.peer)
+    ours = requests.open_request(
+        to=theirs, ask="please look at the census", why="it blocks us",
+        channel="cli-tty", project_dir=project)
+    requests.accept(ours, channel="cli-tty", note=TEXTS["contradiction"],
+                    project_dir=world.peer)
+    # Two texts only the PEER quarantined (its bucket holds the record, this
+    # one holds none): the ask it sends us, and the note it answers ours with.
+    # This project's own snapshot cannot mask either, so a reader that judges
+    # a joined row by the own snapshot alone leaks them.
+    requests.open_request(
+        to=own, ask=PEER_ASK, why="the peer's own words", channel="cli-agent",
+        project_dir=world.peer)
+    ours_two = requests.open_request(
+        to=theirs, ask="please look at the second census ask", why="again",
+        channel="cli-tty", project_dir=project)
+    requests.accept(ours_two, channel="cli-tty", note=PEER_NOTE,
+                    project_dir=world.peer)
+    for text, kind in ((PEER_ASK, "question"), (PEER_NOTE, "topic")):
+        trust.propose(text=text, kind=kind, reason=TEXTS["contradiction"],
+                      evidence=["issue:1"], channel="cli-tty",
+                      project_dir=world.peer)
 
 
 def _plant_quarantined_line(world: World) -> None:

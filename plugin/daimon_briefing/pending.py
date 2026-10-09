@@ -148,7 +148,27 @@ def _order_key(row: dict, seq: int) -> tuple:
             _KIND_RANK.get(row["kind"], 9), row["id"])
 
 
-def _request_rows(project_dir, slug, joined=None) -> tuple[list, int]:
+class MaskFailed(Exception):
+    """The snapshot or the masker failed. Unlike an unreadable ledger this is
+    not a lane to skip: a queue shown without it would read as "nothing
+    waiting", so the call fails and the verb says it could not read."""
+
+
+def _masked_lane(project_dir, ledger_name, records, *, masked, snap) -> list:
+    """The records a lane is about to turn into rows, as a reader may see them
+    (11c): every prose column judged over the bucket's snapshot, so `decide`,
+    `api.queue` and the viewer read masked text. One call per lane per bucket.
+    A caller that only counts (the briefing's `here` figure) asks for none."""
+    if not masked:
+        return list(records)
+    try:
+        return view.masked(project_dir, ledger_name, records, snap=snap)
+    except Exception as exc:  # noqa: BLE001
+        raise MaskFailed(type(exc).__name__) from exc
+
+
+def _request_rows(project_dir, slug, joined=None, *, masked=True,
+                  snap=None) -> tuple[list, int]:
     """Asks addressed to this project that no human has answered.
 
     Sourced from `requests.recipient_join`, the cross-bucket inbox join —
@@ -179,6 +199,7 @@ def _request_rows(project_dir, slug, joined=None) -> tuple[list, int]:
         return seen.index(rid) if rid in seen else 0
 
     rows, suppressed = [], 0
+    pending_records = []
     for rid, record in records.items():
         if record.get("state") not in requests._SENDER_MOVABLE:
             continue
@@ -196,6 +217,11 @@ def _request_rows(project_dir, slug, joined=None) -> tuple[list, int]:
             # owner's own "not now". Counted, never listed.
             suppressed += 1
             continue
+        pending_records.append((rid, record))
+    visible = _masked_lane(project_dir, "requests.jsonl",
+                   [record for _rid, record in pending_records],
+                   masked=masked, snap=snap)
+    for (rid, original), record in zip(pending_records, visible):
         ask = record.get("ask") or ""
         short = requests.short_ask(ask)
         rows.append((_row(
@@ -215,11 +241,11 @@ def _request_rows(project_dir, slug, joined=None) -> tuple[list, int]:
                 ("reject", f"daimon request reject {rid} --note \"<why>\""),
                 ("needs-info", f"daimon request needs-info {rid}"),
             ]),
-            _seq(record, rid)))
+            _seq(original, rid)))
     return rows, suppressed
 
 
-def _ledger_rows(project_dir, slug) -> list:
+def _ledger_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     """Agent-proposed rulings and refutations awaiting ratification.
 
     Polarity decides the verb family AND the header field: a ruling is read by
@@ -230,9 +256,12 @@ def _ledger_rows(project_dir, slug) -> list:
     seen = [row.get("refutation_id") for row in refutations.events(
         project_dir=project_dir)]
     rows = []
-    for rid, record in records.items():
-        if record.get("state") != "candidate":
-            continue
+    candidates = [(rid, record) for rid, record in records.items()
+                  if record.get("state") == "candidate"]
+    visible = _masked_lane(project_dir, "refutations.jsonl",
+                   [record for _rid, record in candidates],
+                   masked=masked, snap=snap)
+    for (rid, _original), record in zip(candidates, visible):
         ruling = record.get("polarity") == "ruling"
         family = "ruling" if ruling else "refute"
         rows.append((_row(
@@ -251,7 +280,7 @@ def _ledger_rows(project_dir, slug) -> list:
     return rows
 
 
-def _trust_rows(project_dir, slug) -> list:
+def _trust_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     """Agent-proposed quarantines awaiting a human confirm/dismiss (#1109
     Slice 1). The one place a human sees a PROPOSED quarantine; the
     withholding passes read only the confirmed ones (`active_value_keys`)."""
@@ -259,9 +288,12 @@ def _trust_rows(project_dir, slug) -> list:
     seen = [row.get("quarantine_id") for row in trust.events(
         project_dir=project_dir)]
     rows = []
-    for tid, record in records.items():
-        if record.get("state") != "candidate":
-            continue
+    candidates = [(tid, record) for tid, record in records.items()
+                  if record.get("state") == "candidate"]
+    visible = _masked_lane(project_dir, "trust.jsonl",
+                   [record for _tid, record in candidates],
+                   masked=masked, snap=snap)
+    for (tid, _original), record in zip(candidates, visible):
         reason = trust.display_text(record.get("reason") or "")
         shown = display.shorten(reason, HEADLINE_CHARS)
         rows.append((_row(
@@ -348,7 +380,7 @@ def _amendment_headline(amend: dict) -> str:
     return display.shorten(loop, HEADLINE_CHARS - len(suffix)) + suffix
 
 
-def _amendment_rows(project_dir, slug) -> list:
+def _amendment_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     """Quote-verified amendments only.
 
     A candidate has not passed the session-end byte-check, so nothing is owed
@@ -370,9 +402,12 @@ def _amendment_rows(project_dir, slug) -> list:
     seen = [row.get("amendment_id") for row in amendments.events(
         project_dir=project_dir)]
     rows = []
-    for aid, record in records.items():
-        if record.get("state") != "verified":
-            continue
+    verified = [(aid, record) for aid, record in records.items()
+                if record.get("state") == "verified"]
+    visible = _masked_lane(project_dir, "amendments.jsonl",
+                   [record for _aid, record in verified],
+                   masked=masked, snap=snap)
+    for (aid, _original), record in zip(verified, visible):
         item_id = str(record.get("item_id") or "")
         role = str(record.get("evidence_role") or "")
         amend = {
@@ -451,48 +486,62 @@ def queue_notes(*, project_dir=None, joined=None) -> tuple:
     return display.cap_notes(notes)
 
 
-def queue_with_notes(*, project_dir=None) -> tuple:
+def queue_with_notes(*, project_dir=None, masked: bool = True) -> tuple:
     """`(queue(...), queue_notes(...))` from ONE read of the request join:
     what a surface that shows both asks for."""
     project_dir = config.resolve_project_dir(project_dir)
     joined = requests.join(project_dir)
-    return (_queue(project_dir, joined),
+    return (_queue(project_dir, joined, masked),
             queue_notes(project_dir=project_dir, joined=joined))
 
 
-def queue_typed(*, project_dir=None) -> Queue:
+def queue_typed(*, project_dir=None, masked: bool = True) -> Queue:
     """`queue`'s rows with `queue_notes`: the typed core a surface that shows
     the notes asks for. `queue` itself keeps its dict shape (`api.queue`)."""
-    result, notes = queue_with_notes(project_dir=project_dir)
+    result, notes = queue_with_notes(project_dir=project_dir, masked=masked)
     return Queue(result["rows"], notes)
 
 
-def queue(*, project_dir=None) -> dict:
+def queue(*, project_dir=None, masked: bool = True) -> dict:
     """{"rows": [...], "excluded": {...}} for this project.
 
     Fail-open per source: one unreadable ledger degrades that lane rather than
     emptying the queue, because a human-facing backlog that silently renders
     nothing is worse than one that renders less.
+
+    The rows carry text a reader may see (11c): each lane's prose is judged
+    over the bucket's snapshot, taken before any lane runs so a judge that
+    fails fails the call instead of emptying a lane. `masked=False` is for a
+    caller that only counts the rows and renders none of their text.
     """
     # #948: one resolution, shared with the CLI. Everything below keys
     # on the project, so a caller standing in a subdir must not answer
     # for a bucket of its own.
-    return _queue(config.resolve_project_dir(project_dir), None)
+    return _queue(config.resolve_project_dir(project_dir), None, masked)
 
 
-def _queue(project_dir, joined) -> dict:
+def _queue(project_dir, joined, masked: bool = True) -> dict:
     slug = store.project_slug(project_dir)
+    try:
+        snap = view.judge(slug).snap if masked else None
+    except Exception as exc:  # noqa: BLE001
+        raise MaskFailed(type(exc).__name__) from exc
     pairs, suppressed = [], 0
     try:
-        request_pairs, suppressed = _request_rows(project_dir, slug, joined)
+        request_pairs, suppressed = _request_rows(
+            project_dir, slug, joined, masked=masked, snap=snap)
         pairs += request_pairs
+    except MaskFailed:
+        raise
     except Exception:
         pass
     for source, _ranks in _LANES:
         if source is _request_rows:
             continue
         try:
-            pairs += source(project_dir, slug)
+            pairs += source(project_dir, slug, masked=masked, snap=snap)
+        except MaskFailed:
+            raise
         except Exception:
             pass
     pairs.sort(key=lambda pair: _order_key(pair[0], pair[1]))
@@ -800,6 +849,8 @@ def foreign_queues_typed(*, project_dir=None) -> ForeignQueues:
             continue
         try:
             result = queue(project_dir=bucket)
+        except MaskFailed:
+            raise
         except Exception:
             continue
         rows = result.get("rows") or []
