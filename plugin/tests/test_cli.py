@@ -5830,7 +5830,7 @@ def test_candidate_emitted_when_no_prior_event(tmp_checkpoint_dir, monkeypatch):
     assert evt["item_ref"] == "r-old"
     assert evt["status"] == "supersede-candidate:r-new"
     assert evt["source"] == "serializer"
-    assert evt["item_text"] == "old text"
+    assert "item_text" not in evt        # ids only (#1132 PR 11b)
 
 
 def test_candidate_skipped_after_human_confirm_and_reject(tmp_checkpoint_dir, monkeypatch):
@@ -5959,7 +5959,9 @@ def test_candidate_emission_skips_forgotten_value(tmp_checkpoint_dir, monkeypatc
     slug = store.project_slug(project)
     raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text(encoding="utf-8")
     assert _FORGOTTEN_TEXT not in raw     # the leak — append-only, so forever
-    assert _CONTROL_TEXT in raw           # liveness: the filter is a skip, not a mute
+    assert _CONTROL_TEXT not in raw       # candidates name ids, never wording
+    assert '"r-old0002"' in raw           # liveness: the filter is a skip, not a mute
+    assert '"r-old0001"' not in raw
     assert count == 1
 
 
@@ -6084,7 +6086,8 @@ def test_serialize_supersede_candidate_never_leaks_forgotten_text(
                   and str(json.loads(line).get("status") or "")
                   .startswith("supersede-candidate")]
     assert len(candidates) == 1
-    assert candidates[0]["item_text"] == _CONTROL_TEXT
+    assert "item_text" not in candidates[0]
+    assert _CONTROL_TEXT not in raw
 
 
 # ---- #29: UX-contract batch — surface messages must match what the code does ----
