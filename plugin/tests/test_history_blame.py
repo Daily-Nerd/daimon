@@ -13,7 +13,8 @@ test is about.
 
 import json
 
-from daimon_briefing import carry, cli, config, render, schema, store
+from daimon_briefing import (carry, cli, config, normalize, render, schema,
+                             store, trust, view)
 from daimon_briefing.cli import history
 from daimon_briefing.surfaces import Writer
 
@@ -306,7 +307,8 @@ def test_blame_json_key_order_is_the_documented_contract(tmp_checkpoint_dir,
         "session_id", "author", "first_seen", "retained"]
     assert list(payload["appearances"][0]) == [
         "index", "pointer", "session_id", "created", "trust", "carried_from",
-        "native"]
+        "native", "withheld"]
+    assert payload["appearances"][0]["withheld"] is None
     # oldest generation first, so a reader walks the lineage forwards
     assert [a["index"] for a in payload["appearances"]] == [1, 0]
 
@@ -326,3 +328,147 @@ def test_blame_renders_plain_off_a_terminal(tmp_checkpoint_dir, monkeypatch,
 
 def test_blame_documents_that_rollback_is_a_non_goal():
     assert "rollback" in history._cmd_blame.__doc__.lower()
+
+
+# ---- withheld values (#1132 PR 11a) -------------------------------------------
+
+OLD = "the retry budget stays at six attempts per request"
+NEW = "the retry budget stays six attempts per request overall"
+
+
+def _restated():
+    first = _write(_checkpoint("S-1", "2026-09-01T10:00:00Z",
+                               decisions=[_item(OLD)]))
+    native = _checkpoint("S-2", "2026-09-02T10:00:00Z",
+                         decisions=[_item(NEW)])
+    merged = carry.merge(native, first, now=1_800_000_000.0)
+    _write(merged)
+    return _ids(first)[OLD]
+
+
+def _blame_json(capsys, item_id):
+    assert cli.main(["blame", item_id, "--project", _PROJECT, "--json"]) == 0
+    return json.loads(capsys.readouterr().out)
+
+
+def test_a_withheld_generation_prints_its_marker_not_a_trust_tag(
+        tmp_checkpoint_dir, capsys):
+    item_id = _restated()
+    qid = trust.propose(text=OLD, kind="decision", reason="fabricated",
+                        evidence=["issue:1"], channel="cli-tty",
+                        project_dir=_PROJECT)
+    assert cli.main(["blame", item_id, "--project", _PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert f"prev-1.json (S-1, 2026-09-01T10:00:00Z) [withheld: quarantine {qid}]" in out
+    assert out.count("stated here") == 1        # the visible generation only
+    assert OLD not in out
+
+
+def test_a_withheld_generation_in_json_carries_no_trust_or_carry(
+        tmp_checkpoint_dir, capsys):
+    item_id = _restated()
+    qid = trust.propose(text=OLD, kind="decision", reason="fabricated",
+                        evidence=["issue:1"], channel="cli-tty",
+                        project_dir=_PROJECT)
+    payload = _blame_json(capsys, item_id)
+    # oldest generation first, so a reader walks the lineage forwards
+    oldest, newest = payload["appearances"]
+    assert oldest["pointer"] == "prev-1.json"
+    assert (oldest["trust"], oldest["carried_from"], oldest["native"]) == (
+        None, None, None)
+    assert oldest["withheld"] == {"state": "withheld", "reason": "quarantine",
+                                  "quarantine_id": qid}
+    assert newest["withheld"] is None and newest["trust"] == "inferred"
+    assert payload["text"] == NEW and payload["lifecycle"] == "active"
+
+
+def test_a_withheld_item_has_a_marker_for_text_and_an_unknown_origin(
+        tmp_checkpoint_dir, capsys):
+    first = _write(_checkpoint("S-1", "2026-09-01T10:00:00Z",
+                               decisions=[_item(OLD)]))
+    item_id = _ids(first)[OLD]
+    qid = trust.propose(text=OLD, kind="decision", reason="fabricated",
+                        evidence=["issue:1"], channel="cli-tty",
+                        project_dir=_PROJECT)
+    payload = _blame_json(capsys, item_id)
+    assert payload["text"] == {"state": "withheld", "reason": "quarantine",
+                               "quarantine_id": qid}
+    assert payload["trust"] is None and payload["kind"] == "decision"
+    assert payload["origin"] == {"session_id": None, "author": None,
+                                 "first_seen": None, "retained": False}
+    assert cli.main(["blame", item_id, "--project", _PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert f"Item: [{item_id}] [decision] [withheld: quarantine {qid}]" in out
+    assert "origin not recorded" in out and OLD not in out
+
+
+def test_blame_on_a_tombstone_only_id_says_forgotten_and_never_the_key(
+        tmp_checkpoint_dir, capsys):
+    _write(_checkpoint("S-1", "2026-09-01T10:00:00Z",
+                       decisions=[_item("a fact that stays")]))
+    key = normalize.content_key(OLD)
+    store.append_event("d-0123456789ab", "forgotten:" + key, kind="tombstone",
+                       tombstone=True, source="cli-tty", project_dir=_PROJECT,
+                       writer=Writer.HUMAN)
+    payload = _blame_json(capsys, "d-0123456789ab")
+    assert payload["lifecycle"] == "forgotten"
+    assert payload["text"] == {"state": "withheld", "reason": "forgotten"}
+    assert payload["appearances"] == []
+    assert [(e["status"], e["source"]) for e in payload["events"]] == [
+        ("forgotten", "cli-tty")]
+    assert key not in json.dumps(payload)
+    assert cli.main(["blame", "d-0123456789ab", "--project", _PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "[withheld: forgotten]" in out and key not in out
+
+
+def test_blame_events_are_the_judged_rows(tmp_checkpoint_dir, capsys):
+    first = _write(_checkpoint("S-1", "2026-09-01T10:00:00Z",
+                               decisions=[_item("a native fact")]))
+    item_id = _ids(first)["a native fact"]
+    key = normalize.content_key("some forgotten wording of a note")
+    path = config.checkpoint_dir() / store.project_slug(_PROJECT) / "events.jsonl"
+    path.write_text(json.dumps({
+        "ts": "2026-09-02T10:00:00Z", "kind": "resolution",
+        "item_ref": item_id, "status": "resolved", "source": "cli-tty",
+        "note": f"[forgotten:{key}]"}) + "\n", encoding="utf-8")
+    payload = _blame_json(capsys, item_id)
+    (event,) = payload["events"]
+    assert event["note"] is None and key not in json.dumps(payload)
+
+
+def test_blame_answers_an_id_that_only_the_ledger_remembers(
+        tmp_checkpoint_dir, capsys):
+    _write(_checkpoint("S-1", "2026-09-01T10:00:00Z",
+                       decisions=[_item("a fact that stays")]))
+    assert store.append_event("d-0123456789ab", "resolved", source="cli-tty",
+                              project_dir=_PROJECT, writer=Writer.HUMAN)
+    payload = _blame_json(capsys, "d-0123456789ab")
+    assert payload["kind"] == "unknown" and payload["text"] is None
+    assert payload["lifecycle"] == "resolved"
+
+
+def test_blame_names_an_item_older_than_the_pointer_window(
+        tmp_checkpoint_dir, capsys):
+    """The id left every pointer but its session file and the index row
+    remain: the view still answers, and no generation claims it."""
+    from daimon_briefing import recall
+    first = _write(_checkpoint("S-1", "2026-09-01T10:00:00Z",
+                               decisions=[_item(OLD)]))
+    for n in (2, 3, 4):
+        _write(_checkpoint(f"S-{n}", f"2026-09-0{n}T10:00:00Z",
+                           decisions=[_item(f"a later fact number {n}")]))
+    recall.rebuild()
+    payload = _blame_json(capsys, _ids(first)[OLD])
+    assert payload["text"] == OLD and payload["appearances"] == []
+
+
+def test_blame_reads_through_one_full_snapshot(tmp_checkpoint_dir,
+                                               monkeypatch):
+    item_id = _restated()
+    calls = []
+    real = view.snapshot
+    monkeypatch.setattr(view, "snapshot",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    assert cli.main(["blame", item_id, "--project", _PROJECT]) == 0
+    assert calls == [1]

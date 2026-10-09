@@ -203,6 +203,8 @@ for kind in ("question", "decision", "belief", "uncertainty"):
     case("cli:why", kind, A("why", I(kind)), rc=(0, 1), dests=("item_id",),
          axes=("DAIMON_PLAIN",) if kind == "question" else ())
 case("cli:why", "control", A("why", I("other_question")), shows=OTHER)
+case("cli:why", "idforgot", A("why", I("idforgot")),
+     shows="[withheld: forgotten]")
 case("cli:why", "json", A("why", I("question"), "--json"), rc=(0, 1),
      dests=("json",))
 case("cli:why", "source", A("why", I("question"), "--source"), rc=(0, 1),
@@ -214,7 +216,7 @@ case("cli:why", "slug", A("why", I("question"), slug_opt), rc=(0, 1),
 case("cli:diff", "default", A("diff"), dests=("project",),
      axes=("DAIMON_PLAIN",))
 case("cli:diff", "json", A("diff", "--json"), dests=("json",))
-case("cli:diff", "range", A("diff", "--from", "prev-1", "--to", "latest"),
+case("cli:diff", "range", A("diff", "--from", "1", "--to", "0"),
      dests=("frm", "to"), rc=(0, 1, 2))
 case("cli:diff", "slug", A("diff", slug_opt), dests=("slug",))
 for kind in ("question", "decision", "belief", "uncertainty"):
@@ -222,6 +224,10 @@ for kind in ("question", "decision", "belief", "uncertainty"):
          dests=("item_id",))
 case("cli:blame", "json", A("blame", I("question"), "--json"), rc=(0, 1),
      dests=("json",))
+case("cli:blame", "idforgot", A("blame", I("idforgot")),
+     shows="[withheld: forgotten]")
+case("cli:blame", "tombstone", A("blame", I("decision")),
+     shows="[withheld: forgotten]")
 case("cli:blame", "project", A("blame", I("question"), proj_opt), rc=(0, 1),
      dests=("project",))
 case("cli:blame", "slug", A("blame", I("question"), slug_opt), rc=(0, 1),
@@ -441,6 +447,8 @@ case("http:/api/diff", "ab", lambda w: "/api/diff?a=S-1&b=S-2")
 case("http:/api/biography", "item", lambda w: f"/api/biography?id={w.ids['question']}")
 case("http:/api/recall", "query", lambda w: "/api/recall?q=sentinel")
 case("http:/api/why", "item", lambda w: f"/api/why?id={w.ids['question']}&source=1")
+case("http:/api/why", "idforgot",
+     lambda w: f"/api/why?id={w.ids['idforgot']}&source=1", shows="forgotten")
 case("http:/api/grid", "default", lambda w: "/api/grid")
 case("http:/api/refutations", "default", lambda w: "/api/refutations")
 case("http:/api/relations", "default", lambda w: "/api/relations")
@@ -516,6 +524,8 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
         blob = res.text() + "\n" + b"\n".join(res.written).decode(
             "utf-8", errors="replace")
         leaks |= {(surface, tag, k) for k in sw.leaked_kinds(blob)}
+        if (surface, tag) not in KEY_EXEMPT:
+            leaks |= {(surface, tag, k) for k in sw.leaked_keys(blob)}
         results.append((label, res))
     return leaks, results
 
@@ -526,7 +536,6 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
 # {(surface, kind)}: seeded from the run, each must still leak, nothing else may
 KNOWN_LEAKS: set = {
     *{("cli:amend list", k) for k in ("question",)},
-    *{("cli:blame", k) for k in ("contradiction", "question",)},
     *{("cli:decide", k) for k in ("question", "topic",)},
     *{("cli:forget", k) for k in ("question", "topic",)},
     *{("cli:refute list", k) for k in ("topic",)},
@@ -554,10 +563,8 @@ KNOWN_LEAKS: set = {
     *{("cli:ruling show", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
-    *{("cli:why", k) for k in ("question",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
     *{("http:/api/relations", k) for k in ("question",)},
-    *{("http:/api/why", k) for k in ("question",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
 }
 
@@ -650,9 +657,52 @@ def test_a_cased_axis_is_a_known_axis():
 
 def test_the_drive_runs_and_nothing_unexpected_leaks(world_run):
     _world, leaks, _details = world_run
-    seen = {(s, kind) for (s, kind) in leaks}
+    seen = {(s, kind) for (s, kind) in leaks if not kind.startswith("key:")}
     print("LEAKS", sorted(seen))
     assert seen == KNOWN_LEAKS
+
+
+# A forgotten value's content key names the value it hashes (scar 0119): a
+# raw tombstone status or scrub marker printed by a reader brings it back
+# without the value sentinel noticing. Every case is scanned for the keys too.
+# `KNOWN_KEY_LEAKS` is shrink-only like KNOWN_LEAKS. `KEY_EXEMPT` declares the
+# cases whose job is to name a key: a person-run proof or publish tool. The
+# forget receipt joins them when the forget verb converts.
+KNOWN_KEY_LEAKS: set = set()
+KEY_EXEMPT = {
+    ("cli:audit privacy", "default"):
+        "the residue audit names the content hash of each residue it proves",
+    ("cli:audit privacy", "all"):
+        "the residue audit names the content hash of each residue it proves",
+    ("cli:forget", "republish"):
+        "re-publishing a tombstone writes its key into the team sidecar",
+}
+
+
+def test_no_surface_hands_back_a_forgotten_key(world_run):
+    _world, leaks, _details = world_run
+    seen = {(s, kind) for (s, kind) in leaks if kind.startswith("key:")}
+    print("KEY LEAKS", sorted(seen))
+    assert seen == KNOWN_KEY_LEAKS
+
+
+def test_the_forgotten_keys_are_stored_in_the_world(world_run):
+    """Anti-vacuity: the tombstones the scan looks for are on disk."""
+    world, _leaks, _details = world_run
+    raw = b"\n".join(p.read_bytes() for p in world.bucket.rglob("events.jsonl"))
+    assert sw.leaked_keys(raw) == {f"key:{n}" for n in sw.KEY_TOKENS}
+
+
+def test_the_key_scan_finds_what_it_bans():
+    assert sw.leaked_keys("x " + sw.KEY_TOKENS["decision"].upper()) == {
+        "key:decision"}
+    assert sw.leaked_keys(b"nothing here") == set()
+    assert set(sw.KEY_TOKENS) == set(sw.FORGOTTEN) | {"idforgot"}
+
+
+def test_the_key_exemptions_name_real_cases():
+    for key in KEY_EXEMPT:
+        assert key in CASES, key
 
 
 def test_cases_ran_and_said_what_they_should(world_run):
@@ -751,6 +801,13 @@ CONVERTED = {
     "http:/api/ledger": (VIEWER, frozenset({"sessions", "open_sessions"})),
     "http:/api/session": (VIEWER, frozenset({"sessions", "open_sessions"})),
     "http:/api/activity": (VIEWER, frozenset({"sessions", "events"})),
+    # 11a: the exact-id history verbs. `why` and `/api/why` compose
+    # `inspector.inspect_item` over `view.lineage`; `blame` reads the lineage
+    # itself; `diff` judges two pointer generations over one snapshot.
+    "cli:why": ("inspector.py", frozenset({"lineage"})),
+    "http:/api/why": ("inspector.py", frozenset({"lineage"})),
+    "cli:blame": ("cli/history.py", frozenset({"lineage"})),
+    "cli:diff": ("cli/history.py", frozenset({"snapshot", "pointers"})),
 }
 
 # The recall surfaces: they do not open a checkpoint, they query the derived
@@ -817,7 +874,8 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         raise RuntimeError("view.open failed")
 
     for name in ("open", "peek", "projects", "pointers", "sessions",
-                 "open_sessions", "events", "verifications"):
+                 "open_sessions", "events", "verifications", "snapshot",
+                 "judge", "lookup_many", "lineage", "match"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
@@ -1028,3 +1086,142 @@ def test_hook_lib_has_no_read_meta_yet():
     pointers themselves (checked above to touch no item key)."""
     lib = (HOOKS_DIR / "_daimon_hook_lib.py").read_text(encoding="utf-8")
     assert "def read_meta" not in lib
+
+
+# ===========================================================================
+# diff and blame over a RESTATED item (11a)
+# ===========================================================================
+# The shared world's checkpoints repeat their texts, so a generation pair never
+# changes an item's wording. These cases build the one writer that does (carry's
+# twin path) in a store of their own and drive the verbs against it: one id,
+# two wordings, each carrying a sentinel token. A reader leaks when the token
+# of a wording it may not show appears in anything it printed or wrote.
+
+OLD_WORDING = f"{sw.TOKENS['question']} the retry budget stays at six attempts per request"
+NEW_WORDING = f"{sw.TOKENS['belief']} the retry budget stays six attempts per request overall"
+
+
+@pytest.fixture
+def restated(tmp_path, monkeypatch):
+    from daimon_briefing import carry, config, normalize, trust
+    from daimon_briefing.surfaces import Writer
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(proj))
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    project = str(proj)
+
+    def cp(sid, created, text):
+        return {"session_id": sid, "created": created,
+                "working_context": {
+                    "active_topic": {"text": "restated", "trust": "inferred"},
+                    "recent_decisions": [{"text": text, "trust": "inferred"}]},
+                "epistemic_snapshot": {}}
+
+    first = cp("S-1", "2026-09-01T10:00:00Z", OLD_WORDING)
+    assert store.write_checkpoint("S-1", first, project_dir=project,
+                                  writer=Writer.HUMAN)
+    native = cp("S-2", "2026-09-01T11:00:00Z", NEW_WORDING)
+    merged = carry.merge(native, first, now=1_800_000_000.0)
+    assert store.write_checkpoint("S-2", merged, project_dir=project,
+                                  writer=Writer.HUMAN)
+    item_id = first["working_context"]["recent_decisions"][0]["id"]
+    assert merged["working_context"]["recent_decisions"][0]["id"] == item_id
+
+    class World:
+        pass
+
+    w = World()
+    w.project, w.item_id = project, item_id
+    w.root = tmp_path
+    w.bucket = config.checkpoint_dir() / store.project_slug(project)
+
+    def quarantine(text, kind):
+        return trust.propose(text=text, kind=kind, reason="fabricated",
+                             evidence=["issue:1"], channel="cli-tty",
+                             project_dir=project)
+
+    def forget_elsewhere(text):
+        store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(text),
+                           kind="tombstone", tombstone=True,
+                           project_dir=project, writer=Writer.HUMAN)
+
+    w.quarantine, w.forget_elsewhere = quarantine, forget_elsewhere
+    return w
+
+
+def _drive(w, argv):
+    before = drive.snapshot_sizes(w.root)
+    res = drive.run_cli(argv, stdin_tty=True)
+    res.written = drive.written_since(w.root, before)
+    blob = res.text() + "\n" + b"\n".join(res.written).decode(
+        "utf-8", errors="replace")
+    return res, blob
+
+
+VERBS = (("diff",), ("diff", "--json"))
+
+
+@pytest.mark.parametrize("verb", VERBS, ids=lambda v: "-".join(v))
+def test_a_quarantined_old_wording_never_prints_in_a_diff(restated, verb):
+    restated.quarantine(OLD_WORDING, "decision")
+    res, blob = _drive(restated, [*verb, f"--project={restated.project}"])
+    assert res.rc == 0
+    assert "question" not in sw.leaked_kinds(blob)
+    assert NEW_WORDING.split(" ", 1)[1] in blob       # the visible side shows
+
+
+@pytest.mark.parametrize("verb", VERBS, ids=lambda v: "-".join(v))
+def test_a_quarantined_new_wording_never_prints_in_a_diff(restated, verb):
+    restated.quarantine(NEW_WORDING, "decision")
+    res, blob = _drive(restated, [*verb, f"--project={restated.project}"])
+    assert res.rc == 0
+    assert "belief" not in sw.leaked_kinds(blob)
+    assert OLD_WORDING.split(" ", 1)[1] in blob
+
+
+@pytest.mark.parametrize("verb", VERBS, ids=lambda v: "-".join(v))
+def test_a_wording_quarantined_under_another_kind_is_masked_in_was(
+        restated, verb):
+    restated.quarantine(OLD_WORDING, "belief")
+    res, blob = _drive(restated, [*verb, f"--project={restated.project}"])
+    assert res.rc == 0
+    assert "question" not in sw.leaked_kinds(blob)
+    assert "was [withheld: quarantine" in blob
+
+
+@pytest.mark.parametrize("verb", VERBS, ids=lambda v: "-".join(v))
+def test_an_erased_old_wording_leaves_no_trace_in_a_diff(restated, verb):
+    restated.forget_elsewhere(OLD_WORDING)
+    res, blob = _drive(restated, [*verb, f"--project={restated.project}"])
+    assert res.rc == 0
+    assert sw.leaked_kinds(blob) - {"belief"} == set()
+    assert "forgot" not in blob.lower()
+    assert sw.leaked_keys(blob) == set()
+    from daimon_briefing import normalize
+    assert normalize.content_key(OLD_WORDING) not in blob
+
+
+@pytest.mark.parametrize("flags", [(), ("--json",)], ids=["text", "json"])
+def test_blame_of_a_restated_item_hides_the_quarantined_wording(
+        restated, flags):
+    restated.quarantine(OLD_WORDING, "decision")
+    res, blob = _drive(restated, ["blame", restated.item_id, *flags,
+                                  f"--project={restated.project}"])
+    assert res.rc == 0
+    assert "question" not in sw.leaked_kinds(blob)
+    assert "withheld" in blob
+
+
+@pytest.mark.parametrize("flags", [(), ("--json",)], ids=["text", "json"])
+def test_blame_of_an_erased_restated_item_says_so_and_no_key(
+        restated, flags):
+    from daimon_briefing import normalize
+    restated.forget_elsewhere(NEW_WORDING)
+    res, blob = _drive(restated, ["blame", restated.item_id, *flags,
+                                  f"--project={restated.project}"])
+    assert res.rc == 0
+    assert "belief" not in sw.leaked_kinds(blob)
+    assert normalize.content_key(NEW_WORDING) not in blob
+    assert "[withheld: forgotten]" in blob or '"reason": "forgotten"' in blob

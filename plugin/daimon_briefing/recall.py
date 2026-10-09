@@ -61,8 +61,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (buckets, config, policy, redact, schema, scoring, store,
-               surfaces, teamproject, view)
+from . import (buckets, config, index_locate, policy, redact, schema, scoring,
+               store, surfaces, teamproject, view)
 # The term functions moved to `terms` so `view` can sit under both `carry` and
 # `recall`. The three public names stay importable from here for one release.
 from .terms import (  # noqa: F401
@@ -110,7 +110,7 @@ def _note_error(where: str, exc: BaseException) -> None:
 # row is judged by its bucket before insert), and `meta.closed` names the
 # buckets with an unreadable trust ledger. An older index may hold a withheld
 # row, so the bump rebuilds it on first use.
-_SCHEMA_VERSION = "10"   # v9: #890 added items.stated_by
+_SCHEMA_VERSION = index_locate.SCHEMA_VERSION   # "10"; v9: #890 added items.stated_by
 
 _FTS5_MISSING_MSG = (
     "sqlite3 has no FTS5 module — `daimon recall` needs an FTS5-enabled "

@@ -14,8 +14,8 @@ index (the derived recall index), view (the read view), read (renders what a
 reader sees), entry (a command, server or hook entry point).
 
 What counts as a raw read, by AST: a call of `store.<primitive>`, `jsonl.read`
-/ `jsonl.read_rows` or `inspector._project_checkpoints` (as an attribute or as
-a name imported from those modules), and `json.load(...)` always, `json.loads(...)` when its argument
+/ `jsonl.read_rows` (as an attribute or as a name imported from those
+modules), and `json.load(...)` always, `json.loads(...)` when its argument
 contains `.read_text(`, `.read_bytes(`, `.read(` or `open(`. The JSON rule is
 deliberately conservative: it flags a host config file as readily as a
 checkpoint, and the allowlist says which is which. It misses a parse whose text
@@ -46,6 +46,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/__init__.py": "entry",  # package entry: Hermes register()
     "daimon_briefing/mcp_server.py": "entry",  # MCP stdio server
     "daimon_briefing/effects_commit.py": "entry",  # commits a read's Effects after its output
+    "daimon_briefing/index_locate.py": "index",  # read-only id locator over the recall index; imports nothing of the package
     "daimon_briefing/recall.py": "index",  # the derived recall index, rebuilt from checkpoints and ledgers
     "daimon_briefing/amendments.py": "ledger",  # owns amendments.jsonl and its fold
     "daimon_briefing/buckets.py": "ledger",  # bucket migration and its receipt ledger (migrations.jsonl)
@@ -159,8 +160,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "quote audit parses stored checkpoint files raw to check their bytes",
     ("daimon_briefing/cli/brief.py", "_cmd_anchor", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/history.py", "_read_pointer", "json.loads"):
-        "diff and blame walk pointer files; moves onto view.chain in PR 7",
     ("daimon_briefing/cli/inject.py", "_cmd_recall_inject", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):
@@ -183,14 +182,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "pointer envelope for status; moves onto store.read_meta in PR 7",
     ("daimon_briefing/cli/status.py", "_cmd_verify_receipt", "store.read_latest_body"):
         "verifies the raw bytes a receipt binds",
-    ("daimon_briefing/inspector.py", "_item_occurrences", "inspector._project_checkpoints"):
-        "why walks every retained copy of an item; moves onto view.lookup in PR 7",
-    ("daimon_briefing/inspector.py", "_legacy_source", "store.read_checkpoint"):
-        "legacy source lookup reads a stored session file",
-    ("daimon_briefing/inspector.py", "_project_checkpoints", "store.project_surfaces"):
-        "enumerates every pointer and session copy; moves onto view.chain in PR 7",
-    ("daimon_briefing/inspector.py", "_read_checkpoint", "json.loads"):
-        "parses each retained copy; moves onto view.chain in PR 7",
     ("daimon_briefing/receipts.py", "_ensure_pubkey", "json.loads"):
         "receipt key file, not a bucket path",
     ("daimon_briefing/receipts.py", "_load_pubkey", "json.loads"):
@@ -249,8 +240,6 @@ class _Visitor(ast.NodeVisitor):
                 return f"store.{attr}"
             if owner == "jsonl" and attr in JSONL_PRIMITIVES:
                 return f"jsonl.{attr}"
-            if owner == "inspector" and attr == "_project_checkpoints":
-                return "inspector._project_checkpoints"
             if owner == "json" and attr == "load":
                 return "json.load"
             if owner == "json" and attr == "loads" and _reads_a_file(node):
@@ -261,8 +250,6 @@ class _Visitor(ast.NodeVisitor):
                 return f"store.{func.id}"
             if origin == "jsonl" and func.id in JSONL_PRIMITIVES:
                 return f"jsonl.{func.id}"
-            if func.id == "_project_checkpoints":
-                return "inspector._project_checkpoints"
         return None
 
 
@@ -429,7 +416,7 @@ def test_the_scan_finds_each_kind_of_raw_read():
         "import json\nfrom .store import read_checkpoint\n"
         "def f(p):\n"
         "    store.read_latest_body(); jsonl.read(p); jsonl.read_rows(p)\n"
-        "    inspector._project_checkpoints(p); json.load(h)\n"
+        "    json.load(h)\n"
         "    json.loads(p.read_text()); json.loads(raw)\n"
         "    read_checkpoint(1)\n"
         "class C:\n"
@@ -440,7 +427,7 @@ def test_the_scan_finds_each_kind_of_raw_read():
     visitor.visit(tree)
     assert visitor.sites == {
         ("f", "store.read_latest_body"), ("f", "jsonl.read"),
-        ("f", "jsonl.read_rows"), ("f", "inspector._project_checkpoints"),
+        ("f", "jsonl.read_rows"),
         ("f", "json.load"), ("f", "json.loads"),
         ("f", "store.read_checkpoint"), ("C.g", "store.read_team")}
 
@@ -512,3 +499,48 @@ def test_the_direction_scan_sees_an_upward_import(tmp_path):
 def test_jsonl_and_surfaces_are_leaves():
     for rel, allowed in LEAVES.items():
         assert _package_imports(PLUGIN / rel) == allowed, rel
+
+
+# ---- the view's import direction (#1132 PR 11a) ------------------------------
+#
+# The view sits above the ledgers and the write layer and below every reader:
+# it imports no read, index or entry module except the three listed here. The
+# index locator is a leaf below it (`recall`, which sits above the view, is not
+# importable from it), `display` is the stdlib-only presenter, and `briefing`
+# is imported inside functions only (it imports the view at module level).
+VIEW_MAY_IMPORT_ABOVE = {
+    "index_locate": "read-only id locator, a leaf that imports nothing of the package",
+    "display": "stdlib-only presenter, one wording for every channel",
+    "briefing": "imported inside functions only; briefing imports the view at module level",
+}
+
+
+def _view_crossings(layer_table, root) -> set:
+    found = set()
+    for mod in _package_imports(root / "daimon_briefing/view.py"):
+        target = layer_table.get(f"daimon_briefing/{mod}.py")
+        if target in UPWARD:
+            found.add(mod)
+    return found
+
+
+def test_the_view_imports_nothing_above_it_but_the_listed_modules():
+    assert _view_crossings(LAYER, PLUGIN) == set(VIEW_MAY_IMPORT_ABOVE)
+    assert "recall" not in _package_imports(PLUGIN / "daimon_briefing/view.py")
+
+
+def test_the_briefing_import_in_the_view_is_never_at_module_level():
+    tree = ast.parse((PLUGIN / "daimon_briefing/view.py").read_text(
+        encoding="utf-8"))
+    top = {a.name for n in tree.body if isinstance(n, ast.ImportFrom)
+           and n.level == 1 and not n.module for a in n.names}
+    assert "briefing" not in top
+    assert "index_locate" in top
+
+
+def test_the_view_scan_sees_an_upward_import(tmp_path):
+    (tmp_path / "daimon_briefing").mkdir()
+    (tmp_path / "daimon_briefing" / "view.py").write_text(
+        "from . import recall\n")
+    assert _view_crossings({"daimon_briefing/recall.py": "index"},
+                           tmp_path) == {"recall"}

@@ -10,13 +10,13 @@ returned to CLI or JSON consumers.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import time
 from pathlib import Path
+from typing import Any
 
-from . import (config, normalize, provenance, recall, redact, schema,
-               scoring, serializer, store, tool_context, transcript)
+from . import (config, display, provenance, redact, schema, scoring,
+               serializer, store, tool_context, transcript, view)
 
 
 SCHEMA_VERSION = 1
@@ -32,71 +32,13 @@ def valid_item_id(value) -> bool:
     return isinstance(value, str) and _ITEM_ID_RE.fullmatch(value) is not None
 
 
-def _read_checkpoint(path: Path) -> dict | None:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def _project_checkpoints(project_dir) -> list[dict]:
-    """One authoritative payload per session, newest first.
-
-    ``project_surfaces`` deliberately includes rotation pointers and flat
-    per-session files.  A session may therefore appear several times.  Prefer
-    its immutable flat session file when it survives GC, otherwise choose one
-    pointer deterministically.  Path identity never leaves this function.
-    """
-    root = config.checkpoint_dir()
-    chosen: dict[str, tuple[tuple[int, str], dict]] = {}
-    for path in store.project_surfaces(project_dir):
-        checkpoint = _read_checkpoint(path)
-        if checkpoint is None:
-            continue
-        session_id = checkpoint.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            continue
-        immutable = int(path.parent == root and path.name == f"{session_id}.json")
-        rank = (immutable, str(path))
-        current = chosen.get(session_id)
-        if current is None or rank > current[0]:
-            chosen[session_id] = (rank, checkpoint)
-
-    def recency(checkpoint: dict) -> tuple[float, str]:
-        return (store._created_epoch(checkpoint.get("created")) or 0.0,
-                str(checkpoint.get("session_id") or ""))
-
-    return sorted((entry[1] for entry in chosen.values()),
-                  key=recency, reverse=True)
-
-
-def _item_occurrences(project_dir, item_id: str) -> list[dict]:
-    occurrences = []
-    for checkpoint in _project_checkpoints(project_dir):
-        for field in schema.ITEM_FIELDS:
-            if field.singleton:
-                continue
-            for item in ((checkpoint.get(field.section) or {}).get(
-                    field.key) or []):
-                if isinstance(item, dict) and item.get("id") == item_id:
-                    occurrences.append({
-                        "checkpoint": checkpoint,
-                        "item": item,
-                        "kind": field.kind,
-                    })
-    return occurrences
-
-
 def _legacy_source(item: dict) -> dict | None:
     session_id = item.get("origin_session")
     if not provenance.valid_session_id(session_id):
         return None
-    origin = store.read_checkpoint(session_id)
-    if isinstance(origin, dict):
-        source = origin.get("source_ref")
-        if provenance.valid_source_ref(source):
-            return source
+    source = view.source_ref(session_id)
+    if provenance.valid_source_ref(source):
+        return source
     source = {
         "version": provenance.SOURCE_REF_VERSION,
         "host": "claude-code",
@@ -107,17 +49,6 @@ def _legacy_source(item: dict) -> dict | None:
     if isinstance(author, str) and author.strip():
         source["author"] = author.strip()
     return source
-
-
-def _lifecycle(event) -> str:
-    if not isinstance(event, dict):
-        return "active"
-    status = str(event.get("status") or "").lower()
-    if status.startswith("forgotten:"):
-        return "forgotten"
-    if status.startswith("superseded-by:"):
-        return "superseded"
-    return "resolved" if store.is_resolved(event) else "active"
 
 
 def _messages(path: Path) -> list[dict] | None:
@@ -324,168 +255,261 @@ def _bounded_source(item, receipt, resolution, messages) -> dict:
     }
 
 
-def _withheld_source(forgotten: int) -> dict:
+_SOURCE_REFUSALS = ("closed", "forgotten-set", "quarantine-set",
+                    "withheld-item")
+
+
+def _withheld_source(reason: str) -> dict:
     """The `why --source` refusal (#1065). A transcript window is drawn from
     the RAW pre-forget transcript, and redact_text only catches secret
-    SHAPES, never free text a person deliberately forgot. A live tombstone
-    anywhere in the project therefore means some window in it could hand
-    that value back. Refused project-wide rather than per-item: a tombstone
-    is a hash of the whole forgotten item's TEXT, so an unrelated window has
-    no key to scan against and clear itself individually. Over-withholding
-    is the fail-safe direction, the same posture all_forgotten_content_keys
-    documents for the inbound gate."""
-    return {"state": "withheld", "forgotten": forgotten}
+    SHAPES, never free text a person deliberately forgot or quarantined. The
+    refusal is therefore set-based, not per-item: a tombstone is a hash of the
+    whole forgotten item's TEXT, so no key can scan an unrelated window to
+    clear it. It publishes the reason and no count: a count would disclose how
+    many tombstones other tenants hold (#899). Over-withholding is the
+    fail-safe direction."""
+    assert reason in _SOURCE_REFUSALS
+    return {"state": "withheld", "reason": reason}
 
 
-def _withheld_item() -> dict:
-    """The `why <id>` item-text/quote refusal (#1070). Every other read path
-    suppresses a value under a live forget tombstone with no opt-in needed:
-    recall search and the team read both union
-    store.forgotten_content_keys(project_dir) with
-    store.foreign_forgotten_content_keys() before a value can surface, and
-    that suppression is always on regardless of the opt-in local rewrite
-    (config.team_apply_forget). `why` binds an id straight to its stored
-    text, so it is the one surface that could still hand a forgotten value
-    back to anyone still holding that id. The item id and every axis that
-    carries no text of its own still print; only the value itself is
-    withheld, keyed on the item's OWN content (normalize.content_key of its
-    text), the same key `forget` itself publishes."""
-    return {"state": "withheld"}
+def _source_refusal(snap, *, item_withheld: bool) -> str | None:
+    """Why `--source` must be refused, or None. The sets are the view's own
+    facts: the machine-wide forgotten set (every local project and what
+    teammates published), this project's quarantines, an unreadable trust
+    ledger, then the item itself."""
+    if snap is not None:
+        if snap.closed:
+            return "closed"
+        if snap.forgotten:
+            return "forgotten-set"
+        if snap.quarantined:
+            return "quarantine-set"
+    return "withheld-item" if item_withheld else None
 
 
-def _index_only_reason(row: dict) -> str:
-    """Why this row is index-backed rather than a local project surface
-    (#674): the two real divergence paths the investigation proved. A local
-    flat file named for the row's session_id existing on disk means recall
-    attributed it via the pointer-fallback (_bucket_slugs) that
-    project_surfaces's membership test does not honor; its absence means the
-    row can only have come from recall's team-dir scan. Display-only — never
-    a claim about forget/membership reach."""
-    session_id = row.get("session_id")
-    if isinstance(session_id, str) and session_id:
-        local_file = config.checkpoint_dir() / f"{session_id}.json"
-        if local_file.is_file():
-            return "pointer-attributed-legacy"
-    return "team-mirror"
+_INDEX_ONLY_NOTE = ("this project's own checkpoint surfaces do not hold "
+                    "this item; content is served from the recall index "
+                    "and its exact bytes cannot be independently verified "
+                    "on this machine")
+
+
+class _Evidence:
+    """The evidence axes of one item (or of the textless projection of a
+    withheld one): the receipt, the source it names, and what the resolver and
+    the transcript say about it. Nothing here reads a ledger."""
+
+    def __init__(self, item: dict, resolver, *, infer_source: bool = True):
+        receipt: Any = item.get("quote_provenance")
+        self.receipt = receipt
+        self.bound = provenance.valid_quote_receipt(receipt)
+        self.source: Any
+        if self.bound:
+            self.source = receipt["source"]
+            self.provenance = "bound"
+        else:
+            self.source = _legacy_source(item) if infer_source else None
+            self.provenance = ("legacy-inferred" if self.source is not None
+                               else "legacy-unbound")
+        if resolver is None:
+            resolver = provenance.SourceResolver(
+                claude_projects=config.claude_projects_dir(),
+                current_author=config.author())
+        self.resolution = (resolver.resolve(self.source)
+                           if self.source is not None
+                           else provenance.SourceResolution("unsupported"))
+        self.messages = (_messages(self.resolution.path)
+                         if self.resolution.state == "resolved"
+                         and self.resolution.path is not None else None)
+        self.capture = receipt["outcome"] if self.bound else "unknown"
+        self.verifier = "unknown"
+        if self.bound:
+            current = (provenance.QUOTE_VERIFIER_ID,
+                       provenance.QUOTE_VERIFIER_VERSION)
+            recorded = (receipt["verifier"]["id"],
+                        receipt["verifier"]["version"])
+            self.verifier = ("same-version" if recorded == current
+                             else "different-version")
+        self.bytes = _bytes_axis(receipt, self.resolution, self.messages)
+
+
+def _lifecycle_event(latest) -> dict | None:
+    """The judged latest lifecycle event, shaped for the result. A tombstone
+    is the bare word `forgotten` (the view collapses its status), never the
+    key it carries (scar 0119)."""
+    if latest is None:
+        return None
+    return {"status": latest.status, "timestamp": latest.ts,
+            "source": latest.source}
+
+
+def _corroboration(item: dict, entry) -> dict:
+    # #983 change 3: `why` must show the SAME effective count the briefing
+    # badge does: an item whose first writer was a provisional never
+    # corroborates, ledger row or not (store.corroboration_origins_for reads
+    # `item["origin_session"]`, already loaded above).
+    references = sorted(store.corroboration_origins_for(item, entry))
+    return {"count": len(references), "references": references}
+
+
+def _events_only_axes(lifecycle: str) -> dict:
+    """An id with no copy has no receipt: every evidence axis is unknown."""
+    return {
+        "capture": "unknown",
+        "provenance": "legacy-unbound",
+        "locator": "unsupported",
+        "bytes": "unknown",
+        "current_support": "not-checked",
+        "verifier_comparison": "unknown",
+        "lifecycle": lifecycle,
+    }
+
+
+def _no_item(item_id: str, kind: str, slug, text) -> dict:
+    return {
+        "item_id": item_id,
+        "kind": kind,
+        "text": text,
+        "trust": None,
+        "quote": text,
+        "author": None,
+        "project_slug": slug,
+        "session_id": None,
+        "origin_session": None,
+        "occurrences": 0,
+    }
+
+
+def _withheld_result(verdict, lineage, slug, include_source: bool,
+                     resolver=None) -> dict:
+    """The `why` payload for an item the reader may not see. It is built from
+    the `Withheld` and the lineage only and never receives an item, so no
+    value, quote, tool context or transcript window can reach it. The id, the
+    kind and the lifecycle still print: a person has to see that a quarantine
+    or a forget exists to act on it. The evidence axes keep reporting from the
+    textless projection the view took when it withheld the copy
+    (`Withheld.receipt`: the quote receipt and the origin stamps), so a
+    teammate's forget does not blank how the item was captured (#1070, H13).
+    The receipt and the source themselves are not published."""
+    projection = verdict.receipt or {}
+    evidence = _Evidence(
+        {"quote_provenance": projection.get("quote_provenance"),
+         "origin_session": projection.get("origin_session"),
+         "origin_author": projection.get("origin_author")}, resolver)
+    marker = display.withheld_json(verdict)
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "item": _no_item(verdict.item_id, verdict.kind, slug, marker),
+        "preceding_tool_context": None,
+        "axes": {
+            "capture": evidence.capture,
+            "provenance": evidence.provenance,
+            "locator": evidence.resolution.state,
+            "bytes": evidence.bytes,
+            "current_support": "withheld",
+            "verifier_comparison": evidence.verifier,
+            "lifecycle": lineage.lifecycle,
+        },
+        "corroboration": {"count": 0, "references": []},
+        "ranking": None,
+        "receipt": None,
+        "source": None,
+        "lifecycle_event": _lifecycle_event(lineage.latest),
+    }
+    if include_source:
+        result["source_excerpt"] = _withheld_source(
+            _source_refusal(lineage.snapshot, item_withheld=True)
+            or "withheld-item")
+    return result
+
+
+def _events_only_result(item_id: str, lineage, slug, include_source: bool
+                        ) -> dict:
+    """The `why` payload for an id whose copies are gone but whose lifecycle
+    the ledger still names (a resolved loop that aged out of every retained
+    checkpoint). There is no item to describe, and `blame` answers the same
+    id the same way."""
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "item": _no_item(item_id, "unknown", slug, None),
+        "preceding_tool_context": _preceding_tool_context({}),
+        "axes": _events_only_axes(lineage.lifecycle),
+        "corroboration": _corroboration({}, lineage.corroboration),
+        "ranking": None,
+        "receipt": None,
+        "source": None,
+        "lifecycle_event": _lifecycle_event(lineage.latest),
+    }
+    if include_source:
+        refusal = _source_refusal(lineage.snapshot, item_withheld=False)
+        result["source_excerpt"] = (
+            _withheld_source(refusal) if refusal else _bounded_source(
+                {}, None, provenance.SourceResolution("unsupported"), None))
+    return result
 
 
 def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
                  resolver=None, now: float | None = None) -> dict | None:
     """Inspect one exact item inside one explicit project scope.
 
+    The view decides what may be said: `view.lineage` (one full snapshot)
+    supplies the verdict, the retained appearances, the judged events and the
+    lifecycle, and nothing else here reads a ledger or a checkpoint. A
+    `Withheld` verdict answers with `_withheld_result`, an id with no copy but
+    a lifecycle with `_events_only_result`, an id with neither with None.
+
     `now` is injected (#840) because the ranking block below decays with age:
     a payload whose number depends on an un-injected clock cannot be pinned by
     a test, and this one is published for consumers to recompute."""
     if now is None:
         now = time.time()
-    occurrences = _item_occurrences(project_dir, item_id)
-    resolutions = store.resolutions(project_dir=project_dir)
-    event = resolutions.get(item_id)
-    index_row = None
-    if not occurrences and event is None:
-        # #674: recall's index reaches surfaces this project's own walk
-        # structurally cannot (team-mirrored checkpoints, pointer-attributed
-        # legacy files). Read-only display fallback only — never widens what
-        # forget/project_surfaces/the privacy audit treat as this project's
-        # surfaces, and never fires once a local resolution event exists
-        # (that branch below already answers, forgotten included).
-        found = recall.find(item_id, project_dir=project_dir)
-        if not isinstance(found, recall.Found):
-            return None  # absent, or withheld, which reads the same
-        index_row = found.row
+    lineage = view.lineage(project_dir, item_id)
+    verdict = lineage.verdict
+    slug = store.project_slug(project_dir)
+    if isinstance(verdict, view.Withheld):
+        return _withheld_result(verdict, lineage, slug, include_source,
+                                resolver)
+    if not isinstance(verdict, view.Found):
+        if not lineage.events:
+            return None
+        return _events_only_result(item_id, lineage, slug, include_source)
 
-    if occurrences:
-        selected = occurrences[0]
-        checkpoint = selected["checkpoint"]
-        item = selected["item"]
-        kind = selected["kind"]
-    elif index_row is not None:
-        checkpoint = {"author": index_row.get("author"),
-                     "session_id": index_row.get("session_id")}
-        item = {"text": index_row.get("text"),
-                "trust": index_row.get("trust"),
-                "quote": index_row.get("quote") or None}
-        kind = index_row.get("kind") or "unknown"
-    else:
-        checkpoint = {}
-        item = {}
-        kind = "unknown"
+    item = verdict.item
+    kind = verdict.field.kind
+    meta = verdict.meta
+    index_only = verdict.source == "index"
+    # An index row names the session that held a copy, which can be a
+    # teammate's mirror or a carrier: not an origin, so nothing is inferred.
+    ev = _Evidence(item, resolver, infer_source=not index_only)
+    receipt, bound, source = ev.receipt, ev.bound, ev.source
+    resolution, messages = ev.resolution, ev.messages
 
-    receipt = item.get("quote_provenance")
-    bound = provenance.valid_quote_receipt(receipt)
-    if bound:
-        source = receipt["source"]
-        provenance_axis = "bound"
-    else:
-        source = _legacy_source(item)
-        provenance_axis = "legacy-inferred" if source is not None else "legacy-unbound"
-
-    if resolver is None:
-        resolver = provenance.SourceResolver(
-            claude_projects=config.claude_projects_dir(),
-            current_author=config.author())
-    resolution = (resolver.resolve(source) if source is not None
-                  else provenance.SourceResolution("unsupported"))
-    messages = (_messages(resolution.path)
-                if resolution.state == "resolved" and resolution.path is not None
-                else None)
-
-    capture = receipt["outcome"] if bound else "unknown"
-    verifier = "unknown"
-    if bound:
-        current = (provenance.QUOTE_VERIFIER_ID,
-                   provenance.QUOTE_VERIFIER_VERSION)
-        recorded = (receipt["verifier"]["id"],
-                    receipt["verifier"]["version"])
-        verifier = "same-version" if recorded == current else "different-version"
-
-    # #1070: every other read path (store.read_team, recall's inbound gate)
-    # unions the local ledger with what teammates published before deciding
-    # what to suppress; `why` must too. Computed once and reused below for
-    # both the item-text withhold and the --source count, so the two never
-    # drift to different answers within one call.
-    forgotten_keys = (store.forgotten_content_keys(project_dir)
-                      | store.foreign_forgotten_content_keys())
-    item_text = item.get("text")
-    item_forgotten = bool(item_text) and (
-        normalize.content_key(item_text) in forgotten_keys)
-
-    corroboration = store.corroborations(project_dir=project_dir).get(item_id, {})
-    # #983 change 3: `why` must show the SAME effective count the briefing
-    # badge does — an item whose first writer was a provisional never
-    # corroborates, ledger row or not (store.corroboration_origins_for reads
-    # `item["origin_session"]`, already loaded above).
-    references = sorted(store.corroboration_origins_for(item, corroboration))
     result = {
         "schema_version": SCHEMA_VERSION,
         "item": {
             "item_id": item_id,
             "kind": kind,
-            "text": _withheld_item() if item_forgotten else item.get("text"),
+            "text": item.get("text"),
             "trust": item.get("trust"),
-            "quote": (_withheld_item() if item_forgotten
-                     else item.get("quote")),
-            "author": checkpoint.get("author"),
-            "project_slug": store.project_slug(project_dir),
-            "session_id": checkpoint.get("session_id"),
-            "origin_session": item.get("origin_session"),
-            "occurrences": len(occurrences),
+            "quote": item.get("quote"),
+            "author": meta.author if meta else None,
+            "project_slug": slug,
+            "session_id": meta.session_id if meta else None,
+            "origin_session": None if index_only else item.get(
+                "origin_session"),
+            "occurrences": len(verdict.occurrences),
         },
         "preceding_tool_context": _preceding_tool_context(item),
         "axes": {
-            "capture": capture,
-            "provenance": provenance_axis,
+            "capture": ev.capture,
+            "provenance": ev.provenance,
             "locator": resolution.state,
-            "bytes": _bytes_axis(receipt, resolution, messages),
+            "bytes": ev.bytes,
             "current_support": _support_axis(
                 item, receipt, resolution, messages),
-            "verifier_comparison": verifier,
-            "lifecycle": _lifecycle(event),
+            "verifier_comparison": ev.verifier,
+            "lifecycle": lineage.lifecycle,
         },
-        "corroboration": {
-            "count": len(references),
-            "references": references,
-        },
+        "corroboration": _corroboration(item, lineage.corroboration),
         # #840 (request q-6cd17264d205): the ordering key, published with the
         # inputs that produced it. `why` is the surface that exists to answer
         # "why is this item where it is", and ranking was the one axis it
@@ -493,8 +517,8 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         # drift from it. Recomputed here rather than stored: the weight decays,
         # so a value written at capture time is stale by the time it is read.
         #
-        # The kind picks the rules — decay rate, and whether overdue
-        # escalation applies at all — so a fixed type would publish a number
+        # The kind picks the rules, decay rate and whether overdue
+        # escalation applies at all, so a fixed type would publish a number
         # no read path actually ranks on. On the #674 index-only path the
         # index row carries no importance or first_seen, and the block says so
         # in its own inputs (`importance_source: default`, `age_days: null`)
@@ -503,29 +527,16 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
             item, schema.KIND_TO_TYPE.get(kind, "recent_decision"), now),
         "receipt": receipt if bound else None,
         "source": source,
-        "lifecycle_event": ({
-            "status": event.get("status"),
-            "timestamp": event.get("ts"),
-            "source": event.get("source"),
-        } if isinstance(event, dict) else None),
+        "lifecycle_event": _lifecycle_event(lineage.latest),
     }
-    if index_row is not None:
-        result["index_only"] = {
-            "reason": _index_only_reason(index_row),
-            "note": ("this project's own checkpoint surfaces do not hold "
-                     "this item; content is served from the recall index "
-                     "and its exact bytes cannot be independently verified "
-                     "on this machine"),
-        }
+    if index_only:
+        reason = next((n.split(":", 1)[1] for n in verdict.notes
+                       if n.startswith("index_only:")), "team-mirror")
+        result["index_only"] = {"reason": reason, "note": _INDEX_ONLY_NOTE}
     if include_source:
-        # #1070: this count used to read the local ledger only
-        # (store.forgotten_content_keys); `forgotten_keys` above already
-        # holds the union with what teammates published, so a
-        # teammate-only tombstone withholds the window exactly like a
-        # local one.
-        forgotten = len(forgotten_keys)
+        refusal = _source_refusal(lineage.snapshot, item_withheld=False)
         result["source_excerpt"] = (
-            _withheld_source(forgotten) if forgotten
+            _withheld_source(refusal) if refusal
             else _bounded_source(item, receipt, resolution, messages))
     return result
 
@@ -550,31 +561,91 @@ def _ranking_line(ranking: dict) -> str:
             f"{inputs['trust_ceiling']:.2f})")
 
 
+_SOURCE_REFUSAL_WORDS = {
+    "closed": "the trust ledger cannot be read",
+    "forgotten-set": "a forget tombstone exists on this machine and the "
+                     "transcript predates any forgetting",
+    "quarantine-set": "this project holds a quarantine and a transcript "
+                      "window could carry its value",
+    "withheld-item": "this item is withheld",
+}
+
+
+def _withheld_marker(text: dict) -> str:
+    """The one-line marker for the `{"state": "withheld", ...}` object a
+    result publishes in place of a value (never the value)."""
+    reason = text.get("reason")
+    return display.withheld_marker(view.Withheld(
+        None, "unknown", reason if reason in ("quarantine", "closed")
+        else "forgotten", text.get("quarantine_id"), ""))
+
+
+def _short_lines(result: dict, item: dict, axes: dict) -> list[str]:
+    """The rendering of a result that has no item to describe (withheld, or an
+    id with only a lifecycle): the headline, the item line, the lifecycle, the
+    cure when the trust ledger is unreadable, the source line and the source
+    refusal. No evidence-axis map is consulted, so nothing here can raise on
+    an axis value that only a visible item has."""
+    text = item.get("text")
+    held = text if isinstance(text, dict) else None
+    marker = _withheld_marker(held) if held is not None else None
+    lines = [
+        f"Now: capture {axes['capture']}; item "
+        f"{'withheld' if marker else 'not retained'}; "
+        f"lifecycle {axes['lifecycle']}",
+        f"Item: [{item['item_id']}] [{item['kind']}] "
+        f"{marker or '(content unavailable)'}",
+    ]
+    if held is not None and held.get("quarantine_id"):
+        lines[-1] += f" (daimon trust show {held['quarantine_id']})"
+    lines.append(f"Lifecycle: {axes['lifecycle']}")
+    if held is not None and held.get("reason") == "closed":
+        lines.append("Cure: the trust ledger cannot be read; "
+                     "run: daimon status")
+    source = result.get("source")
+    if isinstance(source, dict):
+        lines.append(
+            f"Source: {source.get('host', 'unknown')} session "
+            f"{source.get('session_id', 'unknown')}")
+    excerpt = result.get("source_excerpt")
+    if isinstance(excerpt, dict) and excerpt.get("state") == "withheld":
+        lines.append("Source excerpt: withheld, " + _SOURCE_REFUSAL_WORDS.get(
+            str(excerpt.get("reason")), "this item is withheld"))
+    elif isinstance(excerpt, dict):
+        lines.append(f"Source excerpt: {excerpt.get('text') or '(unavailable)'}")
+        if excerpt.get("note"):
+            lines.append(f"Source note: {excerpt['note']}")
+    return lines
+
+
+_SUPPORT_WORDS = {
+    "message-id-match": "quote supported by its bound message",
+    "transcript-scan-match": "quote supported by transcript scan",
+    "not-reproduced": "quote not reproduced",
+    "not-checked": "quote not checked",
+    "withheld": "quote withheld",
+}
+
+
+def _source_state(axes: dict) -> str:
+    return {
+        "unchanged": "source unchanged",
+        "changed": "source changed",
+        "unknown": f"source bytes unknown ({axes['locator']})",
+        "withheld": "source withheld",
+    }[axes["bytes"]]
+
+
 def human_lines(result: dict) -> list[str]:
     """Compact human rendering; JSON intentionally has no derived summary."""
     item = result["item"]
     axes = result["axes"]
-    support = {
-        "message-id-match": "quote supported by its bound message",
-        "transcript-scan-match": "quote supported by transcript scan",
-        "not-reproduced": "quote not reproduced",
-        "not-checked": "quote not checked",
-    }[axes["current_support"]]
-    source_state = ({
-        "unchanged": "source unchanged",
-        "changed": "source changed",
-        "unknown": f"source bytes unknown ({axes['locator']})",
-    }[axes["bytes"]])
-    item_text = item.get("text")
-    if isinstance(item_text, dict) and item_text.get("state") == "withheld":
-        # #1070: a live tombstone (local or a teammate's) matches this
-        # item's own content, one line saying so in place of the value.
-        item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
-                    "(withheld: this project holds a forget tombstone for "
-                    "this value)")
-    else:
-        item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
-                    f"{item_text or '(content unavailable)'}")
+    if result.get("ranking") is None:
+        return _short_lines(result, item, axes)
+    support = _SUPPORT_WORDS[axes["current_support"]]
+    source_state = _source_state(axes)
+    item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
+                 f"{item.get('text') or '(content unavailable)'}")
     lines = [
         f"Now: capture {axes['capture']}; {source_state}; {support}",
         item_line,
@@ -615,10 +686,8 @@ def human_lines(result: dict) -> list[str]:
             f"{source.get('session_id', 'unknown')}")
     excerpt = result.get("source_excerpt")
     if isinstance(excerpt, dict) and excerpt.get("state") == "withheld":
-        count = excerpt.get("forgotten", 0)
-        lines.append(
-            f"Source excerpt: withheld, this project holds {count} forget "
-            "tombstone(s); the transcript predates any forgetting")
+        lines.append("Source excerpt: withheld, " + _SOURCE_REFUSAL_WORDS.get(
+            str(excerpt.get("reason")), "this item is withheld"))
     elif isinstance(excerpt, dict):
         lines.append(f"Source excerpt: {excerpt.get('text') or '(unavailable)'}")
         if excerpt.get("note"):

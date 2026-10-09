@@ -957,6 +957,39 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       '<div class="card-foot">click any row to open its entry</div></div>';
   }
 
+  // ---- why (#1132 PR 11a): a withheld item or source window names its REASON
+  // ("forgotten", "quarantine", "closed" for an item or quote; "forgotten-set",
+  // "quarantine-set", "closed", "withheld-item" for the transcript window).
+  // The words never carry a value, a key or a count. An unknown reason from a
+  // newer server reads as the safest line: withheld, and nothing more. ----
+  export function withheldItemWords(w) {
+    var reason = w && w.reason;
+    if (reason === "quarantine") {
+      return "withheld: a person quarantined this value" +
+        (w.quarantine_id ? " (" + String(w.quarantine_id) + ")" : "");
+    }
+    if (reason === "closed") {
+      return "withheld: the trust ledger cannot be read";
+    }
+    if (reason === "forgotten") {
+      return "withheld: this project holds a forget tombstone for this value";
+    }
+    return "withheld";
+  }
+  export function withheldSourceWords(w) {
+    var reason = w && w.reason;
+    if (reason === "forgotten-set") {
+      return "a forget tombstone exists on this machine; the transcript predates any forgetting";
+    }
+    if (reason === "quarantine-set") {
+      return "this project holds a quarantine; a transcript window could carry its value";
+    }
+    if (reason === "closed") {
+      return "the trust ledger cannot be read";
+    }
+    return "this item is withheld";
+  }
+
   // ---- why (#670): the payload is daimon why's receipt, rendered as-is.
   // JSON carries no derived summary and the viewer must not invent one:
   // axes render as recorded values, nothing is folded into a verdict. ----
@@ -981,8 +1014,8 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     // the same silent-wrong-render class #1065 fixed one level down for
     // the source excerpt.
     if (item.text && item.text.state === "withheld") {
-      html += '<p class="why-text why-none">withheld: this project holds a ' +
-        'forget tombstone for this value</p>';
+      html += '<p class="why-text why-none">' +
+        escapeHtml(withheldItemWords(item.text)) + "</p>";
     } else {
       html += '<p class="why-text">' + escapeHtml(item.text || "") + "</p>";
     }
@@ -994,8 +1027,8 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     if (item.quote && item.quote.state === "withheld") {
       html += '<div class="why-quote"><div class="why-quote-head">' +
         '<span class="why-label">Stored quote</span></div>' +
-        '<p class="why-none">withheld: this project holds a forget ' +
-        'tombstone for this value</p></div>';
+        '<p class="why-none">' + escapeHtml(withheldItemWords(item.quote)) +
+        "</p></div>";
     } else if (item.quote) {
       html += '<div class="why-quote"><div class="why-quote-head">' +
         '<span class="why-label">Stored quote</span></div>' +
@@ -1008,7 +1041,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
 
     // source_excerpt is structured: {kind, text, truncated?} — render the text,
     // label its kind, and say when it was cut rather than pretending it wasn't.
-    // #1065: a live forget tombstone answers with {state: "withheld", forgotten}
+    // #1065: a refused window answers with {state: "withheld", reason}
     // instead. That shape carries no `text`, so gating on `src.text` alone
     // would render nothing at all, the exact silent-empty failure #1065 exists
     // to prevent. It renders as a stated line, never a <pre>: there is no
@@ -1016,8 +1049,8 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var src = payload.source_excerpt;
     if (src && src.state === "withheld") {
       html += '<div class="why-source"><span class="why-label">Transcript context · withheld</span>' +
-        '<p class="why-none">this project holds ' + escapeHtml(String(src.forgotten || 0)) +
-        ' forget tombstone(s); the transcript predates any forgetting</p></div>';
+        '<p class="why-none">' + escapeHtml(withheldSourceWords(src)) +
+        "</p></div>";
     } else if (src && src.text) {
       html += '<div class="why-source"><span class="why-label">Transcript context · fetched now, not stored' +
         (src.kind ? " · " + escapeHtml(String(src.kind)) : "") + "</span>" +

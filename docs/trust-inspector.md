@@ -145,22 +145,102 @@ safely. It does not redact stored evidence a second time.
 edited, truncated, migrated, or parsed differently by a newer host adapter.
 Use the other axes to understand which condition actually changed.
 
-### Forget withholds the window
+### Which sets refuse the window
 
-The window is drawn from the raw, pre-forget transcript. Redaction only
-catches known secret shapes, never free text someone deliberately forgot. If
-this project holds any live forget tombstone, `--source` withholds the window
-project-wide (not only for the forgotten item) and reports the tombstone
-count instead. The item itself still prints; only the transcript excerpt is
-withheld.
+The window is drawn from the raw transcript, and redaction only catches known
+secret shapes, never free text someone deliberately forgot or a person
+quarantined. No key can scan a block of transcript for one value, so the
+refusal is set-based rather than per item. `--source` is refused when any of
+these holds, and the refusal names the reason and never a count:
 
-A teammate's forget counts too, not only this project's own ledger: `why`
-honors the same tombstones every other read path honors, published or not
-yet applied locally.
+| `reason` | When |
+| --- | --- |
+| `closed` | The trust ledger cannot be read, so nothing can be proven not quarantined. |
+| `forgotten-set` | Any forget tombstone exists on this machine, in any project, or a teammate published one. |
+| `quarantine-set` | This project holds an active quarantine. |
+| `withheld-item` | The item itself is withheld. |
 
-### Forget withholds the item too
+The cost is stated plainly: once anything has been forgotten anywhere on the
+machine, `why --source` is refused everywhere, for good, because tombstones
+never expire. The item itself still prints; only the transcript excerpt is
+withheld. A count would say how many values other tenants forgot, so none is
+published.
 
-If the item's own text matches a live forget tombstone, local or a
-teammate's, `why <id>` withholds the value itself, with one line saying so.
-The item id and the evidence axes that carry no text of their own still
-print.
+## A withheld id
+
+An exact id the reader may not see still answers, with the marker in place of
+the value:
+
+```console
+$ daimon why o-3f8a2c
+Now: capture unknown; item withheld; lifecycle active
+Item: [o-3f8a2c] [question] [withheld: quarantine tr-1a2b3c4d5e6f] (daimon trust show tr-1a2b3c4d5e6f)
+Lifecycle: active
+```
+
+The marker is one of `[withheld: quarantine tr-…]` (a person quarantined the
+value; `daimon trust show` has the record), `[withheld: trust ledger
+unreadable]` (nothing can be proven not quarantined; run `daimon status`) and
+`[withheld: forgotten]`. In `--json` the item's `text` and `quote` are
+`{"state": "withheld", "reason": …}` (plus `quarantine_id` for a quarantine),
+`ranking`, `receipt`, `source` and `preceding_tool_context` are `null`, and
+`current_support` is `withheld`. No value, key, quote, tool context or
+transcript window is in the document. The evidence axes that rest on the
+item's quote receipt (capture, provenance, locator, bytes, verifier) still
+report: the view keeps a textless projection of the receipt when it withholds
+a copy, so a quarantine or a teammate's forget does not blank how the item
+was captured. The receipt, the source and the quote themselves are not
+published. An id that is only a tombstone has no copy to project and reports
+`unknown`.
+
+Forgotten is announced only here: `daimon why`, `daimon blame` and the
+viewer's why page say `[withheld: forgotten]` for the one exact id you asked
+about. Every listing (`daimon diff`, recall, the briefing, `status`, the
+viewer's tables) treats a forgotten value as absent: no row, no count, no edge.
+Asking about an id that was never stored answers `no item`, so the one thing
+an exact-id question can learn is that this id was stored and later forgotten,
+which is the same fact a teammate already receives as a tombstone.
+
+An id whose copies are gone but whose lifecycle the ledger still names (a
+resolved loop that left every retained checkpoint) prints `Item: … (content
+unavailable)` and its lifecycle; `daimon blame` answers the same id the same
+way.
+
+## Where an id is looked up
+
+A lookup is bounded by this project's bucket, never by the machine, and never
+rebuilds the recall index:
+
+1. the pointer window (`latest.json` and the `prev-N.json` files kept by
+   `DAIMON_CHECKPOINT_HISTORY`, three by default); the newest `created` stamp
+   wins when several copies differ;
+2. the recall index, opened read-only, only to learn which session file holds
+   an id the window no longer does; the value comes from that file through the
+   same judgement as everything else;
+3. the forgotten-id and quarantine records;
+4. nothing.
+
+An item answered from the index alone (a teammate's mirrored checkpoint with
+no local file, or a legacy file with no project stamp) is judged at read time
+like any other copy and is marked `index_only` in the JSON. A row whose local
+file is torn, or is stamped for another project, is not used at all: the
+answer is `no item`.
+
+What this changes, each in the safe direction (it can under-announce, never
+leak):
+
+- A quarantined item older than the pointer window, whose quarantine record
+  was opened without `--item-id`, reads `no item`: the record names a value,
+  not an id, and the value is no longer in any copy the lookup reads. The
+  internal answer says `outside_window`, which is where it looked.
+- The same id can read `[withheld: quarantine …]` while the index still holds
+  its pre-quarantine row and `no item` after the next index rebuild, so the
+  answer can change with the timing of `daimon recall` or any other call that
+  warms the index.
+- `why` answers for this project's own bucket. It no longer reaches the other
+  slugs listed in `DAIMON_EXTRA_READ_SLUGS`.
+- An item serialized since the last index build is found through the pointer
+  window only.
+
+`occurrences` counts the distinct sessions the window and the index know to
+hold the id, not every copy on disk.

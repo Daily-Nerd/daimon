@@ -20,80 +20,46 @@ module object (`_cli.<name>`), the same seam every other verb family uses.
 """
 
 import json
-import re
 import sys
-from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import config, inspector, render, schema, store
+from .. import config, display, inspector, render, schema, store, view
 
 
 SCHEMA_VERSION = 1
 
-# latest.json is generation 0; prev-N.json is generation N. Bounded digits:
-# the name comes off the filesystem, and an unbounded run before a literal is
-# the backtracking shape carry's _ID_SHAPE documents.
-_POINTER_RE = re.compile(r"^(?:latest|prev-(\d{1,3}))\.json$")
-
 
 # Emission order for a diff. Additions first because they are what a reader
 # scans for; the gone classes last, grouped, because their REASON is the part
-# that carries weight and reads better together.
+# that carries weight and reads better together; `withheld` closes the list
+# because it has no reason to give. There is no `forgotten` class: a listing
+# never names a forgotten value (R2), so after a real forget the item is in
+# neither body and has no row.
 _CHANGE_ORDER = ("added", "restated", "retagged", "resolved", "superseded",
-                 "forgotten", "dropped")
+                 "dropped", "withheld")
 
-_MARKERS = {"added": "+", "restated": "~", "retagged": "~"}
+_MARKERS = {"added": "+", "restated": "~", "retagged": "~", "withheld": "?"}
 
-
-def _read_pointer(path: Path) -> dict | None:
-    """A pointer's payload, or None when it is torn, truncated or not a dict.
-
-    Never raises: a half-written pointer is a routine artifact of a crashed
-    write, and a reader that traces back on one is worse than one that says
-    the file is unreadable and carries on."""
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
+# What a withheld row's `where` can say: the item is withheld in the older
+# generation, the newer one or both.
+_WHERE = {(True, False): "from", (False, True): "to", (True, True): "both"}
 
 
-def chain(project_dir) -> list[dict]:
-    """This project's retained pointer chain, newest generation first.
-
-    One entry per pointer file that EXISTS, whether or not it parses — a torn
-    generation is reported, never silently skipped, because a diff that
-    quietly jumped a generation would describe a change span it did not read.
-
-    The directory is scanned rather than derived from the current history
-    setting: lowering `DAIMON_CHECKPOINT_HISTORY` leaves older pointers on
-    disk, and a file that is readable is readable regardless of what the knob
-    says today."""
-    slug = store.project_slug(project_dir)
-    if not slug:
-        return []
-    bucket = config.checkpoint_dir() / slug
-    entries: list[dict] = []
-    try:
-        names = [p.name for p in bucket.iterdir() if p.is_file()]
-    except OSError:
-        return []
-    for name in names:
-        match = _POINTER_RE.match(name)
-        if match is None:
-            continue
-        index = int(match.group(1)) if match.group(1) else 0
-        checkpoint = _read_pointer(bucket / name)
-        entries.append({
-            "index": index,
-            "pointer": name,
-            "checkpoint": checkpoint,
-            "session_id": (checkpoint or {}).get("session_id"),
-            "created": (checkpoint or {}).get("created"),
-        })
-    entries.sort(key=lambda e: e["index"])
-    return entries
+def _pointer_entry(pointer: view.Pointer) -> dict:
+    """One pointer of the window as a diff endpoint. `checkpoint` is the
+    `view.Opened` (the body with every withheld item removed) of a readable
+    pointer and None of a torn one, which stays listed: a diff that quietly
+    jumped a generation would describe a change span it did not read."""
+    index = 0 if pointer.ref == "latest" else int(pointer.ref.split("-")[1])
+    meta = pointer.meta
+    return {
+        "index": index,
+        "pointer": f"{pointer.ref}.json",
+        "checkpoint": pointer.opened if pointer.readable else None,
+        "session_id": meta.session_id if meta else None,
+        "created": meta.created if meta else None,
+    }
 
 
 def _endpoint(entry: dict | None) -> dict | None:
@@ -108,98 +74,117 @@ def _endpoint(entry: dict | None) -> dict | None:
     }
 
 
-def _items_by_id(checkpoint: dict) -> dict:
-    """`{item_id: (kind, item)}` for one checkpoint body.
-
-    Keyed on the id `policy.stamp_item_ids` wrote, never on text: text is what
-    a restatement changes, and matching on it would report one item twice (the
-    false-merge lesson, #13). Non-dict entries are skipped —
-    contradictions_flagged may hold bare strings, which carry no id."""
-    out: dict = {}
-    for field in schema.ITEM_FIELDS:
-        if field.singleton:
-            continue
-        for item in ((checkpoint.get(field.section) or {}).get(
-                field.key) or []):
-            if not isinstance(item, dict):
-                continue
-            item_id = item.get("id")
-            if isinstance(item_id, str) and item_id and item_id not in out:
-                out[item_id] = (field.kind, item)
-    return out
-
-
-def _gone_reason(event) -> tuple[str, str]:
+def _gone_reason(lifecycle: str, event) -> tuple[str, str]:
     """Why an item present in the older checkpoint is absent from the newer
-    one, read off the project's own lifecycle ledger.
+    one, read off the project's own lifecycle ledger. `lifecycle` is the
+    ledger's word for the id (`view.lifecycle_word`) and `event` its judged
+    latest event (`view.latest_event`).
 
-    Four answers, and the fourth is the honest one. `dropped` means the record
+    Three answers, and the third is the honest one. `dropped` means the record
     does not say: carry expired the item by weight, or the session simply did
     not restate it. Naming that as a resolution would invent a decision nobody
-    made.
-
-    A `forgotten:` tombstone carries the forgotten value's content hash. The
-    detail line never repeats it — a hash names the value it tombstones, and
-    the deletion contract is about what a surface can be made to disclose, not
-    about whether the disclosure is reversible."""
-    if not isinstance(event, dict):
+    made. A forget tombstone is never a reason here: a forgotten item is in
+    neither body, and an event that names a tombstone reads as an unexplained
+    drop rather than as anything about the value."""
+    if event is None or event.tombstone:
         return "dropped", "no lifecycle event recorded"
-    status = str(event.get("status") or "")
-    low = status.lower()
-    source = str(event.get("source") or "unknown")
-    if low.startswith("forgotten"):
-        return "forgotten", "removed by forget; its text is not readable here"
-    if low.startswith("superseded-by:"):
-        target = status.split(":", 1)[1].strip() or "an unnamed item"
-        return "superseded", f"superseded by {target} (via {source})"
-    if store.is_resolved(event):
+    status = event.status or ""
+    source = event.source or "unknown"
+    if lifecycle == "superseded":
+        target = status.split(":", 1)[1].strip() if ":" in status else ""
+        return "superseded", (
+            f"superseded by {target or 'an unnamed item'} (via {source})")
+    if lifecycle == "resolved":
         return "resolved", f"resolved via {source}"
     return "dropped", f"latest event ({status}) does not close it"
 
 
-def changes(older: dict, newer: dict, resolutions: dict) -> list[dict]:
-    """Every change between two checkpoint bodies, one row per item id.
+def _withheld_in(opened) -> dict:
+    """`{item_id: Withheld}` for the items of one generation the reader may
+    not see and a listing may say are there: a quarantine or an unreadable
+    trust ledger. A forgotten item is not among them (it is treated as absent
+    on both sides, so no listing can name, count or list it)."""
+    return {w.item_id: w for w in opened.withheld
+            if w.item_id and w.reason in ("quarantine", "closed")}
 
-    Seven classes. `added` and the four gone classes come from set difference
-    on ids. `retagged` is a trust change under a stable id — the #974 stitched
-    quote demotion and a `reverify` both land here. `restated` is a TEXT
-    change under a stable id, which only carry's twin path can produce (#980):
-    a native item inherits the previous item's identity while saying it in new
-    words.
 
-    An item can be both retagged and restated. Restated wins the single row:
-    the text is what a reader compares first, and the row carries both trust
-    values anyway."""
-    before = _items_by_id(older)
-    after = _items_by_id(newer)
+def _was(old_text, snap) -> str:
+    """The `was "<old wording>"` detail of a restated row, or a mask when that
+    whole wording is a value the reader may not see. A forgotten wording is
+    masked without a reason: naming it would confirm that it was forgotten."""
+    verdict = view.prose_verdict(old_text, snap, closed_masks=True)
+    if verdict is None:
+        return f"was \"{old_text}\""
+    if verdict.reason == "forgotten":
+        return "was (previous wording not shown)"
+    return f"was {display.withheld_marker(verdict)}"
+
+
+def changes(older, newer, snap) -> list[dict]:
+    """Every change between two generations (`view.Opened`), one row per id.
+
+    Seven classes. `added` and the gone classes come from set difference on
+    the ids a reader may see. `retagged` is a trust change under a stable id,
+    the #974 stitched quote demotion and a `reverify` both land here.
+    `restated` is a TEXT change under a stable id, which only carry's twin
+    path can produce (#980): a native item inherits the previous item's
+    identity while saying it in new words. An item can be both retagged and
+    restated. Restated wins the single row: the text is what a reader
+    compares first, and the row carries both trust values anyway.
+
+    `withheld` closes the listing for an id the reader may not see on at least
+    one side (a quarantine, or an unreadable trust ledger): `where` says which
+    generation it is withheld in, and the text is printed only for the side
+    where the item is visible. A released quarantine is therefore never a
+    false `added`, and a new one never a false `gone`. A forgotten item has
+    no row at all."""
+    # Keyed on the id `policy.stamp_item_ids` wrote, never on text: text is
+    # what a restatement changes, and matching on it would report one item
+    # twice (the false-merge lesson, #13). A singleton or a bare string
+    # (contradictions_flagged) carries no id and is skipped.
+    before, after = ({
+        item["id"]: (fld.kind, item)
+        for fld, item in reversed(list(schema.iter_items(body or {})))
+        if not fld.singleton and isinstance(item.get("id"), str)
+        and item["id"]} for body in (older.checkpoint, newer.checkpoint))
+    held_before, held_after = _withheld_in(older), _withheld_in(newer)
     rows: list[dict] = []
-    for item_id, (kind, item) in after.items():
-        if item_id not in before:
+    for item_id in {*before, *after, *held_before, *held_after}:
+        in_before, in_after = item_id in before, item_id in after
+        was_held = item_id in held_before and not in_before
+        now_held = item_id in held_after and not in_after
+        if was_held or now_held:
+            verdict = (held_after if now_held else held_before)[item_id]
+            kind, item = (after if in_after else before).get(
+                item_id, (verdict.kind, {}))
+            rows.append(_row("withheld", item_id, kind, item, None,
+                             display.withheld_marker(verdict),
+                             _WHERE[(was_held, now_held)]))
+        elif in_before and in_after:
+            kind, item = after[item_id]
+            _prev_kind, prev = before[item_id]
+            prev_trust, trust = prev.get("trust"), item.get("trust")
+            if prev.get("text") != item.get("text"):
+                rows.append(_row("restated", item_id, kind, item, prev_trust,
+                                 _was(prev.get("text"), snap)))
+            elif prev_trust != trust:
+                rows.append(_row("retagged", item_id, kind, item, prev_trust,
+                                 f"was {prev_trust or 'untagged'}"))
+        elif in_after:
+            kind, item = after[item_id]
             rows.append(_row("added", item_id, kind, item, None, None))
-            continue
-        _prev_kind, prev = before[item_id]
-        prev_trust = prev.get("trust")
-        trust = item.get("trust")
-        if prev.get("text") != item.get("text"):
-            was = f"was \"{prev.get('text')}\""
-            rows.append(_row("restated", item_id, kind, item, prev_trust, was))
-        elif prev_trust != trust:
-            rows.append(_row("retagged", item_id, kind, item, prev_trust,
-                             f"was {prev_trust or 'untagged'}"))
-    for item_id, (kind, item) in before.items():
-        if item_id in after:
-            continue
-        reason, detail = _gone_reason(resolutions.get(item_id))
-        # A forgotten value must not be re-disclosed by the verb that reports
-        # its removal, whatever a surface still holds.
-        gone = dict(item, text=None) if reason == "forgotten" else item
-        rows.append(_row(reason, item_id, kind, gone, None, detail))
+        elif in_before:
+            kind, item = before[item_id]
+            reason, detail = _gone_reason(
+                view.lifecycle_word(snap.resolutions.get(item_id)),
+                view.latest_event(snap, item_id))
+            rows.append(_row(reason, item_id, kind, item, None, detail))
     rows.sort(key=lambda r: (_CHANGE_ORDER.index(r["change"]), r["item_id"]))
     return rows
 
 
 def _row(change: str, item_id: str, kind: str, item: dict,
-         previous_trust, detail) -> dict:
+         previous_trust, detail, where=None) -> dict:
     """One change row. Key order is the documented `--json` contract; every
     key is always present so a consumer never branches on shape."""
     return {
@@ -210,6 +195,7 @@ def _row(change: str, item_id: str, kind: str, item: dict,
         "previous_trust": previous_trust,
         "text": item.get("text"),
         "detail": detail,
+        "where": where,
     }
 
 
@@ -219,8 +205,10 @@ def _change_line(row: dict) -> str:
     marker = _MARKERS.get(row["change"], "-")
     text = row["text"] or "(content unavailable)"
     detail = f" ({row['detail']})" if row["detail"] else ""
+    where = f" in {row['where']}" if row["where"] else ""
     return (f"{marker} {row['change']:<10} [{row['item_id']}] "
-            f"[{row['trust'] or 'untagged'}] [{row['kind']}] {text}{detail}")
+            f"[{row['trust'] or 'untagged'}] [{row['kind']}] {text}"
+            f"{detail}{where}")
 
 
 def _chain_line(retained: int, history: int, oldest: str) -> str:
@@ -283,6 +271,7 @@ def _pick(entries: list[dict], args) -> tuple:
     return by_index[frm], by_index[to], skipped, 0, None
 
 
+@_cli.guarded
 def _cmd_diff(args) -> int:
     """What changed between two retained checkpoints of this project (#975).
 
@@ -292,13 +281,17 @@ def _cmd_diff(args) -> int:
     `resolve` and `reverify` already say that on the record without erasing
     it. There is no `--restore`, and there will not be one.
 
+    One snapshot judges both generations and the lifecycle reasons; nothing
+    here reads a pointer itself.
+
     rc 0 answered (a chain too thin to compare is an answer, not an error),
     1 nothing readable to compare, 2 a refused address."""
     _cli._note_usage("diff")
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
-    entries = chain(project)
+    snap = view.snapshot(project)
+    entries = [_pointer_entry(p) for p in view.pointers(project, snap=snap)]
     older, newer, skipped, prc, message = _pick(entries, args)
     if message is not None:
         return _refuse(message, prc, args.json)
@@ -309,8 +302,7 @@ def _cmd_diff(args) -> int:
             1, args.json)
     depth = config.checkpoint_history()
     rows = ([] if older is None
-            else changes(older["checkpoint"], newer["checkpoint"],
-                         store.resolutions(project_dir=project)))
+            else changes(older["checkpoint"], newer["checkpoint"], snap))
     payload = {
         "schema_version": SCHEMA_VERSION,
         "project_slug": store.project_slug(project),
@@ -350,44 +342,7 @@ def _diff_lines(payload: dict, oldest: str) -> list[str]:
     return lines
 
 
-def _appearances(entries: list[dict], item_id: str) -> list[dict]:
-    """Every readable generation that holds this item, OLDEST first, so a
-    reader walks the lineage forwards.
-
-    `carried_from` is the carry label, and two things about it are easy to get
-    wrong. It is stamped with `setdefault`, so it names the session an item
-    was FIRST copied from and is never re-stamped on later hops. And carry's
-    twin path never stamps it at all (scar 0077): a session restating a
-    carried claim in its own words wrote those words, so the copy label would
-    misname the author. Its absence therefore means "this session wrote this
-    wording", which is exactly what the line says — never "this is where the
-    claim began". That question is the `Origin:` line's, and only the bound
-    `origin_session` can answer it."""
-    out = []
-    for entry in entries:
-        checkpoint = entry["checkpoint"]
-        if checkpoint is None:
-            continue
-        found = _items_by_id(checkpoint).get(item_id)
-        if found is None:
-            continue
-        kind, item = found
-        out.append({
-            "index": entry["index"],
-            "pointer": entry["pointer"],
-            "session_id": entry["session_id"],
-            "created": entry["created"],
-            "trust": item.get("trust"),
-            "carried_from": item.get("carried_from") or None,
-            "native": not item.get("carried_from"),
-            "_kind": kind,
-            "_item": item,
-        })
-    out.sort(key=lambda a: a["index"], reverse=True)
-    return out
-
-
-def _origin(item: dict, retained_sessions: set) -> dict:
+def _origin(item: dict, retained_sessions) -> dict:
     """Who FIRST stated this, from the write-time binding (#268) and nowhere
     else. An absent binding reads as unknown rather than as the session the
     item happens to sit in: substituting a carrier for an author is the
@@ -406,6 +361,33 @@ def _origin(item: dict, retained_sessions: set) -> dict:
     }
 
 
+def _appearance_row(appearance: view.Appearance) -> dict:
+    """One generation of a lineage. `carried_from` is the carry label, and
+    two things about it are easy to get wrong. It is stamped with
+    `setdefault`, so it names the session an item was FIRST copied from and is
+    never re-stamped on later hops. And carry's twin path never stamps it at
+    all (scar 0077): a session restating a carried claim in its own words
+    wrote those words, so the copy label would misname the author. Its
+    absence therefore means "this session wrote this wording", which is
+    exactly what the line says — never "this is where the claim began". That
+    question is the `Origin:` line's, and only the bound `origin_session` can
+    answer it. A withheld generation says neither: it names no trust and is
+    never "stated here" (scars 0086, 0077)."""
+    verdict = appearance.verdict
+    held = isinstance(verdict, view.Withheld)
+    return {
+        "index": appearance.index,
+        "pointer": appearance.pointer_file,
+        "session_id": appearance.session_id,
+        "created": appearance.created,
+        "trust": appearance.trust,
+        "carried_from": appearance.carried_from,
+        "native": None if held else not appearance.carried_from,
+        "withheld": display.withheld_json(verdict) if held else None,
+    }
+
+
+@_cli.guarded
 def _cmd_blame(args) -> int:
     """How one item got here: origin, every carry, every state change (#975).
 
@@ -414,8 +396,9 @@ def _cmd_blame(args) -> int:
 
     Read-only, and rollback is the same non-goal it is for `diff`: this verb
     shows how a state was reached and offers no way to put an earlier one
-    back. A forgotten item keeps its tombstone here and never its text; the
-    lifecycle is what survives deletion, the value is not.
+    back. A forgotten or quarantined item prints its marker and never its
+    text; the lifecycle is what survives deletion, the value is not. This is
+    the exact-id history verb that may say `[withheld: forgotten]` for one id.
 
     rc 0 answered, 1 this project's chain and ledger hold no such item,
     2 a malformed id or a refused address."""
@@ -427,51 +410,53 @@ def _cmd_blame(args) -> int:
     project, rc = _cli._slug_route(args)
     if rc:
         return rc
-    entries = chain(project)
-    found = _appearances(entries, args.item_id)
-    events = store.item_events(args.item_id, project_dir=project)
-    if not found and not events:
+    lineage = view.lineage(project, args.item_id)
+    verdict = lineage.verdict
+    if (isinstance(verdict, view.Absent) and not lineage.appearances
+            and not lineage.events):
         return _refuse(
             f"no item {args.item_id!r} in this project's retained chain", 1,
             args.json)
-    # The NEWEST retained appearance answers for the item's current text,
-    # trust and binding. An item with no appearance at all is one the ledger
-    # still names — a forget tombstone, most often — and has no content by
-    # construction, so nothing is substituted for it.
-    item: dict = found[-1]["_item"] if found else {}
-    kind: str = found[-1]["_kind"] if found else "unknown"
-    lifecycle = inspector._lifecycle(
-        store.resolutions(project_dir=project).get(args.item_id))
+    # The verdict answers for the item's current text, trust and binding. An
+    # id with no copy at all is one the ledger still names, and has no content
+    # by construction, so nothing is substituted for it.
+    if isinstance(verdict, view.Found):
+        item, kind = verdict.item, verdict.field.kind
+        text = item.get("text") or None
+        trust = item.get("trust")
+    elif isinstance(verdict, view.Withheld):
+        item, kind, trust = {}, verdict.kind, None
+        text = display.withheld_json(verdict)
+    else:
+        item, kind, trust, text = {}, "unknown", None, None
     depth = config.checkpoint_history()
     payload = {
         "schema_version": SCHEMA_VERSION,
         "project_slug": store.project_slug(project),
         "item_id": args.item_id,
         "kind": kind,
-        "trust": item.get("trust"),
-        # A forget tombstone outranks whatever a surface still holds: the verb
-        # that reports a deletion must not be the one that undoes it.
-        "text": None if lifecycle == "forgotten" else (item.get("text") or None),
-        "lifecycle": lifecycle,
-        "origin": _origin(item, {e["session_id"] for e in entries
-                                 if e["session_id"]}),
+        "trust": trust,
+        "text": text,
+        "lifecycle": lineage.lifecycle,
+        "origin": _origin(item, lineage.sessions),
         "history": depth,
-        "retained": len(entries),
-        "truncated": len(entries) >= depth,
-        "appearances": [{key: value for key, value in row.items()
-                         if not key.startswith("_")} for row in found],
-        "events": [{"ts": evt.get("ts"), "kind": evt.get("kind"),
-                    "status": evt.get("status"), "source": evt.get("source"),
-                    "note": evt.get("note")} for evt in events],
-        "skipped": [{"index": e["index"], "pointer": e["pointer"],
-                     "reason": "unreadable"}
-                    for e in entries if e["checkpoint"] is None],
+        "retained": len(lineage.refs),
+        "truncated": len(lineage.refs) >= depth,
+        # oldest generation first, so a reader walks the lineage forwards
+        "appearances": [_appearance_row(a)
+                        for a in reversed(lineage.appearances)],
+        "events": [{"ts": evt.ts, "kind": evt.kind, "status": evt.status,
+                    "source": evt.source, "note": evt.note}
+                   for evt in lineage.events],
+        "skipped": [{"index": view._pointer_index(ref),
+                     "pointer": f"{ref}.json", "reason": "unreadable"}
+                    for ref in lineage.unreadable],
     }
     if args.json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
-    render.render_history_lines(
-        _blame_lines(payload, entries[-1]["pointer"] if entries else ""))
+    oldest = f"{lineage.refs[-1]}.json" if lineage.refs else ""
+    render.render_history_lines(_blame_lines(payload, oldest))
     return 0
 
 
@@ -487,6 +472,25 @@ def _origin_line(origin: dict) -> str:
     return f"Origin: first stated by {origin['session_id']}{author}{seen}"
 
 
+def _marker_of(kind: str, held: dict) -> str:
+    """The marker line for the `{"state": "withheld", ...}` object a payload
+    publishes in place of a value."""
+    reason = held.get("reason")
+    return display.withheld_marker(view.Withheld(
+        None, kind, reason if reason in ("quarantine", "closed")
+        else "forgotten", held.get("quarantine_id"), ""))
+
+
+def _item_line(payload: dict) -> str:
+    text = payload["text"]
+    if isinstance(text, dict):
+        marker = _marker_of(payload["kind"], text)
+        return f"Item: [{payload['item_id']}] [{payload['kind']}] {marker}"
+    return (f"Item: [{payload['item_id']}] "
+            f"[{payload['trust'] or 'untagged'}] [{payload['kind']}] "
+            f"{text or '(content unavailable)'}")
+
+
 def _blame_lines(payload: dict, oldest: str) -> list[str]:
     lines = [f"Project: {payload['project_slug']}"]
     if payload["truncated"]:
@@ -494,21 +498,21 @@ def _blame_lines(payload: dict, oldest: str) -> list[str]:
                                  oldest))
     for row in payload["skipped"]:
         lines.append(f"skipped {row['pointer']} ({row['reason']})")
-    text = payload["text"] or (
-        "(forgotten — its text is not readable here)"
-        if payload["lifecycle"] == "forgotten" else "(content unavailable)")
-    lines.append(f"Item: [{payload['item_id']}] "
-                 f"[{payload['trust'] or 'untagged'}] [{payload['kind']}] {text}")
+    lines.append(_item_line(payload))
     lines.append(_origin_line(payload["origin"]))
     lines.append(f"Lifecycle: {payload['lifecycle']}")
     lines.append("Lineage:")
     if not payload["appearances"]:
         lines.append("  no retained checkpoint holds this item")
     for row in payload["appearances"]:
-        how = ("stated here" if row["native"]
-               else f"carried from {row['carried_from']}")
+        if row["withheld"] is not None:
+            tag = _marker_of(payload["kind"], row["withheld"])
+        else:
+            how = ("stated here" if row["native"]
+                   else f"carried from {row['carried_from']}")
+            tag = f"[{row['trust'] or 'untagged'}] {how}"
         lines.append(f"  {row['pointer']} ({row['session_id']}, "
-                     f"{row['created']}) [{row['trust'] or 'untagged'}] {how}")
+                     f"{row['created']}) {tag}")
     lines.append("Events:")
     if not payload["events"]:
         lines.append("  none recorded")

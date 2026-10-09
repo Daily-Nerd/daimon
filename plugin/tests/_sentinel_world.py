@@ -50,6 +50,26 @@ def leaked_id(blob) -> bool:
     return ID_TOKEN.lower() in blob.lower()
 
 
+# The content key of each forgotten value, and of the value a tombstoned ID
+# was written under. A tombstone row's status and a scrub marker carry the key
+# (scar 0119), which names the value it hashes; the value sentinel above cannot
+# see it, so a reader that prints a raw status brings it back unnoticed.
+KEY_TOKENS = {
+    **{kind: normalize.content_key(TEXTS[kind]) for kind in FORGOTTEN},
+    "idforgot": normalize.content_key("a different value"),
+}
+
+
+def leaked_keys(blob) -> set[str]:
+    """The forgotten-value names whose content key appears in `blob` (str or
+    bytes), as `key:<name>`."""
+    if isinstance(blob, bytes):
+        blob = blob.decode("utf-8", errors="replace")
+    low = blob.lower()
+    return {f"key:{name}" for name, key in KEY_TOKENS.items()
+            if key.lower() in low}
+
+
 def leaked_kinds(blob) -> set[str]:
     """The sentinel kinds whose token appears in `blob` (str or bytes)."""
     if isinstance(blob, bytes):
