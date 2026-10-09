@@ -439,6 +439,36 @@ def test_the_prose_declarations_are_pinned():
         "note", "item_text", "status")
 
 
+def test_the_folded_prose_declarations_are_pinned():
+    """Prose that sits in a FOLDED record outside the row paths (11c): a
+    proposal's copy of the text, an overturn's note, a reply's note. Only the
+    two ledgers whose fold derives such keys declare any."""
+    fp = surfaces.FieldPath
+    assert surfaces.bucket_ledger("refutations.jsonl").folded_prose == (
+        fp(("revision_proposed", "subject")),
+        fp(("revision_proposed", "verdict")),
+        fp(("revision_proposed", "note")),
+        fp(("revision_proposed", "evidence"), True),
+        fp(("revision_proposed", "check", "match")),
+        fp(("revision_proposed", "check", "body")),
+        fp(("overturn_proposed", "note")),
+        fp(("overturn_proposed", "evidence"), True),
+        fp(("overturn_note",)),
+        fp(("overturn_evidence",), True),
+        fp(("guard_match", "anchors"), True))
+    assert surfaces.bucket_ledger("requests.jsonl").folded_prose == (
+        fp(("done_evidence",)),
+        fp(("replies[]", "note")),
+        fp(("replies[]", "evidence")),
+        fp(("replies[]", "act_author")),
+        fp(("opened_act_author",)),
+        fp(("verdict_act_author",)),
+        fp(("done_act_author",)))
+    for name in ("events.jsonl", "amendments.jsonl", "trust.jsonl",
+                 "relations.jsonl", "verification.jsonl"):
+        assert surfaces.bucket_ledger(name).folded_prose == (), name
+
+
 # ---- every prose consumer reads the registry (#1132) ----------------------
 
 
