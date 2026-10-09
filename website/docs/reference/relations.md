@@ -28,11 +28,12 @@ reader sees in the viewer's History panel is one a person vouched for.
 ## Deletion contract
 
 An edge is itself a claim about content, so relations honor `daimon forget`:
-an edge touching a forgotten item is withheld from rendered surfaces, and only
-a count of withheld edges is shown — the wording on the CLI and in the viewer
-is the same, and it names no id. An endpoint that merely aged out of the
-checkpoint retention window is different: it renders as `[unresolved]` and
-stays a valid record.
+an edge touching a forgotten item is left out of every rendered surface and
+counted nowhere, so a list never says that an item was forgotten. An endpoint a
+person quarantined, or any endpoint while the trust ledger cannot be read,
+keeps its edge and renders as the withheld marker instead of its text. An
+endpoint that merely aged out of the checkpoint retention window is different:
+it renders as `[unresolved]` and stays a valid record.
 
 ## Advice for deciding
 
