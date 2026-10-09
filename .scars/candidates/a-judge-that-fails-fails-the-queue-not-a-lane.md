@@ -1,7 +1,7 @@
 ---
 id: 0
 type: fence
-title: "pending._queue takes the bucket snapshot outside the per-lane try on purpose"
+title: "A snapshot or masker that fails in the decide queue fails the call as MaskFailed; only an unreadable ledger drops a lane"
 severity: medium
 confidence: 0.8
 created: 2026-10-09
@@ -17,9 +17,8 @@ expires:
 status: candidate
 ---
 
-Each queue lane is wrapped in `except Exception: pass`, so one unreadable ledger degrades its lane. A masker
-that raised inside a lane would therefore empty the lane silently and `decide` would print "nothing waiting",
-which is a false claim. `_queue` takes `view.judge(slug).snap` before any lane runs and outside the try, so a
-judge that fails fails the call and `decide` answers with one error line and exit 2. A masker that fails after
-a good judge still drops its lane (less is shown, never more). The briefing's count passes `masked=False` and
-takes neither.
+Each queue lane is wrapped in `except Exception: pass`, so an unreadable ledger degrades its lane. A snapshot or
+masker failure must not take that path: the lane would vanish and `decide` would print "nothing waiting", a
+false claim. `_queue` and `_masked_lane` turn both into `MaskFailed`, which the lane loops and
+`foreign_queues_typed` re-raise, so `decide` answers with one error line and exit 2 (guarded). The briefing's
+count passes `masked=False` and takes neither. Do not widen the lane `except` to swallow `MaskFailed`.

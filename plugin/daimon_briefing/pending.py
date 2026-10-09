@@ -148,6 +148,12 @@ def _order_key(row: dict, seq: int) -> tuple:
             _KIND_RANK.get(row["kind"], 9), row["id"])
 
 
+class MaskFailed(Exception):
+    """The snapshot or the masker failed. Unlike an unreadable ledger this is
+    not a lane to skip: a queue shown without it would read as "nothing
+    waiting", so the call fails and the verb says it could not read."""
+
+
 def _masked_lane(project_dir, ledger_name, records, *, masked, snap) -> list:
     """The records a lane is about to turn into rows, as a reader may see them
     (11c): every prose column judged over the bucket's snapshot, so `decide`,
@@ -155,7 +161,10 @@ def _masked_lane(project_dir, ledger_name, records, *, masked, snap) -> list:
     A caller that only counts (the briefing's `here` figure) asks for none."""
     if not masked:
         return list(records)
-    return view.masked(project_dir, ledger_name, records, snap=snap)
+    try:
+        return view.masked(project_dir, ledger_name, records, snap=snap)
+    except Exception as exc:  # noqa: BLE001
+        raise MaskFailed(type(exc).__name__) from exc
 
 
 def _request_rows(project_dir, slug, joined=None, *, masked=True,
@@ -513,12 +522,17 @@ def queue(*, project_dir=None, masked: bool = True) -> dict:
 
 def _queue(project_dir, joined, masked: bool = True) -> dict:
     slug = store.project_slug(project_dir)
-    snap = view.judge(slug).snap if masked else None
+    try:
+        snap = view.judge(slug).snap if masked else None
+    except Exception as exc:  # noqa: BLE001
+        raise MaskFailed(type(exc).__name__) from exc
     pairs, suppressed = [], 0
     try:
         request_pairs, suppressed = _request_rows(
             project_dir, slug, joined, masked=masked, snap=snap)
         pairs += request_pairs
+    except MaskFailed:
+        raise
     except Exception:
         pass
     for source, _ranks in _LANES:
@@ -526,6 +540,8 @@ def _queue(project_dir, joined, masked: bool = True) -> dict:
             continue
         try:
             pairs += source(project_dir, slug, masked=masked, snap=snap)
+        except MaskFailed:
+            raise
         except Exception:
             pass
     pairs.sort(key=lambda pair: _order_key(pair[0], pair[1]))
@@ -833,6 +849,8 @@ def foreign_queues_typed(*, project_dir=None) -> ForeignQueues:
             continue
         try:
             result = queue(project_dir=bucket)
+        except MaskFailed:
+            raise
         except Exception:
             continue
         rows = result.get("rows") or []

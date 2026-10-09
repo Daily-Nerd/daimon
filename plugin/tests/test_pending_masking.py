@@ -95,19 +95,34 @@ def test_a_judge_that_fails_fails_the_call_not_a_lane(tmp_checkpoint_dir,
         raise RuntimeError("no")
 
     monkeypatch.setattr(view, "judge", boom)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(pending.MaskFailed):
         pending.queue(project_dir=m.PROJECT)
 
 
-def test_a_masker_that_fails_drops_the_lane_not_the_text(tmp_checkpoint_dir,
-                                                         monkeypatch):
+def test_a_masker_that_fails_fails_the_call_like_a_judge(tmp_checkpoint_dir,
+                                                        monkeypatch):
     _plant()
 
     def boom(*_a, **_k):
         raise RuntimeError("no")
 
     monkeypatch.setattr(view, "masked", boom)
-    assert _rows() == []          # fail-open per lane: less is shown, never more
+    with pytest.raises(pending.MaskFailed):
+        pending.queue(project_dir=m.PROJECT)
+
+
+def test_decide_says_it_could_not_read_instead_of_nothing_waiting(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    _plant()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(view, "masked", boom)
+    for flags in ((), ("--all-projects",)):
+        rc, out, err = m.run(capsys, "decide", *flags)
+        assert rc == 2 and "nothing waiting" not in out + err, flags
+        assert err.count("\n") == 1, flags
 
 
 def test_decide_prints_masked_cards_and_foreign_ones_by_their_own_bucket(
