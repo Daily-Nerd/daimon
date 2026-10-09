@@ -888,19 +888,39 @@ def scrub_serialize_log() -> tuple:
 _TOMBSTONE_NAME = "tombstones.jsonl"
 
 
-def _own_team_dirs(project_dir=None) -> list:
+def _own_team_dirs(project_dir=None, *, clones_only: bool = False) -> list:
     """This author's directories in every sidecar the project routes to —
     the same identity and routing _dual_write_team writes checkpoints with,
-    so a published tombstone lands where the sync already looks."""
+    so a published tombstone lands where the sync already looks.
+    `clones_only` drops the machine-local `local` mirror: nothing reads it as
+    another author's, so a published quarantine there reaches no reader."""
     own = project_slug(config.author()) or "unknown"
     segs = teamproject.resolve(project_dir)
     out = []
     for slug in _team_write_slugs(project_dir):
+        if clones_only and slug == _TEAM_LOCAL_REMOTE:
+            continue
         base = config.team_dir() / slug
         if segs:
             base = base.joinpath("projects", *segs)
         out.append(base / "authors" / own)
     return out
+
+
+class PublishFailure(NamedTuple):
+    """One own sidecar a publish could not write: the ledger path and why.
+    A 2-tuple, so `for path, why in published.failed` keeps working; `remote`
+    names the sidecar clone (the first segment under the team dir)."""
+
+    path: Path
+    reason: str
+
+    @property
+    def remote(self) -> str:
+        try:
+            return Path(self.path).relative_to(config.team_dir()).parts[0]
+        except (ValueError, IndexError):
+            return ""
 
 
 class Published(list):
@@ -912,7 +932,7 @@ class Published(list):
 
     def __init__(self, paths=(), failed=(), keys=frozenset()):
         super().__init__(paths)
-        self.failed = tuple(failed)
+        self.failed = tuple(PublishFailure(*f) for f in failed)
         self.keys = frozenset(keys)
 
 
@@ -988,17 +1008,156 @@ def republish_tombstones(project_dir=None) -> Published:
                          project_dir)
 
 
+_QUARANTINE_NAME = "quarantines.jsonl"
+# The only fields a published quarantine row may carry: hashes and enums.
+_QUARANTINE_FIELDS = ("version", "ts", "order", "event_id", "quarantine_id",
+                      "kind", "value_key", "state", "author")
+
+
+def _own_author_dirs_everywhere() -> list:
+    """Every directory of THIS author in every sidecar clone, both layout
+    eras, whether or not the project routes there now. A release retracts an
+    earlier claim of yours, a hash-only row in a place you already published
+    to, so it needs no current membership. The `local` mirror is not a clone
+    and is skipped. Never raises."""
+    own = project_slug(config.author()) or "unknown"
+    out: list = []
+    try:
+        clones = sorted(p for p in config.team_dir().iterdir()
+                        if p.is_dir() and p.name != _TEAM_LOCAL_REMOTE
+                        and (p / ".git").exists())
+    except OSError:
+        return out
+    for clone in clones:
+        try:
+            out.extend(d for d in _team_author_dirs(clone) if d.name == own)
+        except OSError:
+            continue
+    return out
+
+
+def _publishable(row) -> dict | None:
+    """A caller's row reduced to the declared hash-only fields, or None when
+    it is not a valid active/released claim."""
+    if not isinstance(row, dict):
+        return None
+    clean = {k: row[k] for k in _QUARANTINE_FIELDS if k in row}
+    if clean.get("state") not in ("active", "released"):
+        return None
+    # Kind and value key must be inside the vocabulary the fold reads.
+    if not policy.fold_published_quarantines([{**clean, "state": "active"}]):
+        return None
+    clean.setdefault("version", 1)
+    clean.setdefault("author", config.author())
+    return clean
+
+
+def _id_folds_active(rows, qid) -> bool:
+    """Does this file, folded per id, still say the quarantine id is active?"""
+    return bool(policy.fold_published_quarantines(
+        [r for r in rows if isinstance(r, dict)
+         and r.get("quarantine_id") == qid]))
+
+
+def publish_quarantine(rows, project_dir=None) -> Published:
+    """Publish a human quarantine so teammates withhold the value (PR 13, D6).
+
+    `rows` are hash-only claims `{ts, order, event_id, quarantine_id, kind,
+    value_key, state, author}` with `state` `active` or `released`, copied
+    from the local ledger row that caused the publish so a published row
+    orders exactly like the local one. Anything else a caller attaches is
+    dropped: no reason, no evidence, no text.
+
+    An `active` row goes to the author's own `quarantines.jsonl` in each
+    sidecar CLONE the project routes to now (never `local`, which no reader
+    folds). A `released` row goes to every own author directory in every
+    clone whose file still folds that quarantine id active, routed or not,
+    so a membership change cannot strand an active row. Presence is checked
+    by `event_id` through the capped reader, so a retry never duplicates; a
+    file that is over the cap or not proven is a reported failure, never
+    re-appended as "absent".
+
+    Gated on config.team_enabled(). Best-effort like the tombstone: the local
+    transition already happened and stays; `Published.failed` says what
+    teammates still hold."""
+    if not config.team_enabled():
+        return Published()
+    clean = [r for r in (_publishable(row) for row in rows) if r is not None]
+    if not clean:
+        return Published()
+    project_dir = _resolved(project_dir)
+    active = [r for r in clean if r["state"] == "active"]
+    released = [r for r in clean if r["state"] == "released"]
+    plan: dict = {}  # ledger path -> (author dir, rows wanted there)
+    if active:
+        for adir in _own_team_dirs(project_dir, clones_only=True):
+            plan.setdefault(adir / _QUARANTINE_NAME, (adir, []))[1].extend(active)
+    written: list[str] = []
+    failed: list[tuple] = []
+    wrote: set = set()
+    reads: dict = {}
+    if released:
+        for adir in _own_author_dirs_everywhere():
+            path = adir / _QUARANTINE_NAME
+            got = reads[path] = _capped_rows(path)
+            wanted = [r for r in released
+                      if _id_folds_active(got.rows, r.get("quarantine_id"))]
+            if wanted:
+                plan.setdefault(path, (adir, []))[1].extend(wanted)
+    for path, (adir, wanted) in plan.items():
+        got = reads.get(path) or _capped_rows(path)
+        have = {r.get("event_id") for r in got.rows if isinstance(r, dict)}
+        todo = [r for r in wanted
+                if not (r.get("event_id") and r["event_id"] in have)]
+        if not todo:
+            continue
+        if got.unproven:
+            why = ("its quarantine ledger is over the 1 MB cap" if got.over_cap
+                   else f"its quarantine ledger is {got.health.value}")
+            failed.append((path, why))
+            continue
+        lines = [json.dumps(r, ensure_ascii=False) for r in todo]
+        try:
+            adir.mkdir(parents=True, exist_ok=True)
+            # lock=False: this dir is committed by teamsync._commit_own, and a
+            # .pointer.lock sidecar would travel to every teammate.
+            jsonl.append_lines(
+                path, lines, lock=False,
+                posture=jsonl.lazy_posture(path, Writer.HUMAN))
+        except OSError as exc:
+            name = errno.errorcode.get(exc.errno or 0, "OSError")
+            failed.append((path, f"{name} while writing"))
+            continue
+        written.append(str(path))
+        wrote.update(r["value_key"] for r in todo)
+    return Published(written, failed, wrote)
+
+
 # One ledger is read on the briefing path, so it cannot be unbounded: a
 # teammate publishing a huge file must not make every read pay for it.
 # ~1 MB is ~12k rows, far past any real forget history.
 _MAX_TOMBSTONE_BYTES = 1_000_000
 
 
+class CappedRead(NamedTuple):
+    """The capped read of one published team ledger: its good rows and what
+    the file is. `unproven` is the state a reader must not trust the rows of
+    as COMPLETE: the file was not read (TRANSIENT or an OS error), holds a
+    garbage line, or is over the cap so only its head was read."""
+
+    rows: list
+    health: jsonl.Health
+    over_cap: bool = False
+
+    @property
+    def unproven(self) -> bool:
+        return self.over_cap or self.health in (jsonl.Health.TRANSIENT,
+                                                jsonl.Health.UNREADABLE)
+
+
 class TombstoneRead(NamedTuple):
     """The capped read of one tombstone ledger: the keys of its good rows and
-    what the file is. `unproven` is the state a reader must not trust the
-    keys of as COMPLETE: the file was not read (TRANSIENT or an OS error),
-    holds a garbage line, or is over the cap so only its head was read."""
+    what the file is (see `CappedRead` for `unproven`)."""
 
     keys: set
     health: jsonl.Health
@@ -1020,33 +1179,39 @@ def _row_keys(rows) -> set[str]:
     return keys
 
 
-def _tombstone_keys(path) -> TombstoneRead:
-    """The keys of one tombstone ledger and its health. Capped at
+def _capped_rows(path) -> CappedRead:
+    """The rows of one published team ledger and its health. Capped at
     `_MAX_TOMBSTONE_BYTES`: `jsonl.read` has no bounded mode (it loads the
     whole file), so an over-cap file is read for its head only and reported
     `over_cap`. A corrupt row never hides the rest. Never raises."""
     try:
         size = path.stat().st_size
     except FileNotFoundError:
-        return TombstoneRead(set(), jsonl.Health.ABSENT)
+        return CappedRead([], jsonl.Health.ABSENT)
     except OSError:
-        return TombstoneRead(set(), jsonl.Health.UNREADABLE)
+        return CappedRead([], jsonl.Health.UNREADABLE)
     if size <= _MAX_TOMBSTONE_BYTES:
         got = jsonl.read(path)
-        return TombstoneRead(_row_keys(got.rows), got.health)
+        return CappedRead(list(got.rows), got.health)
     log.warning("daimon team: %s exceeds %d bytes — reading the first %d "
                 "only", path.name, _MAX_TOMBSTONE_BYTES, _MAX_TOMBSTONE_BYTES)
     try:
         with path.open("rb") as f:
             head = f.read(_MAX_TOMBSTONE_BYTES)
     except OSError:
-        return TombstoneRead(set(), jsonl.Health.UNREADABLE, True)
+        return CappedRead([], jsonl.Health.UNREADABLE, True)
     rows = []
     for line in head.decode("utf-8", errors="surrogateescape").splitlines():
         kind, row = jsonl.classify_line(line)
         if kind == jsonl.ROW:
             rows.append(row)
-    return TombstoneRead(_row_keys(rows), jsonl.Health.DEGRADED, True)
+    return CappedRead(rows, jsonl.Health.DEGRADED, True)
+
+
+def _tombstone_keys(path) -> TombstoneRead:
+    """The keys of one tombstone ledger and its health (see `_capped_rows`)."""
+    got = _capped_rows(path)
+    return TombstoneRead(_row_keys(got.rows), got.health, got.over_cap)
 
 
 class ForeignLedger(NamedTuple):

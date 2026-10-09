@@ -108,6 +108,10 @@ def _expected(name, writer, index):
 
 # One real writer per ledger: (callable(writer) -> bool "row landed").
 ROW = {"event": "proposed", "item_id": "o-aaaaaaaaaaaa"}
+QROW = {"version": 1, "ts": "2026-10-09T12:00:00Z", "order": 1,
+        "event_id": "e" * 32, "quarantine_id": "tr-0123456789ab",
+        "kind": "decision", "value_key": "0123456789abcdef", "state": "active",
+        "author": "ada"}
 
 
 def _writers():
@@ -134,6 +138,9 @@ def _writers():
         # ledger it cannot prove is a failure, never re-appended as absent.
         "tombstones.jsonl": lambda w: bool(store.publish_tombstone(
             "f" * 64, project_dir=PROJECT)),
+        # The same for the published quarantine ledger (PR 13).
+        "quarantines.jsonl": lambda w: bool(store.publish_quarantine(
+            [QROW], project_dir=PROJECT)),
     }
 
 
@@ -164,7 +171,7 @@ COUNTERS = {"verification.jsonl", "forget-hits.jsonl"}
     if c[0] in _writers() and not (c[0] in COUNTERS and c[2] is Writer.CURE)])
 def test_the_real_writer_does_what_its_posture_says(
         tmp_checkpoint_dir, monkeypatch, name, state, writer):
-    if name == "tombstones.jsonl":
+    if name in TEAM_LEDGERS:
         monkeypatch.setenv("DAIMON_TEAM", "1")
         monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
     how, index = STATES[state]
@@ -176,7 +183,7 @@ def test_the_real_writer_does_what_its_posture_says(
     if name in COUNTERS:
         # Counters: the only class is EMITTER, so judge them as one.
         assert writer is Writer.EMITTER
-    if name == "tombstones.jsonl" and state in CAPPED_READER_REFUSES:
+    if name in TEAM_LEDGERS and state in CAPPED_READER_REFUSES:
         posture = W.SKIP  # not a posture: the capped reader's failure
     with jsonl.surface_refusals():
         if posture is W.REFUSE and writer is not Writer.CURE:

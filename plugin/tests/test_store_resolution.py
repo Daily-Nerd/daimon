@@ -305,6 +305,12 @@ def _public_entry_points(sub: str):
          lambda: store.scrub_team_copies("deadbeef", project_dir=sub)),
         ("publish_tombstone",
          lambda: store.publish_tombstone("deadbeef", project_dir=sub)),
+        ("publish_quarantine",
+         lambda: store.publish_quarantine(
+             [{"ts": "2026-10-09T12:00:00Z", "order": 1, "event_id": "e1",
+               "quarantine_id": "tr-0123456789ab", "kind": "decision",
+               "value_key": "0123456789abcdef", "state": "active"}],
+             project_dir=sub)),
         ("apply_foreign_tombstones",
          lambda: store.apply_foreign_tombstones(project_dir=sub)),
         ("write_checkpoint",
