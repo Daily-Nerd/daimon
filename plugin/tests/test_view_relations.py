@@ -186,22 +186,31 @@ def test_a_forgotten_requested_item_answers_nothing(tmp_checkpoint_dir):
 
 
 def test_a_chunk_of_many_ids_is_one_bounded_call(tmp_checkpoint_dir, monkeypatch):
-    """The join is bounded by the edge count: 600 edges name 1200 ids and
-    still make exactly one `lookup_many` call."""
+    """The join is bounded by the edge count: 600 edges name 601 distinct ids
+    and make exactly one `lookup_many` call that carries all of them, with no
+    per-edge `lookup` and one locator pass."""
     _write()
     a = _id(A)
-    seen = []
-    real = view.lookup_many
-    monkeypatch.setattr(view, "lookup_many",
-                        lambda p, ids, **k: (seen.append(len(list(ids))),
-                                             real(p, ids, **k))[1])
+    edges = [{"relation_id": f"rel-{i:016x}", "state": "candidate",
+              "from": {"item_id": f"r-{i:012x}"}, "to": {"item_id": a}}
+             for i in range(600)]
+    wanted = {e["from"]["item_id"] for e in edges} | {a}
+    calls, singles, locates = [], [], []
+    real_many, real_locate = view.lookup_many, view.index_locate.locate
     monkeypatch.setattr(
-        relations, "listing",
-        lambda **k: [{"relation_id": f"rel-{i:016x}", "state": "candidate",
-                      "from": {"item_id": f"r-{i:012x}"},
-                      "to": {"item_id": a}} for i in range(600)])
+        view, "lookup_many",
+        lambda p, ids, **k: (calls.append(list(ids)), real_many(p, ids, **k))[1])
+    monkeypatch.setattr(view, "lookup",
+                        lambda *a_, **k: singles.append(a_) or pytest.fail("per-edge"))
+    monkeypatch.setattr(
+        view.index_locate, "locate",
+        lambda *a_, **k: (locates.append(len(a_[2])), real_locate(*a_, **k))[1])
+    monkeypatch.setattr(relations, "listing", lambda **k: edges)
     got = view.relations(PROJECT)
-    assert len(got.rows) == 600 and seen == [601]
+    assert len(got.rows) == 600
+    assert len(calls) == 1 and singles == []
+    assert len(calls[0]) == len(wanted) == 601 and set(calls[0]) == wanted
+    assert len(locates) == 1 and locates[0] <= 601
 
 
 def test_the_tombstone_id_rule_lives_in_the_store(tmp_checkpoint_dir):
