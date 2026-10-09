@@ -156,8 +156,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "audits the provenance of the stored copy of an item; needs the raw checkpoint",
     ("daimon_briefing/cli/audit.py", "_cmd_audit_quotes", "json.loads"):
         "quote audit parses stored checkpoint files raw to check their bytes",
-    ("daimon_briefing/cli/brief.py", "_cmd_anchor", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_cmd_recall_inject", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):

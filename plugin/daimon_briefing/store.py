@@ -1672,6 +1672,49 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     return path
 
 
+def attach_anchor(project_dir, locator: tuple, anchor: dict, *,
+                  text: str | None = None) -> Path | None:
+    """Patch `anchor` into ONE item of the own latest checkpoint and rewrite it
+    (`anchor --attach`). `locator` is `(section, key, index)` of the item in
+    the RAW own body (`index` is None for the singleton `active_topic`): ids
+    do not cover the singleton, and a position in a view-filtered body would
+    not be one in the file. The body is read raw here, patched in place and
+    rewritten whole, so every byte the view withholds from a reader (a
+    quarantined item) stays where it was. `text`, when given, is the visible
+    text the caller chose and must still be the item's: a body that changed
+    since the match refuses instead of anchoring the wrong item.
+
+    Raises `LookupError` (no checkpoint, locator or text no longer resolves)
+    or `ValueError` (the checkpoint has no session id to rewrite under).
+    Returns what `write_checkpoint` returns: the path, or None when the write
+    boundary refused (kill switch). `jsonl.Refused` propagates from the judged
+    admission."""
+    project_dir = _resolved(project_dir)
+    body = read_latest_body(project_dir=project_dir, route=Route.OWN,
+                            admit=Admit.ANY)
+    if not isinstance(body, dict):
+        raise LookupError("no checkpoint")
+    section, key, index = locator
+    block = body.get(section)
+    value = block.get(key) if isinstance(block, dict) else None
+    if index is None:
+        item = value
+    elif isinstance(value, list) and 0 <= index < len(value):
+        item = value[index]
+    else:
+        item = None
+    if not isinstance(item, dict):
+        raise LookupError("item not found")
+    if text is not None and str(item.get("text", "")) != text:
+        raise LookupError("item changed")
+    session_id = str(body.get("session_id", "")).strip()
+    if not session_id:
+        raise ValueError("latest checkpoint has no session_id — cannot re-write")
+    item["anchored_to"] = anchor
+    return write_checkpoint(session_id, body, project_dir=project_dir,
+                            writer=Writer.HUMAN)
+
+
 def global_latest_path() -> Path:
     """Where the global latest pointer lives (may not exist yet)."""
     return config.checkpoint_dir() / _LATEST

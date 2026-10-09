@@ -24,12 +24,13 @@ from .. import (
     recall,
     render,
     store,
+    view,
 )
 from ..effects import Effects
 from ..ledger import _format_age
-from ..surfaces import Writer
 
 
+@_cli.guarded
 def _cmd_anchor(args) -> int:
     project = _cli._resolve_project(args.project)
     a = anchor.resolve(project, args.file, args.symbol)
@@ -51,41 +52,43 @@ def _cmd_anchor(args) -> int:
     # the project that owns the item never received the anchor while the command
     # reported success. Refusing is the correct outcome: there is nothing here to
     # attach to, and the message below already says so.
-    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
-    if checkpoint is None:
-        print(f"error: no checkpoint found for {project} — nothing to attach to",
-              file=sys.stderr)
-        return 1
-    needle = args.attach.lower()
-    matches = [
-        item for item in anchor._all_items(checkpoint)
-        if isinstance(item, dict) and needle in str(item.get("text", "")).lower()
-    ]
-    if not matches:
+    # The match is `view.match(how="substring")`: visible items only, so a
+    # withheld item is neither named nor counted here (a substring plus a count
+    # would be a character oracle). The write is `store.attach_anchor`, which
+    # patches the raw body by position and keeps every withheld byte in place.
+    found = view.match(project, args.attach, how="substring")
+    if not found.hits:
+        if view.open(project, live=False).checkpoint is None and not found.closed:
+            print(f"error: no checkpoint found for {project} — nothing to "
+                  "attach to", file=sys.stderr)
+            return 1
         print(f"error: no cognitive item text contains {args.attach!r} "
               "in the latest checkpoint", file=sys.stderr)
         return 1
-    if len(matches) > 1:
-        print(f"error: {len(matches)} items match {args.attach!r} — "
+    if len(found.hits) > 1:
+        print(f"error: {len(found.hits)} items match {args.attach!r} — "
               "narrow the match:", file=sys.stderr)
-        for item in matches:
-            print(f"  - {item.get('text')}", file=sys.stderr)
+        for hit in found.hits:
+            print(f"  - {hit.item.get('text')}", file=sys.stderr)
         return 1
-    session_id = str(checkpoint.get("session_id", "")).strip()
-    if not session_id:
-        print("error: latest checkpoint has no session_id — cannot re-write",
+    hit = found.hits[0]
+    try:
+        written = store.attach_anchor(project, hit.at, a,
+                                      text=str(hit.item.get("text", "")))
+    except LookupError:
+        print("error: the checkpoint changed while matching — run it again",
               file=sys.stderr)
         return 1
-    item = matches[0]
-    item["anchored_to"] = a
-    if store.write_checkpoint(session_id, checkpoint, project_dir=project,
-                              writer=Writer.HUMAN) is None:
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if written is None:
         # #421: write boundary refused (kill switch) — nothing was attached
         print("error: daimon disabled (DAIMON_DISABLE) — checkpoint not written",
               file=sys.stderr)
         return 1
-    render.render_anchor_attach([f"attached {a['qualified_name']} to: {item.get('text')}"])
+    render.render_anchor_attach(
+        [f"attached {a['qualified_name']} to: {hit.item.get('text')}"])
     recall.warm()  # #246: the re-write staled the index; freshen off the read path
     return 0
 
