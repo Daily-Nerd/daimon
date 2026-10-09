@@ -834,10 +834,16 @@ def test_exemptions_name_real_cases():
                 or (surface, tag) in CASES), (surface, tag)
 
 
-def test_the_human_channel_exemption_is_closed_to_the_agent(world_run):
+def test_the_human_channel_exemption_is_closed_to_the_agent(
+        world_run, monkeypatch):
+    """Run on the world's own clean copy, not a copy of the root the drive has
+    already dirtied: after the drive, `trust release` and `forget receipt` have
+    redacted the quarantine this reads, and the agent channel then finds
+    nothing to show, which proves nothing."""
     world, _leaks, _details = world_run
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
     tmp = world.root
-    pristine = drive.Pristine(tmp, tmp.parent / (tmp.name + "-keep2"))
+    pristine = drive.Pristine.adopt(tmp, tmp.parent / (tmp.name + "-keep"))
     for key in HUMAN_CHANNEL:
         for label, tty in (("human", True), ("agent", False)):
             found, results = drive_case(key[0], key[1], world, pristine,
