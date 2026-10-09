@@ -12,7 +12,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import amendments, briefing, render, schema, store
+from .. import amendments, briefing, render, schema, store, view
 from . import _cap_refusal
 
 # #920: over-cap `evidence` gets its OWN destination, distinct from the
@@ -50,6 +50,7 @@ def _amend_channel(args) -> str:
     return "cli-tty"
 
 
+@_cli.guarded
 def _cmd_amend_propose(args) -> int:
     project = _cli._resolve_project(args.project)
     _cli.require_ledger(project, "amendments.jsonl")
@@ -62,18 +63,17 @@ def _cmd_amend_propose(args) -> int:
     # belief would invite exactly the state-rewriting on settled facts that
     # ItemField.briefable exists to fence off, and `daimon loops` — the
     # discovery surface this command's errors point at — lists only these.
-    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
-    live = {
-        str(item.get("id") or "")
-        for field in schema.ITEM_FIELDS
-        if field.briefable
-        for item in ((checkpoint or {}).get(field.section) or {}).get(
-            field.key) or []
-        if isinstance(item, dict)
-    }
-    live.discard("")
-    if item_id not in live:
+    # The bind is `view.match(how="id")`: a forgotten id is no target, and a
+    # quarantined or closed one is a human's call on every channel.
+    found = view.match(project, item_id, how="id")
+    loop_kinds = {f.kind for f in schema.ITEM_FIELDS if f.briefable}
+    hit = found.sole
+    if found.exact is not None and found.exact.kind in loop_kinds:
+        _cli._note_usage("amend:withheld")
+        print(f"error: {found.exact.item_id} is withheld; a human decides",
+              file=sys.stderr)
+        return 2
+    if hit is None or not hit.field.briefable:
         _cli._note_usage("amend:no-match")
         print(f"no open-loop item with id {item_id!r} — amend targets open "
               "questions and uncertainties; `daimon loops` lists them")

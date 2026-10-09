@@ -152,8 +152,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "daimon's own plugin manifest file, not a bucket path",
     ("daimon_briefing/cli/action_recall.py", "_cmd_action_recall", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
-    ("daimon_briefing/cli/amend.py", "_cmd_amend_propose", "store.read_latest_body"):
-        "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/audit.py", "_audit_item_source", "store.read_checkpoint"):
         "audits the provenance of the stored copy of an item; needs the raw checkpoint",
     ("daimon_briefing/cli/audit.py", "_cmd_audit_quotes", "json.loads"):
