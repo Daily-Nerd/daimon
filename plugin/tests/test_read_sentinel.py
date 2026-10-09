@@ -330,6 +330,8 @@ case("cli:amend reject", "id", A("amend", "reject",
      dests=("amendment_id",))
 case("cli:trust list", "default", A("trust", "list"),
      dests=("project", "json"))
+case("cli:trust list", "team", A("trust", "list", "--team"),
+     dests=("team",), axes=("STDIN_TTY",))
 case("cli:trust show", "id", A("trust", "show", qid), rc=(0, 1),
      dests=("quarantine_id", "project", "json"), axes=("STDIN_TTY",))
 case("cli:trust propose", "text", A("trust", "propose", "--text",
@@ -642,7 +644,7 @@ def test_dests_match_the_parser_and_are_classified():
         dests = {a.dest for a in parser._actions
                  if not isinstance(a, argparse._HelpAction)}
         assert dests == set(DESTS[" ".join(leaf)]), leaf
-    assert sum(len(v) for v in DESTS.values()) == 341
+    assert sum(len(v) for v in DESTS.values()) == 342
     for leaf, row in DESTS.items():
         for name, (cls, code) in row.items():
             assert cls in ("OUT", "INE"), (leaf, name)
@@ -1059,7 +1061,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
     for name in ("open", "peek", "projects", "pointers", "sessions",
                  "open_sessions", "events", "verifications", "snapshot",
                  "judge", "lookup_many", "lineage", "match", "relations", "label",
-                 "masked"):
+                 "masked", "team_quarantines"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket

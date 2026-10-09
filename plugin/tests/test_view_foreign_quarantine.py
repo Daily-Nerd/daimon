@@ -207,14 +207,75 @@ def test_a_raise_with_the_forgotten_set_in_hand_closes_the_judge_too(
     assert view.judge(slug, forgotten=frozenset()).closed is True
 
 
-def test_a_raise_in_the_accessor_marks_the_events_ledger_unreadable(
+def test_a_raise_in_the_teammates_sets_closes_the_snapshot(
         tmp_checkpoint_dir, monkeypatch):
+    """O3: a reader that cannot prove what teammates withheld does not open.
+    The forgotten values and the quarantined ones stay out of every read."""
     slug = _write()
+    _publish()
 
     def boom():
         raise RuntimeError("walk failed")
 
     monkeypatch.setattr(view, "machine_sets", boom)
     snap = view.snapshot(slug)
+    assert snap.closed is True
     assert snap.health["events.jsonl"].value == "unreadable"
-    assert snap.quarantined == frozenset()
+    item = {"text": TEXT, "id": "d-aaaaaa"}
+    got = view.classify(DECISION, item, snap)
+    assert isinstance(got, view.Withheld) and got.reason == "closed"
+
+
+def test_brief_prints_the_closed_refusal_not_the_item_when_the_sets_raise(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    from daimon_briefing import cli
+    _write()
+    capsys.readouterr()
+    assert cli.main(["brief", "--project", PROJECT]) == 0
+    assert TEXT in capsys.readouterr().out          # open before
+
+    def boom():
+        raise RuntimeError("walk failed")
+
+    monkeypatch.setattr(view, "machine_sets", boom)
+    assert cli.main(["brief", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert TEXT not in out and "events.jsonl is unreadable" in out
+
+
+def test_a_failure_of_the_local_forget_fold_alone_keeps_the_old_posture(
+        tmp_checkpoint_dir, monkeypatch):
+    slug = _write()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("fold failed")
+
+    monkeypatch.setattr(store, "fold_resolutions", boom)
+    snap = view.snapshot(slug)
+    assert snap.health["events.jsonl"].value == "unreadable"
+    assert snap.closed is False
+
+
+def test_a_failed_local_fold_keeps_the_teammates_pairs_and_forgets(
+        tmp_checkpoint_dir, monkeypatch):
+    """#103 keeps the snapshot OPEN when the local forget fold raises; the
+    healthy teammates' half must still withhold in that degraded snapshot."""
+    from daimon_briefing import normalize
+    slug = _write()
+    _publish()
+    tomb = config.team_dir() / "team-a" / "authors" / "grace"
+    forgotten = "a value grace forgot, not the quarantined one"
+    (tomb / "tombstones.jsonl").write_text(
+        json.dumps({"key": normalize.content_key(forgotten)}) + "\n")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("fold failed")
+
+    monkeypatch.setattr(store, "fold_resolutions", boom)
+    snap = view.snapshot(slug)
+    assert snap.closed is False                       # the #103 posture
+    assert snap.health["events.jsonl"].value == "unreadable"
+    assert ("decision", KEY) in snap.quarantined
+    assert normalize.content_key(forgotten) in snap.forgotten
+    item = {"text": TEXT, "id": "d-aaaaaa"}
+    assert isinstance(view.classify(DECISION, item, snap), view.Withheld)

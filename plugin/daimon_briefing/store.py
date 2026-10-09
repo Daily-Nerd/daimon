@@ -1206,22 +1206,36 @@ def _row_keys(rows) -> set[str]:
     return keys
 
 
+_OVERCAP_WARNED: set = set()
+
+
 def _capped_rows(path) -> CappedRead:
     """The rows of one published team ledger and its health. Capped at
     `_MAX_TOMBSTONE_BYTES`: `jsonl.read` has no bounded mode (it loads the
     whole file), so an over-cap file is read for its head only and reported
     `over_cap`. A corrupt row never hides the rest. Never raises."""
     try:
-        size = path.stat().st_size
+        st = path.stat()
     except FileNotFoundError:
         return CappedRead([], jsonl.Health.ABSENT)
     except OSError:
         return CappedRead([], jsonl.Health.UNREADABLE)
+    if not stat.S_ISREG(st.st_mode):
+        # A directory (or a device) in place of the ledger is unreadable. Its
+        # st_size is a filesystem artefact (4096 on ext4) and must never be
+        # compared with the cap, or it would be reported as an over-cap file.
+        return CappedRead([], jsonl.Health.UNREADABLE)
+    size = st.st_size
     if size <= _MAX_TOMBSTONE_BYTES:
         got = jsonl.read(path)
         return CappedRead(list(got.rows), got.health)
-    log.warning("daimon team: %s exceeds %d bytes — reading the first %d "
-                "only", path.name, _MAX_TOMBSTONE_BYTES, _MAX_TOMBSTONE_BYTES)
+    # once per stat change of the file, not once per call
+    seen = (str(path), size, st.st_mtime_ns)
+    if seen not in _OVERCAP_WARNED:
+        _OVERCAP_WARNED.add(seen)
+        log.warning("daimon team: %s exceeds %d bytes; reading the first %d "
+                    "only", path.name, _MAX_TOMBSTONE_BYTES,
+                    _MAX_TOMBSTONE_BYTES)
     try:
         with path.open("rb") as f:
             head = f.read(_MAX_TOMBSTONE_BYTES)
@@ -1269,12 +1283,11 @@ class ForeignTombstones(NamedTuple):
     """Every other author's published tombstones, read once: the union of
     their keys and the author directory names whose published ledgers are not
     proven (their claims may be incomplete: O3, their checkpoints are not
-    admitted). `degraded` names the authors whose over-cap file was read for
-    its head only."""
+    admitted). A torn tail, an over-cap file or a row version this reader does
+    not know is unproven, not read around."""
 
     keys: set
     unproven: frozenset
-    degraded: frozenset
 
 
 class ForeignTeam(NamedTuple):
@@ -1288,18 +1301,18 @@ class ForeignTeam(NamedTuple):
     `unproven` is the author directory names with a file that is over the
     cap, transient, unreadable or has a torn tail (the newest claim cannot be
     proven: O3, H7); good rows of such a file still contribute, since the
-    sets only grow. `degraded` is the subset whose over-cap file was read for
-    its head."""
+    sets only grow. An author directory name that is not a plain name
+    (`[\\w.-]+`) is never read and is unproven. `claims` carries only
+    validated shapes: a timestamp that is not an ISO instant reads as ""."""
 
     keys: frozenset
     quarantines: frozenset
     claims: tuple
     unproven: frozenset
-    degraded: frozenset
 
 
-_EMPTY_TEAM = ForeignTeam(frozenset(), frozenset(), (), frozenset(),
-                          frozenset())
+_ISO_TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+_AUTHOR_DIR = re.compile(r"[\w.-]+")
 # (key, ForeignTeam) of the last real walk. The key is the stat of exactly the
 # files that walk read plus what else changes its answer (scar 0126), so a
 # hit costs one stat per file and never resolves the author.
@@ -1315,9 +1328,13 @@ def _active_claims(author: str, rows, pairs) -> list:
             continue
         pair = (row.get("kind"), row.get("value_key"))
         if pair in pairs:
-            order = row.get("order") if isinstance(row.get("order"), int) else 0
+            order = row.get("order")
+            order = order if (isinstance(order, int)
+                              and not isinstance(order, bool)) else 0
+            ts = row.get("ts")
+            ts = ts if isinstance(ts, str) and _ISO_TS.fullmatch(ts) else ""
             if pair not in newest or order >= newest[pair][0]:
-                newest[pair] = (order, str(row.get("ts") or ""))
+                newest[pair] = (order, ts)
     return [(author, kind, newest[(kind, key)][1])
             for kind, key in sorted(pairs) if (kind, key) in newest]
 
@@ -1326,8 +1343,15 @@ def foreign_team() -> ForeignTeam:
     """The foreign team ledgers, one capped read per file (see
     `ForeignTeam`). Memoised on the stat of the files it reads: the judge's
     slug-less path, every memo miss and the recall build all ask, and each
-    must not pay a parse. A walk that met a transient or unreadable file is
-    not kept, so a read that failed once is retried. Never raises."""
+    must not pay a parse. The memo is skipped while any ledger reads TRANSIENT
+    or UNREADABLE (fail-safe: a read that failed once is retried, at the price
+    of one walk per call until the owner fixes the file). Its key carries
+    `DAIMON_AUTHOR` but not a git identity: an identity changed under a
+    long-lived process keeps the old own-author exclusion until a file moves.
+
+    Never raises: each author's file is read and folded on its own, and one
+    that raises (or sits in a directory that is not a plain name) makes that
+    author unproven while every other author still folds."""
     global _FOREIGN_TEAM_MEMO
     names = (_TOMBSTONE_NAME, _QUARANTINE_NAME)
     key = (str(config.team_dir()), _MAX_TOMBSTONE_BYTES,
@@ -1341,46 +1365,55 @@ def foreign_team() -> ForeignTeam:
     pairs: set = set()
     claims: list = []
     unproven: set = set()
-    degraded: set = set()
     retry = False
     for path in _team_ledger_paths(names):
         author = path.parent.name
-        got = _capped_rows(path)
-        if got.health in (jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
-            retry = True
-        if path.name == _TOMBSTONE_NAME:
-            keys |= _row_keys(got.rows)
-        else:
-            mine = policy.fold_published_quarantines(got.rows)
-            pairs |= mine
-            claims.extend(_active_claims(author, got.rows, mine))
-        # H7: a torn tail is the newest claim, so DEGRADED skips the author
-        # like any other state the file cannot be proven in.
-        if got.unproven or got.health is jsonl.Health.DEGRADED:
+        if not _AUTHOR_DIR.fullmatch(author):
+            unproven.add(author)    # never read, never printed raw
+            continue
+        try:
+            got = _capped_rows(path)
+            if got.health in (jsonl.Health.TRANSIENT,
+                              jsonl.Health.UNREADABLE):
+                retry = True
+            if path.name == _TOMBSTONE_NAME:
+                keys |= _row_keys(got.rows)
+            else:
+                mine = policy.fold_published_quarantines(got.rows)
+                if policy.has_unknown_version(got.rows):
+                    unproven.add(author)   # a later row format: skip, upgrade
+                pairs |= mine
+                claims.extend(_active_claims(author, got.rows, mine))
+            # H7: a torn tail is the newest claim, so DEGRADED skips the
+            # author like any other state the file cannot be proven in.
+            if got.unproven or got.health is jsonl.Health.DEGRADED:
+                unproven.add(author)
+        except Exception:  # noqa: BLE001 - one author's file, one verdict
             unproven.add(author)
-        if got.over_cap and got.health is jsonl.Health.DEGRADED:
-            degraded.add(author)
+            retry = True
     team = ForeignTeam(frozenset(keys), frozenset(pairs), tuple(claims),
-                       frozenset(unproven), frozenset(degraded))
+                       frozenset(unproven))
     if not retry:
         _FOREIGN_TEAM_MEMO = (key, team)
     return team
 
 
 def _stat_entry(path) -> tuple:
+    """`(path, mtime_ns, ctime_ns, size)` of one file, Nones when it cannot be
+    stat'ed: the one stat shape the forgotten stamp and the foreign memo share."""
     try:
         st = os.stat(path)
     except OSError:
-        return (str(path), None, None, None, None)
-    return (str(path), st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+        return (str(path), None, None, None)
+    return (str(path), st.st_mtime_ns, st.st_ctime_ns, st.st_size)
 
 
 def foreign_tombstones() -> ForeignTombstones:
     """The foreign tombstone view of `foreign_team()`: keys plus the authors
-    whose published ledgers are unproven or degraded. Author directory names
-    are `project_slug(author)`. Never raises."""
+    whose published ledgers are unproven. Author directory names are
+    `project_slug(author)`. Never raises."""
     team = foreign_team()
-    return ForeignTombstones(set(team.keys), team.unproven, team.degraded)
+    return ForeignTombstones(set(team.keys), team.unproven)
 
 
 def foreign_quarantines() -> frozenset:
@@ -1416,9 +1449,10 @@ def _team_ledger_paths(names, *, include_own: bool = False,
     """Every published team ledger named in `names` (`tombstones.jsonl`,
     `quarantines.jsonl`): `<author dir>/<name>` for each author directory
     `_team_author_dirs` finds in a sidecar, the one walker for the team
-    layout. A path is returned when something exists there, a directory or a
-    broken link included: the reader then judges it unreadable, which keeps
-    the author unproven rather than silently trusted.
+    layout. A path is returned when something exists there, even a directory:
+    the reader then judges it unreadable, which keeps the author unproven
+    rather than silently trusted. A dangling symlink is the exception: it
+    reads as absent, as there is nothing to read.
 
     `include_own` adds this author's own directories and skips resolving the
     author, which can fork `git config`: the stamp and the fingerprint only
@@ -1477,15 +1511,8 @@ def forgotten_stamp() -> tuple:
                           st.st_size))
         except OSError:
             local.append((name, None, None, None, None))
-    foreign: list[tuple] = []
-    for path in _team_ledger_paths((_TOMBSTONE_NAME, _QUARANTINE_NAME),
-                                   include_own=True):
-        try:
-            st = os.stat(path)
-            foreign.append((str(path), st.st_mtime_ns, st.st_ctime_ns,
-                            st.st_size))
-        except OSError:
-            foreign.append((str(path), None, None, None))
+    foreign = [_stat_entry(path) for path in _team_ledger_paths(
+        (_TOMBSTONE_NAME, _QUARANTINE_NAME), include_own=True)]
     return (base, tuple(local), tuple(sorted(foreign)))
 
 

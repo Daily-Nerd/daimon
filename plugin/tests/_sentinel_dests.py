@@ -302,6 +302,7 @@ DESTS = {
     "trust list": {
         "project": ("OUT", "R1"),
         "json": ("OUT", "R4"),
+        "team": ("OUT", "R4"),
     },
     "trust repair": {
         "project": ("OUT", "R1"),

@@ -124,6 +124,28 @@ def _masked_record(project, record, *, snap=None) -> dict:
     return _masked_records(project, [record], snap=snap)[0]
 
 
+def teammate_pair(verdict) -> bool:
+    """Is this verdict a quarantine only a TEAMMATE holds (no id of the
+    reader's own)? The human-channel exemptions exist so the OWNER of a
+    quarantine can judge it; a reader of a teammate's has no such standing, so
+    every verb that binds an exact id refuses one on every channel."""
+    return (verdict is not None and verdict.reason == "quarantine"
+            and not verdict.quarantine_id)
+
+
+def refuse_teammate_pair(verb: str, verdict, target: str) -> bool:
+    """True, after saying so on stderr and noting the refusal, when `verdict`
+    is a teammate's quarantine: the one refusal `forget`, `resolve` and
+    `reverify` share. Nothing is written by the caller after a True."""
+    if not teammate_pair(verdict):
+        return False
+    import daimon_briefing.cli as _cli
+    _cli._note_usage(f"{verb}:withheld")
+    print(f"error: {target} is withheld (quarantine); a teammate quarantined "
+          "this; they release it", file=sys.stderr)
+    return True
+
+
 def _refuses_withheld(project, verb: str, row: dict, *, snap=None) -> bool:
     """True, after saying so on stderr, when any prose field a ceremony would
     show of `row` is withheld. A person signs the whole text or nothing, so a
@@ -135,13 +157,20 @@ def _refuses_withheld(project, verb: str, row: dict, *, snap=None) -> bool:
         return False
     print(f"error: {verb} refused: this record has withheld text; nothing "
           "was written", file=sys.stderr)
-    # A quarantine is a person's latch on every channel; the cure is theirs.
+    # A quarantine is a person's latch on every channel; the cure is theirs
+    # (the owner's, for a teammate's).
     for verdict in verdicts:
         if verdict.reason == "quarantine" and verdict.quarantine_id:
             qid = verdict.quarantine_id
             print(f"note: daimon trust show {qid} on a terminal, then "
                   f"daimon trust release {qid}", file=sys.stderr)
             return True
+    if any(v.reason == "quarantine" for v in verdicts):
+        # No id: the pair is a teammate's, on every channel (H8). Only they
+        # can release it.
+        print("note: the withheld text is quarantined by a teammate; they "
+              "release it", file=sys.stderr)
+        return True
     if any(v.reason == "forgotten" for v in verdicts):
         print("note: the withheld text was forgotten; the record cannot be "
               "revised", file=sys.stderr)

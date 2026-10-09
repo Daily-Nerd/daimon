@@ -36,7 +36,7 @@ from .. import (
 )
 from ..effects import Effects
 from ..surfaces import Writer
-from ._ledger import _check_sync_warning
+from ._ledger import _check_sync_warning, refuse_teammate_pair
 
 
 def _human_cli_channel(verb: str, *, agent_path: bool = False) -> str | None:
@@ -140,6 +140,9 @@ def _cmd_resolve(args) -> int:
             _cli._note_usage("resolve:withheld")
             print(f"error: {found.exact.item_id} is withheld (trust ledger "
                   "unreadable); daimon trust repair", file=sys.stderr)
+            return 2
+        if refuse_teammate_pair("resolve", found.exact,
+                                str(found.exact.item_id)):
             return 2
         if by_agent:
             _cli._note_usage("resolve:withheld")
@@ -399,6 +402,10 @@ def _cmd_forget(args) -> int:
                          if it_ is target)
         cand = view.label(project, bound_row, snap)
         verdict, shown_kind = cand.verdict, cand.label
+        # A teammate's pair: the human exemption below exists for the owner of
+        # a quarantine, so this is refused on every channel (H8).
+        if refuse_teammate_pair("forget", verdict, args.target):
+            return 2
         if verdict is not None and verdict.reason == "quarantine" and not human:
             _cli._note_usage("forget:withheld")
             print(f"error: {args.target} is withheld "
@@ -926,6 +933,9 @@ def _cmd_reverify(args) -> int:
             _cli._note_usage("reverify:withheld")
             print(f"error: {found.exact.item_id} is withheld (trust ledger "
                   "unreadable); daimon trust repair", file=sys.stderr)
+            return 2
+        if refuse_teammate_pair("reverify", found.exact,
+                                str(found.exact.item_id)):
             return 2
         bound = found.exact
         # no anchor shortcut and no candidate shortcut: the value is not

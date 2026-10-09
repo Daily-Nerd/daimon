@@ -145,7 +145,7 @@ CONDITIONS = {
     "foreign-author-unproven": (
         lambda m, w: (_grace_sidecar_dir() / "tombstones.jsonl").write_bytes(
             b"<<<<<<< HEAD\n"),
-        {("cli:brief", "team"): "a teammate's tombstones cannot be read"}),
+        {("cli:brief", "team"): "a teammate's published forget or quarantine ledger cannot be read"}),
 }
 
 

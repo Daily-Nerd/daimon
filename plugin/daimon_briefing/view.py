@@ -365,6 +365,13 @@ def machine_sets() -> tuple[frozenset, frozenset]:
             team.quarantines)
 
 
+def team_quarantines() -> tuple:
+    """`(kind, author_dir, ts)` for each quarantine a teammate still claims:
+    what `trust list --team` shows. Hashes and enums only, never a value."""
+    return tuple((kind, author, ts)
+                 for author, kind, ts in store.foreign_team().claims)
+
+
 def foreign_pairs() -> frozenset:
     """The `(kind, value_key)` pairs teammates still claim quarantined: the
     second half of `machine_sets` for a caller that already holds the
@@ -481,8 +488,40 @@ def snapshot(project) -> Snapshot:
         return briefing.rulings_read(project, read=refut)
 
     rulings = folded("refutations.jsonl", read_rulings, None)
+    foreign_unproven: list = []
+    healthy: dict = {}
+
+    def machine():
+        try:
+            return machine_sets()
+        except Exception:
+            # A failure of the LOCAL forget fold keeps the old posture (the
+            # events ledger is marked unreadable and the view stays open, #103).
+            # A failure that is not the local fold's is the teammates' sets:
+            # their pairs are unknown, and a reader that cannot prove what is
+            # withheld must not open (O3), so the snapshot closes.
+            local_failed = False
+            try:
+                store.all_forgotten_content_keys()
+            except Exception:  # noqa: BLE001
+                local_failed = True
+            if local_failed:
+                # the teammates' half is healthy and must keep withholding in
+                # this degraded (open) snapshot: their forgets and pairs stay
+                try:
+                    team = store.foreign_team()
+                    healthy.update(keys=team.keys, pairs=team.quarantines)
+                except Exception:  # noqa: BLE001
+                    foreign_unproven.append(True)
+            else:
+                foreign_unproven.append(True)
+            raise
+
     forgotten, foreign = folded(
-        "events.jsonl", machine_sets, (frozenset(), frozenset()))
+        "events.jsonl", machine, (frozenset(), frozenset()))
+    if healthy:
+        forgotten = forgotten | frozenset(healthy["keys"])
+        foreign = foreign | frozenset(healthy["pairs"])
     ids = folded("events.jsonl", lambda: forgotten_ids(resolutions),
                  frozenset())
     incomplete = folded("events.jsonl", store.forgotten_incomplete,
@@ -495,8 +534,8 @@ def snapshot(project) -> Snapshot:
         resolutions=_frozen(resolutions), amendments=_frozen(amend),
         corroborations=_frozen(corroborations), rulings=rulings,
         requests=_frozen(asks), health=_frozen(health),
-        closed=any(posture(n, h) is ReadPosture.CLOSED
-                   for n, h in health.items()),
+        closed=bool(foreign_unproven) or any(
+            posture(n, h) is ReadPosture.CLOSED for n, h in health.items()),
         details=_frozen(details), forgotten_ids=ids,
         unscannable=_frozen(unscannable),
         forgotten_incomplete=incomplete,
@@ -808,10 +847,9 @@ def projects_notes(own: str | None, listed=None) -> tuple[str, ...]:
 
 def team_notes(project=None) -> tuple[str, ...]:
     """`team-closed` when `project`'s own events ledger cannot be read (no
-    teammate is shown), `author-skipped` / `author-degraded` for the
-    teammates' published tombstone ledgers: an author whose ledger cannot be
-    read is not admitted (O3); one whose ledger has torn lines is read
-    around."""
+    teammate is shown), `author-skipped` for the teammates' published
+    ledgers: an author whose tombstone or quarantine ledger cannot be proven
+    (unreadable, over the cap, or a torn tail) is not admitted (O3)."""
     tombs = store.foreign_tombstones()
     lines = []
     if project is not None:
@@ -821,8 +859,6 @@ def team_notes(project=None) -> tuple[str, ...]:
             lines.append(display.team_closed_note())
     if tombs.unproven:
         lines.append(display.author_skipped_note())
-    if tombs.degraded:
-        lines.append(display.author_degraded_note())
     return tuple(lines)
 
 

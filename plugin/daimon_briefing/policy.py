@@ -490,13 +490,32 @@ def _optional_shape_ok(row: dict) -> bool:
                                 and rx.fullmatch(row[name])):
             return False
     version = row.get("version")
-    return "version" not in row or (
-        isinstance(version, int) and not isinstance(version, bool))
+    return "version" not in row or version == PUBLISHED_VERSION and (
+        not isinstance(version, bool))
+
+
+# The only published row version this reader knows. A row that names another
+# integer version is a shape it cannot read: the fold ignores it, and the
+# reader marks that author unproven (`has_unknown_version`) so it never
+# silently stops withholding when a later version (signed rows) arrives.
+PUBLISHED_VERSION = 1
+
+
+def has_unknown_version(rows) -> bool:
+    """Does any row of one author's published file carry an integer version
+    other than the one this reader knows? A missing or non-integer version is
+    not this: it keeps the ordinary rule (a non-integer one is an off-shape
+    row, ignored)."""
+    return any(isinstance(row, dict)
+               and isinstance(row.get("version"), int)
+               and not isinstance(row.get("version"), bool)
+               and row["version"] != PUBLISHED_VERSION
+               for row in rows)
 
 
 def strict_published_row(row) -> bool:
-    """The full shape a PUBLISHER may write: every field present and in its
-    one shape. The fold reads leniently (D6 minimal rows still fold); the
+    """The full shape a PUBLISHER may write (version 1, the only version known
+    here): every field present and in its one shape. The fold reads leniently (D6 minimal rows still fold); the
     writer never emits anything but this."""
     if not isinstance(row, dict) or not _optional_shape_ok(row):
         return False
@@ -504,7 +523,7 @@ def strict_published_row(row) -> bool:
     ident = row.get("quarantine_id")
     event_id = row.get("event_id")
     return (isinstance(order, int) and not isinstance(order, bool)
-            and isinstance(row.get("version"), int)
+            and row.get("version") == PUBLISHED_VERSION
             and isinstance(row.get("ts"), str)
             and isinstance(row.get("author"), str)
             and isinstance(event_id, str)

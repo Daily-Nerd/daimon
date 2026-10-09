@@ -54,7 +54,7 @@ def test_a_published_active_row_is_a_foreign_pair(tmp_checkpoint_dir):
     assert store.foreign_quarantines() == {("decision", KEY)}
     team = store.foreign_team()
     assert team.quarantines == {("decision", KEY)}
-    assert team.unproven == frozenset() and team.degraded == frozenset()
+    assert team.unproven == frozenset()
 
 
 def test_own_author_directory_is_excluded(tmp_checkpoint_dir):
@@ -137,7 +137,7 @@ def test_a_garbage_tombstone_file_makes_the_author_unproven_too(
 def test_a_torn_tail_is_unproven_not_degraded_h7(tmp_checkpoint_dir):
     _put("grace", q=_lines(_row()) + b'{"ts": "x", "kind": "dec', raw=True)
     team = store.foreign_team()
-    assert team.unproven == {"grace"} and team.degraded == frozenset()
+    assert team.unproven == {"grace"}
     # The torn row is the newest claim; the rows before it still count.
     assert team.quarantines == {("decision", KEY)}
 
@@ -147,14 +147,13 @@ def test_a_torn_tombstone_tail_is_unproven_too(tmp_checkpoint_dir):
     assert store.foreign_tombstones().unproven == {"grace"}
 
 
-def test_an_over_cap_file_is_unproven_and_degraded(tmp_checkpoint_dir,
-                                                   monkeypatch):
+def test_an_over_cap_file_is_unproven_only(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 400)
     rows = [_row(key=f"{i:016x}", tid=f"tr-{i:012x}", event_id=f"e{i}")
             for i in range(10)]
     _put("grace", q=rows)
     team = store.foreign_team()
-    assert team.unproven == {"grace"} and team.degraded == {"grace"}
+    assert team.unproven == {"grace"}
     assert 0 < len(team.quarantines) < 10
 
 
@@ -183,7 +182,7 @@ def test_a_directory_in_place_of_the_file_is_unproven_never_fatal(
 def test_an_absent_file_is_open(tmp_checkpoint_dir):
     _put("grace", t=[TOMB_KEY])
     team = store.foreign_team()
-    assert team.unproven == frozenset() and team.degraded == frozenset()
+    assert team.unproven == frozenset()
 
 
 def test_one_unreadable_author_never_hides_the_others(tmp_checkpoint_dir):
@@ -203,7 +202,7 @@ def test_foreign_tombstones_keeps_its_shape(tmp_checkpoint_dir):
     got = store.foreign_tombstones()
     assert type(got).__name__ == "ForeignTombstones"
     assert got.keys == {TOMB_KEY} and isinstance(got.keys, set)
-    assert got.unproven == frozenset() and got.degraded == frozenset()
+    assert got.unproven == frozenset() and got._fields == ("keys", "unproven")
     assert store.foreign_forgotten_content_keys() == {TOMB_KEY}
     got.keys.add("mutated")
     assert store.foreign_forgotten_content_keys() == {TOMB_KEY}
@@ -297,3 +296,147 @@ def test_a_dangling_link_in_place_of_the_file_reads_as_absent_never_fatal(
     team = store.foreign_team()
     assert team.unproven == frozenset() and team.quarantines == frozenset()
     assert TOMB_KEY in team.keys
+
+
+# ---- fix round 1: nothing a teammate writes may raise, print raw or open ----
+
+
+def test_a_file_with_an_infinite_order_cannot_hide_anyone_elses_claims(
+        tmp_checkpoint_dir):
+    _put("grace", t=[TOMB_KEY], q=[_row()])
+    adir = _put("mallory")
+    with open(adir / "quarantines.jsonl", "ab") as handle:   # byte writer
+        handle.write(b'{"kind":"decision","value_key":"%s","state":"active",'
+                     b'"order":Infinity}\n' % OTHER.encode())
+        handle.write(b'{"kind":"decision","value_key":"%s","state":"active",'
+                     b'"order":NaN}\n' % KEY.encode())
+        handle.write(b'{"kind":"decision","value_key":"abcdef0123456789",'
+                     b'"state":"active","order":1e999}\n')
+    team = store.foreign_team()
+    assert TOMB_KEY in team.keys and ("decision", KEY) in team.quarantines
+    assert ("decision", OTHER) in team.quarantines
+    assert team.unproven == frozenset()
+
+
+def test_an_author_whose_fold_raises_is_unproven_and_the_rest_still_fold(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import policy
+    _put("grace", t=[TOMB_KEY], q=[_row()])
+    _put("kay", q=[_row(key=OTHER, tid=TID2, author="kay")])
+    real = policy.fold_published_quarantines
+
+    def boom(rows):
+        if any(isinstance(r, dict) and r.get("author") == "kay" for r in rows):
+            raise RuntimeError("fold exploded")
+        return real(rows)
+
+    monkeypatch.setattr(policy, "fold_published_quarantines", boom)
+    team = store.foreign_team()           # nothing propagates
+    assert team.unproven == {"kay"}
+    assert ("decision", KEY) in team.quarantines
+    assert ("decision", OTHER) not in team.quarantines
+    assert TOMB_KEY in team.keys
+
+
+def test_a_raising_author_is_not_kept_by_the_memo(tmp_checkpoint_dir,
+                                                  monkeypatch):
+    from daimon_briefing import policy
+    _put("kay", q=[_row(key=OTHER, tid=TID2, author="kay")])
+    real = policy.fold_published_quarantines
+    state = {"boom": True}
+
+    def flaky(rows):
+        if state["boom"]:
+            raise RuntimeError("once")
+        return real(rows)
+
+    monkeypatch.setattr(policy, "fold_published_quarantines", flaky)
+    assert store.foreign_team().unproven == {"kay"}
+    state["boom"] = False
+    assert store.foreign_team().unproven == frozenset()
+
+
+def test_an_off_shape_ts_reads_as_empty_in_the_claims(tmp_checkpoint_dir):
+    adir = _put("grace")
+    row = dict(_row(), ts="\x1b]0;PWNED\x07")
+    with open(adir / "quarantines.jsonl", "ab") as handle:
+        handle.write(json.dumps(row).encode() + b"\n")
+    team = store.foreign_team()
+    # the off-shape row is ignored by the fold, so it is not a claim at all
+    assert team.quarantines == frozenset() and team.claims == ()
+    assert all("\x1b" not in repr(c) for c in team.claims)
+
+
+def test_a_directory_name_that_is_not_a_plain_name_is_unproven_not_read(
+        tmp_checkpoint_dir):
+    bad = "gr\x1b[2Jace"
+    adir = _put(bad, q=[_row()])
+    assert adir.exists()
+    team = store.foreign_team()
+    assert team.quarantines == frozenset() and team.claims == ()
+    assert team.unproven == {bad}
+
+
+def test_the_over_cap_warning_is_logged_once_per_stat_change(
+        tmp_checkpoint_dir, monkeypatch, caplog):
+    import logging
+    monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 400)
+    store._OVERCAP_WARNED.clear()
+    rows = [_row(key=f"{i:016x}", tid=f"tr-{i:012x}", event_id=f"e{i}")
+            for i in range(10)]
+    adir = _put("grace", q=rows)
+    # a directory in place of a ledger never memoises: the walk repeats
+    (adir / "tombstones.jsonl").mkdir()
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            store.foreign_team()
+    assert sum("exceeds" in r.message for r in caplog.records) == 1
+
+
+# ---- round 2: a row version this reader does not know ------------------------
+
+
+def test_an_unknown_row_version_marks_that_author_unproven_only(
+        tmp_checkpoint_dir):
+    _put("grace", q=[_row()])
+    _put("kay", q=[_row(key=OTHER, tid=TID2, author="kay"),
+                   dict(_row(key=KEY, tid=TID, author="kay"), version=2)])
+    team = store.foreign_team()
+    assert team.unproven == {"kay"}
+    # the v2 row is not folded; grace is untouched; kay's v1 row still counts
+    assert ("decision", KEY) in team.quarantines          # from grace
+    assert ("decision", OTHER) in team.quarantines
+    assert store.foreign_tombstones().unproven == {"kay"}
+
+
+def test_version_one_and_a_text_version_behave_as_before(tmp_checkpoint_dir):
+    _put("grace", q=[_row()])
+    _put("kay", q=[dict(_row(key=OTHER, tid=TID2, author="kay"),
+                        version="x")])
+    team = store.foreign_team()
+    assert team.unproven == frozenset()
+    assert team.quarantines == {("decision", KEY)}   # kay's "x" row ignored
+
+
+def test_an_unknown_version_note_is_the_author_skipped_one(
+        tmp_checkpoint_dir):
+    from daimon_briefing import display, view
+    _put("kay", q=[dict(_row(author="kay"), version=2)])
+    assert view.team_notes() == (display.author_skipped_note(),)
+
+
+def test_a_directory_in_place_of_a_ledger_is_unreadable_never_over_cap(
+        tmp_checkpoint_dir, monkeypatch, caplog):
+    """A directory's st_size is 4096 on ext4 and tiny on APFS; with the cap at
+    0 any size would trip an over-cap branch, so this is red on both."""
+    import logging
+    monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 0)
+    store._OVERCAP_WARNED.clear()
+    adir = _put("grace")
+    (adir / "quarantines.jsonl").mkdir()
+    with caplog.at_level(logging.WARNING):
+        got = store._capped_rows(adir / "quarantines.jsonl")
+    assert got.health is Health.UNREADABLE and got.over_cap is False
+    assert got.rows == []
+    assert not [r for r in caplog.records if "exceeds" in r.message]
+    assert store.foreign_team().unproven == {"grace"}

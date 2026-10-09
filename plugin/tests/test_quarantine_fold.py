@@ -208,3 +208,27 @@ def test_a_finite_float_order_sorts_by_its_integer_part():
     assert policy.fold_published_quarantines(rows) == frozenset()
     rows = [_row("released", order=5.9, event_id="e2"), _row(order=6.2)]
     assert policy.fold_published_quarantines(rows) == {("decision", KEY)}
+
+
+def test_version_one_is_the_only_known_version():
+    assert policy.PUBLISHED_VERSION == 1
+    assert policy.fold_published_quarantines([_row(version=1)]) == {
+        ("decision", KEY)}
+    # a row of a version this reader does not know is not folded
+    assert policy.fold_published_quarantines([_row(version=2)]) == frozenset()
+    assert policy.has_unknown_version([_row(version=2)])
+    assert policy.has_unknown_version([_row(), _row(version=7)])
+    # a missing, text or bool version is not "unknown": today's rules hold
+    for ok in ({}, {"version": "x"}, {"version": True}, {"version": None}):
+        row = {k: v for k, v in _row().items() if k != "version"}
+        assert not policy.has_unknown_version([{**row, **ok}]), ok
+    assert not policy.has_unknown_version(["x", None, _row()])
+    assert policy.fold_published_quarantines(
+        [{k: v for k, v in _row().items() if k != "version"}]) == {
+        ("decision", KEY)}
+    assert policy.fold_published_quarantines([_row(version="x")]) == frozenset()
+
+
+def test_a_publisher_writes_version_one_only():
+    assert policy.strict_published_row(_row(event_id="a" * 32))
+    assert not policy.strict_published_row(_row(event_id="a" * 32, version=2))

@@ -1,10 +1,13 @@
 """`daimon trust` verbs — the human-only quarantine ledger (#1109 Slice 1).
 
-Nothing here changes what a briefing, recall, or MCP tool renders — this
-slice is write-only. `propose` records a candidate (or, from a human
-channel, an immediately active quarantine); `confirm`/`dismiss`/`release`
-are human-only, refused at the library boundary (`trust._human_transition`)
-for any other channel, not merely hidden from this CLI.
+An active quarantine withholds its value from every briefing, recall and MCP
+read of the project (and, once published, from every teammate's: PR 13).
+`propose` records a candidate (or, from a human channel, an immediately active
+quarantine, published to the team when one is enabled); `confirm`/`dismiss`/
+`release` are human-only, refused at the library boundary
+(`trust._human_transition`) for any other channel, not merely hidden from this
+CLI. `republish` re-sends the standing ones; `list --team` shows what
+teammates have published.
 """
 
 import functools
@@ -168,8 +171,36 @@ def _cmd_trust_republish(args) -> int:
     return 4 if published.failed else 0
 
 
+def _cmd_trust_list_team(args) -> int:
+    """`trust list --team`: the quarantines teammates have published. Kind and
+    count on any channel; the author directory and ts at a terminal only, the
+    same split the evidence column makes. Never a value, a key or an id."""
+    claims = view.team_quarantines()
+    human = _human_channel()
+    if human:
+        rows = [{"kind": kind, "author": author, "ts": ts}
+                for kind, author, ts in sorted(claims)]
+    else:
+        counts: dict = {}
+        for kind, _author, _ts in claims:
+            counts[kind] = counts.get(kind, 0) + 1
+        rows = [{"kind": kind, "count": counts[kind]} for kind in sorted(counts)]
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        render.render_ledger_lines(["no quarantines published by teammates"])
+        return 0
+    render.render_ledger_lines(
+        [f"{r['kind']}  {r['author']}  {r['ts']}" if human
+         else f"{r['kind']}  {r['count']} claim(s)" for r in rows])
+    return 0
+
+
 @_cli.guarded
 def _cmd_trust_list(args) -> int:
+    if getattr(args, "team", False):
+        return _cmd_trust_list_team(args)
     project = _resolve_project(args.project)
     records = sorted(
         trust.records(project_dir=project).values(),
@@ -180,10 +211,14 @@ def _cmd_trust_list(args) -> int:
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
+    foreign = len(view.foreign_pairs())
+    footer = ([f"{foreign} quarantine(s) published by teammates are in force; "
+               "they release their own"] if foreign else [])
     if not rows:
-        render.render_ledger_lines(["no quarantines recorded for this project"])
+        render.render_ledger_lines(
+            ["no quarantines recorded for this project", *footer])
         return 0
-    render.render_ledger_lines([_record_line(r) for r in rows])
+    render.render_ledger_lines([_record_line(r) for r in rows] + footer)
     return 0
 
 
@@ -239,7 +274,8 @@ def register(sub, fmt) -> None:
     p_trust = sub.add_parser(
         "trust",
         help="record or settle a human quarantine on a checkpoint value "
-             "(#1109); write-only in this release, nothing reads it yet",
+             "(#1109): an active one is withheld from every read, and is "
+             "published to the team when one is enabled",
         epilog="Examples:\n"
                "  daimon trust propose --text \"the runbook was fabricated\" "
                "--kind decision --reason \"no matching PR\" "
@@ -306,6 +342,10 @@ def register(sub, fmt) -> None:
         "list", help="list project quarantines, candidates first")
     pt_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pt_list.add_argument("--json", action="store_true", help="machine-readable output")
+    pt_list.add_argument(
+        "--team", action="store_true",
+        help="list the quarantines teammates published instead: kind and "
+             "count anywhere, author directory and ts at a terminal")
     pt_list.set_defaults(func=_cli._cmd_trust_list)
 
     pt_repair = trust_sub.add_parser(

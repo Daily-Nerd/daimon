@@ -187,10 +187,8 @@ def test_the_decision_panel_carries_the_degraded_line(tmp_checkpoint_dir):
 
 # ---- 6. author notes on recall and the no-checkpoint team branch ------------
 
-SKIPPED = ("⚠ a teammate's tombstones cannot be read; their checkpoints are "
-           "not admitted")
-TORN = ("⚠ a teammate's tombstones ledger has torn lines; their forgets may "
-        "be incomplete")
+SKIPPED = ("⚠ a teammate's published forget or quarantine ledger cannot be "
+           "read; their checkpoints are not admitted")
 
 
 def test_recall_carries_the_author_codes(tmp_checkpoint_dir, monkeypatch):
@@ -202,15 +200,16 @@ def test_recall_carries_the_author_codes(tmp_checkpoint_dir, monkeypatch):
     # H7: a torn tail is the newest claim, so it skips the author too.
     (adir / "tombstones.jsonl").write_bytes(b'{"ts": "x", "key": "tor')
     got = recall.query("teammate", all_projects=True)
-    assert "author-skipped" in got.notes and "author-degraded" not in got.notes
+    assert "author-skipped" in got.notes
     assert display.recall_note(got.notes) == SKIPPED
-    # An over-cap file is read for its head only: skipped AND degraded.
+    # An over-cap file is read for its head only: skipped, once.
     monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 10)
     (adir / "tombstones.jsonl").write_bytes(
         json.dumps({"ts": "x", "key": "k" * 16}).encode() + b"\n")
     got = recall.query("teammate", all_projects=True)
-    assert "author-skipped" in got.notes and "author-degraded" in got.notes
-    assert display.recall_note(got.notes) == SKIPPED + "\n" + TORN
+    assert "author-skipped" in got.notes
+    assert not [n for n in got.notes if n == "author-degraded"]
+    assert display.recall_note(got.notes) == SKIPPED
 
 
 def test_recall_says_nothing_about_authors_when_all_are_proven(

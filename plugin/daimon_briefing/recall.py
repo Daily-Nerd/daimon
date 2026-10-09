@@ -1681,8 +1681,6 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     tombs = store.foreign_tombstones()
     if tombs.unproven:
         _note(notes, "author-skipped")    # the index left that author out
-    if tombs.degraded:
-        _note(notes, "author-degraded")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"
