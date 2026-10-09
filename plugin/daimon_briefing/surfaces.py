@@ -177,6 +177,11 @@ _READ_NOTED = (_RP.OPEN, _RP.NOTE, _RP.NOTE, _RP.NOTE)
 _READ_TRUST = (_RP.OPEN, _RP.NOTE, _RP.CLOSED, _RP.CLOSED)
 _READ_COUNTERS = (_RP.OPEN, _RP.OPEN, _RP.OPEN, _RP.NOTE)
 _READ_FOREIGN = (_RP.OPEN, _RP.NOTE, _RP.SKIP_SOURCE, _RP.SKIP_SOURCE)
+# The two published team ledgers (tombstones, quarantines): a torn tail is the
+# author's newest claim, so it is not read around with a note, the author is
+# skipped like for any other unproven state (#1132 PR 13, H7).
+_READ_FOREIGN_TEAM = (_RP.OPEN, _RP.SKIP_SOURCE, _RP.SKIP_SOURCE,
+                      _RP.SKIP_SOURCE)
 
 _WP = WritePosture
 # R2.3 write column, the human copy lives in tests/test_write_posture_registry.py.
@@ -511,9 +516,17 @@ SURFACES: tuple[Surface, ...] = (
     # and named `.jsonl` so no `*.json` walk claims it.
     Surface("team/{remote}/**/tombstones.jsonl", "store.publish_tombstone",
             False, "exempt-no-plaintext", "none",
-            foreign_read=_READ_FOREIGN,
+            foreign_read=_READ_FOREIGN_TEAM,
             # Append-only and read per line, the reader skips a bad row: the
             # own sidecar is a write target in every state (R2.3).
+            write=((_WR.HUMAN, _WRITE_OPEN),)),
+    # #1132 PR 13 (D6): the published quarantine ledger, the same shape and
+    # posture beside it. Rows are {kind, value_key, state, ids, order}: hashes
+    # and enums, never the text. Not a bucket ledger: no bucket registry
+    # (buckets, privacy, the index) lists it.
+    Surface("team/{remote}/**/quarantines.jsonl", "store.publish_quarantine",
+            False, "exempt-no-plaintext", "none",
+            foreign_read=_READ_FOREIGN_TEAM,
             write=((_WR.HUMAN, _WRITE_OPEN),)),
     Surface("team/{remote}/**/*.json", "store._dual_write_team",
             True, "known-gap", "audit", issue="#600"),

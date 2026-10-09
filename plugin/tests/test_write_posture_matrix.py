@@ -28,6 +28,7 @@ EXPECTED = {
     **REGISTRY_EXPECTED,
     "events.quarantined-lines": {Writer.HUMAN: _H},
     "tombstones.jsonl": {Writer.HUMAN: (W.PROCEED, W.PROCEED, W.PROCEED)},
+    "quarantines.jsonl": {Writer.HUMAN: (W.PROCEED, W.PROCEED, W.PROCEED)},
 }
 
 PROJECT = "/p/write-matrix"
@@ -47,8 +48,22 @@ STATES = {
 }
 
 
+TEAM_LEDGERS = ("tombstones.jsonl", "quarantines.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def _team_grant(monkeypatch):
+    """The env grant routes PROJECT into a fake sidecar clone (a `.git` entry
+    is all the router looks for): `local` is never a publish target for a
+    quarantine, so its ledger needs a clone to land in."""
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/matrix")
+
+
 def _path(name):
-    if name == "tombstones.jsonl":
+    if name in TEAM_LEDGERS:
+        if name == "quarantines.jsonl":
+            (config.team_dir() / "r1" / ".git").mkdir(parents=True,
+                                                      exist_ok=True)
         [adir] = store._own_team_dirs(PROJECT)
         adir.mkdir(parents=True, exist_ok=True)
         return adir / name
