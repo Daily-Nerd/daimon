@@ -32,6 +32,7 @@ from .. import (
     serializer,
     store,
     trust,
+    view,
 )
 from ..effects import Effects
 from ..surfaces import Writer
@@ -54,6 +55,12 @@ def _human_cli_channel(verb: str, *, agent_path: bool = False) -> str | None:
     return "cli-tty"
 
 
+def _withheld_reason(withheld) -> str:
+    """`quarantine tr-…` / `forgotten`: the marker without its brackets."""
+    return display.withheld_marker(withheld)[len("[withheld: "):-1]
+
+
+@_cli.guarded
 def _cmd_resolve(args) -> int:
     """Append a resolution event for ONE checkpoint item (#102). Exact id
     first; else a fuzzy query that must match uniquely — an ambiguous bind
@@ -81,7 +88,13 @@ def _cmd_resolve(args) -> int:
     'resolved': store.is_resolved/_tie_rank exempt it exactly as they exempt
     #14's supersede-candidate, so an agent's claim never withholds the item
     on its own (the #13 false-merge lesson) until slice 3's serializer
-    verifies the quote or a human confirms."""
+    verifies the quote or a human confirms.
+
+    The bind goes through `view.match` and nothing else: a forgotten id is not
+    a target on any channel, a quarantined exact id binds on a human channel
+    only (no echo, no stored text), a closed one is refused on every channel,
+    and a visible hit beside a withheld one is ambiguous, never a guess. The
+    event row carries no item text (the id is the reference)."""
     by_agent = getattr(args, "by", None) == "agent"
     raw_evidence = getattr(args, "evidence", None)
     if raw_evidence is not None and not by_agent:
@@ -114,42 +127,61 @@ def _cmd_resolve(args) -> int:
             return 1
         event_source = human_channel
     project = _cli._resolve_project(args.project)
-    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
-    if not isinstance(checkpoint, dict):
-        print("no checkpoint for this project yet — nothing to resolve")
+    dry_run = getattr(args, "dry_run", False)
+    if not dry_run:
+        # R3.10 #12: a ledger that cannot be read must not answer "no match"
+        # or take a verdict it cannot fold. A dry run writes nothing.
+        _cli.require_ledger(project, "events.jsonl")
+    found = view.match(project, args.target)
+    target = found.sole
+    bound = None                       # the quarantined exact id a person binds
+    if target is None and found.exact is not None:
+        if found.exact.reason == "closed":
+            _cli._note_usage("resolve:withheld")
+            print(f"error: {found.exact.item_id} is withheld (trust ledger "
+                  "unreadable); daimon trust repair", file=sys.stderr)
+            return 2
+        if by_agent:
+            _cli._note_usage("resolve:withheld")
+            print(f"error: {found.exact.item_id} is withheld "
+                  f"({_withheld_reason(found.exact)}); a person must judge a "
+                  "value an agent cannot see", file=sys.stderr)
+            return 2
+        bound = found.exact
+    elif target is None:
+        # #303: a refused attempt must leave its own trace — otherwise
+        # "no agent ever tried resolve" and "an agent tried and was
+        # refused" are indistinguishable in `daimon stats`, and the two
+        # have opposite fixes (teaching vs UX).
+        _cli._note_usage("resolve:no-match"
+                         if not (found.hits or found.withheld)
+                         else "resolve:ambiguous")
+        rows = [display.Candidate(h.item["id"], h.field.key,
+                                  str(h.item.get("text") or ""))
+                for h in found.hits]
+        for line in display.candidate_lines(
+                rows, query=args.target, closed=found.closed,
+                hidden=found.withheld,
+                pointer="resolve by exact id: daimon resolve <id>; "
+                        "daimon loops lists the open items"):
+            print(line)
+        if found.closed:
+            print("the trust ledger cannot be read, so no item can be "
+                  "judged; daimon trust repair")
         return 1
-    items = []
-    for section, key in schema.ITEM_LISTS:
-        for item in ((checkpoint.get(section) or {}).get(key) or []):
-            if isinstance(item, dict) and item.get("id"):
-                items.append((key, item))
-    target = next((it for _, it in items if it["id"] == args.target), None)
-    if target is None:
-        texts = [str(it.get("text") or "") for _, it in items]
-        generic = carry._generic_terms(texts)
-        hits = [(key, it) for key, it in items
-                if carry._same_item(args.target, str(it.get("text") or ""), generic)]
-        if len(hits) == 1:
-            target = hits[0][1]
-        else:
-            # #303: a refused attempt must leave its own trace — otherwise
-            # "no agent ever tried resolve" and "an agent tried and was
-            # refused" are indistinguishable in `daimon stats`, and the two
-            # have opposite fixes (teaching vs UX).
-            _cli._note_usage("resolve:no-match" if not hits else "resolve:ambiguous")
-            label = "no item matches" if not hits else "ambiguous — matches"
-            print(f"{label} {args.target!r}; candidates:")
-            listing = hits or items
-            for key, it in listing:
-                print(f"  {it['id']}  [{key}] {it.get('text', '')}")
-            print("resolve by exact id: daimon resolve <id>")
-            return 1
     # #480 slice 2: the agent path writes a candidate status, credited to
     # source="agent" — NOT args.status/"cli". Human writes carry the observed
     # "cli-tty" source; legacy "cli" rows remain human when folded.
     effective_status = "resolving-candidate" if by_agent else args.status
-    if getattr(args, "dry_run", False):
+    if bound is not None:
+        item_id = str(bound.item_id)
+        shown = (f"{item_id} [{bound.kind}] "
+                 f"{display.withheld_marker(bound)}")
+    else:
+        assert target is not None      # the branches above returned otherwise
+        item_id = str(target.item["id"])
+        shown = f"{item_id}: {target.item.get('text', '')}"
+    if dry_run:
         # A distinct tag, not "resolve": nothing was written, so folding this
         # into the success counter would inflate it with attempts that never
         # touched the ledger — corrupting the exact refusal-rate signal #303
@@ -157,26 +189,24 @@ def _cmd_resolve(args) -> int:
         # `daimon stats` usage counts, just apart from resolve/resolve:*.
         _cli._note_usage("resolve:dry-run")
         render.render_lifecycle_lines(
-            [f"would resolve {target['id']}: {target.get('text', '')} [{effective_status}]"])
+            [f"would resolve {shown} [{effective_status}]"])
         return 0
     ok = store.append_event(
-        target["id"], effective_status,
+        item_id, effective_status,
         note=(evidence if by_agent else (args.note or "")),
         source=event_source,
-        project_dir=project, item_text=str(target.get("text") or ""),
-        writer=Writer.HUMAN)
+        project_dir=project, writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1
     if by_agent:
         _cli._note_usage("resolve:agent")
         render.render_lifecycle_lines(
-            [f"claim recorded {target['id']}: {target.get('text', '')} "
+            [f"claim recorded {shown} "
              "— pending verification at session end"])
         return 0
     _cli._note_usage("resolve")
-    render.render_lifecycle_lines(
-        [f"resolved {target['id']}: {target.get('text', '')} [{args.status}]"])
+    render.render_lifecycle_lines([f"resolved {shown} [{args.status}]"])
     return 0
 
 def _unreached_line(u) -> str:
@@ -824,6 +854,7 @@ def _is_supersede_candidate(item_id: str, project) -> bool:
     source = str(prior.get("source") or "")
     return status.startswith("supersede-candidate") and source == "serializer"
 
+@_cli.guarded
 def _cmd_reverify(args) -> int:
     """Evidence-gated reopen (#103): re-stamping a resolved item without
     evidence would mark an unchecked claim verified — the one thing this
@@ -841,43 +872,56 @@ def _cmd_reverify(args) -> int:
     if human_channel is None:
         return 1
     project = _cli._resolve_project(args.project)
-    checkpoint = store.read_latest_body(project_dir=project, route=store.Route.OWN,
-                                        admit=store.Admit.ANY)
-    if not isinstance(checkpoint, dict):
-        print("no checkpoint for this project yet — nothing to reverify")
-        return 1
-    item = None
-    for section, key in schema.ITEM_LISTS:
-        for it in ((checkpoint.get(section) or {}).get(key) or []):
-            if isinstance(it, dict) and it.get("id") == args.target:
-                item = it
-                break
-        if item is not None:
-            break
-    if item is None:
-        print(f"no item found with id {args.target!r}")
-        return 1
+    # R3.10 #12: a ledger that cannot be read must not answer "no item found".
+    _cli.require_ledger(project, "events.jsonl")
+    found = view.match(project, args.target, how="id")
     evidence = args.evidence or ""
-    a = item.get("anchored_to")
-    if isinstance(a, dict) and anchor.check(a, project) == "live":
-        note = "reverified: anchor live"
-        if evidence:
-            note += "; " + evidence
-    elif evidence:
+    bound = None                       # the quarantined id a person binds
+    item = None
+    if found.exact is not None:
+        if found.exact.reason == "closed":
+            _cli._note_usage("reverify:withheld")
+            print(f"error: {found.exact.item_id} is withheld (trust ledger "
+                  "unreadable); daimon trust repair", file=sys.stderr)
+            return 2
+        bound = found.exact
+        # no anchor shortcut and no candidate shortcut: the value is not
+        # readable here, so only a person's evidence vouches for it
+        if not evidence:
+            print("re-stamping without evidence would mark an unchecked "
+                  "claim verified — supply --evidence")
+            return 1
         note = f"evidence: {evidence}"
-    elif _is_supersede_candidate(item["id"], project):
-        # #111: the target is an unconfirmed machine SUGGESTION, never a
-        # withheld/suppressed item — rejecting a guess needs no proof. The
-        # reopened event below is a human verdict, so the human-speaks-once
-        # gate (#14) silences re-detection of this candidate permanently.
-        note = "candidate rejected"
+        item_id = str(bound.item_id)
+        shown = f"{item_id} [{bound.kind}] {display.withheld_marker(bound)}"
     else:
-        print("re-stamping without evidence would mark an unchecked claim "
-              "verified — supply --evidence, or fix the anchored code and retry")
-        return 1
-    ok = store.append_event(item["id"], "reopened", note=note,
-                            source=human_channel,
-                            item_text=item.get("text", ""), project_dir=project,
+        found_item = found.sole
+        if found_item is None:
+            print(f"no item found with id {args.target!r}")
+            return 1
+        item = found_item.item
+        item_id = str(item["id"])
+        shown = f"{item_id}: {item.get('text', '')}"
+        a = item.get("anchored_to")
+        if isinstance(a, dict) and anchor.check(a, project) == "live":
+            note = "reverified: anchor live"
+            if evidence:
+                note += "; " + evidence
+        elif evidence:
+            note = f"evidence: {evidence}"
+        elif _is_supersede_candidate(item_id, project):
+            # #111: the target is an unconfirmed machine SUGGESTION, never a
+            # withheld/suppressed item — rejecting a guess needs no proof. The
+            # reopened event below is a human verdict, so the human-speaks-once
+            # gate (#14) silences re-detection of this candidate permanently.
+            note = "candidate rejected"
+        else:
+            print("re-stamping without evidence would mark an unchecked claim "
+                  "verified — supply --evidence, or fix the anchored code "
+                  "and retry")
+            return 1
+    ok = store.append_event(item_id, "reopened", note=note,
+                            source=human_channel, project_dir=project,
                             writer=Writer.HUMAN)
     if not ok:
         print("event not written (daimon disabled or project unknown)")
@@ -886,8 +930,7 @@ def _cmd_reverify(args) -> int:
     # structurally zero, and a zero that measures missing instrumentation
     # cannot be compared against a UI channel's count later.
     _cli._note_usage("reverify")
-    render.render_lifecycle_lines(
-        [f"reopened {item['id']}: {item.get('text', '')}"])
+    render.render_lifecycle_lines([f"reopened {shown}"])
     return 0
 
 @effects_commit.committing

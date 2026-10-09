@@ -64,3 +64,11 @@ def test_a_closed_snapshot_prints_no_count():
     assert display.candidate_lines(rows, query="q", pointer=POINTER,
                                    closed=True) == [
         "no item matches 'q'", POINTER]
+
+
+def test_a_count_the_caller_holds_is_added_to_the_withheld_rows():
+    rows = [_row("o-1", "visible")]
+    assert COUNT.format(n=3) in display.candidate_lines(
+        rows, query="q", pointer=POINTER, hidden=3)
+    assert display.candidate_lines([], query="q", pointer=POINTER, hidden=1) == [
+        "no visible item matches 'q'", COUNT.format(n=1), POINTER]

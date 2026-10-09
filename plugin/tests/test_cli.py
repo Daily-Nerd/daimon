@@ -9201,7 +9201,8 @@ def test_resolve_by_exact_id_appends_event(tmp_checkpoint_dir, capsys, monkeypat
     assert cli.main(["resolve", iid]) == 0
     r = store.resolutions(project_dir="/p/A")
     assert store.is_resolved(r[iid])
-    assert r[iid]["item_text"] == "release pipeline awaiting manual approval step"
+    # the id is the reference: the event row carries no item text (#1132 PR 11b)
+    assert "item_text" not in r[iid]
 
 
 def test_resolve_by_unique_fuzzy_query(tmp_checkpoint_dir, capsys, monkeypatch):

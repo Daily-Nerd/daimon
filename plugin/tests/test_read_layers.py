@@ -168,10 +168,6 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "forget binds its target across every surface copy",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.read_latest_body"):
         "forget binds its target in the live checkpoint; view.match in PR 9",
-    ("daimon_briefing/cli/lifecycle.py", "_cmd_resolve", "store.read_latest_body"):
-        "resolve binds its target in the live checkpoint; view.match in PR 9",
-    ("daimon_briefing/cli/lifecycle.py", "_cmd_reverify", "store.read_latest_body"):
-        "reverify binds its target in the live checkpoint; view.match in PR 9",
     ("daimon_briefing/cli/stats.py", "_stats_resolutions", "jsonl.read"):
         "counts events rows for the stats credit rollup, no content shown",
     ("daimon_briefing/cli/stats.py", "_stats_stitching", "json.loads"):

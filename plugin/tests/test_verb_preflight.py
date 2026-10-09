@@ -22,6 +22,9 @@ VERBS = [
     ("amendments.jsonl", ["amend", "reject", AID]),
     ("amendments.jsonl", ["amend", "propose", ITEM, "--change", "progressed",
                           "--evidence", "x"]),
+    ("events.jsonl", ["resolve", ITEM]),
+    ("events.jsonl", ["resolve", ITEM, "--by", "agent", "--evidence", "x"]),
+    ("events.jsonl", ["reverify", ITEM, "--evidence", "x"]),
     ("requests.jsonl", ["request", "open", "--to=-p-other", "--ask", "a",
                         "--why", "b", "--anyway"]),
     ("requests.jsonl", ["request", "revise", QID]),
@@ -38,7 +41,8 @@ VERBS = [
 
 
 @pytest.mark.parametrize("ledger,argv", VERBS,
-                         ids=[" ".join(v[1][:2]) for v in VERBS])
+                         ids=[" ".join(v[1][:2]) + (" agent" if "agent" in v[1] else "")
+                              for v in VERBS])
 def test_a_lookup_verb_is_refused_on_an_unproven_ledger(
         tmp_checkpoint_dir, capsys, monkeypatch, ledger, argv):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
@@ -50,4 +54,16 @@ def test_a_lookup_verb_is_refused_on_an_unproven_ledger(
     assert rc == 2, (argv, out)
     assert f"{ledger} is unreadable" in out.err
     assert "unknown" not in (out.out + out.err).lower()
+    assert path.read_bytes() == b"<<<<<<< conflict\n"
+
+
+def test_a_resolve_dry_run_writes_nothing_and_needs_no_proven_ledger(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    path = store._events_path(store._resolved(PROJECT)).parent / "events.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"<<<<<<< conflict\n")
+    rc = cli.main(["resolve", ITEM, "--dry-run", "--project", PROJECT])
+    out = capsys.readouterr()
+    assert rc != 2 and "is unreadable" not in out.err
     assert path.read_bytes() == b"<<<<<<< conflict\n"

@@ -133,16 +133,19 @@ class Candidate:
     verdict: Any = None
 
 
-def candidate_lines(rows, *, query, pointer, closed: bool = False) -> list[str]:
+def candidate_lines(rows, *, query, pointer, closed: bool = False,
+                    hidden: int = 0) -> list[str]:
     """The lines a binding verb prints when it cannot bind. Visible rows print
     as `  <id>  [<label>] <text>` (with the matched value when it differs);
     quarantined and closed rows are counted in one line and never named; a
     forgotten row is absent. The count is not printed when the trust ledger is
     unreadable (`closed`): then every hit counts as withheld and the number
     would be a membership oracle, while the refusal the verb prints already
-    says why. `pointer` is the verb's own "how to name it exactly" line."""
+    says why. `hidden` adds withheld candidates the caller holds only as a
+    count (`view.Match.withheld`). `pointer` is the verb's own "how to name it
+    exactly" line."""
     visible = [r for r in rows if r.verdict is None]
-    counted = 0 if closed else sum(
+    counted = 0 if closed else hidden + sum(
         1 for r in rows
         if r.verdict is not None and r.verdict.reason in ("quarantine", "closed"))
     lines: list[str] = []
