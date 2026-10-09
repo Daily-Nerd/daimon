@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 135
 type: fence
 title: Forget decides "reached" by reading the ledger again after the deleter, never from the deleter's own return
 severity: medium
 confidence: 0.85
 created: 2026-10-08
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - pattern: "judge_reach"
 evidence:
-  - note: "#1132 PR 10b: tests/test_forget_reached.py::test_a_failed_rewrite_is_not_reached_even_on_a_clean_ledger"
+  - note: #1132 PR 10b: tests/test_forget_reached.py::test_a_failed_rewrite_is_not_reached_even_on_a_clean_ledger
 expires:
   condition: "every deleter reports success or failure itself, distinct from 'nothing matched'"
   review_after: 2027-04-08
-status: candidate
+status: active
 ---
 
 Every forget deleter returns `[]` for "nothing matched", "ledger absent" and

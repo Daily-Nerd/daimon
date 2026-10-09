@@ -1,22 +1,24 @@
 ---
-id: 0
+id: 128
 type: fence
 title: "ruling ratify and revise refuse a record with a withheld field instead of printing the marker and proceeding, on purpose"
 severity: high
 confidence: 0.85
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/cli/ruling.py
   - path: plugin/daimon_briefing/cli/_ledger.py
   - path: plugin/daimon_briefing/cli/refute.py
 evidence:
-  - commit: f49ee80
-  - note: "tests/test_ruling_masking.py::test_ratify_refuses_a_pending_proposal_it_cannot_show"
+  - commit: e5aea9e
+  - note: tests/test_ruling_masking.py::test_ratify_refuses_a_pending_proposal_it_cannot_show
 expires:
   condition: "a ceremony can show the withheld words to the person at a terminal without leaking them to an agent"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 Ratifying is a signature on the FULL text and binds the stored record's content key. If the ceremony masked

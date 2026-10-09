@@ -1,19 +1,21 @@
 ---
-id: 0
+id: 139
 type: landmine
 title: jsonl.Refused is an OSError, so an appender whose writer can be REFUSED must re-raise jsonl.Refused before its except OSError
 severity: high
 confidence: 0.9
 created: 2026-10-08
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - pattern: "jsonl\.append_as\("
 evidence:
-  - note: "#1132 PR 10b: tests/test_cli_refusal.py::test_the_cli_run_alone_surfaces_the_refusal fails if the re-raise is removed from any appender"
+  - note: #1132 PR 10b: tests/test_cli_refusal.py::test_the_cli_run_alone_surfaces_the_refusal fails if the re-raise is removed from any appender
 expires:
   condition: "Refused stops being an OSError, or the appenders stop catching OSError"
   review_after: 2027-04-08
-status: candidate
+status: active
 ---
 
 A refused write raises `jsonl.Refused`, an `OSError` on purpose, so every library

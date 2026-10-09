@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 138
 type: fence
 title: "A refused-admission line puts (session: id) BEFORE (transcript: path) because the transcript regex swallows whatever follows the path"
 severity: medium
 confidence: 0.9
 created: 2026-10-08
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/ledger.py
   - pattern: "_ERR_SESSION_RE"
 evidence:
-  - note: "#1132 PR 10b: tests/test_admission_ledger.py::test_the_session_group_before_the_transcript_group_leaves_the_path_whole"
+  - note: #1132 PR 10b: tests/test_admission_ledger.py::test_the_session_group_before_the_transcript_group_leaves_the_path_whole
 expires:
   condition: "the transcript regex stops accepting a trailing group"
   review_after: 2027-04-08
-status: candidate
+status: active
 ---
 
 The result line `error: ... (transcript: <path>) after Ns` is parsed by

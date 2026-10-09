@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 132
 type: landmine
 title: A verb that writes an event for an id must bind through view.match, never through lookup, because any later event on a tombstoned id lifts its tombstone
 severity: high
 confidence: 0.85
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/cli/lifecycle.py
   - path: plugin/daimon_briefing/cli/amend.py
 evidence:
-  - note: "#1132 PR 11b: tests/test_forgotten_write_pin.py and tests/test_resolve_withheld.py::test_a_forgotten_id_is_not_a_write_target"
+  - note: #1132 PR 11b: tests/test_forgotten_write_pin.py and tests/test_resolve_withheld.py::test_a_forgotten_id_is_not_a_write_target
 expires:
   condition: "PR 12 namespaces the tombstone so a later event no longer lifts it"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 `view.forgotten_ids` keeps an id only while its latest event is a tombstone, so

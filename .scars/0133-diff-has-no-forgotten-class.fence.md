@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 133
 type: fence
 title: daimon diff has no forgotten change class on purpose, so a restated item whose old wording was forgotten reads as added
 severity: medium
 confidence: 0.8
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
 anchors:
   - path: plugin/daimon_briefing/cli/history.py
   - pattern: "_CHANGE_ORDER"
 evidence:
-  - note: "#1132 PR 11a: tests/test_history_diff.py::test_there_is_no_forgotten_change_class and ::test_a_real_forget_leaves_nothing_in_either_body_or_the_listing"
+  - note: #1132 PR 11a: tests/test_history_diff.py::test_there_is_no_forgotten_change_class and ::test_a_real_forget_leaves_nothing_in_either_body_or_the_listing
 expires:
   condition: "a person rules that a listing may announce a forgotten id"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 A listing of two generations names, counts and lists no forgotten value. The
