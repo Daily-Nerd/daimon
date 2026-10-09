@@ -21,7 +21,7 @@ daimon mcp serve   # blocks, serves JSON-RPC on stdio until EOF
 | `daimon_brief` | The latest briefing for the current project — deterministic render, trust-tagged, resolutions withheld |
 | `daimon_projects` | Every project daimon has memory for: slug, session, branch, last topic |
 | `daimon_status` | Capture health: checkpoint freshness, last serialize result, outstanding failures, alarms — same payload as `daimon status --json` |
-| `requests_inbox` | Requests other projects have addressed to this one — the read-only pull side of the [cross-project request ledger](cli.md#coordinate). `daimon_brief` never carries this content; opening, answering, or deciding a request is CLI-only. Its rows come back with every prose column judged, so a quarantined or forgotten value is a marker or blank. |
+| `requests_inbox` | Requests other projects have addressed to this one — the read-only pull side of the [cross-project request ledger](cli.md#coordinate). `daimon_brief` never carries this content; opening, answering, or deciding a request is CLI-only. Quarantined or forgotten text in its rows comes back as a marker or blank. |
 
 All five carry `readOnlyHint`. Item-id verbs exist on the CLI, the viewer and
 the in-process api; the MCP tools take no item id by design (pinned by test).
