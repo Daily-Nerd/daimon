@@ -9,6 +9,7 @@ authors: ["claude-code"]
 anchors:
   - path: plugin/daimon_briefing/cli/ruling.py
   - path: plugin/daimon_briefing/cli/_ledger.py
+  - path: plugin/daimon_briefing/cli/refute.py
 evidence:
   - commit: f49ee80
   - note: "tests/test_ruling_masking.py::test_ratify_refuses_a_pending_proposal_it_cannot_show"

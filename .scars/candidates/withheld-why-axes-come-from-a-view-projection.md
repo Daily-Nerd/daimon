@@ -9,7 +9,6 @@ authors: ["claude-code"]
 anchors:
   - path: plugin/daimon_briefing/inspector.py
   - pattern: "def _withheld_result\("
-  - path: plugin/daimon_briefing/view.py
   - pattern: "def _projection\("
 evidence:
   - note: "#1132 PR 11a: tests/test_why_contract.py::test_a_withheld_items_bound_receipt_still_reports_its_axes and ::test_the_view_projection_carries_no_text"

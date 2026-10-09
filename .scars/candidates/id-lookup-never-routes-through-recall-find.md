@@ -7,7 +7,6 @@ confidence: 0.8
 created: 2026-10-09
 authors: ["claude-code"]
 anchors:
-  - path: plugin/daimon_briefing/view.py
   - pattern: "def lookup_many\("
   - path: plugin/daimon_briefing/index_locate.py
 evidence:

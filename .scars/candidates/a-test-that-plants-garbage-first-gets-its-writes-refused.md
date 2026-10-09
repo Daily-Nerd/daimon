@@ -7,7 +7,6 @@ confidence: 0.9
 created: 2026-10-08
 authors: ["claude-code"]
 anchors:
-  - path: plugin/tests/
   - pattern: "events\.jsonl.*write_bytes"
 evidence:
   - note: "#1132 PR 10b: four existing tests had to write their rows before planting the junk"

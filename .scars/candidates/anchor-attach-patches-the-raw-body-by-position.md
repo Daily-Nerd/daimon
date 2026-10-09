@@ -7,7 +7,6 @@ confidence: 0.85
 created: 2026-10-09
 authors: ["claude-code"]
 anchors:
-  - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/cli/brief.py
   - pattern: "def attach_anchor"
 evidence:

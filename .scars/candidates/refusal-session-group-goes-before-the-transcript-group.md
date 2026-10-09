@@ -1,7 +1,7 @@
 ---
 id: 0
 type: fence
-title: A refused-admission line puts (session: id) BEFORE (transcript: path) because the transcript regex swallows whatever follows the path
+title: "A refused-admission line puts (session: id) BEFORE (transcript: path) because the transcript regex swallows whatever follows the path"
 severity: medium
 confidence: 0.9
 created: 2026-10-08

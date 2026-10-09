@@ -7,7 +7,6 @@ confidence: 0.85
 created: 2026-10-08
 authors: ["claude-code"]
 anchors:
-  - path: plugin/daimon_briefing/jsonl.py
   - pattern: "judge_reach"
 evidence:
   - note: "#1132 PR 10b: tests/test_forget_reached.py::test_a_failed_rewrite_is_not_reached_even_on_a_clean_ledger"
