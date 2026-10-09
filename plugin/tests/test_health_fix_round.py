@@ -35,6 +35,9 @@ def _write(project, texts, sid=None):
 
 
 def _seam(monkeypatch, path, result):
+    # The seam changes what a read answers without moving the file's stat, so
+    # the foreign-team memo (keyed on stat) must not hide it.
+    monkeypatch.setattr(store, "_FOREIGN_TEAM_MEMO", None)
     real = jsonl.read
     monkeypatch.setattr(
         jsonl, "read",
@@ -196,10 +199,18 @@ def test_recall_carries_the_author_codes(tmp_checkpoint_dir, monkeypatch):
     got = recall.query("teammate", all_projects=True)
     assert "author-skipped" in got.notes
     assert display.recall_note(got.notes) == SKIPPED
+    # H7: a torn tail is the newest claim, so it skips the author too.
     (adir / "tombstones.jsonl").write_bytes(b'{"ts": "x", "key": "tor')
     got = recall.query("teammate", all_projects=True)
-    assert "author-degraded" in got.notes and "author-skipped" not in got.notes
-    assert display.recall_note(got.notes) == TORN
+    assert "author-skipped" in got.notes and "author-degraded" not in got.notes
+    assert display.recall_note(got.notes) == SKIPPED
+    # An over-cap file is read for its head only: skipped AND degraded.
+    monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 10)
+    (adir / "tombstones.jsonl").write_bytes(
+        json.dumps({"ts": "x", "key": "k" * 16}).encode() + b"\n")
+    got = recall.query("teammate", all_projects=True)
+    assert "author-skipped" in got.notes and "author-degraded" in got.notes
+    assert display.recall_note(got.notes) == SKIPPED + "\n" + TORN
 
 
 def test_recall_says_nothing_about_authors_when_all_are_proven(
@@ -700,7 +711,7 @@ def test_jsonl_has_a_public_line_classifier():
 
 def test_store_reaches_the_classifier_only_by_its_public_name():
     import inspect
-    source = inspect.getsource(store._tombstone_keys)
+    source = inspect.getsource(store._capped_rows)
     assert "jsonl._" not in source and "jsonl.classify_line" in source
 
 

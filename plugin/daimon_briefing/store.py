@@ -1267,29 +1267,127 @@ def foreign_ledger(slug: str, name: str) -> ForeignLedger:
 
 class ForeignTombstones(NamedTuple):
     """Every other author's published tombstones, read once: the union of
-    their keys, the author directory names whose ledger is not proven (their
-    keys may be incomplete: O3, their checkpoints are not admitted) and those
-    whose ledger only has torn lines (keys used, a note)."""
+    their keys and the author directory names whose published ledgers are not
+    proven (their claims may be incomplete: O3, their checkpoints are not
+    admitted). `degraded` names the authors whose over-cap file was read for
+    its head only."""
 
     keys: set
     unproven: frozenset
     degraded: frozenset
 
 
+class ForeignTeam(NamedTuple):
+    """Every other author's published team ledgers, read in ONE walk: both
+    files per author directory, one health verdict per author.
+
+    `keys` is the union of forget keys (tombstones). `quarantines` is the
+    union of the `(kind, value_key)` pairs still claimed active, each author
+    file folded per id first (`policy.fold_published_quarantines`). `claims`
+    is `(author_dir, kind, ts)` per active pair claim, for display only.
+    `unproven` is the author directory names with a file that is over the
+    cap, transient, unreadable or has a torn tail (the newest claim cannot be
+    proven: O3, H7); good rows of such a file still contribute, since the
+    sets only grow. `degraded` is the subset whose over-cap file was read for
+    its head."""
+
+    keys: frozenset
+    quarantines: frozenset
+    claims: tuple
+    unproven: frozenset
+    degraded: frozenset
+
+
+_EMPTY_TEAM = ForeignTeam(frozenset(), frozenset(), (), frozenset(),
+                          frozenset())
+# (key, ForeignTeam) of the last real walk. The key is the stat of exactly the
+# files that walk read plus what else changes its answer (scar 0126), so a
+# hit costs one stat per file and never resolves the author.
+_FOREIGN_TEAM_MEMO: tuple | None = None
+
+
+def _active_claims(author: str, rows, pairs) -> list:
+    """`(author, kind, ts)` for each pair in `pairs`: the ts of the newest
+    active row that claimed it."""
+    newest: dict = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("state") != "active":
+            continue
+        pair = (row.get("kind"), row.get("value_key"))
+        if pair in pairs:
+            order = row.get("order") if isinstance(row.get("order"), int) else 0
+            if pair not in newest or order >= newest[pair][0]:
+                newest[pair] = (order, str(row.get("ts") or ""))
+    return [(author, kind, newest[(kind, key)][1])
+            for kind, key in sorted(pairs) if (kind, key) in newest]
+
+
+def foreign_team() -> ForeignTeam:
+    """The foreign team ledgers, one capped read per file (see
+    `ForeignTeam`). Memoised on the stat of the files it reads: the judge's
+    slug-less path, every memo miss and the recall build all ask, and each
+    must not pay a parse. A walk that met a transient or unreadable file is
+    not kept, so a read that failed once is retried. Never raises."""
+    global _FOREIGN_TEAM_MEMO
+    names = (_TOMBSTONE_NAME, _QUARANTINE_NAME)
+    key = (str(config.team_dir()), _MAX_TOMBSTONE_BYTES,
+           config._get("DAIMON_AUTHOR"),
+           tuple(_stat_entry(p) for p in _team_ledger_paths(
+               names, include_own=True)))
+    memo = _FOREIGN_TEAM_MEMO
+    if memo is not None and memo[0] == key:
+        return memo[1]
+    keys: set = set()
+    pairs: set = set()
+    claims: list = []
+    unproven: set = set()
+    degraded: set = set()
+    retry = False
+    for path in _team_ledger_paths(names):
+        author = path.parent.name
+        got = _capped_rows(path)
+        if got.health in (jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
+            retry = True
+        if path.name == _TOMBSTONE_NAME:
+            keys |= _row_keys(got.rows)
+        else:
+            mine = policy.fold_published_quarantines(got.rows)
+            pairs |= mine
+            claims.extend(_active_claims(author, got.rows, mine))
+        # H7: a torn tail is the newest claim, so DEGRADED skips the author
+        # like any other state the file cannot be proven in.
+        if got.unproven or got.health is jsonl.Health.DEGRADED:
+            unproven.add(author)
+        if got.over_cap and got.health is jsonl.Health.DEGRADED:
+            degraded.add(author)
+    team = ForeignTeam(frozenset(keys), frozenset(pairs), tuple(claims),
+                       frozenset(unproven), frozenset(degraded))
+    if not retry:
+        _FOREIGN_TEAM_MEMO = (key, team)
+    return team
+
+
+def _stat_entry(path) -> tuple:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return (str(path), None, None, None, None)
+    return (str(path), st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+
+
 def foreign_tombstones() -> ForeignTombstones:
-    """The foreign tombstone ledgers, one capped read each. Author directory
-    names are `project_slug(author)`. Never raises."""
-    keys: set[str] = set()
-    unproven: set[str] = set()
-    degraded: set[str] = set()
-    for path in _team_ledger_paths((_TOMBSTONE_NAME,)):
-        got = _tombstone_keys(path)
-        keys |= got.keys
-        if got.unproven:
-            unproven.add(path.parent.name)
-        elif got.health is jsonl.Health.DEGRADED:
-            degraded.add(path.parent.name)
-    return ForeignTombstones(keys, frozenset(unproven), frozenset(degraded))
+    """The foreign tombstone view of `foreign_team()`: keys plus the authors
+    whose published ledgers are unproven or degraded. Author directory names
+    are `project_slug(author)`. Never raises."""
+    team = foreign_team()
+    return ForeignTombstones(set(team.keys), team.unproven, team.degraded)
+
+
+def foreign_quarantines() -> frozenset:
+    """The `(kind, value_key)` pairs other authors still claim quarantined.
+    Own rows and the `local` mirror are excluded: the local ledger is the
+    truth for the reader's own quarantines. Never raises."""
+    return foreign_team().quarantines
 
 
 def foreign_forgotten_content_keys() -> set[str]:
@@ -1310,7 +1408,7 @@ def foreign_forgotten_content_keys() -> set[str]:
     finds are visited, so a clone's .git object store is never traversed, and
     each ledger is capped: a teammate cannot make every briefing pay for an
     unbounded file. Never raises."""
-    return foreign_tombstones().keys
+    return set(foreign_team().keys)
 
 
 def _team_ledger_paths(names, *, include_own: bool = False,
