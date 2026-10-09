@@ -109,3 +109,13 @@ def test_a_forgotten_id_is_not_a_write_target(tmp_checkpoint_dir, capsys):
     assert rc == 1 and out.strip() == f"no item found with id {item_id!r}"
     assert "forgotten" not in out + err
     assert _events() == before
+
+
+def test_no_checkpoint_at_all_keeps_its_own_message(tmp_checkpoint_dir, capsys):
+    rc, out, _err = _run(capsys, "o-aaaaaaaaaaaa", "--evidence", "x")
+    assert rc == 1
+    assert out.strip() == ("no checkpoint for this project yet, nothing to "
+                           "reverify")
+    _write()
+    rc, out, _err = _run(capsys, "o-aaaaaaaaaaaa", "--evidence", "x")
+    assert rc == 1 and out.strip() == "no item found with id 'o-aaaaaaaaaaaa'"

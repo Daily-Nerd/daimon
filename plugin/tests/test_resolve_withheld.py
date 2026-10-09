@@ -218,3 +218,13 @@ def test_the_agent_claim_writes_no_text_either(tmp_checkpoint_dir, capsys):
     rc, out, _err = _run(capsys, item_id, "--by", "agent", "--evidence", "x")
     assert rc == 0 and f"claim recorded {item_id}: {Q2}" in out
     assert Q2.encode() not in _events_bytes()
+
+
+def test_no_checkpoint_at_all_keeps_its_own_message(tmp_checkpoint_dir, capsys):
+    rc, out, _err = _run(capsys, "anything at all")
+    assert rc == 1
+    assert out.strip() == ("no checkpoint for this project yet, nothing to "
+                           "resolve")
+    _write()
+    rc, out, _err = _run(capsys, "zzz qqq www")
+    assert rc == 1 and out.splitlines()[0] == "no item matches 'zzz qqq www'"

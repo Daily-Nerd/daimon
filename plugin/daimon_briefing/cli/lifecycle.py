@@ -156,6 +156,10 @@ def _cmd_resolve(args) -> int:
         _cli._note_usage("resolve:no-match"
                          if not (found.hits or found.withheld)
                          else "resolve:ambiguous")
+        if (not (found.hits or found.withheld)
+                and view.open(project, live=False).checkpoint is None):
+            print("no checkpoint for this project yet, nothing to resolve")
+            return 1
         rows = [display.Candidate(h.item["id"], h.field.key,
                                   str(h.item.get("text") or ""))
                 for h in found.hits]
@@ -936,6 +940,11 @@ def _cmd_reverify(args) -> int:
     else:
         found_item = found.sole
         if found_item is None:
+            if (not found.withheld
+                    and view.open(project, live=False).checkpoint is None):
+                print("no checkpoint for this project yet, nothing to "
+                      "reverify")
+                return 1
             print(f"no item found with id {args.target!r}")
             return 1
         item = found_item.item
