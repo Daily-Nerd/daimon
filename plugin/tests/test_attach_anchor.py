@@ -190,3 +190,17 @@ def test_only_a_withheld_match_reads_as_no_match(tmp_checkpoint_dir, proj, capsy
     assert rc != 0 and "no cognitive item text contains 'owner is unknown'" in err
     assert "SENTINEL-q1" not in err
     assert "anchored_to" not in _raw_of(proj)["working_context"]["open_questions"][0]
+
+
+def test_a_checkpoint_that_changes_between_match_and_write_is_refused(
+        tmp_checkpoint_dir, proj, capsys, monkeypatch):
+    _store(proj)
+
+    def moved(*_a, **_k):
+        raise LookupError("item changed")
+
+    monkeypatch.setattr(store, "attach_anchor", moved)
+    rc = cli.main(["anchor", "pkg/m.py", "foo", "--attach", "weekly sync",
+                   "--project", str(proj)])
+    assert rc == 1
+    assert "changed while matching" in capsys.readouterr().err

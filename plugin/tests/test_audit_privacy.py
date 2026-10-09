@@ -28,8 +28,18 @@ def _write(session_id, *texts, project_dir=PROJECT):
     }, project_dir=project_dir, writer=Writer.HUMAN)
 
 
+@pytest.fixture(autouse=True)
+def _human(monkeypatch):
+    """Finishing the deletion of an id whose tombstone already stands is a
+    person's call, by exact id (#1132 PR 11b)."""
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+
 def _forget(value):
-    assert cli.main(["forget", value, "--project", PROJECT]) == 0
+    target = next((item["id"] for _p, _s, _k, item in
+                   store.items_for_project(PROJECT) if item["text"] == value),
+                  value)
+    assert cli.main(["forget", target, "--project", PROJECT]) == 0
 
 
 def test_hashes_covers_text_quote_and_scene():

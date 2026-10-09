@@ -26,8 +26,6 @@ LEGACY = {"read_latest", "read_latest_reportable"}
 MANIFEST = {
     ("capture.py", "carry_forward", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
-    ("cli/brief.py", "_cmd_anchor", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
     ("cli/inject.py", "_cmd_recall_inject", "read_latest_body",
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
     # #1031: the action surface excludes whatever the briefing carried on the
@@ -37,13 +35,7 @@ MANIFEST = {
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
     ("cli/status.py", "_cmd_verify_receipt", "read_latest_body",
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.OWN_OR_UNROUTED"),
-    ("cli/amend.py", "_cmd_amend_propose", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
-    ("cli/lifecycle.py", "_cmd_resolve", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
     ("cli/lifecycle.py", "_cmd_forget", "read_latest_body",
-     "store.Route.OWN", "store.Admit.ANY"),
-    ("cli/lifecycle.py", "_cmd_reverify", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
     ("receipts.py", "status_line", "read_latest_body",
      "store.Route.OWN_ELSE_GLOBAL", "store.Admit.OWN_OR_UNROUTED"),
@@ -56,6 +48,10 @@ MANIFEST = {
      "route", "store.Admit.ANY"),
     ("view.py", "match", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
+    # #1132 PR 11b: `anchor --attach` patches the raw own body, so the read
+    # moved from the CLI into the write layer.
+    ("store.py", "attach_anchor", "read_latest_body",
+     "Route.OWN", "Admit.ANY"),
 }
 
 # Wrapper-internal calls in store.py that are not migration sites. The two

@@ -280,6 +280,15 @@ def test_a_slug_survives_every_public_entry_point(tmp_checkpoint_dir, tmp_path,
 # ---- the audit: every public entry point, one invariant ----
 
 
+def _attach_anchor_misses(sub: str):
+    """`attach_anchor` of a project with no checkpoint raises LookupError after
+    it has resolved the path; the invariant here is only which bucket it names."""
+    try:
+        store.attach_anchor(sub, ("working_context", "active_topic", None), {})
+    except LookupError:
+        pass
+
+
 def _public_entry_points(sub: str):
     """Every PUBLIC store function that accepts a `project_dir`, called once
     with a subdirectory path. `project_slug` is excluded on purpose: it is the
@@ -287,6 +296,9 @@ def _public_entry_points(sub: str):
     return [
         ("project_surfaces", lambda: store.project_surfaces(project_dir=sub)),
         ("items_for_project", lambda: store.items_for_project(project_dir=sub)),
+        ("tombstoned_item_ids",
+         lambda: store.tombstoned_item_ids(project_dir=sub)),
+        ("attach_anchor", lambda: _attach_anchor_misses(sub)),
         ("scrub_content_key",
          lambda: store.scrub_content_key("deadbeef", project_dir=sub)),
         ("scrub_team_copies",
