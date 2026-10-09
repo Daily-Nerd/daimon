@@ -350,15 +350,63 @@ def test_a_remote_whose_walk_explodes_costs_only_its_own_keys(
     assert store.foreign_forgotten_content_keys() == {KEY, other}, \
         "seed failed — both remotes must be readable before one is broken"
 
-    real_rglob = type(config.team_dir()).rglob
+    real_walk = store._team_author_dirs
 
-    def explode_on_team_a(self, pattern):
-        if self.name == "team-a":
+    def explode_on_team_a(remote):
+        if remote.name == "team-a":
             raise OSError("EIO reading the sidecar")
-        return real_rglob(self, pattern)
+        return real_walk(remote)
 
-    monkeypatch.setattr(type(config.team_dir()), "rglob", explode_on_team_a)
+    monkeypatch.setattr(store, "_team_author_dirs", explode_on_team_a)
     assert store.foreign_forgotten_content_keys() == {other}
+
+
+def test_a_ledger_planted_inside_dot_git_is_never_read(tmp_checkpoint_dir):
+    """The enumerator descends `authors/` and `projects/**/authors/` only, so
+    a clone's object store is never walked: a file shaped like a ledger
+    inside `.git` is not a teammate's claim."""
+    planted = (config.team_dir() / "team-a" / ".git" / "modules" / "m"
+               / "authors" / "mallory" / store._TOMBSTONE_NAME)
+    planted.parent.mkdir(parents=True)
+    planted.write_text(json.dumps({"key": "f" * 16}) + "\n", encoding="utf-8")
+    assert store.foreign_forgotten_content_keys() == set()
+    assert store._team_ledger_paths((store._TOMBSTONE_NAME,),
+                                    include_own=True,
+                                    include_local=True) == []
+
+
+def test_the_enumerator_honours_own_and_local(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    names = (store._TOMBSTONE_NAME,)
+    for remote, author in (("team-a", "ada"), ("team-a", "grace"),
+                           ("local", "grace")):
+        d = config.team_dir() / remote / "authors" / author
+        d.mkdir(parents=True)
+        (d / store._TOMBSTONE_NAME).write_text("", encoding="utf-8")
+
+    def rel(paths):
+        return sorted(p.relative_to(config.team_dir()).as_posix()
+                      for p in paths)
+
+    assert rel(store._team_ledger_paths(names)) == [
+        "team-a/authors/grace/tombstones.jsonl"]
+    assert rel(store._team_ledger_paths(names, include_own=True)) == [
+        "team-a/authors/ada/tombstones.jsonl",
+        "team-a/authors/grace/tombstones.jsonl"]
+    assert rel(store._team_ledger_paths(
+        names, include_own=True, include_local=True)) == [
+        "local/authors/grace/tombstones.jsonl",
+        "team-a/authors/ada/tombstones.jsonl",
+        "team-a/authors/grace/tombstones.jsonl"]
+
+
+def test_the_enumerator_reads_the_nested_layout(tmp_checkpoint_dir):
+    d = (config.team_dir() / "team-a" / "projects" / "squad" / "census"
+         / "authors" / "grace")
+    d.mkdir(parents=True)
+    (d / store._TOMBSTONE_NAME).write_text(
+        json.dumps({"key": KEY}) + "\n", encoding="utf-8")
+    assert store.foreign_forgotten_content_keys() == {KEY}
 
 
 def test_apply_across_all_projects_survives_a_missing_checkpoint_dir(

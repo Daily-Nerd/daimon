@@ -70,6 +70,25 @@ def logical_segments(path_str) -> tuple[str, ...]:
     )
 
 
+# PR 13: `authors` names the per-author directory level of the sidecar layout
+# (`authors/<a>/` and `projects/<seg…>/authors/<a>/`). A logical project path
+# that contained it would be indistinguishable from that level, so the walkers
+# that find author directories could misread a project directory as an author
+# directory. Reserving the segment makes the layout unambiguous by
+# construction: one walker (store._team_author_dirs) is then exact.
+RESERVED_SEGMENT = "authors"
+
+
+def reserved_error(path_str) -> str | None:
+    """The message naming the reserved segment when a logical project path
+    contains it, else None."""
+    if RESERVED_SEGMENT in logical_segments(path_str):
+        return (f"logical project path '{path_str}' contains the reserved "
+                f"segment '{RESERVED_SEGMENT}' (it names the per-author "
+                "directory level of the team sidecar); rename that segment")
+    return None
+
+
 def normalize_repo_url(url) -> str | None:
     """Canonical host/path form for a repo URL, so ssh/https/scp spellings of
     the same repo compare equal: scheme stripped, credentials stripped, scp
@@ -112,15 +131,19 @@ def _parse_config(
     projects = data.get("projects")
     if not isinstance(projects, dict):
         return [], scope, None
+    reserved: str | None = None
     for logical, table in projects.items():
         segs = logical_segments(logical)
         repos = table.get("repos") if isinstance(table, dict) else None
         if not segs or not isinstance(repos, list):
             continue
+        if RESERVED_SEGMENT in segs:
+            reserved = reserved or reserved_error(logical)
+            continue
         normalized = {n for n in (normalize_repo_url(r) for r in repos) if n}
         if normalized:
             entries.append((segs, normalized))
-    return entries, scope, None
+    return entries, scope, (f"{reserved}; mapping ignored" if reserved else None)
 
 
 def config_error(sidecar: Path) -> str | None:
@@ -190,13 +213,29 @@ def read_candidates(project_dir) -> list[tuple[str, ...]]:
     return result
 
 
+def resolve_error(project_dir) -> str | None:
+    """Why a path this project WOULD resolve to was refused: the first of the
+    explicit env path and the origin-derived path that contains the reserved
+    segment. None when neither does. `team init` refuses on it; the resolver
+    itself degrades to the next tier, never raises."""
+    env = config.team_project()
+    if env and (msg := reserved_error(env)):
+        return msg
+    origin = _cached_origin(project_dir) if project_dir else None
+    if origin:
+        derived = "/".join(origin.split("/")[1:])
+        if msg := reserved_error(derived):
+            return msg
+    return None
+
+
 def _candidates(project_dir) -> list[tuple[str, ...]]:
     out: list[tuple[str, ...]] = []
     # Tier 1: explicit local intent — needs no git, wins over central config.
     env = config.team_project()
     if env:
         segs = logical_segments(env)
-        if segs:
+        if segs and RESERVED_SEGMENT not in segs:
             out.append(segs)
     if project_dir:
         origin = normalize_repo_url(_origin_url(project_dir))
@@ -212,7 +251,7 @@ def _candidates(project_dir) -> list[tuple[str, ...]]:
             # read candidate even when a higher tier wins: pre-mapping
             # history lives here.
             derived = logical_segments("/".join(origin.split("/")[1:]))
-            if derived:
+            if derived and RESERVED_SEGMENT not in derived:
                 out.append(derived)
     # Tier 4: nothing resolved → [] → flat era. Dedupe preserves tier order.
     #
@@ -304,13 +343,13 @@ def granted_paths(sidecar, honor_env=True) -> set[tuple[str, ...]]:
             repos |= mapped
         for repo in repos:
             derived = logical_segments("/".join(repo.split("/")[1:]))
-            if derived:
+            if derived and RESERVED_SEGMENT not in derived:
                 out.add(derived)
         if honor_env:
             env = config.team_project()
             if env:
                 segs = logical_segments(env)
-                if segs:
+                if segs and RESERVED_SEGMENT not in segs:
                     out.add(segs)
     except Exception:  # membership bugs must deny, never admit
         return set()

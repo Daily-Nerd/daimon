@@ -769,3 +769,51 @@ def test_granted_paths_resolver_bug_denies(monkeypatch):
 
     monkeypatch.setattr(teamproject, "_parse_config", _boom)
     assert teamproject.granted_paths(_remote_clone()) == set()
+
+
+# ---- PR 13: `authors` is a reserved segment of a logical project path ----
+
+
+def test_reserved_segment_is_named_in_the_error():
+    msg = teamproject.reserved_error("core/authors/api")
+    assert msg is not None
+    assert "authors" in msg and "core/authors/api" in msg
+    assert teamproject.reserved_error("core/api") is None
+    assert teamproject.reserved_error("") is None
+
+
+def test_env_path_with_the_reserved_segment_never_resolves(monkeypatch, tmp_path):
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/authors/census")
+    repo = _repo(tmp_path, "r", origin="git@github.com:org/plain.git")
+    assert teamproject.read_candidates(repo) == [("org", "plain")]
+    assert "authors" in (teamproject.resolve_error(repo) or "")
+
+
+def test_env_path_with_the_reserved_segment_alone_falls_to_flat(monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "authors")
+    assert teamproject.resolve(None) is None
+    assert "authors" in (teamproject.resolve_error(None) or "")
+
+
+def test_mapped_path_with_the_reserved_segment_is_skipped_and_reported(tmp_path):
+    repo = _repo(tmp_path, "r", origin="git@github.com:org/svc.git")
+    path = _write_config(
+        '[projects."core/authors/x"]\nrepos = ["git@github.com:org/svc.git"]\n'
+        '[projects."core/ok"]\nrepos = ["git@github.com:org/other.git"]\n')
+    assert teamproject.resolve(repo) == ("org", "svc")
+    err = teamproject.config_error(path.parent)
+    assert err is not None and "authors" in err
+    entries, _scope, _err = teamproject._parse_config(path)
+    assert [segs for segs, _r in entries] == [("core", "ok")]
+
+
+def test_origin_derived_path_with_the_reserved_segment_is_refused(tmp_path):
+    repo = _repo(tmp_path, "r", origin="git@github.com:org/authors/svc.git")
+    assert teamproject.resolve(repo) is None
+    assert "authors" in (teamproject.resolve_error(repo) or "")
+
+
+def test_clean_project_has_no_resolve_error(monkeypatch, tmp_path):
+    monkeypatch.delenv("DAIMON_TEAM_PROJECT", raising=False)
+    repo = _repo(tmp_path, "r", origin="git@github.com:org/svc.git")
+    assert teamproject.resolve_error(repo) is None

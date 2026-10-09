@@ -127,7 +127,8 @@ def census_machine() -> dict:
     for name in _LOG_LEDGERS:
         found[f"logs/{name}"] = config.log_dir() / name
     root = config.team_dir()
-    for path in sorted(root.rglob("tombstones.jsonl")):
+    for path in sorted(store._team_ledger_paths(
+            ("tombstones.jsonl",), include_own=True, include_local=True)):
         found[f"team/{path.relative_to(root).as_posix()}"] = path
     return {key: _counts(jsonl.read(path)) for key, path in found.items()}
 

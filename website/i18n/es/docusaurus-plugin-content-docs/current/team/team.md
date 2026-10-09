@@ -187,6 +187,16 @@ siempre — las lecturas abarcan ambos layouts y no hay migración; los
 checkpoints nuevos simplemente empiezan a aterrizar bajo `projects/` cuando
 resuelve una identidad de proyecto.
 
+**Segmento reservado.** `authors` nombra el nivel de directorio por autor, así
+que no puede aparecer como segmento de la ruta lógica de un proyecto.
+`daimon team init` rechaza un proyecto cuya ruta lo contenga, y el resolvedor
+descarta esa ruta (venga de `DAIMON_TEAM_PROJECT`, del fallback derivado del
+origin o de una tabla `[projects."…"]`, que `daimon team status` reporta).
+Migración: renombra el segmento en `daimon-team.toml` o en
+`DAIMON_TEAM_PROJECT`. Los archivos que ya estén bajo una ruta que contenga
+`authors` no se leen hasta renombrarla, lo que se equivoca hacia leer menos,
+nunca más.
+
 ## Qué proyectos sincronizan: la allowlist de alcance (cerrada por defecto)
 
 `DAIMON_TEAM=1` es global a la máquina, pero un remoto sincronizado solo

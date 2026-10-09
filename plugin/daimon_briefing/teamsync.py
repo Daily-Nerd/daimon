@@ -220,6 +220,8 @@ def init(url: str, project_dir=None) -> Path:
     config — the architect owns daimon-team.toml after birth. Raises TeamError
     on real user errors."""
     _validate_remote_url(url)
+    if reserved := teamproject.resolve_error(project_dir):
+        raise TeamError(reserved)
     slug = remote_slug(url)
     if shutil.which("git") is None:
         raise TeamError("git not found on PATH — team sync needs git")
@@ -273,25 +275,13 @@ def _ls_remote(sidecar, branch) -> tuple[str, str | None]:
 
 def _own_pathspecs(sidecar: Path, own: str) -> list[str]:
     """Own-author dirs in BOTH layout eras (#200): the legacy flat
-    authors/<own>/ plus every projects/**/authors/<own>/ at any depth. Found
-    by an explicit walk yielding explicit relative paths — exact by
-    construction, where a `projects/**/authors/<own>` glob pathspec would ride
-    on git's glob semantics. Descent stops at each authors/ dir (author dirs
-    hold only checkpoint files). Never raises (os.walk swallows errors)."""
-    specs = []
-    # Existence-gated: `git add` FAILS outright on a pathspec that matches
-    # nothing, so a nested-only sidecar must not carry a phantom flat spec
-    # (and vice versa). The nested specs come off the disk walk, so they
-    # exist by construction.
-    if (sidecar / "authors" / own).is_dir():
-        specs.append(f"authors/{own}")
-    for cur, dirnames, _files in os.walk(sidecar / "projects"):
-        cur_p = Path(cur)
-        if cur_p.name == "authors":
-            if own in dirnames:
-                specs.append((cur_p / own).relative_to(sidecar).as_posix())
-            dirnames[:] = []
-    return specs
+    authors/<own>/ plus every projects/**/authors/<own>/ at any depth, as
+    explicit relative paths from store's single author-directory walker (the
+    `authors` segment is reserved, so the walker is exact). A directory that
+    exists by construction, which `git add` needs: it FAILS outright on a
+    pathspec that matches nothing. Never raises."""
+    return [d.relative_to(sidecar).as_posix()
+            for d in store._team_author_dirs(sidecar) if d.name == own]
 
 
 def _commit_own(sidecar, report) -> None:

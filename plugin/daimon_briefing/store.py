@@ -1090,7 +1090,7 @@ def foreign_tombstones() -> ForeignTombstones:
     keys: set[str] = set()
     unproven: set[str] = set()
     degraded: set[str] = set()
-    for path in _foreign_tombstone_paths():
+    for path in _team_ledger_paths((_TOMBSTONE_NAME,)):
         got = _tombstone_keys(path)
         keys |= got.keys
         if got.unproven:
@@ -1114,23 +1114,37 @@ def foreign_forgotten_content_keys() -> set[str]:
     is another author's, it never syncs, and a solo user with DAIMON_TEAM=1
     would otherwise poison their own reopen through a dead-end path.
 
-    Bounded on purpose: only `authors/*/` directories inside real sidecars
-    are walked, so a clone's .git object store is never traversed, and each
-    ledger is capped — a teammate cannot make every briefing pay for an
+    Bounded on purpose: only the author directories `_team_ledger_paths`
+    finds are visited, so a clone's .git object store is never traversed, and
+    each ledger is capped: a teammate cannot make every briefing pay for an
     unbounded file. Never raises."""
     return foreign_tombstones().keys
 
 
-def _foreign_tombstone_paths(include_own: bool = False) -> list:
-    """Every tombstone ledger another author published in a synced sidecar:
-    the files `foreign_forgotten_content_keys` reads. `include_own` adds this
-    author's own ledgers and skips resolving the author, which can fork
-    `git config`: `forgotten_stamp` only needs to notice a change, so it
-    stats a superset and never pays that."""
+def _team_ledger_paths(names, *, include_own: bool = False,
+                       include_local: bool = False) -> list:
+    """Every published team ledger named in `names` (`tombstones.jsonl`,
+    `quarantines.jsonl`): `<author dir>/<name>` for each author directory
+    `_team_author_dirs` finds in a sidecar, the one walker for the team
+    layout. A path is returned when something exists there, a directory or a
+    broken link included: the reader then judges it unreadable, which keeps
+    the author unproven rather than silently trusted.
+
+    `include_own` adds this author's own directories and skips resolving the
+    author, which can fork `git config`: the stamp and the fingerprint only
+    need to notice a change, so they stat a superset and never pay that.
+    `include_local` adds the machine-local `local` mirror, which no reader
+    folds but whose files a fingerprint must still notice.
+
+    Bounded on purpose: the walker descends only `authors/` and
+    `projects/**/authors/`, so a clone's `.git` object store is never
+    traversed. A sidecar that cannot be walked costs only its own paths.
+    Never raises."""
     out: list = []
     try:
-        remotes = [d for d in config.team_dir().iterdir()
-                   if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
+        remotes = sorted(d for d in config.team_dir().iterdir()
+                         if d.is_dir()
+                         and (include_local or d.name != _TEAM_LOCAL_REMOTE))
     except OSError:
         return out
     if not remotes:
@@ -1140,8 +1154,11 @@ def _foreign_tombstone_paths(include_own: bool = False) -> list:
     own = None if include_own else (project_slug(config.author()) or "unknown")
     for remote in remotes:
         try:
-            out.extend(p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
-                       if own is None or p.parent.name != own)
+            for adir in _team_author_dirs(remote):
+                if own is not None and adir.name == own:
+                    continue
+                out.extend(adir / name for name in names
+                           if os.path.lexists(adir / name))
         except OSError:
             continue
     return out
@@ -1168,7 +1185,7 @@ def forgotten_stamp() -> tuple:
         except OSError:
             local.append((name, None, None, None, None))
     foreign: list[tuple] = []
-    for path in _foreign_tombstone_paths(include_own=True):
+    for path in _team_ledger_paths((_TOMBSTONE_NAME,), include_own=True):
         try:
             st = os.stat(path)
             foreign.append((str(path), st.st_mtime_ns, st.st_ctime_ns,

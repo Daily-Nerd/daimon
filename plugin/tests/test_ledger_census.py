@@ -117,14 +117,15 @@ def test_machine_files_report_health_only():
     logs = config.log_dir()
     logs.mkdir(parents=True, exist_ok=True)
     (logs / "checks.jsonl").write_bytes(b"not json\n")
-    tomb = config.team_dir() / "remote-a" / "sub" / "tombstones.jsonl"
+    tomb = (config.team_dir() / "remote-a" / "authors" / "ada"
+            / "tombstones.jsonl")
     tomb.parent.mkdir(parents=True)
     tomb.write_bytes(_line(key="abc"))
     result = ledger_census.census_machine()
     assert result["checkpoints/migrations.jsonl"]["state"] == "degraded"
     assert result["logs/checks.jsonl"]["state"] == "unreadable"
     assert result["logs/recall-delivery.jsonl"]["state"] == "absent"
-    assert result["team/remote-a/sub/tombstones.jsonl"]["state"] == "ok"
+    assert result["team/remote-a/authors/ada/tombstones.jsonl"]["state"] == "ok"
     for entry in result.values():
         assert set(entry) == {"state", "torn", "split", "garbage"}
 

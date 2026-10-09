@@ -960,3 +960,11 @@ def test_cli_team_status_lists_scope_repos(bare_remote, monkeypatch, capsys, tmp
     teamsync.init(str(bare_remote), project_dir=proj)
     assert cli.main(["team", "status"]) == 0
     assert "github.com/org/alpha" in capsys.readouterr().out
+
+
+def test_init_refuses_a_project_path_with_the_reserved_segment(
+        bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/authors/census")
+    with pytest.raises(teamsync.TeamError, match="authors"):
+        teamsync.init(str(bare_remote), project_dir=bare_remote.parent)
+    assert not (config.team_dir() / teamsync.remote_slug(str(bare_remote))).exists()

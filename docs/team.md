@@ -162,6 +162,15 @@ paste error can never open the remote to the whole machine.
 across both layouts and there is no migration; new checkpoints simply start
 landing under `projects/` once a project identity resolves.
 
+**Reserved segment.** `authors` names the per-author directory level, so it
+cannot appear as a segment of a logical project path. `daimon team init` refuses
+a project whose path contains it, and the resolver drops such a path (from
+`DAIMON_TEAM_PROJECT`, from the origin-derived fallback, or from a
+`[projects."…"]` table, which `daimon team status` reports). Migration: rename
+the offending segment in `daimon-team.toml` or `DAIMON_TEAM_PROJECT`. Files
+already sitting under a path that contains `authors` are not read until the
+path is renamed, which errs toward reading less, never more.
+
 ## Which projects sync: the scope allowlist (default-closed)
 
 `DAIMON_TEAM=1` is machine-global, but a synced remote only accepts
