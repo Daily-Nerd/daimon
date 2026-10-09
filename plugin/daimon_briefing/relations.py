@@ -83,7 +83,6 @@ _MAX_AUTHOR = 200
 # reaching it is a caller bug and refusal is LOUD (RelationError), never a
 # silent False the audit would read as absence.
 _MAX_ROW_BYTES = 2048
-_FORGOTTEN_PREFIX = "forgotten:"
 
 
 class RelationError(ValueError):
@@ -452,101 +451,40 @@ def get(relation_id: str, project_dir=None) -> dict | None:
     return records(project_dir=project_dir).get(relation_id)
 
 
-def endpoint_texts(project_dir=None) -> dict:
-    """Read-time id→text join over every project surface, live or not.
-
-    The ledger holds no text by construction, so display resolves against
-    the checkpoints — and only at render time, never persisted back.  Every
-    surface is walked (not just the live checkpoint) because a relation
-    endpoint may name a session that only survives in prev-N.
-    """
-    texts = {}
-    for _, _, _, item in store.items_for_project(project_dir):
-        item_id = str(item.get("id") or "")
-        if item_id and item_id not in texts:
-            texts[item_id] = str(item.get("text") or "")
-    return texts
-
-
-def _withhold_erased(records_map, *, project_dir):
-    """Split folded records into (renderable, withheld_count).
-
-    Erased means TOMBSTONED, never merely absent: an edge touching a
-    forgotten item is withheld from every rendered surface (the count is
-    safe — it names no id), while an endpoint that only aged out of the GC
-    window still renders as unresolved.
-    """
-    erased = tombstoned_item_ids(project_dir=project_dir)
-    kept, withheld = [], 0
-    for record in records_map.values():
-        if _row_item_ids(record) & erased:
-            withheld += 1
-            continue
-        kept.append(record)
-    return kept, withheld
-
-
-def listing(*, states=None, project_dir=None) -> tuple[list[dict], int]:
-    """Every renderable record in adjudication order: candidates first,
-    ties by id, erased edges withheld.  This sort and the withholding are
-    the presentation contract shared by the CLI and the viewer lane; they
-    live here so the two surfaces cannot drift apart."""
+def listing(*, states=None, project_dir=None) -> list[dict]:
+    """Every record in the requested states, in adjudication order: candidates
+    first, ties by id. No text and no withholding: the join with item text,
+    and the rule that drops an edge touching an erased item, live in
+    `view.relations`, once, for the CLI and the viewer."""
     wanted = set(states or STATES)
     unknown = wanted - STATES
     if unknown:
         raise RelationError(f"unknown state: {', '.join(sorted(unknown))}")
-    kept, withheld = _withhold_erased(
-        records(project_dir=project_dir), project_dir=project_dir)
-    rows = [record for record in kept if record["state"] in wanted]
+    rows = [record for record in records(project_dir=project_dir).values()
+            if record["state"] in wanted]
     rows.sort(key=lambda record: (record["state"] != "candidate",
                                   record["relation_id"]))
-    return rows, withheld
+    return rows
 
 
-def for_item(item_id: str, *, project_dir=None) -> tuple[list[dict], int]:
-    """CONFIRMED edges touching one item, erased chains withheld.
+def for_item(item_id: str, *, project_dir=None) -> list[dict]:
+    """CONFIRMED edges touching one item.
 
     Confirmed-only is the Phase 3 boundary: candidates and rejections stay
     off every reader-facing history surface (they exist for adjudication
     and evaluator metrics), so a chain a reader sees is always one a human
-    vouched for.  The withheld count is scoped to THIS item's edges — it
-    names no id and never distinguishes forget from absence to a reader."""
+    vouched for."""
     target = str(item_id or "")
     if not target:
-        return [], 0
-    erased = tombstoned_item_ids(project_dir=project_dir)
-    rows, withheld = [], 0
-    for record in records(project_dir=project_dir).values():
-        touched = _row_item_ids(record)
-        if target not in touched:
-            continue
-        if touched & erased:
-            withheld += 1
-            continue
-        if record["state"] == "confirmed":
-            rows.append(record)
+        return []
+    rows = [record for record in records(project_dir=project_dir).values()
+            if target in row_item_ids(record)
+            and record["state"] == "confirmed"]
     rows.sort(key=lambda record: record["relation_id"])
-    return rows, withheld
+    return rows
 
 
-def tombstoned_item_ids(*, project_dir=None) -> set[str]:
-    """Item ids whose LATEST event is a forget tombstone — true erasure.
-
-    Absence from live surfaces is NOT this: per-session files GC and prev-N
-    rotates, so an aged-out occurrence must stay a valid, resolvable memory
-    (the refuter round: inerting on absence would have destroyed exactly the
-    long-range lineage this ledger exists to keep).  Latest-event folding
-    means a later `reopen` lifts the tombstone, matching
-    `store.forgotten_content_keys`.
-    """
-    out = set()
-    for ref, event in store.resolutions(project_dir=project_dir).items():
-        if str(event.get("status") or "").startswith(_FORGOTTEN_PREFIX):
-            out.add(str(ref))
-    return out
-
-
-def _row_item_ids(row: dict) -> set[str]:
+def row_item_ids(row: dict) -> set[str]:
     out = set()
     for key in ("from", "to"):
         endpoint = row.get(key)
@@ -559,7 +497,7 @@ def _row_item_ids(row: dict) -> set[str]:
 
 # No plaintext lives here, so a torn line cannot hide the value: only a ledger
 # that was not READ leaves this unreached.
-@jsonl.reaching(_path, lambda row, item: str(item or "") in _row_item_ids(row),
+@jsonl.reaching(_path, lambda row, item: str(item or "") in row_item_ids(row),
                 plaintext=False)
 def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     """Remove every record whose edge touches `item_id` (#678 fork A).
@@ -593,7 +531,7 @@ def forget_item_id(item_id: str, *, project_dir=None) -> list[str]:
     doomed = {
         str(row.get("relation_id") or "")
         for row in events(project_dir=project_dir)
-        if target in _row_item_ids(row)
+        if target in row_item_ids(row)
     }
     doomed.discard("")
     if not doomed:

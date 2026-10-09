@@ -523,7 +523,7 @@ def audit_project(project_dir=None) -> dict:
     # scan is what proves the deletion reached the edges.
     rel_path = config.checkpoint_dir() / slug / _RELATIONS_NAME
     scanned = _scan_rows(rel_path, result)
-    tombstoned = relations.tombstoned_item_ids(project_dir=project_dir)
+    tombstoned = store.tombstoned_item_ids(project_dir=project_dir)
     rel_records: set[str] = set()
     rel_rows = 0
     for row in scanned:
@@ -563,7 +563,7 @@ def audit_project(project_dir=None) -> dict:
     # tombstones — amendments.forget_item_id removes rows about a forgotten
     # item, so a surviving one means the scrub was missed or raced.
     # `tombstoned` is the set the RELATIONS block above computed
-    # (relations.tombstoned_item_ids) — a deliberate shared read, named here
+    # (store.tombstoned_item_ids) — a deliberate shared read, named here
     # so reordering these blocks does not silently sever it.
     amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
     scanned = _scan_rows(amend_path, result)

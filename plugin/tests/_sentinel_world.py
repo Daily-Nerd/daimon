@@ -143,6 +143,8 @@ def build_world(tmp_path, monkeypatch) -> World:
         pytest.skip("git not on PATH: the sidecar needs it")
     proj = tmp_path / "proj"
     proj.mkdir()
+    # `daimon anchor mod.py fn` resolves a real symbol (the anchor verb cases)
+    (proj / "mod.py").write_text("def fn():\n    return 1\n")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(proj))
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")

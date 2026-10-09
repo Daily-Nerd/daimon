@@ -16,7 +16,7 @@ from . import reader
 # the view (`view`, `schema`, `api`, pinned by tests/test_read_layers.py); the
 # engine boundary lives here in dispatch only.
 from daimon_briefing import (config, display, inspector, recall, refutations,
-                             relations, view)
+                             view)
 
 _PAGE = Path(__file__).parent / "page.html"
 _SLUG_RE = re.compile(r"^[\w-]+$")
@@ -287,22 +287,14 @@ def _relations(h, path, params):
     slug = h._slug_or_refuse(params)
     if slug is None:
         return
-    # History lane (#678 Phase 3): CONFIRMED edges only — the fold,
-    # the confirmed boundary, and the erased-edge withholding all live
-    # in relations.for_item, shared with the CLI's presentation seam,
-    # so the two surfaces cannot drift. Texts are a read-time join
-    # (the ledger holds no text by construction) scoped to the ids the
-    # response actually names.
+    # History lane (#678 Phase 3): CONFIRMED edges only. The fold, the
+    # confirmed boundary, the endpoint-text join and the rule that drops an
+    # edge touching a forgotten item all live in `view.relations`, shared
+    # with the CLI, so the two surfaces cannot drift.
     item_id = params.get("id", [""])[0]
-    rows, withheld = relations.for_item(item_id, project_dir=slug)
-    named = {item_id}
-    for row in rows:
-        for endpoint in (row.get("from") or {}, row.get("to") or {}):
-            named.add(str(endpoint.get("item_id") or ""))
-    texts = {k: v for k, v in relations.endpoint_texts(slug).items()
-             if k in named}
-    h._json({"ok": True, "rows": rows, "texts": texts,
-             "withheld": withheld})
+    got = view.relations(slug, item_id=item_id)
+    h._json({"ok": True, "rows": list(got.rows), "texts": dict(got.texts),
+             "withheld": got.withheld})
 
 
 def _ledger(h, path, params):

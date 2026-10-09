@@ -183,9 +183,17 @@ case("cli:brief", "global", A("brief", "--global-fallback"),
 case("cli:brief", "auto", A("brief", "--auto"), dests=("auto",))
 case("cli:anchor", "print", A("anchor", "mod.py", "fn"),
      dests=("file", "symbol", "project"), rc=(0, 1))
+# a needle that matches ONLY the quarantined question: a withheld match is
+# ignored entirely, so this reads as no match (the needle is the caller's own
+# words, not the sentinel token)
 case("cli:anchor", "attach",
-     A("anchor", "mod.py", "fn", "--attach", sw.TOKENS["question"]),
-     dests=("attach",), rc=(0, 1))
+     A("anchor", "mod.py", "fn", "--attach", "the question sentinel"),
+     dests=("attach",), rc=(1,))
+# a needle that matches a quarantined question AND a visible one: the visible
+# one takes the anchor, the withheld one is neither named nor counted
+case("cli:anchor", "attach-withheld",
+     A("anchor", "mod.py", "fn", "--attach", "question"),
+     dests=("attach",), rc=(0,))
 case("cli:recall", "query", A("recall", "sentinel"), dests=("query",),
      axes=("DAIMON_PLAIN", "DAIMON_EXTRA_READ_SLUGS", "DAIMON_TENANT_SCOPED"))
 case("cli:recall", "control", A("recall", "unrelated", "decision"),
@@ -521,8 +529,11 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
         else:
             res = drive.run_hook(name, c.args(world), env=envs)
         res.written = drive.written_since(world.root, before)
-        blob = res.text() + "\n" + b"\n".join(res.written).decode(
-            "utf-8", errors="replace")
+        # a declared write-carry case keeps withheld bytes in its rewrite on
+        # purpose: only what it PRINTED is read output
+        written = b"" if (surface, tag) in WRITE_CARRY else b"\n".join(
+            res.written)
+        blob = res.text() + "\n" + written.decode("utf-8", errors="replace")
         leaks |= {(surface, tag, k) for k in sw.leaked_kinds(blob)}
         if (surface, tag) not in KEY_EXEMPT:
             leaks |= {(surface, tag, k) for k in sw.leaked_keys(blob)}
@@ -544,8 +555,6 @@ KNOWN_LEAKS: set = {
     *{("cli:refute revise", k) for k in ("question", "topic",)},
     *{("cli:refute search", k) for k in ("question", "topic",)},
     *{("cli:refute show", k) for k in ("contradiction", "question", "topic",)},
-    *{("cli:relations list", k) for k in ("question",)},
-    *{("cli:relations show", k) for k in ("question",)},
     *{("cli:request accept", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request done", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request inbox", k) for k in ("contradiction", "question", "topic",)},
@@ -555,8 +564,6 @@ KNOWN_LEAKS: set = {
     *{("cli:request reply", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request suppress", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:request-inject", k) for k in ("contradiction", "topic",)},
-    *{("cli:resolve", k) for k in ("question",)},
-    *{("cli:reverify", k) for k in ("question",)},
     *{("cli:ruling list", k) for k in ("question",)},
     *{("cli:ruling retire", k) for k in ("contradiction", "question", "topic",)},
     *{("cli:ruling revise", k) for k in ("contradiction", "question", "topic",)},
@@ -564,7 +571,6 @@ KNOWN_LEAKS: set = {
     *{("cli:trust list", k) for k in ("contradiction", "question",)},
     *{("cli:trust show", k) for k in ("contradiction",)},
     *{("http:/api/refutations", k) for k in ("contradiction", "question", "topic",)},
-    *{("http:/api/relations", k) for k in ("question",)},
     *{("mcp:requests_inbox", k) for k in ("contradiction", "question", "topic",)},
 }
 
@@ -742,14 +748,18 @@ WRITE_CARRY = {
         "copies the checkpoint into the author's team mirror",
     ("cli:team sync", "publish"):
         "publishes own author dirs to the sidecar remote",
+    ("cli:anchor", "attach-withheld"):
+        "rewrites the checkpoint whole; the bytes the view withholds stay in "
+        "place, which is the point (tests/test_attach_anchor.py)",
 }
 
 
 def test_exemptions_name_real_cases():
     for key in HUMAN_CHANNEL:
         assert key in CASES, key
-    for surface, _tag in WRITE_CARRY:
-        assert surface in NO_ITEMS or surface.startswith("store."), surface
+    for surface, tag in WRITE_CARRY:
+        assert (surface in NO_ITEMS or surface.startswith("store.")
+                or (surface, tag) in CASES), (surface, tag)
 
 
 def test_the_human_channel_exemption_is_closed_to_the_agent(world_run):
@@ -808,6 +818,15 @@ CONVERTED = {
     "http:/api/why": ("inspector.py", frozenset({"lineage"})),
     "cli:blame": ("cli/history.py", frozenset({"lineage"})),
     "cli:diff": ("cli/history.py", frozenset({"snapshot", "pointers"})),
+    # 11b: the binding verbs bind through `view.match` and nothing else; the
+    # relations verbs and route read the edges through `view.relations`.
+    "cli:resolve": ("cli/lifecycle.py", frozenset({"match"})),
+    "cli:reverify": ("cli/lifecycle.py", frozenset({"match"})),
+    "cli:amend propose": ("cli/amend.py", frozenset({"match"})),
+    "cli:anchor": ("cli/brief.py", frozenset({"match"})),
+    "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
+    "cli:relations show": ("cli/relations_cmd.py", frozenset({"relations"})),
+    "http:/api/relations": ("../daimon_ui/server.py", frozenset({"relations"})),
 }
 
 # The recall surfaces: they do not open a checkpoint, they query the derived
@@ -833,6 +852,9 @@ NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json"),
                 # `/api/checkpoint/S-1` is not a pointer ref: refused before
                 # any read
                 ("http:/api/checkpoint/", "session")}
+# `anchor` without `--attach` prints the resolved anchor block and reads no item
+NO_ITEM_READ |= {(s, t) for (s, t) in CASES
+                 if s == "cli:anchor" and t != "attach"}
 
 
 def _calls_view(rel, names):
@@ -875,7 +897,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
 
     for name in ("open", "peek", "projects", "pointers", "sessions",
                  "open_sessions", "events", "verifications", "snapshot",
-                 "judge", "lookup_many", "lineage", "match"):
+                 "judge", "lookup_many", "lineage", "match", "relations"):
         monkeypatch.setattr(view, name, boom)
     # the autouse isolation points this test at a fresh empty home; the world
     # lives where the fixture built it, and a surface that finds no bucket
@@ -976,15 +998,16 @@ def test_a_recall_surface_shows_nothing_when_the_judge_withholds_everything(
 # These two print the raw bind candidates of the live checkpoint (the same
 # leak they already carry in KNOWN_LEAKS for the quarantined sentinels); the
 # view.match conversion deletes them.
-KNOWN_ID_LEAKS: set = {"cli:forget", "cli:resolve"}
+KNOWN_ID_LEAKS: set = {"cli:forget"}
 
 
 def _id_leaking_surfaces(details):
     out = set()
-    for (surface, _tag), results in details.items():
+    for (surface, tag), results in details.items():
         for _label, res in results:
-            blob = res.text() + "\n" + b"\n".join(res.written).decode(
-                "utf-8", errors="replace")
+            written = b"" if (surface, tag) in WRITE_CARRY else b"\n".join(
+                res.written)
+            blob = res.text() + "\n" + written.decode("utf-8", errors="replace")
             if sw.leaked_id(blob):
                 out.add(surface)
     return out

@@ -477,7 +477,6 @@ from .relations_cmd import (  # noqa: E402
     _cmd_relations_show,  # noqa: F401 — re-exported for compat
     _cmd_relations_verdict,  # noqa: F401 — re-exported for compat
     _relations_channel,  # noqa: F401 — re-exported for compat
-    _relations_endpoint_texts,  # noqa: F401 — re-exported for compat
 )
 from .projects import (  # noqa: E402
     _TOPIC_TEASER_CHARS,  # noqa: F401 — re-exported for compat

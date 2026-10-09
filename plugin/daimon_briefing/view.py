@@ -28,8 +28,9 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping, NamedTuple
 
 from . import (amendments, carry, config, display, index_locate, jsonl,
-               multihash, normalize, provenance, refutations, requests, schema,
-               store, surfaces, trust)
+               multihash, normalize, provenance, refutations)
+from . import relations as relation_ledger
+from . import requests, schema, store, surfaces, trust
 from .jsonl import Health
 from .surfaces import ReadPosture
 
@@ -359,10 +360,7 @@ def forgotten_ids(resolutions) -> frozenset:
     lifts it). A free-form status that merely starts with the word
     ("forgotten about it") is a resolution, not a tombstone. The one id rule,
     shared by `snapshot` and `judge`."""
-    return frozenset(
-        ref for ref, evt in resolutions.items()
-        if store.is_resolved(evt)
-        and store.is_tombstone_status(evt.get("status")))
+    return store.tombstone_refs(resolutions)
 
 
 def posture(name: str, health: Health, *, foreign: bool = False) -> ReadPosture:
@@ -1722,6 +1720,58 @@ def match(project, query: str, *, how: str = "terms") -> Match:
         else:
             hits.append(Found(item, fld, (_occurrence(raw),)))
     return Match(tuple(hits), withheld, named, snap.closed)
+
+
+@dataclass(frozen=True)
+class RelationView:
+    """Relation edges a reader may see, with the text of their endpoints.
+    `texts` maps an item id to its visible text or to the withheld marker
+    (a quarantined or closed endpoint); an endpoint nothing holds is absent
+    from it (the renderers print `[unresolved]`). `withheld` is 0: an edge
+    that touches a forgotten item is dropped and counted nowhere."""
+
+    rows: tuple
+    texts: Mapping
+    withheld: int = 0
+
+
+def relations(project, *, states=None, item_id=None,
+              relation_id=None) -> RelationView:
+    """The relation edges of a project joined with their endpoint text, the
+    one place the ledger (which holds no text) meets the checkpoints.
+
+    The rows come from the relations ledger: every record in `states`, or the
+    confirmed edges touching `item_id`, or the one record `relation_id`. The
+    endpoint ids of those rows go through `lookup_many` ONCE (one light
+    snapshot, one pointer window, chunked index seeks), so the join is bounded
+    by the edge count and never walks the machine. An edge with a forgotten
+    endpoint is dropped silently (H7): the list never says an item was
+    forgotten. A quarantined or closed endpoint keeps its edge and reads as
+    the marker."""
+    if relation_id is not None:
+        record = relation_ledger.get(relation_id, project_dir=project)
+        rows = [record] if record is not None else []
+    elif item_id is not None:
+        rows = relation_ledger.for_item(item_id, project_dir=project)
+    else:
+        rows = relation_ledger.listing(states=states, project_dir=project)
+    ids = list(dict.fromkeys(
+        i for row in rows for i in sorted(relation_ledger.row_item_ids(row))))
+    found = lookup_many(project, ids) if ids else {}
+    erased = {i for i, v in found.items()
+              if isinstance(v, Withheld) and v.reason == "forgotten"}
+    kept = tuple(row for row in rows
+                 if not relation_ledger.row_item_ids(row) & erased)
+    named = {i for row in kept for i in relation_ledger.row_item_ids(row)}
+    texts: dict[str, str] = {}
+    for i, v in found.items():
+        if i not in named:
+            continue
+        if isinstance(v, Found):
+            texts[i] = str(v.item.get("text") or "")
+        elif isinstance(v, Withheld):
+            texts[i] = display.withheld_marker(v)
+    return RelationView(kept, texts, 0)
 
 
 def suppressed(project, now: float) -> Suppression:

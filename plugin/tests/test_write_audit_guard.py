@@ -155,7 +155,7 @@ SKIPPED: dict = {
         "harness cannot drive it to completion. Its write surface is bounded "
         "by construction — the handler defines only do_GET, and its engine "
         "calls (recall.search, inspector.inspect_item, refutations.listing, "
-        "relations.for_item/endpoint_texts) are the same paths the `recall`, "
+        "view.relations) are the same paths the `recall`, "
         "`refute`, and `relations` recipes already audit "
         "(tests/ui/test_server_engines.py covers the dispatch). The one "
         "write is /api/recall refreshing the derived recall index."

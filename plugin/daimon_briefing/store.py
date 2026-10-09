@@ -2728,6 +2728,30 @@ def forget_hit_stats(project_dir=None) -> dict:
 HUMAN_EVENT_SOURCES = frozenset({"cli", "cli-tty", "ui"})
 
 
+def tombstone_refs(resolutions) -> frozenset:
+    """The refs of a `fold_resolutions` result whose latest event is a forget
+    tombstone that still stands: the one id rule `view.forgotten_ids` and
+    `tombstoned_item_ids` share. A later reopen replaces the latest event and
+    lifts it; a free-form status that merely starts with the word is a
+    resolution, not a tombstone."""
+    return frozenset(
+        ref for ref, evt in resolutions.items()
+        if is_resolved(evt) and is_tombstone_status(evt.get("status")))
+
+
+def tombstoned_item_ids(*, project_dir=None) -> set[str]:
+    """Item ids whose LATEST event is a forget tombstone: true erasure, read
+    from the project's own events ledger.
+
+    Absence from live surfaces is NOT this: per-session files GC and prev-N
+    rotates, so an aged-out occurrence must stay a valid, resolvable memory
+    (inerting on absence would destroy the long-range lineage the relations
+    ledger exists to keep). Latest-event folding means a later `reopen` lifts
+    the tombstone. The residue audit (`privacy`) reads it to prove a forget
+    reached the relations ledger."""
+    return set(tombstone_refs(resolutions(project_dir=project_dir)))
+
+
 def is_tombstone_status(status) -> bool:
     """Whether a free-form status would read back as a forget tombstone: the
     same prefix test `forgotten_content_keys` applies (stripped, any case)."""
