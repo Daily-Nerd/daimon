@@ -306,7 +306,12 @@ payload, counts are counts of visible items, and a trust ledger that cannot be r
 hides items and is named in the payload's `notes`. The activity feed never shows a
 forgotten value or the key that names it: a forget tombstone reads as the bare
 status `forgotten`. A resolution is the kernel's (`store.is_resolved`), the rule
-`daimon diff` applies. The viewer's reader opens no file and parses no ledger; the
+`daimon diff` applies. An exact id is read by `view.lookup_many` (pointer window,
+then a read-only index locator that never rebuilds the index, then the
+forgotten-id and quarantine hints) and its history by `view.lineage`, which
+`daimon why`, `daimon blame` and the viewer's why page compose. Those three are
+the only places that may say `[withheld: forgotten]`, and only for the one id
+asked about; `daimon diff` and every listing treat a forgotten value as absent. The viewer's reader opens no file and parses no ledger; the
 one file check it needs, the cheap receipt tamper test, is `view.receipt_state`.
 Its server delegates search, trust inspection, refutations and relations to Daimon's
 engines so those semantics do not fork inside the same distribution. Every request
