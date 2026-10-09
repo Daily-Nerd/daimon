@@ -27,6 +27,8 @@ redact function are all injected by the caller.
 """
 
 import hashlib
+import math
+import re
 
 from . import normalize, redact, schema
 
@@ -438,3 +440,121 @@ def admit_foreign(checkpoint, *, member: bool, forgotten_keys: set,
     drop_forgotten(checkpoint, forgotten_keys)
     clamp_foreign_trust(checkpoint)
     return checkpoint
+
+
+# ---- PR 13 (D6): a teammate's published quarantine claims ----
+
+# `trust._EVENT_RANK` for the events a published row can stand for. The
+# ledger's own tie rule, restated because trust imports this module and a
+# test pins equality (tests/test_quarantine_fold.py): a same-order tie ends
+# `released`, the way the local fold ends it.
+_EVENT_RANK = {"quarantined": 0, "confirmed": 1, "released": 2}
+# A published row says `active` or `released`; `active` is a quarantined or
+# a confirmed event, and both rank below `released`.
+_STATE_RANK = {"active": _EVENT_RANK["quarantined"],
+               "released": _EVENT_RANK["released"]}
+_PUBLISHED_KINDS = frozenset(f.kind for f in schema.ITEM_FIELDS)
+_PUBLISHED_KEY_RE = re.compile(r"[0-9a-f]{8,64}")
+_PUBLISHED_ID_RE = re.compile(r"tr-[0-9a-f]{12}")
+
+
+_PUBLISHED_TS_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+_PUBLISHED_EVENT_RE = re.compile(r"[\w-]{1,64}")
+_PUBLISHED_AUTHOR_RE = re.compile(r"[\w.-]{1,128}")
+_PUBLISHER_EVENT_RE = re.compile(r"[0-9a-f]{32}")
+
+
+def _published_order(row: dict) -> int:
+    """The row's `order` as an int, 0 when it is missing or not a finite
+    number. `json` accepts `Infinity`, `-Infinity`, `NaN` and `1e999`, and a
+    bool, a string or a list is not an order: none may raise out of the fold
+    or sort a forged row ahead of the real ones."""
+    value = row.get("order")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return 0
+        return int(value)
+    return value
+
+
+def _optional_shape_ok(row: dict) -> bool:
+    """The optional fields of a published row, when present, have their one
+    shape (hashes, enums, a timestamp, a directory-name-like author): a field
+    that carries anything else marks a row a reader ignores."""
+    for name, rx in (("ts", _PUBLISHED_TS_RE),
+                     ("event_id", _PUBLISHED_EVENT_RE),
+                     ("author", _PUBLISHED_AUTHOR_RE)):
+        if name in row and not (isinstance(row[name], str)
+                                and rx.fullmatch(row[name])):
+            return False
+    version = row.get("version")
+    return "version" not in row or (
+        isinstance(version, int) and not isinstance(version, bool))
+
+
+def strict_published_row(row) -> bool:
+    """The full shape a PUBLISHER may write: every field present and in its
+    one shape. The fold reads leniently (D6 minimal rows still fold); the
+    writer never emits anything but this."""
+    if not isinstance(row, dict) or not _optional_shape_ok(row):
+        return False
+    order = row.get("order")
+    ident = row.get("quarantine_id")
+    event_id = row.get("event_id")
+    return (isinstance(order, int) and not isinstance(order, bool)
+            and isinstance(row.get("version"), int)
+            and isinstance(row.get("ts"), str)
+            and isinstance(row.get("author"), str)
+            and isinstance(event_id, str)
+            and bool(_PUBLISHER_EVENT_RE.fullmatch(event_id))
+            and isinstance(ident, str) and bool(_PUBLISHED_ID_RE.fullmatch(ident))
+            and row.get("kind") in _PUBLISHED_KINDS
+            and row.get("state") in _STATE_RANK
+            and isinstance(row.get("value_key"), str)
+            and bool(_PUBLISHED_KEY_RE.fullmatch(row["value_key"])))
+
+
+def fold_published_quarantines(rows) -> frozenset:
+    """The `(kind, value_key)` pairs ONE author's published file still claims.
+
+    A row is `{kind, value_key, state}` plus optional `quarantine_id`,
+    `order` and `event_id` (hashes and enums, never prose). Rows that are not
+    objects, name a kind outside the item vocabulary, carry a value key that
+    is not 8 to 64 lowercase hex characters, or state anything but `active`
+    or `released` are ignored.
+
+    Per quarantine id the rows sort by `(order, rank, event_id, line)` and the
+    id is active when its last row says `active`; a row with no well-formed
+    id is its own `(kind, value_key)` identity. A pair is active when ANY of
+    its ids is: one author who quarantined the same text in two projects has
+    two ids, and releasing one must not lift the other. A missing `order`
+    reads 0, and so does one that is not a finite number; a row whose ts,
+    event id, author or version is not its one shape is ignored. The caller
+    unions the result across authors and files: a
+    release retracts only its own author's claim. Pure: no I/O."""
+    by_id: dict = {}
+    for line, row in enumerate(rows):
+        if not isinstance(row, dict) or not _optional_shape_ok(row):
+            continue
+        kind, key, state = row.get("kind"), row.get("value_key"), row.get("state")
+        if not (isinstance(kind, str) and isinstance(state, str)
+                and isinstance(key, str)):
+            continue
+        if (kind not in _PUBLISHED_KINDS or state not in _STATE_RANK
+                or not _PUBLISHED_KEY_RE.fullmatch(key)):
+            continue
+        tid = row.get("quarantine_id")
+        ident = (tid if isinstance(tid, str) and _PUBLISHED_ID_RE.fullmatch(tid)
+                 else (kind, key))
+        event_id = row.get("event_id")
+        sort = (_published_order(row), _STATE_RANK[state],
+                event_id if isinstance(event_id, str) else "", line)
+        by_id.setdefault(ident, []).append((sort, kind, key, state))
+    active: set = set()
+    for entries in by_id.values():
+        _sort, kind, key, state = max(entries, key=lambda e: e[0])
+        if state == "active":
+            active.add((kind, key))
+    return frozenset(active)
