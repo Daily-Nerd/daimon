@@ -1935,6 +1935,27 @@ def _sync_checks(project_dir=None, *, record=None, row=None,
         _last_check_sync = _CheckSyncFailure(f"{type(exc).__name__}: {exc}")
 
 
+def sync_armed_checks(*, project_dir=None) -> "jsonl.Reached":
+    """The forget registry's derived step for the armed-check manifest and
+    its scripts (#943): a forgotten ruling's check leaves the disk by
+    re-deriving both from the ledger the forget just rewrote.
+
+    `refutations.forget_content_key` already re-derives them when it removed a
+    ruling that carries a check; this reports whether that derivation held
+    (`last_check_sync`), and re-runs it when the report is a failure, so a
+    rerun after a repair finishes the job. A failure names its exception TYPE
+    only."""
+    report = last_check_sync()
+    if report is not None and not report.ok:
+        _sync_checks(project_dir, force=True, writer=Writer.CURE)
+        report = last_check_sync()
+    if report is None or report.ok:
+        return jsonl.Reached(())
+    detail = ("not updated" if not isinstance(report, _CheckSyncFailure)
+              else str(report.reason).split(":", 1)[0])
+    return jsonl.Reached((), reached=False, detail=detail)
+
+
 def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
            project_dir=None) -> str:
     """#693: end an active ruling. Human channels retire directly; an agent

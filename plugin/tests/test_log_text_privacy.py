@@ -100,9 +100,11 @@ def test_registry_declares_backend_stderr_log_reachable():
     assert s is not None
     assert s.plaintext is True and s.delete == "wholesale-purge"
     assert s.walker == "forget"
-    # serialize.log keeps the exempt claim — true again by construction once
-    # the downgrade writers log hashes (and forget scrubs the legacy lines).
-    assert surfaces.match("logs/serialize.log").delete == "exempt-no-plaintext"
+    # serialize.log is its own row: current writers log hashes, and forget
+    # scrubs the legacy payloads in place (it is also the ledger `status`
+    # parses, so it is never purged wholesale).
+    assert surfaces.match("logs/serialize.log").delete == "rewrite"
+    assert surfaces.match("logs/other.log").delete == "exempt-no-plaintext"
     assert not any(x.issue == "#616" for x in surfaces.SURFACES), \
         "#616 is closed — no entry may still cite it as an open gap"
 

@@ -108,6 +108,45 @@ class FieldPath(NamedTuple):
     is_list: bool = False
 
 
+# The forget registry (#1132 PR 12). Every step a forget runs is a row of
+# SURFACES, and `forget.STEPS` is derived from here and nowhere else, so a
+# deleter added to the registry cannot be missed by forget, repair or resume,
+# and a deleter that is not a row fails the census.
+#
+# Phases run in this order: the tombstone lands first (the write gate and the
+# recall index read it), the hash-only team row goes out next so teammates get
+# the deletion even if a later step dies, then the value-keyed scrubs, the
+# id-keyed ones, the wholesale purges and last the derived caches.
+PHASES = ("tombstone", "publish", "value", "id", "wholesale", "derived")
+
+# How a step is called, stated on its row (never inferred from a signature):
+#   value       fn(content_key, project_dir=...)
+#   value-text  fn(content_key, text=..., project_dir=...)
+#   id          fn(item_id, project_dir=...), once per id the forget reached
+#   project     fn(project_dir=...)
+#   bare        fn()
+CALLS = ("value", "value-text", "id", "project", "bare")
+
+# Whose bytes a step reaches: this project, the author's own team mirror, one
+# store shared by every project on the machine, or the machine itself.
+SCOPES = ("project", "own-author", "store", "machine")
+
+
+class Step(NamedTuple):
+    """One thing a forget does to a surface (#1132 PR 12)."""
+    fn: str                  # dotted `module.function` under daimon_briefing
+    phase: str               # one of PHASES
+    label: str               # what a report calls the surface
+    scope: str = "project"   # one of SCOPES
+    call: str = "value"      # one of CALLS
+    # The success line of a step whose result is a count, `{n}` being the
+    # count. Empty for a step whose line is composed from richer results.
+    done: str = ""
+    # Whether a step that cannot be vouched for moves the exit code. A
+    # surface that holds no text (the relations ledger) is only noted.
+    plaintext: bool = True
+
+
 class Surface(NamedTuple):
     shape: str          # path pattern relative to ~/.daimon (syntax above)
     owner: str          # writer, as module.function
@@ -138,8 +177,11 @@ class Surface(NamedTuple):
     # Bytes of an append-only log judged for a write posture (0 = the whole
     # file). A log that grows without bound must not be parsed per write.
     tail_bytes: int = 0
-    deleter: str = ""                 # forget registry (later PR)
-    phase: str = ""                   # forget registry (later PR)
+    # The forget registry: what a forget (or `forget --resume`, or `ledger
+    # repair`) does to this shape, in declaration order within a phase.
+    # Rows that walk `forget` carry at least one; the publish and derived
+    # rows (walker `none` / `recall`) carry the step that is not a deletion.
+    steps: tuple[Step, ...] = ()
 
 
 # A repair moves the lines a ledger cannot parse out of it and into
@@ -196,6 +238,20 @@ _W_HUMAN = ((_WR.HUMAN, _WRITE_REFUSED),)
 _W_HUMAN_EMITTER = ((_WR.HUMAN, _WRITE_REFUSED), (_WR.EMITTER, _WRITE_SKIPPED))
 _W_EMITTER = ((_WR.EMITTER, _WRITE_SKIPPED),)
 
+# Rows that name one step share it; `forget.STEPS` runs it once.
+_CHECKPOINT_COPIES = (Step("store.scrub_content_key", "value",
+                           "checkpoint copies"),)
+_WINDSURF_PURGE = (Step(
+    "store.purge_windsurf_state", "wholesale", "windsurf transcripts",
+    "machine", "bare",
+    done="purged {n} daimon-authored windsurf transcript file(s) across all "
+         "projects (machine-wide: the store is keyed by trajectory, not "
+         "project); host-authored transcripts are untouched"),)
+_CHECKS_SYNC = (Step("refutations.sync_armed_checks", "derived",
+                     "armed-check manifest", "project", "project"),)
+_RECALL_REFRESH = (Step("recall.refresh_store_caches", "derived",
+                        "recall index", "store", "bare"),)
+
 SURFACES: tuple[Surface, ...] = (
     # -- per-project bucket ledgers (specific before the *.json generics) --
     Surface("checkpoints/{slug}/events.jsonl", "store.append_event",
@@ -203,7 +259,8 @@ SURFACES: tuple[Surface, ...] = (
             prose=_scalars("note", "item_text", "status"),
             index_content=True, mergeable=True, read=_READ_NOTED,
             write=((_WR.HUMAN, _WRITE_REFUSED), (_WR.ADMISSION, _WRITE_REFUSED),
-                   (_WR.EMITTER, _WRITE_SKIPPED))),
+                   (_WR.EMITTER, _WRITE_SKIPPED)),
+            steps=(Step("store.scrub_event_fields", "value", "events.jsonl"),)),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
     #    carries item PLAINTEXT by design (subject, verdict, scope, note,
     #    revisit_when, anchors, evidence), so it sits in the checkpoint's
@@ -272,7 +329,8 @@ SURFACES: tuple[Surface, ...] = (
                 FieldPath(("overturn_evidence",), True),
                 FieldPath(("guard_match", "anchors"), True)),
             mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN,
-            write=_W_HUMAN),
+            write=_W_HUMAN,
+            steps=(Step("refutations.forget_content_key", "value", "refutations.jsonl"),)),
     # -- the amendment ledger (#691): the fourth bucket ledger — evidence
     #    quotes and human-channel notes, both length-capped, both plaintext
     #    by design, so it sits in the checkpoint's deletion category with
@@ -296,7 +354,10 @@ SURFACES: tuple[Surface, ...] = (
             True, "rewrite", "forget", fold="amendments.fold",
             prose=_scalars("evidence", "note"), mergeable=True,
             read=_READ_NOTED, foreign_read=_READ_FOREIGN,
-            write=_W_HUMAN_EMITTER),
+            write=_W_HUMAN_EMITTER,
+            steps=(Step("amendments.forget_content_key", "value", "amendments.jsonl"),
+                   Step("amendments.forget_item_id", "id", "amendments.jsonl",
+                        call="id"))),
     # -- the request ledger (#694): the fifth bucket ledger — one project's
     #    ask of another, so its rows carry the ask, its rationale, a human
     #    verdict note, and a completion quote: plaintext by design, in the
@@ -333,7 +394,8 @@ SURFACES: tuple[Surface, ...] = (
                 FieldPath(("verdict_act_author",)),
                 FieldPath(("done_act_author",))),
             mergeable=True, read=_READ_NOTED,
-            foreign_read=_READ_FOREIGN, write=_W_HUMAN_EMITTER),
+            foreign_read=_READ_FOREIGN, write=_W_HUMAN_EMITTER,
+            steps=(Step("requests.forget_content_key", "value", "requests.jsonl"),)),
     # store.append_verification: "a POINTER and a REASON CODE, never the
     # rejected text" (store.py docstring).
     Surface("checkpoints/{slug}/verification.jsonl",
@@ -380,7 +442,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/*" + QUARANTINE_SIDECAR_SUFFIX,
             "ledger_repair.quarantine_lines", True, "rewrite", "forget",
             prose=_scalars("text"), mergeable=True, read=_READ_NOTED, write=_W_HUMAN,
-            deleter="ledger_repair.forget_quarantined_lines"),
+            steps=(Step("ledger_repair.forget_quarantined_lines", "value",
+                        "quarantined lines", call="value-text"),)),
     # -- the relations ledger (#678 fork A): ids and closed-vocabulary codes
     #    only — no field can carry item text (relations.py refuses at the
     #    seam). plaintext=True anyway, deliberately: an edge is an
@@ -396,7 +459,9 @@ SURFACES: tuple[Surface, ...] = (
     #    growth is measured, never silent. --
     Surface("checkpoints/{slug}/relations.jsonl", "relations._append",
             True, "rewrite", "forget", fold="relations.fold",
-            mergeable=True, read=_READ_NOTED, write=_W_HUMAN),
+            mergeable=True, read=_READ_NOTED, write=_W_HUMAN,
+            steps=(Step("relations.forget_item_id", "id", "relations.jsonl", call="id",
+                   plaintext=False),)),
     # -- the trust ledger (#1109 Slice 1): a human-only quarantine verdict on
     #    a checkpoint value, append-only like refutations.jsonl, and in the
     #    same category — it carries item PLAINTEXT by design (`reason`,
@@ -416,7 +481,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/trust.jsonl", "trust.append",
             True, "rewrite", "forget", fold="trust.fold",
             prose=(FieldPath(("reason",)), FieldPath(("evidence",), True)),
-            index_content=True, mergeable=True, read=_READ_TRUST, write=_W_HUMAN),
+            index_content=True, mergeable=True, read=_READ_TRUST, write=_W_HUMAN,
+            steps=(Step("trust.redact_content_key", "value", "trust.jsonl"),)),
     # -- the request-policy tombstones (#961 slice 5): one row per activation
     #    interval of a ruling that forget has since removed, so a forgotten
     #    ruling's `info` asks do not silently flip to `work` (refutations.
@@ -474,7 +540,11 @@ SURFACES: tuple[Surface, ...] = (
     # -- serializer chunk cache: PRE-redaction by design (#125), so it can
     #    only be purged wholesale (#422); age reaper bounds survivors. --
     Surface("checkpoints/.chunk-cache/*", "serializer._save_chunk_cache",
-            True, "wholesale-purge", "forget"),
+            True, "wholesale-purge", "forget",
+            steps=(Step("serializer.purge_chunk_cache", "wholesale", "chunk cache",
+                   "store", "bare",
+                   done="purged {n} cached chunk extraction(s) "
+                        "(pre-redaction serializer cache)"),)),
     # -- receipts sidecars: hashes, method, nonce — bind to bytes, never
     #    copy them (receipts._sidecar_path). The suffix exemption. --
     Surface("checkpoints/**/*.receipt", "receipts._atomic_write_text",
@@ -488,10 +558,12 @@ SURFACES: tuple[Surface, ...] = (
             "none", audit_exempt=True),
     # -- checkpoint JSON: the core belief state, flat and bucketed. --
     Surface("checkpoints/{slug}/*.json", "store.write_checkpoint",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget",
+            steps=_CHECKPOINT_COPIES),
     Surface("checkpoints/*.json",
             "store.write_checkpoint / store._rotate_pointers",
-            True, "rewrite", "forget"),
+            True, "rewrite", "forget",
+            steps=_CHECKPOINT_COPIES),
     # store._atomic_write staging twins; reaped by store._reap_stale_tmps.
     # Honest bounds (adversarial-review finding): the reaper walks the flat
     # dir plus ONE level of bucket subdirs, so a depth-2+ .tmp has no live
@@ -519,7 +591,9 @@ SURFACES: tuple[Surface, ...] = (
             foreign_read=_READ_FOREIGN_TEAM,
             # Append-only and read per line, the reader skips a bad row: the
             # own sidecar is a write target in every state (R2.3).
-            write=((_WR.HUMAN, _WRITE_OPEN),)),
+            write=((_WR.HUMAN, _WRITE_OPEN),),
+            steps=(Step("store.publish_tombstone", "publish", "team tombstone sidecar",
+                   "own-author"),)),
     # #1132 PR 13 (D6): the published quarantine ledger, the same shape and
     # posture beside it. Rows are {kind, value_key, state, ids, order}: hashes
     # and enums, never the text. Not a bucket ledger: no bucket registry
@@ -528,6 +602,15 @@ SURFACES: tuple[Surface, ...] = (
             False, "exempt-no-plaintext", "none",
             foreign_read=_READ_FOREIGN_TEAM,
             write=((_WR.HUMAN, _WRITE_OPEN),)),
+    # The author's OWN directory is rewritten by store.scrub_team_copies, so
+    # the registry says so. `{own}` is the one placeholder that is not a
+    # wildcard: it matches the running author's slug and nothing else. Every
+    # other author's copy falls through to the known gap below, which stays
+    # open: forget never reaches a teammate's file.
+    Surface("team/{remote}/**/authors/{own}/*.json", "store._dual_write_team",
+            True, "rewrite", "forget",
+            steps=(Step("store.scrub_team_copies", "value",
+                        "own team-mirror copies", "own-author"),)),
     Surface("team/{remote}/**/*.json", "store._dual_write_team",
             True, "known-gap", "audit", issue="#600"),
     Surface("team/{remote}/.git/**", "git (teamsync subprocess)",
@@ -539,14 +622,16 @@ SURFACES: tuple[Surface, ...] = (
     #    Dead snapshots from crashed rebuilds are reaped on sight. --
     Surface("recall.db.{pid}.tmp*", "recall.rebuild",
             True, "reap", "reaper"),
-    Surface("recall.db", "recall.rebuild", True, "lazy-rebuild", "recall"),
+    Surface("recall.db", "recall.rebuild", True, "lazy-rebuild", "recall",
+            steps=_RECALL_REFRESH),
     # -- per-store indexes (D9.6): any store but the default keeps its index
     #    at `recall/<hash>.db`, and its staging twins follow the same shapes.
     #    The audit scans every cache whose meta.store is the audited store;
     #    heal reaps the ones whose store is gone or untouched for 30 days. --
     Surface("recall/{hash}.db.{pid}.tmp*", "recall.rebuild",
             True, "reap", "reaper"),
-    Surface("recall/*.db", "recall.rebuild", True, "lazy-rebuild", "recall"),
+    Surface("recall/*.db", "recall.rebuild", True, "lazy-rebuild", "recall",
+            steps=_RECALL_REFRESH),
     Surface("recall_seen/*.json", "cli._save_seen",
             False, "exempt-no-plaintext", "none"),
     # -- the crash sink: RAW child stderr, so its contents are whatever the
@@ -564,7 +649,12 @@ SURFACES: tuple[Surface, ...] = (
     #    narrowing of what lands here, never a claim about the file, and
     #    nothing in this entry rests on it. --
     Surface("logs/serialize-crash.log", "cli serialize child stderr",
-            True, "wholesale-purge", "forget"),
+            True, "wholesale-purge", "forget",
+            steps=(Step("store.purge_crash_log", "wholesale", "serializer crash log",
+                   "machine", "bare",
+                   done="purged {n} serializer crash log(s) across all "
+                        "projects (machine-wide: the log is raw child "
+                        "stderr, not keyed by project)"),)),
     Surface("logs/heartbeats/*", "ledger.touch_heartbeat",
             False, "exempt-no-plaintext", "none"),
     # -- backend diagnostics: stderr AND stdout of the LLM CLI child, which
@@ -576,7 +666,12 @@ SURFACES: tuple[Surface, ...] = (
     #    located when the tombstone is a hash. BEFORE the *.log glob so the
     #    specific contract wins. --
     Surface("logs/backend-stderr.log", "llm._log_backend_stderr",
-            True, "wholesale-purge", "forget"),
+            True, "wholesale-purge", "forget",
+            steps=(Step("store.purge_backend_stderr_log", "wholesale",
+                   "backend stderr log", "machine", "bare",
+                   done="purged {n} backend stderr log(s) across all "
+                        "projects (machine-wide: backend diagnostics are "
+                        "not keyed by project)"),)),
     # -- #943 check firing log: one row per runner invocation, carrying ids,
     #    outcomes, causes and durations only. No command text, no paths, no
     #    subject — and that is a property of the WRITER, which projects every
@@ -607,6 +702,18 @@ SURFACES: tuple[Surface, ...] = (
     # would tombstone), and forget scrubs the LEGACY payloads by line shape
     # (store.scrub_serialize_log) rather than purging serialize.log
     # wholesale, because that file is also the ledger `status` parses.
+    # The serialize log is also the ledger `status` parses, so forget does not
+    # purge it. Pre-fix writers logged an item's own text in two downgrade
+    # line shapes, and store.scrub_serialize_log redacts exactly those payloads
+    # in place. Its own row, before the glob, so the contract that names a
+    # deleter is the one that wins.
+    Surface("logs/serialize.log", "cli._attach_serialize_log_handler",
+            True, "rewrite", "forget",
+            steps=(Step("store.scrub_serialize_log", "wholesale",
+                        "serialize.log", "machine", "bare",
+                        done="scrubbed {n} legacy downgrade line(s) in "
+                             "serialize.log (payload replaced; ledger "
+                             "lines kept)"),)),
     Surface("logs/*.log", "ledger / cli._note_usage / recall._note_error",
             False, "exempt-no-plaintext", "none"),
     # -- key material and env: secrets, never item plaintext. --
@@ -628,9 +735,11 @@ SURFACES: tuple[Surface, ...] = (
     #    (config.windsurf_state_days), and the audit reports the store
     #    without claiming a verdict it cannot reach. --
     Surface("windsurf/transcripts/*.md", "_hooks/daimon-windsurf-hooks.py",
-            True, "wholesale-purge", "forget"),
+            True, "wholesale-purge", "forget",
+            steps=_WINDSURF_PURGE),
     Surface("windsurf/unparsed-*.json", "_hooks/daimon-windsurf-hooks.py",
-            True, "wholesale-purge", "forget"),
+            True, "wholesale-purge", "forget",
+            steps=_WINDSURF_PURGE),
     # trajectory activity/serialize stamps: epoch floats, no item text.
     Surface("windsurf/*.last-activity", "_hooks/daimon-windsurf-hooks.py",
             False, "exempt-no-plaintext", "none"),
@@ -652,8 +761,10 @@ SURFACES: tuple[Surface, ...] = (
     #    deletion reaches here by re-deriving from a ledger the forget
     #    already rewrote, rather than by a second walk that could disagree
     #    with the first. --
-    Surface("checks/manifest.json", "checks.sync", True, "rewrite", "forget"),
-    Surface("checks/*.sh", "checks.sync", True, "rewrite", "forget"),
+    Surface("checks/manifest.json", "checks.sync", True, "rewrite", "forget",
+            steps=_CHECKS_SYNC),
+    Surface("checks/*.sh", "checks.sync", True, "rewrite", "forget",
+            steps=_CHECKS_SYNC),
 )
 
 _PLACEHOLDER_RE = re.compile(r"\{[a-z]+\}")
@@ -664,9 +775,32 @@ _PLACEHOLDER_RE = re.compile(r"\{[a-z]+\}")
 _PLACEHOLDER_GLOBS = {"{pid}": "[0-9]*"}
 
 
+def _no_author() -> str:
+    return ""
+
+
+# The running author's directory name in a team mirror: a fact of the machine,
+# not of a shape, so the layer that knows it (`store`) registers the reader and
+# this leaf imports nothing. Until one is registered `{own}` matches nothing.
+_own_author: Callable[[], str] = _no_author
+
+
+def register_own_author(reader: Callable[[], str]) -> None:
+    """Install the reader of the author's team-mirror directory name."""
+    global _own_author
+    _own_author = reader
+
+
+def own_author_slug() -> str:
+    return _own_author()
+
+
 def _part_matches(shape_part: str, part: str) -> bool:
     if shape_part == part:
         return True
+    if shape_part == "{own}":
+        own = _own_author()
+        return bool(own) and part == own
     pat = _PLACEHOLDER_RE.sub(
         lambda m: _PLACEHOLDER_GLOBS.get(m.group(0), "*"), shape_part)
     return fnmatch.fnmatchcase(part, pat)

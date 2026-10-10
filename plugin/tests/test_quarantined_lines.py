@@ -53,7 +53,8 @@ def test_the_sidecar_is_a_declared_plaintext_surface():
     assert s is not None
     assert s.plaintext and s.delete == "rewrite" and s.walker == "forget"
     assert [fp.path for fp in s.prose] == [("text",)]
-    assert s.deleter == "ledger_repair.forget_quarantined_lines"
+    assert [x.fn for x in s.steps] == [
+        "ledger_repair.forget_quarantined_lines"]
 
 
 def test_forget_with_text_purges_only_the_matching_envelope_rows():

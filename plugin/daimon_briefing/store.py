@@ -90,6 +90,15 @@ def project_slug(project_dir) -> str | None:
     return re.sub(r"[^\w-]", "-", s) or None
 
 
+def _own_author_dir() -> str:
+    """The author's own directory name in a team mirror: the same identity
+    `_dual_write_team` writes and `scrub_team_copies` walks."""
+    return project_slug(config.author()) or "unknown"
+
+
+surfaces.register_own_author(_own_author_dir)
+
+
 def _resolved(project_dir):
     """The project directory this store will actually address (#954).
 
@@ -471,17 +480,44 @@ def items_for_project(project_dir=None) -> list[tuple[Path, str, str, dict]]:
     return found
 
 
-def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
+def _judged(rewritten: list[str], still: int, unreadable: int
+            ) -> jsonl.Reached:
+    """`rewritten` as a `Reached`, judged by the re-scan the caller just made
+    (scar 0135: never trust a deleter's own return). A surface that still
+    holds the value, or that could not be read to prove it does not, is not
+    reached; `detail` is a fixed word, never a path or a message."""
+    if still:
+        detail = "unwritable"
+    elif unreadable:
+        detail = "unreadable"
+    else:
+        detail = ""
+    return jsonl.Reached(rewritten, reached=not (still or unreadable),
+                         detail=detail)
+
+
+def _holds_key(payload: dict, keys) -> bool:
+    """Whether a checkpoint payload still carries a forgotten key anywhere the
+    write gate would scrub it: the read-only twin of the splice."""
+    _, changed = policy.scrub_forgotten_payload(
+        json.loads(json.dumps(payload)), set(keys))
+    return bool(changed)
+
+
+def scrub_content_key(content_hash: str, project_dir=None) -> jsonl.Reached:
     """Remove every item folding to `content_hash` from all plaintext surfaces.
 
-    Returns the paths rewritten, so the caller can report what deletion
-    actually reached instead of asserting it. Best-effort per file: one
-    unreadable or unwritable surface must not abort the rest of the scrub, and
-    a file that cannot be parsed is left byte-identical rather than truncated —
-    the same posture the ledger rewrite takes toward rows it cannot interpret.
+    Returns the paths rewritten (a `jsonl.Reached`, so it is the list it always
+    was), and whether the surfaces were REACHED: after the scrub every surface
+    is read again, and one that still holds the value, or that cannot be
+    parsed to prove it does not, makes the result unreached. Best-effort per
+    file: one unreadable or unwritable surface must not abort the rest of the
+    scrub, and a file that cannot be parsed is left byte-identical rather than
+    truncated, the same posture the ledger rewrite takes toward rows it cannot
+    interpret.
     """
     if not content_hash:
-        return []
+        return jsonl.Reached(())
     rewritten: list[str] = []
     for path in project_surfaces(project_dir):
         try:
@@ -502,10 +538,19 @@ def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
         except OSError:
             continue
         rewritten.append(str(path))
-    return rewritten
+    still = unreadable = 0
+    for path in project_surfaces(project_dir):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            unreadable += 1
+            continue
+        if isinstance(payload, dict) and _holds_key(payload, {content_hash}):
+            still += 1
+    return _judged(rewritten, still, unreadable)
 
 
-def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
+def scrub_team_copies(content_hash: str, project_dir=None) -> jsonl.Reached:
     """#600 slice A: scrub the author's OWN team-mirror checkpoint copies.
 
     The mirror holds full plaintext copies of every mirrored session, and
@@ -543,14 +588,58 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
     skipped — privacy._scan_team_dir misses it by the identical rule, so
     scrub and audit at least agree.
 
-    Best-effort per file; returns the paths rewritten."""
+    Best-effort per file; returns the paths rewritten as a `jsonl.Reached`.
+    After the pass the own copies are read again: one that still holds the
+    value, or that cannot be parsed to prove it does not, is not reached."""
     if not content_hash:
-        return []
+        return jsonl.Reached(())
     project_dir = _resolved(project_dir)
+    keys = forgotten_content_keys(project_dir) | {content_hash}
+    rewritten: list[str] = []
+    for path, payload in _own_team_files(project_dir):
+        if payload is None:
+            continue
+        # Probe on a copy first: only files the forget actually changes
+        # are re-admitted and rewritten — admission drift (missing ids,
+        # a new redact pattern) must not masquerade as a scrub, and a
+        # torn payload the probe cannot change is skipped before the
+        # stricter admission can trip on it.
+        probe = json.loads(json.dumps(payload))
+        _, changed = policy.scrub_forgotten_payload(probe, keys)
+        if not changed:
+            continue
+        try:
+            policy.admit_checkpoint(payload, keys)
+            _atomic_write(path, json.dumps(payload, indent=2,
+                                           ensure_ascii=False) + "\n")
+        except Exception:
+            # best-effort per file: one unwritable or half-torn surface
+            # must not abort the rest of the scrub — nor the forget's
+            # remaining steps (event scrub, cache purge) behind it. The
+            # re-scan below is what says it was not reached.
+            continue
+        rewritten.append(str(path))
+    still = unreadable = 0
+    for _path, payload in _own_team_files(project_dir):
+        if payload is None:
+            unreadable += 1
+        elif _holds_key(payload, keys):
+            still += 1
+    return _judged(rewritten, still, unreadable)
+
+
+def _own_team_files(project_dir) -> list:
+    """`(path, payload)` for this author's own team-mirror files that belong
+    to this project, `payload` None when the file cannot be parsed.
+
+    A file whose project is told by its path (the nested layout) and cannot be
+    parsed is returned with no payload, because it is this project's and
+    cannot be proven clean. A file attributed only by its payload's
+    `project_slug` stamp and unparseable is left out: nothing says whose it
+    is (the audit's own blindness, shared so scrub and audit agree)."""
     team = config.team_dir()
     own = project_slug(config.author()) or "unknown"
     slug = project_slug(project_dir)
-    keys = forgotten_content_keys(project_dir) | {content_hash}
     try:
         segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
     except Exception:
@@ -559,7 +648,7 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
         remotes = [d for d in team.iterdir() if d.is_dir()]
     except OSError:
         return []
-    rewritten: list[str] = []
+    out: list = []
     for remote in remotes:
         candidates = list(remote.glob(f"authors/{own}/*.json"))
         candidates += remote.glob(f"projects/**/authors/{own}/*.json")
@@ -577,31 +666,15 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
+                if nested_ok:
+                    out.append((path, None))
                 continue
             if not isinstance(payload, dict):
                 continue
             if not nested_ok and payload.get("project_slug") != slug:
                 continue
-            # Probe on a copy first: only files the forget actually changes
-            # are re-admitted and rewritten — admission drift (missing ids,
-            # a new redact pattern) must not masquerade as a scrub, and a
-            # torn payload the probe cannot change is skipped before the
-            # stricter admission can trip on it.
-            probe = json.loads(json.dumps(payload))
-            _, changed = policy.scrub_forgotten_payload(probe, keys)
-            if not changed:
-                continue
-            try:
-                policy.admit_checkpoint(payload, keys)
-                _atomic_write(path, json.dumps(payload, indent=2,
-                                               ensure_ascii=False) + "\n")
-            except Exception:
-                # best-effort per file: one unwritable or half-torn surface
-                # must not abort the rest of the scrub — nor the forget's
-                # remaining steps (event scrub, cache purge) behind it.
-                continue
-            rewritten.append(str(path))
-    return rewritten
+            out.append((path, payload))
+    return out
 
 
 # Daimon-authored Windsurf state that holds conversation text (#607). The

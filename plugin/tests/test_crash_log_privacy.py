@@ -506,4 +506,8 @@ def test_registry_declares_the_crash_log_reachable():
     assert s.walker == "forget"
     assert not any(x.issue == "#605" for x in surfaces.SURFACES), \
         "#605 is closed — no entry may still cite it as an open gap"
-    assert surfaces.match("logs/serialize.log").delete == "exempt-no-plaintext"
+    # serialize.log has its own row since the forget registry: the legacy
+    # downgrade payloads are scrubbed in place, the capture record is kept.
+    log = surfaces.match("logs/serialize.log")
+    assert log.shape == "logs/serialize.log" and log.delete == "rewrite"
+    assert log.walker == "forget"

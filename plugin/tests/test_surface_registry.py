@@ -350,7 +350,7 @@ def test_no_ledger_column_is_filled_on_a_non_jsonl_shape():
     jsonl = {s.shape for s in _bucket_jsonl()}
     for s in surfaces.SURFACES:
         filled = (s.fold or s.prose or s.read or s.index_content
-                  or s.mergeable or s.deleter or s.phase)
+                  or s.mergeable)
         if filled:
             assert s.shape in jsonl, f"{s.shape}: ledger column on a non-ledger"
     # The write column also governs the two append-only ledgers outside a
@@ -362,6 +362,17 @@ def test_no_ledger_column_is_filled_on_a_non_jsonl_shape():
         if s.write:
             assert s.shape in jsonl | outside, (
                 f"{s.shape}: write column on a non-ledger")
+
+
+def test_a_step_is_declared_only_where_a_forget_acts():
+    """The forget registry's `steps` column is not a ledger column: any row a
+    forget walks carries it (checkpoint copies, logs, caches), and the two
+    rows whose step is not a deletion (the team publish, the derived caches)
+    carry it too. A row nothing acts on carries none."""
+    for s in surfaces.SURFACES:
+        if s.steps:
+            assert s.walker in ("forget", "none", "recall"), \
+                f"{s.shape}: a step on a walker that never runs one"
 
 
 def test_every_nonempty_fold_resolves_to_a_callable():

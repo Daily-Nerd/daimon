@@ -7,11 +7,13 @@ module turns that override off and moves HOME instead."""
 import hashlib
 import os
 import sqlite3
+import stat
 import time
 
 import pytest
 
-from daimon_briefing import cli, config, normalize, privacy, recall, store
+from daimon_briefing import (cli, config, jsonl, normalize, privacy, recall,
+                             store)
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/recall-location"
@@ -563,3 +565,57 @@ def test_the_legacy_index_without_meta_is_foreign_to_another_store(
     conn.commit()
     conn.close()
     assert (legacy, "foreign-cache") in recall.unclaimed_caches()
+
+
+def test_refresh_is_reached_when_every_cache_of_the_store_is_current(
+        home, tmp_path, monkeypatch):
+    ckpt, _ = _build_in(monkeypatch, tmp_path, "a")
+    sibling = _plant_sibling_cache(ckpt, tmp_path / "t2", [], "fp")
+    got = recall.refresh_store_caches()
+    assert isinstance(got, jsonl.Reached) and got.reached is True
+    assert not sibling.exists() and config.recall_db().exists()
+
+
+def test_refresh_is_unreached_when_the_recall_directory_is_unwritable(
+        home, tmp_path, monkeypatch):
+    """A real unwritable directory: the sibling cache cannot be unlinked and
+    the live index cannot be staged, and both are said, not swallowed."""
+    ckpt, _ = _build_in(monkeypatch, tmp_path, "a")
+    sibling = _plant_sibling_cache(ckpt, tmp_path / "t2", [], "fp")
+    directory = sibling.parent
+    mode = directory.stat().st_mode
+    os.chmod(directory, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        got = recall.refresh_store_caches()
+    finally:
+        os.chmod(directory, mode)
+    assert got.reached is False
+    assert sibling.exists()
+
+
+def test_refresh_is_unreached_when_only_a_sibling_cache_cannot_be_dropped(
+        home, tmp_path, monkeypatch):
+    """The default store: its live index sits beside the `recall/` directory
+    that holds the sibling caches, so a locked `recall/` stops the drop and
+    leaves the rebuild alone."""
+    ckpt = config.recall_store()[0]
+    sibling = home / ".daimon" / "recall" / "0123456789abcdef.db"
+    sibling.parent.mkdir(parents=True)
+    conn = sqlite3.connect(str(sibling))
+    conn.executescript(
+        "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);"
+        "CREATE TABLE items(id INTEGER PRIMARY KEY, text TEXT, quote TEXT,"
+        " scene TEXT, project_slug TEXT, author TEXT, item_id TEXT);")
+    conn.execute("INSERT INTO meta VALUES ('fingerprint', 'fp')")
+    conn.execute("INSERT INTO meta VALUES ('store', ?)", (ckpt,))
+    conn.commit()
+    conn.close()
+    assert sibling in recall.store_caches()
+    mode = sibling.parent.stat().st_mode
+    os.chmod(sibling.parent, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        got = recall.refresh_store_caches()
+    finally:
+        os.chmod(sibling.parent, mode)
+    assert got.reached is False and got.detail == "unwritable"
+    assert sibling.exists() and config.recall_db().exists()

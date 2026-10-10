@@ -448,6 +448,16 @@ class Reached(list):
         self.unscannable = unscannable
 
 
+def raised(exc: BaseException) -> Reached:
+    """A forget step that raised, as a `Reached` that was not reached.
+
+    `detail` is the exception TYPE and nothing else: an exception message can
+    carry the very value being forgotten (a path, a repr, a decoded byte), and
+    this text reaches a terminal. A step that fails must say so and name the
+    class of failure, never quote it."""
+    return Reached((), reached=False, detail=type(exc).__name__)
+
+
 def judge_reach(path, removed, holds: Callable[[dict], bool], *,
                 plaintext: bool = True) -> Reached:
     """`removed` as a `Reached`, judged by reading `path` again: the ledger
