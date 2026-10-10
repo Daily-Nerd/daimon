@@ -34,3 +34,11 @@ def test_the_js_mirror_stays_anchored():
     pattern = _js_literal("ACT_ITEM_ID_RE")
     assert pattern.startswith("^"), pattern
     assert pattern.endswith("$"), pattern
+
+
+def test_the_activity_feed_labels_a_lifted_forget():
+    """`daimon unforget` writes rows of kind `lift`; without a label of its own
+    the feed would spell the machine kind out as "LIFT", a word that tells a
+    reader nothing about what was lifted."""
+    src = _RENDER_JS.read_text(encoding="utf-8")
+    assert 'lift: "FORGET LIFTED"' in src

@@ -456,6 +456,16 @@ case("cli:forget", "idforgot-agent", A("forget", I("idforgot"), "--dry-run"),
      tty=False, rc=(1,), shows="no item matches", dests=("dry_run",))
 case("cli:reverify", "id", A("reverify", I("question"), "--evidence",
      "checked"), tty=True, rc=(0, 1), dests=("target", "project"))
+# the lift, from a person's terminal, by the exact id of a forget the world made
+# through the real verb: it prints counts and the class of what still withholds
+# the value, never an id, a key or a value. An agent meets the refusal and
+# nothing else (the gate looks at nothing before it refuses).
+case("cli:unforget", "id", A("unforget", I("decision")), tty=True,
+     rc=(0, 1, 2, 4), dests=("target", "project"))
+case("cli:unforget", "dry", A("unforget", I("decision"), "--dry-run"),
+     tty=True, rc=(0, 1, 2, 4), dests=("dry_run",))
+case("cli:unforget", "agent", A("unforget", I("decision")), rc=(1,),
+     shows="requires an interactive terminal")
 
 # ---- R1 dests (which bucket is read) on the verbs that act on a record ----
 def _bucket_variants():
@@ -661,7 +671,7 @@ def test_dests_match_the_parser_and_are_classified():
         dests = {a.dest for a in parser._actions
                  if not isinstance(a, argparse._HelpAction)}
         assert dests == set(DESTS[" ".join(leaf)]), leaf
-    assert sum(len(v) for v in DESTS.values()) == 342
+    assert sum(len(v) for v in DESTS.values()) == 346
     for leaf, row in DESTS.items():
         for name, (cls, code) in row.items():
             assert cls in ("OUT", "INE"), (leaf, name)
@@ -1031,6 +1041,10 @@ CONVERTED = {
     "cli:amend propose": ("cli/amend.py", frozenset({"match"})),
     "cli:anchor": ("cli/brief.py", frozenset({"match"})),
     "cli:forget": ("cli/lifecycle.py", frozenset({"label"})),
+    # 12: the lift reads the view's snapshot before it writes, and proves the
+    # lift against the machine-wide forgotten set after (the second is pinned
+    # inside the verb itself by test_unforget.py)
+    "cli:unforget": ("cli/lifecycle.py", frozenset({"judge"})),
     "cli:audit quotes": ("cli/audit.py", frozenset({"open_sessions"})),
     "cli:audit-quotes": ("cli/audit.py", frozenset({"open_sessions"})),
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
@@ -1096,6 +1110,8 @@ NO_ITEM_READ |= {(s, t) for (s, t) in CASES
                  if s == "cli:anchor" and t != "attach"}
 # `forget --republish` publishes tombstone keys already recorded; it binds no item
 NO_ITEM_READ |= {("cli:forget", "republish")}
+# an agent's `unforget` is refused at the gate, before any read
+NO_ITEM_READ |= {("cli:unforget", "agent")}
 
 
 def _calls_view(rel, names):

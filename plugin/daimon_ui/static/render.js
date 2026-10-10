@@ -59,7 +59,7 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
       return st ? escapeHtml(spellOutEnum(st)) : "RESOLUTION";
     }
     var L = { session: "SESSION", handoff: "HANDOFF", corroboration: "CORROBORATED",
-              note: "NOTE", quote_check: "QUOTE CHECK" };
+              note: "NOTE", quote_check: "QUOTE CHECK", lift: "FORGET LIFTED" };
     return Object.prototype.hasOwnProperty.call(L, r.kind) ?
       L[r.kind] : escapeHtml(spellOutEnum(String(r.kind)));
   }

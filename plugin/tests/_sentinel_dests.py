@@ -94,6 +94,12 @@ DESTS = {
         "dry_run": ("OUT", "R3"),
         "republish": ("OUT", "R3"),
     },
+    "unforget": {
+        "target": ("OUT", "R2"),
+        "reason": ("INE", "R6"),
+        "project": ("OUT", "R1"),
+        "dry_run": ("OUT", "R3"),
+    },
     "reverify": {
         "target": ("OUT", "R2"),
         "evidence": ("INE", "R6"),

@@ -3183,6 +3183,14 @@ _KEY_REF_PREFIX = "forgotten-key:"
 LIFT_STATUS = "reopened:unforget"
 
 
+def tombstone_key(status) -> str:
+    """The content key a `forgotten:` status names (stripped, any case), or ""
+    for a status that is not a tombstone. The one parse of the prefix."""
+    if not is_tombstone_status(status):
+        return ""
+    return str(status).strip()[len(_FORGOTTEN_PREFIX):].strip()
+
+
 def is_key_ref(ref) -> bool:
     """Whether `ref` is a forget's key ref rather than an item or record id."""
     return str(ref or "").startswith(_KEY_REF_PREFIX)
@@ -3216,7 +3224,7 @@ def standing_tombstones(rows) -> dict:
         status = evt.get("status")
         if not (is_resolved(evt) and is_tombstone_status(status)):
             continue
-        key = str(status).strip()[len(_FORGOTTEN_PREFIX):].strip()
+        key = tombstone_key(status)
         if key:
             (key_refs if is_key_ref(ref) else ids).setdefault(
                 key, []).append(ref)

@@ -49,6 +49,7 @@ REQUIRED = (
     "_cmd_decide",
     "_cmd_diff",
     "_cmd_forget",
+    "_cmd_unforget",
     "_cmd_heal",
     "_cmd_hooks_install",
     "_cmd_hooks_list",

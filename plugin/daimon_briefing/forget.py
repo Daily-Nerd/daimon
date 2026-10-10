@@ -215,6 +215,48 @@ def splice_checkpoint(target: Target) -> jsonl.Reached:
     return jsonl.Reached(sorted(set(removed) - {""}), reached=wrote is not None)
 
 
+# ---- the lift ----------------------------------------------------------------
+
+class Lifted(NamedTuple):
+    """What a lift wrote: the refs it lifted and whether the rows landed."""
+    refs: tuple
+    written: bool
+
+
+def key_of(project, item_id: str) -> str:
+    """The content key the LAST tombstone row on `item_id` named, "" when the id
+    never carried one. Read from the id's own history rather than the fold, so
+    it still answers after a legacy reopen replaced the id's latest event."""
+    for evt in reversed(store.item_events(item_id, project_dir=project)):
+        key = store.tombstone_key(evt.get("status"))
+        if key:
+            return key
+    return ""
+
+
+def lift(project, key: str, *, reason: str = "", source: str = "cli",
+         dry_run: bool = False) -> Lifted:
+    """Lift a forgotten key on EVERY standing ref that carries it, in one
+    append: the ids, the siblings and the key refs. Lifting only one would
+    leave the key standing through the others, because each id row names the
+    key in its own status. The rows are `reopened:unforget` with kind `lift`,
+    so they win a same-second tie, read as live, and are not resolutions.
+
+    A person's write: the ledger must be proven, and the kill switch stops it
+    (a lift is never an exemption). The value is not restored, because it was
+    removed from every surface; the lift only lets a new capture back in."""
+    standing = store.project_standing(project).get(key)
+    if standing is None:
+        return Lifted((), True)
+    refs = tuple(standing.ids) + tuple(standing.key_refs)
+    if dry_run:
+        return Lifted(refs, True)
+    specs = [{"item_ref": ref, "status": store.LIFT_STATUS, "kind": "lift",
+              "source": source, "note": reason} for ref in refs]
+    ok = store.append_events(specs, project_dir=project, writer=Writer.HUMAN)
+    return Lifted(refs, bool(ok))
+
+
 # ---- running the steps -----------------------------------------------------
 
 def _resolve(fn: str):

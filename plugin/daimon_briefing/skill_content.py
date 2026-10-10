@@ -71,6 +71,11 @@ NOT_AGENT_FACING = {
         "human-only by design: deletion is the user's call, and the full body "
         "says so in as many words"
     ),
+    "unforget": (
+        "human-only by design: lifting a forget is the user's call, as the "
+        "forget was. It needs an interactive terminal and has no agent "
+        "channel at all"
+    ),
     "relations": (
         "human decision surface (#678 shadow mode): deciding requires an "
         "interactive terminal and agents cannot confirm, reject, or retract "

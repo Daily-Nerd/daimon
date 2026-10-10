@@ -667,6 +667,85 @@ def _cmd_forget(args) -> int:
                           ledger_meta)
 
 
+@_cli.guarded(writes=True)
+def _cmd_unforget(args) -> int:
+    """Lift a forget on this machine (human only). Binds by the exact id the
+    forget receipt printed and lifts the forget on EVERY ref that carries its
+    key, in one append; it restores nothing, because the value was removed from
+    every surface. It proves the lift or exits 4: the value counts as lifted
+    only when no other project, no teammate's published row and no ledger it
+    could not prove still withholds it. The published row stays: a published
+    tombstone has no retraction."""
+    # The gate comes first and looks at nothing: an unknown id, a forgotten one
+    # and a dry run all meet the same refusal on an agent channel, so the verb
+    # cannot be used to ask whether an id was forgotten.
+    if _human_cli_channel("unforget") is None:
+        return 1
+    project = _cli._resolve_project(args.project)
+    events_path = store._events_path(store._resolved(project))
+    if events_path is not None:
+        jsonl.require_writable(events_path, Writer.HUMAN)
+    # The view's snapshot must be buildable before a person lifts anything: a
+    # lift is judged against what the view withholds, never against a guess.
+    view.judge(store.project_slug(config.resolve_project_dir(project)))
+    key = forget.key_of(project, args.target)
+    if not key:
+        print("no forgotten item with that id in this project")
+        return 1
+    if key not in store.project_standing(project):
+        # nothing in this project withholds it any more; the verdict still
+        # proves the rest, so a retry after an exit 4 cannot turn green
+        # without the cause being fixed
+        return _lift_verdict(key, 0, wrote=False,
+                             held=key in view.machine_sets()[0])
+    dry_run = getattr(args, "dry_run", False)
+    lifted = forget.lift(project, key, reason=args.reason or "",
+                         dry_run=dry_run)
+    if dry_run:
+        print(f"would lift {len(lifted.refs)} ref(s) on this machine; "
+              "nothing was written")
+        return 0
+    if not lifted.written:
+        print("lift not written (daimon disabled or ledger unwritable)")
+        return 1
+    _cli._note_usage("unforget")
+    return _lift_verdict(key, len(lifted.refs), wrote=True,
+                         held=key in view.machine_sets()[0])
+
+
+def _lift_verdict(key: str, n: int, *, wrote: bool, held: bool) -> int:
+    """Say what the lift did and prove it. Exit 0 only when the key is absent
+    from the machine-wide set (`held` False) and no ledger was left unproven;
+    otherwise exit 4 with the CLASS of what still withholds it, never a project
+    or an author. Every exit 0 of the verb passes through here."""
+    unproven = bool(store.forgotten_incomplete()
+                    or store.foreign_tombstones().unproven)
+    lines = []
+    if wrote:
+        lines.append(f"lifted the forget on this machine: {n} ref(s) written")
+        lines.append("nothing was restored: the value was removed from every "
+                     "surface, so only a new capture can bring it back")
+    else:
+        lines.append("already lifted here: nothing in this project "
+                     "withholds that value")
+    reasons = []
+    if held:
+        # the machine-wide set is the local projects' keys plus what teammates
+        # published, so a key held by no local project is a teammate's
+        if key in store.all_forgotten_content_keys():
+            reasons.append("still withheld by another project on this machine")
+        else:
+            reasons.append("withheld by a teammate's published row; they "
+                           "lift it")
+    if unproven:
+        reasons.append("a ledger could not be proven; run daimon status")
+    lines.append("the row your teammates already folded stays: a published "
+                 "tombstone has no retraction")
+    lines.extend(f"not fully lifted: {why}" for why in reasons)
+    render.render_lifecycle_lines(lines)
+    return 4 if reasons else 0
+
+
 def _removed(outcome, *fns) -> list:
     """The ids the named steps removed, sorted and de-duplicated."""
     got: set = set()
@@ -1276,6 +1355,21 @@ def register(sub, fmt) -> None:
         help="publish every local forget the team sidecar is missing "
              "(the cure for a publish that failed); takes no target")
     p_forget.set_defaults(func=_cli._cmd_forget)
+
+    p_unforget = sub.add_parser(
+        "unforget", help="lift a forget on this machine, from a terminal: the "
+        "value is not restored, a new capture is admitted again",
+        epilog="Examples:\n  daimon unforget o-3f8a2c --reason \"forgot the "
+               "wrong one\"\n  daimon unforget o-3f8a2c --dry-run\n",
+    )
+    p_unforget.add_argument(
+        "target", help="the item id the forget receipt printed (exact only)")
+    p_unforget.add_argument("--reason", help="recorded on the lift rows (redacted like any note)")
+    p_unforget.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_unforget.add_argument(
+        "--dry-run", action="store_true",
+        help="count the refs that would be lifted without writing")
+    p_unforget.set_defaults(func=_cli._cmd_unforget)
 
     p_reverify = sub.add_parser(
         "reverify", help="evidence-gated human reopen of a resolved item (#103) — "
