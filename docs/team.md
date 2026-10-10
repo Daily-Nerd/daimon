@@ -289,6 +289,12 @@ now.
   published ledger. That is hygiene, not proof, and it does not detect a forged
   row. Published rows are version 1; a reader that meets a row version it does
   not know skips that author until upgraded.
+- **A forget is not retracted.** A published tombstone row has no retraction
+  because tombstone rows carry no version and no fail-closed hook; that gate
+  exists for quarantine rows only. `daimon unforget` lifts a forget on your own
+  machine and leaves the row you published: the row your teammates already
+  folded stays, and they keep withholding the value until they remove it
+  themselves.
 - **A damaged ledger skips the author.** A garbage line or a torn last line in
   either published ledger of a teammate means their newest claim cannot be
   proven, so their checkpoints are not admitted until the file is clean, and

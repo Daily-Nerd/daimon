@@ -247,7 +247,11 @@ orientation surface, not proof of project ownership.
 Lifecycle and knowledge stores are append-oriented state-transition ledgers. Privacy
 deletion is the deliberate exception: forgetting content may rewrite declared
 surfaces and publish tombstones so erased text cannot return through re-capture or
-team synchronization.
+team synchronization. Every step a forget takes is a row of the surface registry
+(`surfaces.SURFACES`), run in phase order by `forget.run`: the tombstone, the team
+publish, the value-keyed scrubs, the id-keyed ones, the wholesale purges and the
+derived caches. A step reports its own reach, and any plaintext surface it could not
+reach makes the command exit 4.
 
 The SQLite recall database is derived state. Checkpoint JSON and ledgers are the
 sources of truth; the index can be rebuilt when its source fingerprint changes.
@@ -387,6 +391,8 @@ project's own memory.
 - **Recall is derived.** The FTS index may be discarded and rebuilt from durable
   sources.
 - **Deletion crosses every declared surface.** Forgetting is not complete while a
-  plaintext copy can return through history, logs, indexes, or team state.
+  plaintext copy can return through history, logs, indexes, or team state. A
+  deleter that is not a registry row, or that returns no reach of its own, is a
+  defect.
 - **Optional surfaces stay optional.** The viewer, MCP server, team sidecar, and
   receipt signer do not become required runtime infrastructure.

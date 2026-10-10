@@ -35,7 +35,8 @@ borra — su historia sigue siendo buscable, y el rastro de eventos muestra
 cuándo y por qué se cerró. `--status` acepta un estado de ciclo de vida
 libre; cualquier estado que empiece con `reopen` revive el ítem. Un estado
 que empiece con `forgotten:` se rechaza: es una lápida, y solo `daimon forget`
-la escribe (además quita el valor de los archivos).
+la escribe (además quita el valor de los archivos). Solo `daimon unforget`
+levanta una.
 
 ## `daimon reverify` — afirmar que sigue siendo cierto
 
@@ -78,7 +79,11 @@ Qué ocurre al olvidar:
   `forgotten:<hash de 12 caracteres>` — el hash, nunca el texto. Eliminar
   significa que el contenido también sale del rastro de auditoría; el rastro
   aún puede demostrar *que* algo se eliminó, cuándo y por qué (`--reason`,
-  redactado como cualquier nota).
+  redactado como cualquier nota). Se escribe junto con una **fila de clave**
+  en una referencia propia y una fila por cada id hermano que tuviera el mismo
+  valor, en un solo append. Un `reopen` posterior sobre el id reemplaza solo la
+  fila del id, así que el valor sigue retenido; `daimon unforget <id>` es lo que
+  levanta un olvido (mira abajo).
 - El índice de recall borra las filas del ítem en **todas** las copias
   históricas de checkpoints de tu índice local — incluidas tus copias
   locales de los mirrors de equipo — así recall no puede resucitarlo.
@@ -92,10 +97,33 @@ Qué ocurre al olvidar:
   chunks más jóvenes que la ventana de rotación, `chunk_cache_days`, 3 días
   por defecto, se re-extraen la próxima vez). Las entradas también se
   cosechan por edad en esa ventana, independientemente de forget. La purga
-  nunca es fatal — la eliminación del estado de creencias siempre se
-  completa — y el comando reporta honestamente si la purga tuvo éxito.
+  nunca es fatal (la eliminación del estado de creencias siempre se
+  completa), y una purga que no pudo terminar se lista como `unreached` y hace
+  que el comando salga con 4.
 - La retención en el briefing, la supresión del arrastre y `daimon stats`
   heredan el tombstone a través del mismo flujo de eventos.
+- Cada paso de arriba es una fila del registro de superficies, se ejecuta en
+  orden de fase, y cada paso informa si alcanzó su superficie. Una superficie
+  que forget no pudo alcanzar se nombra con su cura y el código de salida es 4.
+  `daimon forget --resume` termina todas las fases de cada olvido vigente una
+  vez corregida la causa.
+
+### `daimon unforget`: levantar un olvido en esta máquina
+
+```sh
+daimon unforget o-3f8a2c --reason "olvidé el equivocado"
+daimon unforget o-3f8a2c --dry-run
+```
+
+Unforget toma el id que imprimió el recibo del olvido, desde una persona en una
+terminal (un agente no tiene forma de ejecutarlo), y levanta el olvido en cada
+referencia que lleva su clave. No restaura nada: el valor se quitó de todas las
+superficies, así que el levantamiento solo deja entrar de nuevo una captura
+nueva de la misma afirmación. Sale con 0 solo cuando nada más retiene el valor;
+si otro proyecto de esta máquina, una fila publicada de un compañero o un ledger
+que no pudo probar lo retiene, dice cuál y sale con 4. Una fila de tombstone
+publicada no tiene retractación, así que la fila que publicaste se queda y tus
+compañeros siguen reteniendo el valor hasta que la levanten.
 
 ### Cumplimiento de durabilidad de la eliminación
 
