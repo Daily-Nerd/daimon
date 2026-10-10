@@ -10628,7 +10628,7 @@ def test_forget_purges_chunk_cache(tmp_checkpoint_dir, capsys, monkeypatch):
     assert "purged 1 cached chunk" in out  # honest reporting, success path
 
 
-def test_forget_cache_purge_failure_warns_but_still_succeeds(
+def test_forget_cache_purge_failure_is_unreached_and_still_scrubs(
         tmp_checkpoint_dir, capsys, monkeypatch):
     """#422: the purge is never-fatal — deletion of belief state is the
     primary contract — but a failed purge is reported, never silent."""
@@ -10641,15 +10641,16 @@ def test_forget_cache_purge_failure_warns_but_still_succeeds(
         raise RuntimeError("cache dir on fire")
 
     monkeypatch.setattr(cli.serializer, "purge_chunk_cache", boom)
-    assert cli.main(["forget", iid]) == 0  # forget itself still succeeds
+    # the scrub still lands; the failed purge is unreached (exit 4)
+    assert cli.main(["forget", iid]) == 4
     after = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN,
                                    admit=store.Admit.ANY)
     assert iid not in [i.get("id")
                        for i in after["working_context"]["open_questions"]]
     out = capsys.readouterr().out
     assert "forgot" in out
-    assert "cache purge failed" in out
-    assert "cache dir on fire" in out
+    assert "unreached: chunk cache could not be reached (RuntimeError)" in out
+    assert "cache dir on fire" not in out
 
 
 # --- #376 rejection ledger in stats ----------------------------------------

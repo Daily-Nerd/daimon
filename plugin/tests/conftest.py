@@ -254,3 +254,21 @@ def use_clock():
     from daimon_briefing import clock as _clock
     with contextlib.ExitStack() as stack:
         yield lambda active: stack.enter_context(_clock.use(active))
+
+
+@pytest.fixture
+def locked():
+    """Make directories unwritable for the test and restore them after: the
+    way a test makes a real write fail, never a patched raise. Call it with a
+    directory (a file's permission does not stop an atomic replace)."""
+    import os
+    import stat
+    held = []
+
+    def lock(path):
+        held.append((path, path.stat().st_mode))
+        os.chmod(path, stat.S_IRUSR | stat.S_IXUSR)
+
+    yield lock
+    for path, mode in held:
+        os.chmod(path, mode)

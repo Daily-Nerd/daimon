@@ -144,6 +144,14 @@ KNOWN_BYPASSES = frozenset({
     ("trust repair", "checkpoints/{slug}/trust.jsonl"),
     ("trust repair", "checkpoints/{slug}/trust.quarantined-lines"),
     ("trust repair", "checkpoints/{slug}/.ledger-census"),
+    # forget's team publish (#600 slice B): one {ts, key, author} row, the
+    # canonical hash and never the text, appended to the author's own
+    # tombstone sidecar. There is no prose to admit. It used to read as
+    # governed only because the same stack frame still held the checkpoint the
+    # splice had just admitted, and the publish ran after it; the publish
+    # phase now runs second, ahead of every scrub, so the correlation no longer
+    # reaches it and the bypass is stated instead of inherited.
+    ("forget", "team/local/authors/ada/tombstones.jsonl"),
 })
 
 # Commands that genuinely cannot be driven headless would be named here with

@@ -125,7 +125,9 @@ PHASES = ("tombstone", "publish", "value", "id", "wholesale", "derived")
 #   id          fn(item_id, project_dir=...), once per id the forget reached
 #   project     fn(project_dir=...)
 #   bare        fn()
-CALLS = ("value", "value-text", "id", "project", "bare")
+#   target      fn(target), a step the forget module owns (it needs the whole
+#               `forget.Target`: the id the person named, the live checkpoint)
+CALLS = ("value", "value-text", "id", "project", "bare", "target")
 
 # Whose bytes a step reaches: this project, the author's own team mirror, one
 # store shared by every project on the machine, or the machine itself.
@@ -239,8 +241,10 @@ _W_HUMAN_EMITTER = ((_WR.HUMAN, _WRITE_REFUSED), (_WR.EMITTER, _WRITE_SKIPPED))
 _W_EMITTER = ((_WR.EMITTER, _WRITE_SKIPPED),)
 
 # Rows that name one step share it; `forget.STEPS` runs it once.
-_CHECKPOINT_COPIES = (Step("store.scrub_content_key", "value",
-                           "checkpoint copies"),)
+_CHECKPOINT_COPIES = (
+    Step("forget.splice_checkpoint", "value", "live checkpoint",
+         call="target"),
+    Step("store.scrub_content_key", "value", "checkpoint copies"))
 _WINDSURF_PURGE = (Step(
     "store.purge_windsurf_state", "wholesale", "windsurf transcripts",
     "machine", "bare",
@@ -260,7 +264,9 @@ SURFACES: tuple[Surface, ...] = (
             index_content=True, mergeable=True, read=_READ_NOTED,
             write=((_WR.HUMAN, _WRITE_REFUSED), (_WR.ADMISSION, _WRITE_REFUSED),
                    (_WR.EMITTER, _WRITE_SKIPPED)),
-            steps=(Step("store.scrub_event_fields", "value", "events.jsonl"),)),
+            steps=(Step("forget.write_tombstone", "tombstone", "tombstone event",
+                        call="target"),
+                   Step("store.scrub_event_fields", "value", "events.jsonl"))),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
     #    carries item PLAINTEXT by design (subject, verdict, scope, note,
     #    revisit_when, anchors, evidence), so it sits in the checkpoint's

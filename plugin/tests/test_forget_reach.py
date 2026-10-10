@@ -7,10 +7,6 @@ that could not be written looked like a clean sweep. Each now returns a
 never a patched raise.
 """
 import json
-import os
-import stat
-
-import pytest
 
 from daimon_briefing import config, jsonl, normalize, store
 from daimon_briefing.surfaces import Writer
@@ -25,20 +21,6 @@ def _cp(sid, items):
     return {"session_id": sid, "created": "2026-08-01T00:00:00Z",
             "working_context": {"recent_decisions": [
                 {"text": t, "trust": "inferred"} for t in items]}}
-
-
-@pytest.fixture
-def locked():
-    """Make directories unwritable for the test and restore them after."""
-    held = []
-
-    def lock(path):
-        held.append((path, path.stat().st_mode))
-        os.chmod(path, stat.S_IRUSR | stat.S_IXUSR)
-
-    yield lock
-    for path, mode in held:
-        os.chmod(path, mode)
 
 
 def _seed(sessions=("S1", "S2")):

@@ -181,15 +181,20 @@ def test_scrub_never_crosses_a_project_boundary(tmp_checkpoint_dir):
 # partial failure corrupts data, so they are asserted rather than assumed.
 
 
-def test_unparseable_surface_is_left_byte_identical(tmp_checkpoint_dir):
+def test_unparseable_surface_is_left_byte_identical(tmp_checkpoint_dir,
+                                                    capsys):
     _write("S1", CANARY, KEEPER)
     junk = tmp_checkpoint_dir / store.project_slug(PROJECT) / "prev-1.json"
     junk.write_text("{ this is not json", encoding="utf-8")
     before = junk.read_bytes()
 
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    # It cannot be read to prove the value is not in it, so the forget says
+    # so (exit 4) and still leaves the bytes it cannot interpret alone.
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
 
     assert junk.read_bytes() == before, "a file we cannot parse was rewritten"
+    assert ("unreached: checkpoint copies could not be reached (unreadable)"
+            in capsys.readouterr().out)
 
 
 def test_non_dict_payload_is_skipped_not_rewritten(tmp_checkpoint_dir):
