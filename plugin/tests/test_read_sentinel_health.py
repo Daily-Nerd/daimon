@@ -3,7 +3,7 @@
 `test_read_sentinel.py` drives every read surface against a store with
 quarantined and forgotten values. This drives the same surfaces under a
 damaged ledger and asserts two things for each damage: no surface leaks a
-sentinel it did not already leak (`KNOWN_LEAKS` is unchanged), and the
+sentinel it did not already leak (the drive's own leak set is empty), and the
 surfaces that carry a note say it, in the one set of words.
 
 The damage is a seam on `jsonl.read` (TRANSIENT and OS errors, which bytes
@@ -259,12 +259,8 @@ ALLOWED = {
 @pytest.mark.parametrize("name", sorted(CONDITIONS))
 def test_a_damaged_ledger_leaks_nothing_new_and_says_so(health_runs, name):
     leaks, shown = health_runs[name]
-    print("HEALTH-LEAKS", name, sorted(leaks - rs.KNOWN_LEAKS))
-    assert leaks - rs.KNOWN_LEAKS == ALLOWED.get(name, set()), sorted(
-        leaks - rs.KNOWN_LEAKS)
+    print("HEALTH-LEAKS", name, sorted(leaks))
+    assert leaks == ALLOWED.get(name, set()), sorted(leaks)
     for key, text in CONDITIONS[name][1].items():
         assert text in shown[key], (name, key)
 
-
-def test_the_known_leak_list_is_unchanged_by_this_axis():
-    assert len(rs.KNOWN_LEAKS) == 0
