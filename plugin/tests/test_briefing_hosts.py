@@ -80,14 +80,17 @@ def test_a_ruling_that_is_a_quarantined_value_prints_the_marker(
     assert "§ never ship a Friday deploy" in out
 
 
-def test_a_forgotten_ruling_prints_the_forgotten_marker(
+def test_a_forgotten_ruling_prints_blank(
         tmp_checkpoint_dir, monkeypatch, capsys):
+    """One policy for every panel (`view.masked`): a forgotten whole value is
+    blank, never a marker that names a reason, and the row stays."""
     _seed()
     _ruling(F)
     _forget()
     _, out = _brief(capsys, monkeypatch)
     assert F not in out
-    assert f"§ {MARKER_F}" in out
+    assert MARKER_F not in out
+    assert any(line.rstrip() == "§" for line in out.splitlines())
 
 
 def _recipient_panels(capsys, monkeypatch):
@@ -139,19 +142,59 @@ def test_the_verdict_panel_masks_ask_note_evidence_and_reply(
     assert "Reply: [withheld" in out or "Reply (agent" in out
 
 
-def test_the_panel_builders_mask_only_through_a_mask(tmp_checkpoint_dir):
+def test_the_panel_builders_take_their_rows_through_the_view(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import view
     _seed()
     _seed(project=SENDER)
     requests.open_request(to=store.project_slug(PROJECT), ask=Q, why="b",
                           channel="cli-agent", project_dir=SENDER)
+    seen = []
+    real = view.masked
+    monkeypatch.setattr(view, "masked", lambda project, ledger, rows, **kw: (
+        seen.append(ledger), real(project, ledger, rows, **kw))[1])
     plain = briefing.request_panel_lines(PROJECT)
-    masked = briefing.request_panel_lines(PROJECT, mask=lambda t: "X")
     assert any(Q in ln for ln in plain)
-    assert all(Q not in ln for ln in masked) and any("X" in ln for ln in masked)
+    assert seen == ["requests.jsonl"], "one pass over the rows, one ledger"
+    _quarantine()
+    snap = view.judge(store.project_slug(PROJECT)).snap
+    masked = briefing.request_panel_lines(PROJECT, snap=snap)
+    assert all(Q not in ln for ln in masked)
+    assert any(MARKER_Q in ln for ln in masked)
 
 
-def test_the_prose_mask_of_no_snapshot_masks_nothing():
-    assert briefing.prose_mask(None)("anything") == "anything"
+def test_a_forgotten_ask_is_blank_in_every_request_panel(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    _seed()
+    _seed(project=SENDER)
+    rid = requests.open_request(to=store.project_slug(PROJECT), ask=F,
+                                why="because", channel="cli-agent",
+                                project_dir=SENDER)
+    _forget()
+    _, out = _brief(capsys, monkeypatch)
+    assert briefing._REQUEST_PANEL_HEADER in out
+    assert F not in out and MARKER_F not in out
+    assert any(line.startswith(f"→ {rid}") and line.rstrip() == f"→ {rid}"
+               for line in out.splitlines()), "the row stays, its ask blank"
+    requests.accept(rid, channel="cli-tty", project_dir=PROJECT)
+    _, out = _brief(capsys, monkeypatch)
+    assert briefing._OWED_PANEL_HEADER in out
+    assert F not in out and MARKER_F not in out
+
+
+def test_a_forgotten_note_and_evidence_leave_no_line_in_the_verdict_panel(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    _seed(project=SENDER)
+    rid = requests.open_request(to=store.project_slug(PROJECT), ask=KEPT,
+                                why="because", channel="cli-agent",
+                                project_dir=SENDER)
+    requests.accept(rid, channel="cli-tty", note=F, project_dir=PROJECT)
+    requests.done(rid, channel="cli-tty", evidence=F, project_dir=PROJECT)
+    _forget(project=SENDER)
+    _, out = _brief(capsys, monkeypatch, project=SENDER)
+    assert briefing._VERDICT_PANEL_HEADER in out
+    assert F not in out and MARKER_F not in out
+    assert "  Note:" not in out and "  Done:" not in out
 
 
 def test_the_mcp_tool_masks_a_quarantined_ruling(tmp_checkpoint_dir):

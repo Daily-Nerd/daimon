@@ -191,7 +191,6 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
     fixed pointer line, so callers can compose or print them as needed, and
     the request and verdict cards the blocks print (all whole). No
     droppable structure here, so #1044's byte ceiling does not apply to it."""
-    mask = briefing.prose_mask(snap)
     rulings = (briefing.ruling_lines(project_dir, snap=snap)
               if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel, not rulings — absent on
@@ -200,10 +199,10 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
                       if worldcheck_project is not None else None)
     decision_count_block = [decision_count] if decision_count else []
     request_lines, request_cards = briefing.request_panel(
-        worldcheck_project, mask=mask)
+        worldcheck_project, snap=snap)
     verdict_lines, verdict_cards = briefing.verdict_panel(
-        worldcheck_project, mask=mask)
-    owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
+        worldcheck_project, snap=snap)
+    owed_lines = (briefing.owed_panel_lines(worldcheck_project, snap=snap)
                   if worldcheck_project is not None else [])
     request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
         request_lines, verdict_lines, owed_lines, notes=notes)
@@ -230,17 +229,16 @@ def _panel_lines(project_dir, worldcheck_project, snap=None, notes=()):
     the request and verdict cards that same read produced. Kept as one seam
     so the rich, plain, and byte-budgeted plain branches read the same
     ledgers the same way (#693/#694)."""
-    mask = briefing.prose_mask(snap)
     rulings = (briefing.ruling_lines(project_dir, snap=snap)
               if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel, not rulings.
     decision_count = (briefing.decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
     request_lines, request_cards = briefing.request_panel(
-        worldcheck_project, mask=mask)
+        worldcheck_project, snap=snap)
     verdict_lines, verdict_cards = briefing.verdict_panel(
-        worldcheck_project, mask=mask)
-    owed_lines = (briefing.owed_panel_lines(worldcheck_project, mask=mask)
+        worldcheck_project, snap=snap)
+    owed_lines = (briefing.owed_panel_lines(worldcheck_project, snap=snap)
                   if worldcheck_project is not None else [])
     request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
         request_lines, verdict_lines, owed_lines, notes=notes)
