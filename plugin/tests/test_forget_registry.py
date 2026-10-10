@@ -84,7 +84,7 @@ def test_every_public_deleter_is_a_registry_step_or_named_a_non_deleter():
         "a deleter that is not a registry row"
     assert declared - found - {
         "store.publish_tombstone", "recall.refresh_store_caches",
-        "refutations.sync_armed_checks", "forget.write_tombstone",
+        "refutations.sync_armed_checks", "forget.write_tombstones",
         "forget.splice_checkpoint"} == set(), \
         "a step that is not a deleter by name or a declared non-deletion step"
 

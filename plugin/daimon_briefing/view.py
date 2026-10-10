@@ -1302,14 +1302,19 @@ def events(project, *, snap: Snapshot | None = None) -> tuple[Event, ...]:
     judged over one snapshot (`snap`, or a fresh one: a caller that already
     holds the snapshot of its read passes it). Notes are human prose, so they
     stay readable when the trust ledger is unreadable; an item value does not.
-    An absent ledger is no rows; torn lines and non-object rows are skipped."""
+    An absent ledger is no rows; torn lines and non-object rows are skipped.
+
+    A forget's key row (`store.is_key_ref`) is bookkeeping with no reader, so
+    it is never shown: this is the one display filter, on the same predicate
+    the item fold uses, and every feed built on `events` inherits it."""
     bucket = _bucket(project)
     if bucket is None:
         return ()
     snap = snap if snap is not None else snapshot(project)
     return tuple(_event(row, snap)
                  for row in jsonl.read(bucket / "events.jsonl").rows
-                 if isinstance(row, dict))
+                 if isinstance(row, dict)
+                 and not store.is_key_ref(row.get("item_ref")))
 
 
 def latest_event(snap: Snapshot, item_id: str) -> Event | None:

@@ -282,23 +282,30 @@ def test_forget_tombstones_the_refutation_before_rewriting_the_ledger(
     ref_id = _refute()
 
     order = []
-    real_append_event = store.append_event
+    appended = []
+    real_append_events = store.append_events
     real_forget = refutations.forget_content_key
 
-    def spy_append_event(*args, **kwargs):
-        if kwargs.get("kind") == "tombstone":
-            order.append("tombstone")
-        return real_append_event(*args, **kwargs)
+    def spy_append_events(specs, *args, **kwargs):
+        # ONE call carries every tombstone row: the id row first, then the
+        # key row on its own ref (a refutation has no sibling items).
+        order.append("tombstones")
+        appended.append([(spec["item_ref"], spec["kind"]) for spec in specs])
+        return real_append_events(specs, *args, **kwargs)
 
     def spy_forget(*args, **kwargs):
         order.append("rewrite")
         return real_forget(*args, **kwargs)
 
-    monkeypatch.setattr(store, "append_event", spy_append_event)
+    monkeypatch.setattr(store, "append_events", spy_append_events)
     monkeypatch.setattr(refutations, "forget_content_key", spy_forget)
 
     assert cli.main(["forget", ref_id, "--project", PROJECT]) == 0
-    assert order == ["tombstone", "rewrite"]
+    assert order == ["tombstones", "rewrite"]
+    [rows] = appended
+    assert rows[0] == (ref_id, "tombstone")
+    assert store.is_key_ref(rows[1][0]) and rows[1][1] == "tombstone"
+    assert len(rows) == 2
 
     # The tombstone carries the HASH, never the text (#321).
     raw = (tmp_checkpoint_dir / store.project_slug(PROJECT) / "events.jsonl")
@@ -306,7 +313,8 @@ def test_forget_tombstones_the_refutation_before_rewriting_the_ledger(
             raw.read_text(encoding="utf-8").splitlines() if line.strip()]
     tombstones = [e for e in rows if e.get("kind") == "tombstone"]
     assert tombstones
-    assert normalize.content_key(SUBJECT) in tombstones[-1]["status"]
+    assert all(normalize.content_key(SUBJECT) in t["status"]
+               for t in tombstones)
     assert SUBJECT not in json.dumps(tombstones)
 
 

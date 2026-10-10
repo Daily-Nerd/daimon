@@ -353,6 +353,10 @@ def _public_entry_points(sub: str):
         ("forget_hit_stats", lambda: store.forget_hit_stats(project_dir=sub)),
         ("append_event",
          lambda: store.append_event("i-1", "resolved", project_dir=sub, writer=Writer.HUMAN)),
+        ("append_events",
+         lambda: store.append_events(
+             [{"item_ref": "i-1", "status": "resolved"}], project_dir=sub,
+             writer=Writer.HUMAN)),
         ("admission_state", lambda: store.admission_state(sub)),
         ("emitters_open", lambda: store.emitters_open(sub)),
         ("ledger_file", lambda: store.ledger_file(sub, "events.jsonl")),

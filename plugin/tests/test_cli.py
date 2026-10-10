@@ -10586,7 +10586,7 @@ def test_forget_event_write_failure_exits_1(tmp_checkpoint_dir, capsys, monkeypa
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    monkeypatch.setattr(store, "append_event", lambda *a, **k: False)
+    monkeypatch.setattr(store, "append_events", lambda *a, **k: False)
     assert cli.main(["forget", iid]) == 1
     assert "not written" in capsys.readouterr().out
 

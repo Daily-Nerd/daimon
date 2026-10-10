@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import stat
 import time
 from datetime import datetime, timezone
@@ -3234,6 +3235,28 @@ def project_standing(project_dir=None) -> dict:
     return standing_tombstones(jsonl.read(path).rows)
 
 
+def _event_row(item_ref: str, status: str, note: str = "",
+               kind: str = "resolution", source: str = "cli",
+               item_text: str = "") -> dict:
+    """The one builder of an events row, so every writer of the ledger admits
+    its row the same way. The scrub runs through policy.admit_row (#431): the
+    same redaction as before (status is free-form by design, readers
+    prefix-match, so it can carry a secret-shaped value and is scrubbed too,
+    #141), mounted on the policy seam so the write-audit guard can correlate
+    the row on disk with its admission."""
+    evt = policy.admit_row(
+        {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+         "kind": kind, "item_ref": item_ref, "status": status,
+         "source": source, "note": note, "item_text": item_text},
+        redact_fields=("status", "note", "item_text"))
+    # Empty optional fields never land on the row — unchanged shape.
+    if not evt["note"]:
+        del evt["note"]
+    if not evt["item_text"]:
+        del evt["item_text"]
+    return evt
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "",
@@ -3247,7 +3270,7 @@ def append_event(item_ref: str, status: str, note: str = "",
     the kill switch
     and when the project is unknown (an event without a bucket has no
     reader). `allow_disabled` (#421) is the narrow deletion exemption:
-    passed ONLY by cli._cmd_forget's tombstone append — forget must work
+    passed ONLY by forget's tombstone append — forget must work
     while disabled, and #418 mandates its tombstone lands before the
     rewrite, so the tombstone shares the rewrite's exemption. No other
     caller may pass it.
@@ -3258,7 +3281,25 @@ def append_event(item_ref: str, status: str, note: str = "",
     the value everywhere. A free-form `resolve --status` or `log --status`
     that reached here would tombstone with no scrub, so the status is
     refused unless the caller is the forget path."""
-    if is_tombstone_status(status) and not tombstone:
+    return append_events(
+        [{"item_ref": item_ref, "status": status, "note": note, "kind": kind,
+          "source": source, "item_text": item_text}],
+        project_dir=project_dir, allow_disabled=allow_disabled,
+        tombstone=tombstone, writer=writer)
+
+
+def append_events(specs, project_dir=None, allow_disabled: bool = False,
+                  tombstone: bool = False, *, writer: Writer) -> bool:
+    """Several lifecycle facts in ONE append: every spec (a dict of
+    `item_ref`, `status` and optionally `note`, `kind`, `source`, `item_text`)
+    is built and admitted by `_event_row`, one admission frame each, then all
+    the rows are written in a single call under one posture judgement. A crash
+    leaves at most the last row torn. The gates are `append_event`'s: a
+    `forgotten:` status is refused unless `tombstone` is set, nothing is
+    written under the kill switch without `allow_disabled`, and an unknown
+    project has no ledger. Returns whether the rows landed."""
+    if any(is_tombstone_status(spec["status"]) for spec in specs) \
+            and not tombstone:
         return False
     if config.is_disabled() and not allow_disabled:
         return False
@@ -3267,31 +3308,28 @@ def append_event(item_ref: str, status: str, note: str = "",
     if path is None:
         return False
     try:
-        # #431: the scrub runs through policy.admit_row — same redaction as
-        # before (status is free-form by design, readers prefix-match, so it
-        # can carry a secret-shaped value and is scrubbed too, #141), but
-        # mounted on the policy seam so the write-audit guard can correlate
-        # the row on disk with its admission.
-        evt = policy.admit_row(
-            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-             "kind": kind, "item_ref": item_ref, "status": status,
-             "source": source, "note": note, "item_text": item_text},
-            redact_fields=("status", "note", "item_text"))
-        # Empty optional fields never land on the row — unchanged shape.
-        if not evt["note"]:
-            del evt["note"]
-        if not evt["item_text"]:
-            del evt["item_text"]
+        rows = []
+        for spec in specs:
+            evt = _event_row(**spec)
+            rows.append(evt)
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         # `writer` picks the row of the registry's write column (#1132 PR
         # 10b): a person and an admission are REFUSED an unproven events
         # ledger, a machine row is SKIPPED, a cure always writes.
-        return jsonl.append_as(path, evt, writer)
+        return jsonl.append_rows_as(path, rows, writer)
     except jsonl.Refused:
         raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
+
+
+def new_key_ref() -> str:
+    """The ref of a forget's key row: the namespace plus a random token. Random
+    on purpose: nothing needs it derivable (`standing_tombstones` maps a key to
+    its refs from the status), and a ref derived from the key would be one more
+    oracle for whether a value was forgotten."""
+    return _KEY_REF_PREFIX + secrets.token_hex(8)
 
 
 # The in-place redaction marker for event fields (#599). Carries the

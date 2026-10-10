@@ -56,7 +56,7 @@ def test_the_steps_are_the_registry_steps_once_each_in_phase_order():
     assert sorted(p.step.fn for p in forget.STEPS) == sorted(registry)
     order = [surfaces.PHASES.index(p.step.phase) for p in forget.STEPS]
     assert order == sorted(order)
-    assert forget.STEPS[0].step.fn == "forget.write_tombstone"
+    assert forget.STEPS[0].step.fn == "forget.write_tombstones"
     assert forget.STEPS[-1].step.phase == "derived"
 
 
@@ -244,7 +244,7 @@ def test_a_tombstone_that_is_not_written_stops_the_run(tmp_checkpoint_dir):
     the tombstone runs."""
     outcome = forget.run(forget.Target(KEY, "i-1", ("i-1",), ""))
     assert outcome.refused is True
-    assert [d.step.fn for d in outcome.done] == ["forget.write_tombstone"]
+    assert [d.step.fn for d in outcome.done] == ["forget.write_tombstones"]
 
 
 # ---- the sibling ids come from every surface --------------------------------

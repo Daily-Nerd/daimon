@@ -142,16 +142,44 @@ def siblings(project, content_key: str, item_id: str = "") -> tuple:
     return tuple(sorted(ids))
 
 
-def write_tombstone(target: Target) -> jsonl.Reached:
-    """The tombstone row: the deletion is real everywhere else only once this
-    lands (the write gate and the recall index read it), so it runs first and a
-    forget that cannot record it touches nothing. `allow_disabled` is the
-    ratified deletion exemption to the kill switch."""
-    ok = store.append_event(
-        target.item_id, f"forgotten:{target.content_key}", note=target.reason,
-        kind="tombstone", project_dir=target.project, allow_disabled=True,
+def write_tombstones(target: Target) -> jsonl.Reached:
+    """The tombstone rows, in ONE append: the id row first, then the key row
+    on a ref of its own, then one row per sibling id.
+
+    The id row keeps the person-facing record (`blame` and `why` read it) and
+    names the key in its status, so even a torn tail that loses the rest still
+    withholds the value and a `--resume` can write what is missing. The key
+    row is what a reopen on the id cannot reach, so only `unforget` lifts the
+    value. The sibling rows make every id that held the value a standing
+    tombstone, which is how a repair finds them again. The rows are built by
+    the writer of every other events row, so each is admitted on its own.
+
+    Nothing is written twice: a ref that already stands for this key is left
+    alone, so a second forget of a value adds no second key row. The
+    deletion exemption to the kill switch applies (#421)."""
+    key = target.content_key
+    status = f"forgotten:{key}"
+    standing = store.project_standing(target.project).get(key, store.Standing())
+    specs: list = []
+    if target.item_id and target.item_id not in standing.ids:
+        specs.append({"item_ref": target.item_id, "status": status,
+                      "note": target.reason, "kind": "tombstone"})
+    if not standing.key_refs:
+        specs.append({"item_ref": store.new_key_ref(), "status": status,
+                      "kind": "tombstone"})
+    for sibling in target.item_ids:
+        if sibling and sibling != target.item_id \
+                and sibling not in standing.ids:
+            specs.append({"item_ref": sibling, "status": status,
+                          "kind": "tombstone"})
+    if not specs:
+        return jsonl.Reached(())
+    ok = store.append_events(
+        specs, project_dir=target.project, allow_disabled=True,
         tombstone=True, writer=Writer.HUMAN)
-    return jsonl.Reached((target.item_id,) if ok else (), reached=bool(ok))
+    written = tuple(spec["item_ref"] for spec in specs
+                    if not store.is_key_ref(spec["item_ref"]))
+    return jsonl.Reached(written if ok else (), reached=bool(ok))
 
 
 def splice_checkpoint(target: Target) -> jsonl.Reached:

@@ -264,7 +264,7 @@ SURFACES: tuple[Surface, ...] = (
             index_content=True, mergeable=True, read=_READ_NOTED,
             write=((_WR.HUMAN, _WRITE_REFUSED), (_WR.ADMISSION, _WRITE_REFUSED),
                    (_WR.EMITTER, _WRITE_SKIPPED)),
-            steps=(Step("forget.write_tombstone", "tombstone", "tombstone event",
+            steps=(Step("forget.write_tombstones", "tombstone", "tombstone event",
                         call="target"),
                    Step("store.scrub_event_fields", "value", "events.jsonl"))),
     # -- the refutation ledger (#575): append-only like events.jsonl, but it
