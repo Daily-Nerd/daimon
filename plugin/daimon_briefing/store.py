@@ -1807,7 +1807,7 @@ def admission_gate(project_dir, writer: Writer) -> set[str]:
         raise jsonl.Posture(result.health, result.detail, result.undecodable,
                             write, "events.jsonl", result.cannot_scan,
                             writer is Writer.ADMISSION).refusal()
-    return _tombstoned_keys(fold_resolutions(result.rows))
+    return _tombstoned_keys(result.rows)
 
 
 def admission_state(project_dir) -> tuple[str, str] | None:
@@ -3096,6 +3096,71 @@ def is_tombstone_status(status) -> bool:
     return str(status or "").strip().lower().startswith("forgotten:")
 
 
+# A forget also writes its key on a ref of its own, so a reopen on the item id
+# cannot lift the value (decision 10). The ref is a namespace no item id can
+# equal (no id this codebase mints contains a colon), and the item fold never
+# returns it: a key ref is not an item, so no reader of `resolutions()` meets
+# one. `standing_tombstones` is the one parser that reads both kinds of ref.
+_KEY_REF_PREFIX = "forgotten-key:"
+
+# The status a lift writes, on every standing ref that carries a key. It
+# starts with `reopen`, so `is_resolved` is False and `_tie_rank` is highest
+# (a lift wins a same-second tie by rule); `is_lift_status` names the class.
+LIFT_STATUS = "reopened:unforget"
+
+
+def is_key_ref(ref) -> bool:
+    """Whether `ref` is a forget's key ref rather than an item or record id."""
+    return str(ref or "").startswith(_KEY_REF_PREFIX)
+
+
+def is_lift_status(status) -> bool:
+    """Whether a status is a lift of a forget (`LIFT_STATUS`), stripped, any
+    case: the one predicate for the class, so a new status word is ranked in
+    `_tie_rank` and kept by `_class_preserving_marker` on purpose."""
+    return str(status or "").strip().lower().startswith(LIFT_STATUS)
+
+
+class Standing(NamedTuple):
+    """Every ref that still carries one forgotten key: the item or record ids
+    (`ids`) and the forget's own key refs (`key_refs`), each sorted."""
+    ids: tuple = ()
+    key_refs: tuple = ()
+
+
+def standing_tombstones(rows) -> dict:
+    """`{content key: Standing}` for the tombstones that still stand in
+    `rows` (events rows): the latest event of a ref is a `forgotten:` status.
+    A reopen or a lift replaces the latest event of its ref and drops it.
+
+    The ONE parse of the status (stripped, any case) and the one place that
+    tells an id ref from a key ref. `_tombstoned_keys`, ledger repair, the
+    forget verbs and the lift read this; nothing else parses the prefix."""
+    ids: dict[str, list[str]] = {}
+    key_refs: dict[str, list[str]] = {}
+    for ref, evt in sorted(_fold(rows, keys=True).items()):
+        status = evt.get("status")
+        if not (is_resolved(evt) and is_tombstone_status(status)):
+            continue
+        key = str(status).strip()[len(_FORGOTTEN_PREFIX):].strip()
+        if key:
+            (key_refs if is_key_ref(ref) else ids).setdefault(
+                key, []).append(ref)
+    return {key: Standing(tuple(ids.get(key, ())),
+                          tuple(key_refs.get(key, ())))
+            for key in sorted(set(ids) | set(key_refs))}
+
+
+def project_standing(project_dir=None) -> dict:
+    """`standing_tombstones` of this project's events ledger. An unknown
+    project or an unreadable ledger reads as nothing standing (callers that
+    must know a ledger is unproven ask `jsonl.read` themselves)."""
+    path = _events_path(_resolved(project_dir))
+    if path is None:
+        return {}
+    return standing_tombstones(jsonl.read(path).rows)
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "",
@@ -3168,7 +3233,8 @@ _FORGOTTEN_FIELD_MARKER = "[forgotten:{}]"
 # item forever. Longest-match order: candidate forms before their shorter
 # cousins. The kept token is generic lifecycle vocabulary, not the value.
 _STATUS_CLASS_PREFIXES = ("supersede-candidate", "superseded-by:",
-                          "resolving-candidate", "reopen", "forgotten")
+                          "resolving-candidate", LIFT_STATUS, "reopen",
+                          "forgotten")
 
 
 def _class_preserving_marker(status: str, marker: str) -> str:
@@ -3271,7 +3337,7 @@ def _tie_rank(evt: dict) -> int:
     status = str(evt.get("status") or "").lower()
     if status.startswith(("supersede-candidate", "resolving-candidate")):
         return 0
-    if status.startswith("reopen"):
+    if is_lift_status(status) or status.startswith("reopen"):
         return 2
     return 1
 
@@ -3310,13 +3376,21 @@ def fold_resolutions(rows) -> dict:
     Latest by `ts`, never by row position; equal-ts ties break on content
     (`_tie_wins`). A row with no `item_ref` is skipped, a row with no usable
     `ts` never displaces a stamped one, and the first of two unstamped rows
-    on one ref stays. No dedupe: every ref keeps its own latest event."""
+    on one ref stays. No dedupe: every ref keeps its own latest event.
+
+    The ITEM fold: a forget's key ref (`is_key_ref`) is not an item, so it is
+    skipped here and no reader of this map can count it, show it or mistake it
+    for an id. `standing_tombstones` is the one reader of key refs."""
+    return _fold(rows, keys=False)
+
+
+def _fold(rows, *, keys: bool) -> dict:
     out: dict = {}
     for evt in rows:
         if not isinstance(evt, dict):
             continue
         ref = str(evt.get("item_ref") or "")
-        if not ref:
+        if not ref or (is_key_ref(ref) and not keys):
             continue
         cur = out.get(ref)
         if cur is None:
@@ -3571,20 +3645,13 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     under a different framing. Only the LATEST event per ref counts, so a later
     `reopen` lifts the tombstone (same fold recall and the view use). Fails open to
     an empty set (missing/corrupt log, unknown project)."""
-    return _tombstoned_keys(resolutions(project_dir=project_dir))
+    return set(project_standing(project_dir))
 
 
-def _tombstoned_keys(resolved: dict) -> set[str]:
-    """The canonical keys of the `forgotten:` statuses in a
-    `fold_resolutions` result."""
-    keys: set[str] = set()
-    for evt in resolved.values():
-        status = str(evt.get("status") or "")
-        if status.lower().startswith(_FORGOTTEN_PREFIX):
-            key = status[len(_FORGOTTEN_PREFIX):].strip()
-            if key:
-                keys.add(key)
-    return keys
+def _tombstoned_keys(rows) -> set[str]:
+    """The canonical keys of the tombstones that stand in events `rows`: a
+    view of `standing_tombstones`, id refs and key refs alike."""
+    return set(standing_tombstones(rows))
 
 
 # (checkpoint root) -> (stamp, keys): see all_forgotten_content_keys. Only a
@@ -3625,7 +3692,7 @@ def _forgotten_walk() -> tuple[frozenset, frozenset]:
         read = jsonl.read(child / "events.jsonl")
         if read.health in (jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
             incomplete.add(child.name)
-        keys |= _tombstoned_keys(fold_resolutions(read.rows))
+        keys |= _tombstoned_keys(read.rows)
     if not incomplete:
         _all_forgotten_cache[root] = (key, frozenset(keys))
     return frozenset(keys), frozenset(incomplete)

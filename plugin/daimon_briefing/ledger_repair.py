@@ -241,22 +241,6 @@ def resolve_name(name: str) -> str | None:
     return None
 
 
-_MARKER = "forgotten:"
-
-
-def _forgotten_keys(project_dir) -> dict[str, list[str]]:
-    """{content key: the item ids tombstoned for it}, from the events fold.
-    A reopened tombstone is not in the fold, so it is not here either."""
-    keys: dict[str, list[str]] = {}
-    for ref, evt in sorted(store.resolutions(project_dir=project_dir).items()):
-        status = str(evt.get("status") or "")
-        if store.is_tombstone_status(status):
-            key = status.strip()[len(_MARKER):].strip()
-            if key:
-                keys.setdefault(key, []).append(ref)
-    return keys
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -342,18 +326,22 @@ def _rescrub(project_dir, approve, dry_run: bool
         return 0, 0, (f"events.jsonl is {health.value}, so the forgotten "
                       "keys cannot be read; run `daimon ledger repair "
                       "events` first"), (), ""
-    forgotten = _forgotten_keys(project_dir)
+    # One parse of the tombstones (`store.standing_tombstones`): a key whose
+    # only standing ref is its key ref has no id and is still repaired.
+    forgotten = store.project_standing(project_dir)
     doomed = tuple(refutations.active_rulings_reached(
-        forgotten, item_ids={r for refs in forgotten.values() for r in refs},
+        forgotten,
+        item_ids={r for standing in forgotten.values() for r in standing.ids},
         project_dir=project_dir)) if forgotten else ()
     if doomed and not dry_run:
         refusal = approve(list(doomed))
         if refusal:
             return 0, 0, "", doomed, refusal
     rows = 0
-    for key, refs in forgotten.items():
-        done = scrub_forgotten_key(key, item_id=refs[0],
-                                   sibling_ids=refs[1:],
+    for key, standing in forgotten.items():
+        ids = standing.ids
+        done = scrub_forgotten_key(key, item_id=ids[0] if ids else "",
+                                   sibling_ids=ids[1:],
                                    project_dir=project_dir)
         rows += (done.events + len(done.refutations) + len(done.relations)
                  + len(done.amendments) + len(done.requests)
