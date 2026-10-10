@@ -26,6 +26,7 @@ withheld value inside longer prose still leaks.
 
 import ast
 import itertools
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -213,6 +214,10 @@ for kind in ("question", "decision", "belief", "uncertainty"):
 case("cli:why", "control", A("why", I("other_question")), shows=OTHER)
 case("cli:why", "idforgot", A("why", I("idforgot")),
      shows="[withheld: forgotten]")
+# a value only a TEAMMATE quarantined: withheld on every channel, with the
+# anonymous marker (no id: ada holds no record of it)
+case("cli:why", "foreignq", A("why", I("foreignq")),
+     shows="[withheld: quarantine]")
 case("cli:why", "json", A("why", I("question"), "--json"), rc=(0, 1),
      dests=("json",))
 case("cli:why", "source", A("why", I("question"), "--source"), rc=(0, 1),
@@ -341,6 +346,18 @@ case("cli:trust propose", "text", A("trust", "propose", "--text",
 for verb in ("confirm", "dismiss", "release"):
     case(f"cli:trust {verb}", "id", A("trust", verb, qid), tty=True,
          rc=(0, 1, 2), dests=("quarantine_id",))
+# a dry run: under a closed trust ledger the verb is allowed to proceed (the
+# deletion promise outranks the outage, H6), and a real forget there rewrites
+# checkpoints that carry other withheld values on purpose
+case("cli:forget", "foreignq", A("forget", I("foreignq"), "--dry-run"),
+     tty=True, rc=(0, 2), dests=("target", "dry_run"), axes=("STDIN_TTY",))
+# the other exact-id binding verbs refuse it too, on a terminal and as an agent
+case("cli:resolve", "foreignq", A("resolve", I("foreignq")), tty=True,
+     rc=(2,), dests=("target",))
+case("cli:resolve", "foreignq-agent", A("resolve", I("foreignq"), "--by",
+     "agent", "--evidence", "quoted"), rc=(2,), dests=("target", "by"))
+case("cli:reverify", "foreignq", A("reverify", I("foreignq"), "--evidence",
+     "checked"), tty=True, rc=(2,), dests=("target",))
 case("cli:trust republish", "tty", A("trust", "republish"), tty=True,
      rc=(0, 1, 2, 4))
 case("cli:trust republish", "agent", A("trust", "republish", "--by", "agent"),
@@ -778,6 +795,82 @@ def test_the_peer_quarantines_live_in_the_peer_bucket_only(world_run):
         key = normalize.content_key(text)
         assert key not in own and key in peer
         assert text in rows
+
+
+def _in_world(world, monkeypatch):
+    """Point a test at the stores the module-scoped world built (the autouse
+    isolation gave this test fresh empty ones), as ada."""
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(world.bucket.parent))
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(world.root / ".daimon" / "team"))
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+
+
+def test_the_teammates_quarantine_is_planted_and_is_what_withholds(
+        world_run, monkeypatch):
+    """Anti-vacuity for D6: the value is in every copy of ada's and in grace's
+    mirrored checkpoint, grace's hash-only row is in grace's author directory, and
+    removing that pair (and nothing else) makes the same item visible."""
+    import dataclasses
+
+    from daimon_briefing import config, normalize, trust, view
+    world, _leaks, _details = world_run
+    _in_world(world, monkeypatch)
+    # the value sits in the bytes a reader could recover it from
+    own_raw = b"\n".join(p.read_bytes() for p in world.bucket.glob("*.json"))
+    assert sw.FOREIGNQ_TOKEN.encode() in own_raw
+    mirrored = list((config.team_dir()).rglob("authors/grace/G-1.json"))
+    assert mirrored and sw.FOREIGNQ_TOKEN in mirrored[0].read_text()
+    # grace's published row: hashes and enums, written by the real publisher
+    [published] = list(config.team_dir().rglob("authors/grace/quarantines.jsonl"))
+    assert sw.FOREIGNQ_TOKEN not in published.read_text()
+    row = json.loads(published.read_text().splitlines()[-1])
+    assert row["value_key"] == trust.value_key(sw.FOREIGNQ_TEXT)
+    assert row["quarantine_id"] == world.foreignq_id and row["state"] == "active"
+    # ada's bucket holds no record of it; the reader's set does
+    assert trust.get(world.foreignq_id, project_dir=world.project) is None
+    pair = ("decision", trust.value_key(sw.FOREIGNQ_TEXT))
+    assert pair in store.foreign_quarantines()
+    snap = view.snapshot(world.bucket.name)
+    assert pair in snap.quarantined and pair not in snap.quarantine_ids
+    item = {"text": sw.FOREIGNQ_TEXT, "id": world.ids["foreignq"]}
+    fld = next(f for f in schema.ITEM_FIELDS if f.kind == "decision")
+    got = view.classify(fld, item, snap)
+    assert isinstance(got, view.Withheld) and got.quarantine_id is None
+    # without the pair, and only without it, the same item reads
+    bare = dataclasses.replace(snap, quarantined=snap.quarantined - {pair})
+    assert isinstance(view.classify(fld, item, bare), view.Visible)
+    # positive controls: another value, and the same text as another kind
+    other = next(f for f in schema.ITEM_FIELDS if f.kind == "belief")
+    assert isinstance(view.classify(fld, {"text": VISIBLE, "id": "d-1"}, snap),
+                      view.Visible)
+    assert isinstance(view.classify(other, item, snap), view.Visible)
+    assert normalize.content_key(sw.FOREIGNQ_TEXT) == pair[1]
+
+
+def test_the_authors_own_published_pairs_are_not_foreign(world_run,
+                                                         monkeypatch):
+    """The world's own `trust.propose` calls publish too (DAIMON_TEAM is on):
+    ada's author directory holds them, and none of them is read back as a
+    teammate's."""
+    from daimon_briefing import config, trust
+    world, _leaks, _details = world_run
+    _in_world(world, monkeypatch)
+    [mine] = list(config.team_dir().rglob("authors/ada/quarantines.jsonl"))
+    own_pairs = {(r["kind"], r["value_key"])
+                 for r in map(json.loads, mine.read_text().splitlines())}
+    assert own_pairs, "the world publishes ada's quarantines"
+    foreign = store.foreign_quarantines()
+    assert not own_pairs & foreign
+    assert foreign == {("decision", trust.value_key(sw.FOREIGNQ_TEXT))}
+
+
+def test_a_teammates_quarantine_withholds_on_the_terminal_too(world_run):
+    """H8: the human-channel exemptions are for the owner. The raw-for-a-person
+    table never names FOREIGNQ, and the forget case ran at a terminal."""
+    for kinds in HUMAN_RAW.values():
+        assert "foreignq" not in kinds
+    assert CASES[("cli:forget", "foreignq")].tty is True
+    assert ("cli:why", "foreignq") in CASES
 
 
 def test_the_forgotten_keys_are_stored_in_the_world(world_run):

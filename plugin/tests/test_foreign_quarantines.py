@@ -3,7 +3,9 @@
 One walk reads both team ledgers per foreign author directory: the forget
 keys, the active quarantine pairs, and one health verdict per author. The
 fixtures plant the files by hand on purpose: this is the READER's view of what
-a sidecar clone holds, and the writer has its own tests."""
+a sidecar clone holds, and the writer has its own tests. The planted rows
+bypass the publisher's strict shape (short event ids, shared ids) because
+the fold reads leniently and these tests pin that."""
 
 import json
 

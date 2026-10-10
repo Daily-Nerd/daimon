@@ -968,3 +968,69 @@ def test_init_refuses_a_project_path_with_the_reserved_segment(
     with pytest.raises(teamsync.TeamError, match="authors"):
         teamsync.init(str(bare_remote), project_dir=bare_remote.parent)
     assert not (config.team_dir() / teamsync.remote_slug(str(bare_remote))).exists()
+
+
+# ---- PR 13 (D6): a quarantine crosses the sidecar and comes back ----
+
+
+def test_a_quarantine_is_published_synced_withheld_and_released(
+        bare_remote, tmp_path, monkeypatch):
+    """Ada quarantines through the real verb, sync pushes Ada's author
+    directory with the new ledger and no protocol change, Bob's sync pulls it
+    and Bob's judge withholds the value; Ada releases, the two syncs repeat and
+    it reads again. Bob's recall fingerprint moves both times."""
+    from daimon_briefing import normalize, recall, schema, trust, view
+    value = "the staging vault password is in the old runbook"
+    key = normalize.content_key(value)
+    decision = next(f for f in schema.ITEM_FIELDS if f.kind == "decision")
+    item = {"text": value, "id": "d-aaaaaa"}
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/census")
+
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    tid = trust.propose(text=value, kind="decision", reason="not true",
+                        evidence=["issue:1"], channel="cli-tty",
+                        project_dir="/p/ada-q")
+    assert len(tid.published) == 1 and tid.published.failed == ()
+    ledger = ("projects/squad/census/authors/Ada/quarantines.jsonl")
+    assert (ada / ledger).exists()
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    assert ledger in _bare_files(bare_remote), \
+        "_commit_own must carry the new ledger with no protocol change"
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    before = recall._fingerprint()
+    assert teamsync.sync_remote(bob)["fetched"] is True
+    assert (bob / ledger).exists()
+    assert store.foreign_quarantines() == {("decision", key)}
+    verdict = view.judge(None).verdict(decision, item)
+    assert isinstance(verdict, view.Withheld) and verdict.quarantine_id is None
+    activated = recall._fingerprint()
+    assert activated != before
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    released = trust.release(tid, channel="cli-tty", project_dir="/p/ada-q")
+    assert len(released) == 1 and released.failed == ()
+    assert teamsync.sync_remote(ada)["pushed"] is True
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    assert teamsync.sync_remote(bob)["fetched"] is True
+    assert store.foreign_quarantines() == frozenset()
+    assert isinstance(view.judge(None).verdict(decision, item), view.Visible)
+    assert recall._fingerprint() not in (before, activated)
+
+
+def test_commit_own_stages_the_quarantine_ledger(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    own = sidecar / "authors" / "Ada"
+    own.mkdir(parents=True)
+    (own / "quarantines.jsonl").write_text("{}\n", encoding="utf-8")
+    report = {"committed": 0, "warnings": []}
+    teamsync._commit_own(sidecar, report)
+    assert report["committed"] == 1
+    assert "authors/Ada/quarantines.jsonl" in _git(
+        sidecar, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()

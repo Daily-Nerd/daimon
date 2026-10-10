@@ -5,7 +5,8 @@ The foreign pairs are merged into `Snapshot.quarantined` and into every
 withheld machine-wide. The reader's own `quarantine_ids` stay own-only: a
 verdict with no id is a teammate's. The published file is planted by hand
 here; the writer-to-reader round trip lives in test_teamsync and the
-sentinel world."""
+sentinel world. The planted rows bypass the publisher's strict shape on purpose
+(short event ids, shared ids): they pin what the READER does with a row."""
 
 import json
 
