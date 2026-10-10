@@ -445,6 +445,12 @@ case("cli:forget", "dry", A("forget", I("question"), "--dry-run"), tty=True,
      rc=(0, 1, 2), dests=("dry_run", "project"), axes=("STDIN_TTY",))
 case("cli:forget", "republish", A("forget", "--republish"), tty=True,
      rc=(0, 1, 4), dests=("project", "republish"))
+# finishing what a forget left: every standing tombstone, every phase, from a
+# person's terminal; it binds no item and prints counts and surface names
+case("cli:forget", "resume", A("forget", "--resume"), tty=True,
+     rc=(0, 1, 4), dests=("resume",))
+case("cli:forget", "resume-publish", A("forget", "--resume", "--only",
+     "publish"), tty=True, rc=(0, 1, 4), dests=("only",))
 # a real forget of the quarantined sentinel by its exact id, from a person's
 # terminal: the receipt prints the content hash of the value just forgotten
 case("cli:forget", "receipt", A("forget", I("question"), "--reason", "r"),
@@ -671,7 +677,7 @@ def test_dests_match_the_parser_and_are_classified():
         dests = {a.dest for a in parser._actions
                  if not isinstance(a, argparse._HelpAction)}
         assert dests == set(DESTS[" ".join(leaf)]), leaf
-    assert sum(len(v) for v in DESTS.values()) == 346
+    assert sum(len(v) for v in DESTS.values()) == 348
     for leaf, row in DESTS.items():
         for name, (cls, code) in row.items():
             assert cls in ("OUT", "INE"), (leaf, name)
@@ -747,6 +753,13 @@ KEY_EXEMPT = {
         "person's command (the agent run is refused)",
     ("cli:forget", "republish"):
         "re-publishing a tombstone writes its key into the team sidecar",
+    ("cli:forget", "resume"):
+        "finishing a forget writes the missing key row into the events "
+        "ledger, which is where the key lives; it prints none (a person's "
+        "command, the agent run is refused)",
+    ("cli:forget", "resume-publish"):
+        "the publish phase writes the key into the team sidecar, as "
+        "republish does",
 }
 
 
@@ -1109,7 +1122,8 @@ NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json"),
 NO_ITEM_READ |= {(s, t) for (s, t) in CASES
                  if s == "cli:anchor" and t != "attach"}
 # `forget --republish` publishes tombstone keys already recorded; it binds no item
-NO_ITEM_READ |= {("cli:forget", "republish")}
+NO_ITEM_READ |= {("cli:forget", "republish"), ("cli:forget", "resume"),
+                  ("cli:forget", "resume-publish")}
 # an agent's `unforget` is refused at the gate, before any read
 NO_ITEM_READ |= {("cli:unforget", "agent")}
 

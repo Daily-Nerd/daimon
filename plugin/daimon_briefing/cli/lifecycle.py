@@ -33,7 +33,7 @@ from .. import (
     view,
 )
 from ..effects import Effects
-from ..surfaces import Writer
+from ..surfaces import PHASES, Writer
 from ._ledger import refuse_teammate_pair
 
 
@@ -228,7 +228,7 @@ def _unreached_line(u) -> str:
         # a surface that is not a ledger (a cache, a log, the live checkpoint)
         shown = f" ({u.detail})" if u.detail else ""
         return (f"{u.name} could not be reached{shown}; the value may still "
-                "be in it")
+                "be in it; fix the cause, then run: daimon forget --resume")
     if u.name.endswith(".quarantined-lines"):
         return (f"{u.name} holds {u.torn or 'a'} line(s) forget cannot read "
                 f"({u.state.value}); review that file by hand")
@@ -262,11 +262,140 @@ def _cmd_forget_republish(args) -> int:
     if not config.team_enabled():
         print("no team is enabled; nothing to republish")
         return 0
+    if getattr(args, "dry_run", False):
+        keys = store.forgotten_content_keys(project)
+        print(f"would publish up to {len(keys)} standing tombstone(s) the "
+              "team sidecar is missing; nothing was written")
+        return 0
     published = store.republish_tombstones(project_dir=project)
     lines = [f"republished {len(published.keys)} tombstone(s) to the team "
              "sidecar"] + _published_lines(published)
     render.render_lifecycle_lines(lines)
     return 4 if published.failed else 0
+
+
+def forget_phases() -> tuple:
+    """The phases a resume can run, in the order they run."""
+    return tuple(p for p in PHASES if p != "tombstone")
+
+
+def _cmd_forget_resume(args) -> int:
+    """`forget --resume`: finish every phase for every standing tombstone of
+    this project. A forget that could not reach a surface, one that stopped
+    after its first write, and every forget made before the key row existed
+    all leave a tombstone with work behind it, and this is the one verb that
+    does it. Idempotent: a surface already clean is reached again at no cost.
+
+    A standing tombstone with no key row gets one (the old shape was an id row
+    alone), and the receipt counts them in one line: from then on only
+    `daimon unforget` lifts the forget, a reopen on the id no longer does.
+    Human only, because that last step makes a liftable forget stricter and
+    the run may remove an ACTIVE ruling, which asks first like forget does."""
+    if _human_cli_channel("forget --resume") is None:
+        return 1
+    project = _cli._resolve_project(args.project)
+    events_path = store._events_path(store._resolved(project))
+    if events_path is not None:
+        jsonl.require_writable(events_path, Writer.HUMAN)
+    only = getattr(args, "only", None)
+    dry_run = getattr(args, "dry_run", False)
+    if only == "publish":
+        return _cmd_forget_republish(args)
+    standing = store.project_standing(project)
+    if not standing:
+        print("no standing forget in this project; nothing to finish")
+        return 0
+    phases = {"publish", "value", "id", "wholesale", "derived"}
+    if only:
+        phases = {only}
+    legacy = [k for k, held in standing.items()
+              if held.ids and not held.key_refs]
+    doomed: tuple = ()
+    if "value" in phases:
+        doomed = tuple(refutations.active_rulings_reached(
+            set(standing),
+            item_ids={i for held in standing.values() for i in held.ids},
+            project_dir=project))
+    if dry_run:
+        # A real preview: nothing runs, no row is written, nobody is asked.
+        lines = [f"would finish {len(standing)} standing forget(s); nothing "
+                 "was written"]
+        if only is None and legacy:
+            lines.append(f"would write the key row for {len(legacy)} "
+                         "standing tombstone(s)")
+        lines.append("phases that would run: " + ", ".join(
+            p for p in forget_phases() if p in phases))
+        if doomed:
+            lines.append("would remove ACTIVE ruling(s): " + ", ".join(doomed))
+        render.render_lifecycle_lines(lines)
+        return 0
+    from .ledger_cmd import _approve_rulings
+    if doomed:
+        refusal = _approve_rulings(list(doomed))
+        if refusal:
+            print(refusal)
+            return 1
+    unreached: dict = {}
+    upgraded = 0
+    for key, held in standing.items():
+        # the key-row upgrade is a tombstone-phase write: `--only` skips it
+        if only is None and held.ids and not held.key_refs:
+            wrote = forget.write_tombstones(
+                forget.Target(key, held.ids[0], held.ids, project))
+            if wrote.reached:
+                upgraded += 1
+            else:
+                unreached.setdefault("tombstone key row", forget.Unreached(
+                    "tombstone key row", jsonl.Health.OK, 0, True,
+                    "could not be written"))
+    totals: dict = {}
+    published_failed = 0
+    ledger_fns = {p.step.fn for p in forget.STEPS if p.ledger}
+    steps = {p.step.fn: p.step for p in forget.STEPS}
+    reached_all: dict = {}
+    for key, held in store.project_standing(project).items():
+        ids = tuple(held.ids)
+        outcome = forget.run(
+            forget.Target(key, ids[0] if ids else "", ids, project),
+            phases=phases, approve_rulings=lambda _rulings: "")
+        for item in outcome.done:
+            fn = item.step.fn
+            totals[fn] = totals.get(fn, 0) + item.n
+            reached_all[fn] = reached_all.get(fn, True) and item.reached
+            if item.step.phase == "publish":
+                published_failed += len(getattr(item.result, "failed", ()))
+                continue
+            for u in item.unreached:
+                unreached.setdefault(u.name, u)
+    lines = []
+    if upgraded:
+        lines.append(
+            f"wrote the key row for {upgraded} standing tombstone(s); from "
+            "now only `daimon unforget` lifts them, a reopen on the id no "
+            "longer does")
+    rows = sum(n for fn, n in totals.items() if fn in ledger_fns)
+    lines.append(f"finished {len(standing)} standing forget(s): {rows} "
+                 "record(s) removed or redacted in the ledgers")
+    for fn, step in steps.items():
+        if step.done and fn in totals and reached_all.get(fn):
+            lines.append(step.done.format(n=totals[fn]))
+    for u in unreached.values():
+        lines.append(
+            f"unreached: {_unreached_line(u)}" if u.plaintext else
+            f"note: {_unreached_line(u)}; it holds no plaintext, so this "
+            "does not block forget")
+    failing = [u for u in unreached.values() if u.plaintext]
+    if published_failed:
+        lines.append(f"warning: {published_failed} team sidecar(s) could not "
+                     "be written; fix them, then run this again")
+    if failing or published_failed:
+        lines.append(
+            "forget scrubbed everything it could read; "
+            f"{len(failing) + published_failed} surface(s) were not reached "
+            "(exit 4)")
+    _cli._note_usage("forget:resume")
+    render.render_lifecycle_lines(lines)
+    return 4 if (failing or published_failed) else 0
 
 
 def _approve_forget(rulings: list) -> str:
@@ -300,7 +429,19 @@ def _cmd_forget(args) -> int:
     rides the resolutions fold, so withhold, carry suppression, and the
     recall index deletion all inherit it with no new plumbing. The rewritten
     checkpoint re-mints its receipt, so the post-removal state is signed."""
+    only = getattr(args, "only", None)
+    if only and not (getattr(args, "resume", False)
+                     or getattr(args, "republish", False)):
+        print("error: --only goes with --resume", file=sys.stderr)
+        return 2
+    if getattr(args, "resume", False):
+        if args.target:
+            print("error: --resume takes no target; it finishes the forgets "
+                  "already recorded", file=sys.stderr)
+            return 2
+        return _cmd_forget_resume(args)
     if getattr(args, "republish", False):
+        # the publish phase of a resume, kept as its own flag for one release
         if args.target:
             print("error: --republish takes no target; it publishes the "
                   "forgets already recorded", file=sys.stderr)
@@ -1351,9 +1492,19 @@ def register(sub, fmt) -> None:
         "--dry-run", action="store_true",
         help="show what would be forgotten without writing — look before a destructive op")
     p_forget.add_argument(
+        "--resume", action="store_true",
+        help="finish every phase for every forget already recorded: the cure "
+             "for a surface that could not be reached; a person at a "
+             "terminal, takes no target")
+    p_forget.add_argument(
+        "--only", choices=["publish", "value", "id", "wholesale", "derived"],
+        help="with --resume, run only this phase")
+    p_forget.add_argument(
         "--republish", action="store_true",
         help="publish every local forget the team sidecar is missing "
-             "(the cure for a publish that failed); takes no target")
+             "(the cure for a publish that failed); takes no target; the "
+             "same as --resume --only publish, and it goes in the next "
+             "release")
     p_forget.set_defaults(func=_cli._cmd_forget)
 
     p_unforget = sub.add_parser(
