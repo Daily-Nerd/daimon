@@ -888,19 +888,39 @@ def scrub_serialize_log() -> tuple:
 _TOMBSTONE_NAME = "tombstones.jsonl"
 
 
-def _own_team_dirs(project_dir=None) -> list:
+def _own_team_dirs(project_dir=None, *, clones_only: bool = False) -> list:
     """This author's directories in every sidecar the project routes to —
     the same identity and routing _dual_write_team writes checkpoints with,
-    so a published tombstone lands where the sync already looks."""
+    so a published tombstone lands where the sync already looks.
+    `clones_only` drops the machine-local `local` mirror: nothing reads it as
+    another author's, so a published quarantine there reaches no reader."""
     own = project_slug(config.author()) or "unknown"
     segs = teamproject.resolve(project_dir)
     out = []
     for slug in _team_write_slugs(project_dir):
+        if clones_only and slug == _TEAM_LOCAL_REMOTE:
+            continue
         base = config.team_dir() / slug
         if segs:
             base = base.joinpath("projects", *segs)
         out.append(base / "authors" / own)
     return out
+
+
+class PublishFailure(NamedTuple):
+    """One own sidecar a publish could not write: the ledger path and why.
+    A 2-tuple, so `for path, why in published.failed` keeps working; `remote`
+    names the sidecar clone (the first segment under the team dir)."""
+
+    path: Path
+    reason: str
+
+    @property
+    def remote(self) -> str:
+        try:
+            return Path(self.path).relative_to(config.team_dir()).parts[0]
+        except (ValueError, IndexError):
+            return ""
 
 
 class Published(list):
@@ -912,7 +932,7 @@ class Published(list):
 
     def __init__(self, paths=(), failed=(), keys=frozenset()):
         super().__init__(paths)
-        self.failed = tuple(failed)
+        self.failed = tuple(PublishFailure(*f) for f in failed)
         self.keys = frozenset(keys)
 
 
@@ -988,17 +1008,183 @@ def republish_tombstones(project_dir=None) -> Published:
                          project_dir)
 
 
+_QUARANTINE_NAME = "quarantines.jsonl"
+# The only fields a published quarantine row may carry: hashes and enums.
+_QUARANTINE_FIELDS = ("version", "ts", "order", "event_id", "quarantine_id",
+                      "kind", "value_key", "state", "author")
+
+
+def _own_author_dirs_everywhere() -> list:
+    """Every directory of THIS author in every sidecar clone, both layout
+    eras, whether or not the project routes there now. A release retracts an
+    earlier claim of yours, a hash-only row in a place you already published
+    to, so it needs no current membership. The `local` mirror is not a clone
+    and is skipped. Never raises."""
+    own = project_slug(config.author()) or "unknown"
+    out: list = []
+    try:
+        clones = sorted(p for p in config.team_dir().iterdir()
+                        if p.is_dir() and p.name != _TEAM_LOCAL_REMOTE
+                        and (p / ".git").exists())
+    except OSError:
+        return out
+    for clone in clones:
+        try:
+            out.extend(d for d in _team_author_dirs(clone) if d.name == own)
+        except OSError:
+            continue
+    return out
+
+
+def _publishable(row) -> dict | None:
+    """A caller's row reduced to the declared hash-only fields in their one
+    shape (`policy.strict_published_row`), or None when it is not a valid
+    active/released claim. The author is written as the directory-safe slug,
+    the name the sidecar already shows. A row that is a claim but off shape is
+    refused here, never written."""
+    if not isinstance(row, dict):
+        return None
+    clean = {k: row[k] for k in _QUARANTINE_FIELDS if k in row}
+    if clean.get("state") not in ("active", "released"):
+        return None
+    clean.setdefault("version", 1)
+    clean["author"] = project_slug(str(clean.get("author")
+                                       or config.author())) or "unknown"
+    return clean if policy.strict_published_row(clean) else None
+
+
+def _id_folds_active(rows, qid) -> bool:
+    """Does this file, folded per id, still say the quarantine id is active?"""
+    return bool(policy.fold_published_quarantines(
+        [r for r in rows if isinstance(r, dict)
+         and r.get("quarantine_id") == qid]))
+
+
+def publish_quarantine(rows, project_dir=None) -> Published:
+    """Publish a human quarantine so teammates withhold the value (PR 13, D6).
+
+    `rows` are hash-only claims `{ts, order, event_id, quarantine_id, kind,
+    value_key, state, author}` with `state` `active` or `released`, copied
+    from the local ledger row that caused the publish so a published row
+    orders exactly like the local one. Anything else a caller attaches is
+    dropped: no reason, no evidence, no text.
+
+    An `active` row goes to the author's own `quarantines.jsonl` in each
+    sidecar CLONE the project routes to now (never `local`, which no reader
+    folds). A `released` row goes to every own author directory in every
+    clone whose file still folds that quarantine id active, routed or not,
+    so a membership change cannot strand an active row. Presence is checked
+    by `event_id` through the capped reader, so a retry never duplicates; a
+    file that is over the cap or not proven is a reported failure, never
+    re-appended as "absent".
+
+    Gated on config.team_enabled(). Best-effort like the tombstone: the local
+    transition already happened and stays; `Published.failed` says what
+    teammates still hold."""
+    if not config.team_enabled():
+        return Published()
+    clean = []
+    refused = []
+    for row in rows:
+        got = _publishable(row)
+        if got is not None:
+            clean.append(got)
+        elif isinstance(row, dict) and row.get("state") in ("active",
+                                                           "released"):
+            refused.append((config.team_dir(),
+                            "a quarantine row was refused: it is not the "
+                            "hash-only published shape"))
+    if not clean:
+        return Published((), refused)
+    project_dir = _resolved(project_dir)
+    try:
+        out = _publish_planned(clean, project_dir)
+    except Exception as exc:  # noqa: BLE001 - the local transition stands
+        return Published((), [*refused, (config.team_dir(),
+                              f"{type(exc).__name__} while publishing")])
+    return Published(out, [*refused, *out.failed], out.keys) if refused else out
+
+
+def _publish_planned(clean, project_dir) -> Published:
+    """Plan and write the sidecar appends for already-clean rows. A raise
+    inside one sidecar's append is that sidecar's failure; a raise while
+    planning propagates to `publish_quarantine`, which reports it."""
+    active = [r for r in clean if r["state"] == "active"]
+    released = [r for r in clean if r["state"] == "released"]
+    plan: dict = {}  # ledger path -> (author dir, rows wanted there)
+    if active:
+        for adir in _own_team_dirs(project_dir, clones_only=True):
+            plan.setdefault(adir / _QUARANTINE_NAME, (adir, []))[1].extend(active)
+    written: list[str] = []
+    failed: list[tuple] = []
+    wrote: set = set()
+    reads: dict = {}
+    if released:
+        for adir in _own_author_dirs_everywhere():
+            path = adir / _QUARANTINE_NAME
+            got = reads[path] = _capped_rows(path)
+            wanted = [r for r in released
+                      if _id_folds_active(got.rows, r.get("quarantine_id"))]
+            if wanted:
+                plan.setdefault(path, (adir, []))[1].extend(wanted)
+    for path, (adir, wanted) in plan.items():
+        got = reads.get(path) or _capped_rows(path)
+        have = {r.get("event_id") for r in got.rows
+                if isinstance(r, dict) and isinstance(r.get("event_id"), str)}
+        todo = [r for r in wanted
+                if not (r.get("event_id") and r["event_id"] in have)]
+        if not todo:
+            continue
+        if got.unproven:
+            why = ("its quarantine ledger is over the 1 MB cap" if got.over_cap
+                   else f"its quarantine ledger is {got.health.value}")
+            failed.append((path, why))
+            continue
+        lines = [json.dumps(r, ensure_ascii=False) for r in todo]
+        try:
+            adir.mkdir(parents=True, exist_ok=True)
+            # lock=False: this dir is committed by teamsync._commit_own, and a
+            # .pointer.lock sidecar would travel to every teammate.
+            jsonl.append_lines(
+                path, lines, lock=False,
+                posture=jsonl.lazy_posture(path, Writer.HUMAN))
+        except OSError as exc:
+            name = errno.errorcode.get(exc.errno or 0, "OSError")
+            failed.append((path, f"{name} while writing"))
+            continue
+        except Exception as exc:  # noqa: BLE001 - one sidecar, one failure
+            failed.append((path, f"{type(exc).__name__} while writing"))
+            continue
+        written.append(str(path))
+        wrote.update(r["value_key"] for r in todo)
+    return Published(written, failed, wrote)
+
+
 # One ledger is read on the briefing path, so it cannot be unbounded: a
 # teammate publishing a huge file must not make every read pay for it.
 # ~1 MB is ~12k rows, far past any real forget history.
 _MAX_TOMBSTONE_BYTES = 1_000_000
 
 
+class CappedRead(NamedTuple):
+    """The capped read of one published team ledger: its good rows and what
+    the file is. `unproven` is the state a reader must not trust the rows of
+    as COMPLETE: the file was not read (TRANSIENT or an OS error), holds a
+    garbage line, or is over the cap so only its head was read."""
+
+    rows: list
+    health: jsonl.Health
+    over_cap: bool = False
+
+    @property
+    def unproven(self) -> bool:
+        return self.over_cap or self.health in (jsonl.Health.TRANSIENT,
+                                                jsonl.Health.UNREADABLE)
+
+
 class TombstoneRead(NamedTuple):
     """The capped read of one tombstone ledger: the keys of its good rows and
-    what the file is. `unproven` is the state a reader must not trust the
-    keys of as COMPLETE: the file was not read (TRANSIENT or an OS error),
-    holds a garbage line, or is over the cap so only its head was read."""
+    what the file is (see `CappedRead` for `unproven`)."""
 
     keys: set
     health: jsonl.Health
@@ -1020,33 +1206,53 @@ def _row_keys(rows) -> set[str]:
     return keys
 
 
-def _tombstone_keys(path) -> TombstoneRead:
-    """The keys of one tombstone ledger and its health. Capped at
+_OVERCAP_WARNED: set = set()
+
+
+def _capped_rows(path) -> CappedRead:
+    """The rows of one published team ledger and its health. Capped at
     `_MAX_TOMBSTONE_BYTES`: `jsonl.read` has no bounded mode (it loads the
     whole file), so an over-cap file is read for its head only and reported
     `over_cap`. A corrupt row never hides the rest. Never raises."""
     try:
-        size = path.stat().st_size
+        st = path.stat()
     except FileNotFoundError:
-        return TombstoneRead(set(), jsonl.Health.ABSENT)
+        return CappedRead([], jsonl.Health.ABSENT)
     except OSError:
-        return TombstoneRead(set(), jsonl.Health.UNREADABLE)
+        return CappedRead([], jsonl.Health.UNREADABLE)
+    if not stat.S_ISREG(st.st_mode):
+        # A directory (or a device) in place of the ledger is unreadable. Its
+        # st_size is a filesystem artefact (4096 on ext4) and must never be
+        # compared with the cap, or it would be reported as an over-cap file.
+        return CappedRead([], jsonl.Health.UNREADABLE)
+    size = st.st_size
     if size <= _MAX_TOMBSTONE_BYTES:
         got = jsonl.read(path)
-        return TombstoneRead(_row_keys(got.rows), got.health)
-    log.warning("daimon team: %s exceeds %d bytes — reading the first %d "
-                "only", path.name, _MAX_TOMBSTONE_BYTES, _MAX_TOMBSTONE_BYTES)
+        return CappedRead(list(got.rows), got.health)
+    # once per stat change of the file, not once per call
+    seen = (str(path), size, st.st_mtime_ns)
+    if seen not in _OVERCAP_WARNED:
+        _OVERCAP_WARNED.add(seen)
+        log.warning("daimon team: %s exceeds %d bytes; reading the first %d "
+                    "only", path.name, _MAX_TOMBSTONE_BYTES,
+                    _MAX_TOMBSTONE_BYTES)
     try:
         with path.open("rb") as f:
             head = f.read(_MAX_TOMBSTONE_BYTES)
     except OSError:
-        return TombstoneRead(set(), jsonl.Health.UNREADABLE, True)
+        return CappedRead([], jsonl.Health.UNREADABLE, True)
     rows = []
     for line in head.decode("utf-8", errors="surrogateescape").splitlines():
         kind, row = jsonl.classify_line(line)
         if kind == jsonl.ROW:
             rows.append(row)
-    return TombstoneRead(_row_keys(rows), jsonl.Health.DEGRADED, True)
+    return CappedRead(rows, jsonl.Health.DEGRADED, True)
+
+
+def _tombstone_keys(path) -> TombstoneRead:
+    """The keys of one tombstone ledger and its health (see `_capped_rows`)."""
+    got = _capped_rows(path)
+    return TombstoneRead(_row_keys(got.rows), got.health, got.over_cap)
 
 
 class ForeignLedger(NamedTuple):
@@ -1075,29 +1281,146 @@ def foreign_ledger(slug: str, name: str) -> ForeignLedger:
 
 class ForeignTombstones(NamedTuple):
     """Every other author's published tombstones, read once: the union of
-    their keys, the author directory names whose ledger is not proven (their
-    keys may be incomplete: O3, their checkpoints are not admitted) and those
-    whose ledger only has torn lines (keys used, a note)."""
+    their keys and the author directory names whose published ledgers are not
+    proven (their claims may be incomplete: O3, their checkpoints are not
+    admitted). A torn tail, an over-cap file or a row version this reader does
+    not know is unproven, not read around."""
 
     keys: set
     unproven: frozenset
-    degraded: frozenset
+
+
+class ForeignTeam(NamedTuple):
+    """Every other author's published team ledgers, read in ONE walk: both
+    files per author directory, one health verdict per author.
+
+    `keys` is the union of forget keys (tombstones). `quarantines` is the
+    union of the `(kind, value_key)` pairs still claimed active, each author
+    file folded per id first (`policy.fold_published_quarantines`). `claims`
+    is `(author_dir, kind, ts)` per active pair claim, for display only.
+    `unproven` is the author directory names with a file that is over the
+    cap, transient, unreadable or has a torn tail (the newest claim cannot be
+    proven: O3, H7); good rows of such a file still contribute, since the
+    sets only grow. An author directory name that is not a plain name
+    (`[\\w.-]+`) is never read and is unproven. `claims` carries only
+    validated shapes: a timestamp that is not an ISO instant reads as ""."""
+
+    keys: frozenset
+    quarantines: frozenset
+    claims: tuple
+    unproven: frozenset
+
+
+_ISO_TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+_AUTHOR_DIR = re.compile(r"[\w.-]+")
+# (key, ForeignTeam) of the last real walk. The key is the stat of exactly the
+# files that walk read plus what else changes its answer (scar 0126), so a
+# hit costs one stat per file and never resolves the author.
+_FOREIGN_TEAM_MEMO: tuple | None = None
+
+
+def _active_claims(author: str, rows, pairs) -> list:
+    """`(author, kind, ts)` for each pair in `pairs`: the ts of the newest
+    active row that claimed it."""
+    newest: dict = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("state") != "active":
+            continue
+        pair = (row.get("kind"), row.get("value_key"))
+        if pair in pairs:
+            order = row.get("order")
+            order = order if (isinstance(order, int)
+                              and not isinstance(order, bool)) else 0
+            ts = row.get("ts")
+            ts = ts if isinstance(ts, str) and _ISO_TS.fullmatch(ts) else ""
+            if pair not in newest or order >= newest[pair][0]:
+                newest[pair] = (order, ts)
+    return [(author, kind, newest[(kind, key)][1])
+            for kind, key in sorted(pairs) if (kind, key) in newest]
+
+
+def foreign_team() -> ForeignTeam:
+    """The foreign team ledgers, one capped read per file (see
+    `ForeignTeam`). Memoised on the stat of the files it reads: the judge's
+    slug-less path, every memo miss and the recall build all ask, and each
+    must not pay a parse. The memo is skipped while any ledger reads TRANSIENT
+    or UNREADABLE (fail-safe: a read that failed once is retried, at the price
+    of one walk per call until the owner fixes the file). Its key carries
+    `DAIMON_AUTHOR` but not a git identity: an identity changed under a
+    long-lived process keeps the old own-author exclusion until a file moves.
+
+    Never raises: each author's file is read and folded on its own, and one
+    that raises (or sits in a directory that is not a plain name) makes that
+    author unproven while every other author still folds."""
+    global _FOREIGN_TEAM_MEMO
+    names = (_TOMBSTONE_NAME, _QUARANTINE_NAME)
+    key = (str(config.team_dir()), _MAX_TOMBSTONE_BYTES,
+           config._get("DAIMON_AUTHOR"),
+           tuple(_stat_entry(p) for p in _team_ledger_paths(
+               names, include_own=True)))
+    memo = _FOREIGN_TEAM_MEMO
+    if memo is not None and memo[0] == key:
+        return memo[1]
+    keys: set = set()
+    pairs: set = set()
+    claims: list = []
+    unproven: set = set()
+    retry = False
+    for path in _team_ledger_paths(names):
+        author = path.parent.name
+        if not _AUTHOR_DIR.fullmatch(author):
+            unproven.add(author)    # never read, never printed raw
+            continue
+        try:
+            got = _capped_rows(path)
+            if got.health in (jsonl.Health.TRANSIENT,
+                              jsonl.Health.UNREADABLE):
+                retry = True
+            if path.name == _TOMBSTONE_NAME:
+                keys |= _row_keys(got.rows)
+            else:
+                mine = policy.fold_published_quarantines(got.rows)
+                if policy.has_unknown_version(got.rows):
+                    unproven.add(author)   # a later row format: skip, upgrade
+                pairs |= mine
+                claims.extend(_active_claims(author, got.rows, mine))
+            # H7: a torn tail is the newest claim, so DEGRADED skips the
+            # author like any other state the file cannot be proven in.
+            if got.unproven or got.health is jsonl.Health.DEGRADED:
+                unproven.add(author)
+        except Exception:  # noqa: BLE001 - one author's file, one verdict
+            unproven.add(author)
+            retry = True
+    team = ForeignTeam(frozenset(keys), frozenset(pairs), tuple(claims),
+                       frozenset(unproven))
+    if not retry:
+        _FOREIGN_TEAM_MEMO = (key, team)
+    return team
+
+
+def _stat_entry(path) -> tuple:
+    """`(path, mtime_ns, ctime_ns, size)` of one file, Nones when it cannot be
+    stat'ed: the one stat shape the forgotten stamp and the foreign memo share."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return (str(path), None, None, None)
+    return (str(path), st.st_mtime_ns, st.st_ctime_ns, st.st_size)
 
 
 def foreign_tombstones() -> ForeignTombstones:
-    """The foreign tombstone ledgers, one capped read each. Author directory
-    names are `project_slug(author)`. Never raises."""
-    keys: set[str] = set()
-    unproven: set[str] = set()
-    degraded: set[str] = set()
-    for path in _foreign_tombstone_paths():
-        got = _tombstone_keys(path)
-        keys |= got.keys
-        if got.unproven:
-            unproven.add(path.parent.name)
-        elif got.health is jsonl.Health.DEGRADED:
-            degraded.add(path.parent.name)
-    return ForeignTombstones(keys, frozenset(unproven), frozenset(degraded))
+    """The foreign tombstone view of `foreign_team()`: keys plus the authors
+    whose published ledgers are unproven. Author directory names are
+    `project_slug(author)`. Never raises."""
+    team = foreign_team()
+    return ForeignTombstones(set(team.keys), team.unproven)
+
+
+def foreign_quarantines() -> frozenset:
+    """The `(kind, value_key)` pairs other authors still claim quarantined.
+    Own rows and the `local` mirror are excluded: the local ledger is the
+    truth for the reader's own quarantines. Never raises."""
+    return foreign_team().quarantines
 
 
 def foreign_forgotten_content_keys() -> set[str]:
@@ -1114,23 +1437,38 @@ def foreign_forgotten_content_keys() -> set[str]:
     is another author's, it never syncs, and a solo user with DAIMON_TEAM=1
     would otherwise poison their own reopen through a dead-end path.
 
-    Bounded on purpose: only `authors/*/` directories inside real sidecars
-    are walked, so a clone's .git object store is never traversed, and each
-    ledger is capped — a teammate cannot make every briefing pay for an
+    Bounded on purpose: only the author directories `_team_ledger_paths`
+    finds are visited, so a clone's .git object store is never traversed, and
+    each ledger is capped: a teammate cannot make every briefing pay for an
     unbounded file. Never raises."""
-    return foreign_tombstones().keys
+    return set(foreign_team().keys)
 
 
-def _foreign_tombstone_paths(include_own: bool = False) -> list:
-    """Every tombstone ledger another author published in a synced sidecar:
-    the files `foreign_forgotten_content_keys` reads. `include_own` adds this
-    author's own ledgers and skips resolving the author, which can fork
-    `git config`: `forgotten_stamp` only needs to notice a change, so it
-    stats a superset and never pays that."""
+def _team_ledger_paths(names, *, include_own: bool = False,
+                       include_local: bool = False) -> list:
+    """Every published team ledger named in `names` (`tombstones.jsonl`,
+    `quarantines.jsonl`): `<author dir>/<name>` for each author directory
+    `_team_author_dirs` finds in a sidecar, the one walker for the team
+    layout. A path is returned when something exists there, even a directory:
+    the reader then judges it unreadable, which keeps the author unproven
+    rather than silently trusted. A dangling symlink is the exception: it
+    reads as absent, as there is nothing to read.
+
+    `include_own` adds this author's own directories and skips resolving the
+    author, which can fork `git config`: the stamp and the fingerprint only
+    need to notice a change, so they stat a superset and never pay that.
+    `include_local` adds the machine-local `local` mirror, which no reader
+    folds but whose files a fingerprint must still notice.
+
+    Bounded on purpose: the walker descends only `authors/` and
+    `projects/**/authors/`, so a clone's `.git` object store is never
+    traversed. A sidecar that cannot be walked costs only its own paths.
+    Never raises."""
     out: list = []
     try:
-        remotes = [d for d in config.team_dir().iterdir()
-                   if d.is_dir() and d.name != _TEAM_LOCAL_REMOTE]
+        remotes = sorted(d for d in config.team_dir().iterdir()
+                         if d.is_dir()
+                         and (include_local or d.name != _TEAM_LOCAL_REMOTE))
     except OSError:
         return out
     if not remotes:
@@ -1140,19 +1478,25 @@ def _foreign_tombstone_paths(include_own: bool = False) -> list:
     own = None if include_own else (project_slug(config.author()) or "unknown")
     for remote in remotes:
         try:
-            out.extend(p for p in remote.rglob(f"authors/*/{_TOMBSTONE_NAME}")
-                       if own is None or p.parent.name != own)
+            for adir in _team_author_dirs(remote):
+                if own is not None and adir.name == own:
+                    continue
+                out.extend(adir / name for name in names
+                           if os.path.lexists(adir / name))
         except OSError:
             continue
     return out
 
 
 def forgotten_stamp() -> tuple:
-    """A cheap key that changes whenever the machine-wide forgotten set can:
-    each local bucket's `events.jsonl` (inode, mtime, size) and each foreign
-    tombstone ledger's. A reader that memoizes a judgement of the set keys on
-    this, so a forget in ANOTHER bucket or a pulled tombstone drops its memo.
-    Plain `os` calls: a build asks for it once per bucket it judges."""
+    """A cheap key that changes whenever the machine-wide withheld sets can:
+    each local bucket's `events.jsonl` (inode, mtime, size) and each team
+    author directory's tombstone and quarantine ledger (own author included,
+    the `local` mirror not: `_team_ledger_paths` never resolves the author for
+    this). A reader that memoizes a judgement of the sets keys on this, so a
+    forget in ANOTHER bucket, a pulled tombstone or a pulled quarantine or
+    release drops its memo. Plain `os` calls: a build asks for it once per
+    bucket it judges. The name stays: callers outside this package key on it."""
     root = config.checkpoint_dir()
     base = str(root)
     try:
@@ -1167,14 +1511,8 @@ def forgotten_stamp() -> tuple:
                           st.st_size))
         except OSError:
             local.append((name, None, None, None, None))
-    foreign: list[tuple] = []
-    for path in _foreign_tombstone_paths(include_own=True):
-        try:
-            st = os.stat(path)
-            foreign.append((str(path), st.st_mtime_ns, st.st_ctime_ns,
-                            st.st_size))
-        except OSError:
-            foreign.append((str(path), None, None, None))
+    foreign = [_stat_entry(path) for path in _team_ledger_paths(
+        (_TOMBSTONE_NAME, _QUARANTINE_NAME), include_own=True)]
     return (base, tuple(local), tuple(sorted(foreign)))
 
 

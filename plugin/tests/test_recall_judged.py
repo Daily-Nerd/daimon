@@ -677,6 +677,6 @@ def test_a_fold_that_raises_closes_the_judge_and_is_not_memoized(
     assert first.closed and not first.empty
     assert view.judge(slug) is not first
     monkeypatch.undo()
-    monkeypatch.setattr(view, "forgotten_keys", boom)
+    monkeypatch.setattr(view, "machine_sets", boom)
     assert view.judge(slug).closed
     assert view.judge(None).closed

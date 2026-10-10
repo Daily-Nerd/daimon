@@ -960,3 +960,207 @@ def test_cli_team_status_lists_scope_repos(bare_remote, monkeypatch, capsys, tmp
     teamsync.init(str(bare_remote), project_dir=proj)
     assert cli.main(["team", "status"]) == 0
     assert "github.com/org/alpha" in capsys.readouterr().out
+
+
+def test_init_refuses_a_project_path_with_the_reserved_segment(
+        bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/authors/census")
+    with pytest.raises(teamsync.TeamError, match="authors"):
+        teamsync.init(str(bare_remote), project_dir=bare_remote.parent)
+    assert not (config.team_dir() / teamsync.remote_slug(str(bare_remote))).exists()
+
+
+# ---- PR 13 (D6): a quarantine crosses the sidecar and comes back ----
+
+
+def test_a_quarantine_is_published_synced_withheld_and_released(
+        bare_remote, tmp_path, monkeypatch):
+    """Ada quarantines through the real verb, sync pushes Ada's author
+    directory with the new ledger and no protocol change, Bob's sync pulls it
+    and Bob's judge withholds the value; Ada releases, the two syncs repeat and
+    it reads again. Bob's recall fingerprint moves both times."""
+    from daimon_briefing import normalize, recall, schema, trust, view
+    value = "the staging vault password is in the old runbook"
+    key = normalize.content_key(value)
+    decision = next(f for f in schema.ITEM_FIELDS if f.kind == "decision")
+    item = {"text": value, "id": "d-aaaaaa"}
+    monkeypatch.setenv("DAIMON_TEAM", "1")
+    monkeypatch.setenv("DAIMON_TEAM_PROJECT", "squad/census")
+
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    tid = trust.propose(text=value, kind="decision", reason="not true",
+                        evidence=["issue:1"], channel="cli-tty",
+                        project_dir="/p/ada-q")
+    assert len(tid.published) == 1 and tid.published.failed == ()
+    ledger = ("projects/squad/census/authors/Ada/quarantines.jsonl")
+    assert (ada / ledger).exists()
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    assert ledger in _bare_files(bare_remote), \
+        "_commit_own must carry the new ledger with no protocol change"
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    before = recall._fingerprint()
+    assert teamsync.sync_remote(bob)["fetched"] is True
+    assert (bob / ledger).exists()
+    assert store.foreign_quarantines() == {("decision", key)}
+    verdict = view.judge(None).verdict(decision, item)
+    assert isinstance(verdict, view.Withheld) and verdict.quarantine_id is None
+    activated = recall._fingerprint()
+    assert activated != before
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    released = trust.release(tid, channel="cli-tty", project_dir="/p/ada-q")
+    assert len(released) == 1 and released.failed == ()
+    assert teamsync.sync_remote(ada)["pushed"] is True
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    assert teamsync.sync_remote(bob)["fetched"] is True
+    assert store.foreign_quarantines() == frozenset()
+    assert isinstance(view.judge(None).verdict(decision, item), view.Visible)
+    assert recall._fingerprint() not in (before, activated)
+
+
+def test_commit_own_stages_the_quarantine_ledger(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    own = sidecar / "authors" / "Ada"
+    own.mkdir(parents=True)
+    (own / "quarantines.jsonl").write_text("{}\n", encoding="utf-8")
+    report = {"committed": 0, "warnings": []}
+    teamsync._commit_own(sidecar, report)
+    assert report["committed"] == 1
+    assert "authors/Ada/quarantines.jsonl" in _git(
+        sidecar, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
+
+
+# ---- PR 13 (H5): a published ledger changed by someone else is flagged ------
+
+
+def _plant_by(sidecar, committer, rel, line):
+    """Append `line` to `rel` and commit it as `committer` (a plain git commit,
+    the way a member with write access would)."""
+    path = sidecar / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "ab") as handle:
+        handle.write(line)
+    _git(sidecar, "add", "--", rel)
+    _git(sidecar, "-c", f"user.name={committer}", "-c", "user.email=m@x",
+         "commit", "-m", "edit")
+
+
+@pytest.mark.parametrize("name", ["quarantines.jsonl", "tombstones.jsonl"])
+def test_a_ledger_added_or_edited_by_another_committer_warns(
+        bare_remote, tmp_path, monkeypatch, name):
+    rel = f"authors/Ada/{name}"
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    mallory = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory",
+                              "team-m")
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    _plant_by(ada, "Ada", rel, b'{"ts": "x", "key": "abcd1234"}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+
+    # Bob arrives at the honest history: the first pull has no arrival window
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)
+
+    # Mallory edits Ada's file (a modification, not an addition)
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory", "team-m")
+    teamsync.sync_remote(mallory)
+    _plant_by(mallory, "Mallory", rel, b'{"ts": "y", "key": "ffff0000"}\n')
+    assert teamsync.sync_remote(mallory)["pushed"] is True
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    r = teamsync.sync_remote(bob)
+    assert any(rel in w and "Ada" in w and "Mallory" in w
+               and "not authenticated" in w for w in r["warnings"]), \
+        r["warnings"]
+    assert (bob / rel).exists(), "a warning, never a block"
+
+
+def test_a_ledger_published_by_its_owner_never_warns(bare_remote, tmp_path,
+                                                     monkeypatch):
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)           # arrive before anything exists
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    rel = "projects/squad/census/authors/Ada/quarantines.jsonl"
+    _plant_by(ada, "Ada", rel, b'{"state": "active"}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    _plant_by(ada, "Ada", rel, b'{"state": "released"}\n')   # an append
+    assert teamsync.sync_remote(ada)["pushed"] is True
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    r = teamsync.sync_remote(bob)
+    assert r["fetched"] is True and r["warnings"] == []
+
+
+def test_a_merge_commit_is_not_blamed_for_the_files_it_carries(
+        bare_remote, tmp_path, monkeypatch):
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    _plant_by(ada, "Ada", "authors/Ada/quarantines.jsonl", b'{"a": 1}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    _plant_by(bob, "Bob", "authors/Bob/quarantines.jsonl", b'{"b": 1}\n')
+    r = teamsync.sync_remote(bob)       # Bob merges Ada's, pushes the merge
+    assert r["warnings"] == []
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    r = teamsync.sync_remote(ada)       # Ada pulls Bob's file and the merge
+    assert r["fetched"] is True and r["warnings"] == []
+
+
+def test_the_ledger_check_is_quiet_without_a_window_or_on_a_git_failure(
+        bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    report = {"warnings": []}
+    teamsync._check_ledger_authorship(sidecar, None, "HEAD", report)
+    teamsync._check_ledger_authorship(sidecar, "deadbeef", "cafebabe", report)
+    assert report["warnings"] == []
+
+    real = teamsync._git
+    _plant_by(sidecar, "Mallory", "authors/Ada/quarantines.jsonl", b"{}\n")
+
+    def broken_log(sidecar_, *args, **kw):
+        out = real(sidecar_, *args, **kw)
+        if args and args[0] == "log":
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return out
+
+    monkeypatch.setattr(teamsync, "_git", broken_log)
+    teamsync._check_ledger_authorship(sidecar, "HEAD~1", "HEAD", report)
+    assert report["warnings"] == []
+
+
+def test_a_non_ascii_ledger_path_is_still_checked(bare_remote, tmp_path,
+                                                  monkeypatch):
+    rel = "authors/Ädä/quarantines.jsonl"
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ädä", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    mallory = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory",
+                              "team-m")
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ädä", "team-a")
+    _plant_by(ada, "Ädä", rel, b'{"a": 1}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory", "team-m")
+    teamsync.sync_remote(mallory)
+    _plant_by(mallory, "Mallory", rel, b'{"a": 2}\n')
+    assert teamsync.sync_remote(mallory)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    r = teamsync.sync_remote(bob)
+    assert any("Mallory" in w and "Ädä" in w for w in r["warnings"]), \
+        r["warnings"]

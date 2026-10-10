@@ -680,3 +680,13 @@ def test_trust_prose_paths_are_single_segment():
             f"trust prose path {fp.path!r} is nested: "
             "trust.redact_content_key only reaches single-segment paths, so "
             "teach it the nested walk before declaring one")
+
+
+def test_fold_reads_a_garbled_order_as_zero(project):
+    """The ledger's `order` is read leniently: a hand-edited non-integer sorts
+    first instead of raising, so one bad row cannot take the fold down."""
+    tid = _propose(project, channel="cli-tty")
+    rows = trust.events(project_dir=project)
+    rows[0] = {**rows[0], "order": "soon"}
+    assert trust.fold(rows)[tid]["state"] == "active"
+    assert trust._fold_key(rows[0])[0] == 0

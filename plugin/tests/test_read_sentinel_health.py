@@ -97,6 +97,11 @@ def _refuse_admissions(m, w):
         "/t/S-refused.jsonl) after 0s\n")
 
 
+def _append_bytes(path, data):
+    with open(path, "ab") as handle:        # independent byte writer
+        handle.write(data)
+
+
 def _grace_sidecar_dir():
     found = [p for p in config.team_dir().rglob("authors/grace") if p.is_dir()]
     assert found, "the world has no teammate sidecar"
@@ -145,7 +150,14 @@ CONDITIONS = {
     "foreign-author-unproven": (
         lambda m, w: (_grace_sidecar_dir() / "tombstones.jsonl").write_bytes(
             b"<<<<<<< HEAD\n"),
-        {("cli:brief", "team"): "a teammate's tombstones cannot be read"}),
+        {("cli:brief", "team"): "a teammate's published forget or quarantine ledger cannot be read"}),
+    # grace's published quarantine ledger gains a garbage line (a merge
+    # marker): the good line before it still withholds FOREIGNQ, and grace is
+    # skipped
+    "foreign-quarantines-unproven": (
+        lambda m, w: _append_bytes(
+            _grace_sidecar_dir() / "quarantines.jsonl", b"<<<<<<< HEAD\n"),
+        {("cli:brief", "team"): "a teammate's published forget or quarantine ledger cannot be read"}),
 }
 
 

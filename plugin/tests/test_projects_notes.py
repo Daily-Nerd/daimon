@@ -97,4 +97,4 @@ def test_brief_team_trailer_names_an_author_that_is_not_admitted(
     (adir / "tombstones.jsonl").write_bytes(b"<<<<<<< HEAD\n")
     _write(OWN)
     assert cli.main(["brief", "--project", OWN, "--team"]) == 0
-    assert "a teammate's tombstones cannot be read" in capsys.readouterr().out
+    assert "a teammate's published forget or quarantine ledger cannot be read" in capsys.readouterr().out

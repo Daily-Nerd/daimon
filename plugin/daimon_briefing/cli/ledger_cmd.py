@@ -92,6 +92,12 @@ def _cmd_ledger_repair(args) -> int:
         if waiting:
             lines.append(f"{waiting} session(s) wait to be serialized; "
                          "daimon heal repairs one per run")
+    # PR 13: a repaired trust ledger may have changed which quarantines are
+    # active without a verb; the team sidecar is not told on its own.
+    if (ledger == "trust.jsonl" and not report.dry_run
+            and report.outcome == "repaired"):
+        lines.append("teammates are not told by a repair; if you publish "
+                     "quarantines to a team, run: daimon trust republish")
     render.render_ledger_lines(lines)
     return 1 if report.scrub_skipped or report.refusal else 0
 

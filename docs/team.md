@@ -162,6 +162,17 @@ paste error can never open the remote to the whole machine.
 across both layouts and there is no migration; new checkpoints simply start
 landing under `projects/` once a project identity resolves.
 
+**Reserved segment.** `authors` names the per-author directory level, so it
+cannot appear as a segment of a logical project path. `daimon team init` refuses
+a project whose path contains it, and the resolver drops such a path (from
+`DAIMON_TEAM_PROJECT`, from the origin-derived fallback, or from a
+`[projects."…"]` table, which `daimon team status` reports). Migration: rename
+the offending segment in `daimon-team.toml` or `DAIMON_TEAM_PROJECT`. Files
+already sitting under a path that contains `authors` are not read until the
+path is renamed. Reading less is not the safe direction for tombstones: until
+the rename, a value someone forgot under such a path is not suppressed on
+your machine and can reappear.
+
 ## Which projects sync: the scope allowlist (default-closed)
 
 `DAIMON_TEAM=1` is machine-global, but a synced remote only accepts
@@ -239,6 +250,55 @@ re-asserted on a teammate's checkpoint on the way in, at read/index time
   `[teammate claims verbatim — unverifiable here]` — stating both facts:
   the claim, and that it can't be checked locally. Your own items are
   unaffected.
+
+### Quarantines travel too
+
+A quarantine is a person's decision that a value is unsafe to act on
+(`daimon trust propose`, confirmed or released by a human). When you turn one
+on, or lift one, and a team is enabled, daimon appends a hash-only row to your
+own `quarantines.jsonl` beside your tombstones in each sidecar the project
+routes to: the kind, a hash of the value, `active` or `released`, an ordering
+stamp and ids. Never the text, the reason or the evidence. An agent's
+candidate and a dismissal publish nothing. A release also reaches every sidecar
+of yours that still holds the claim, whether or not the project routes there
+now.
+
+- **Scope.** A teammate's quarantine withholds that value, of that kind, on
+  your whole machine, in every project, the way a forget does. You see
+  `[withheld: quarantine]` with no id, on every channel, a terminal included.
+  `daimon forget`, `daimon resolve` and `daimon reverify` on such an exact id
+  are refused ("a teammate quarantined this; they release it"). Only they
+  release it.
+- **Yours stay yours.** Your own quarantines keep working per project from your
+  local ledger. The same person on a second machine has to propose there too.
+- **See them.** `daimon trust list` ends with a count of the quarantines
+  teammates have in force. `daimon trust list --team [--json]` shows kind and
+  count anywhere, and the author directory and time at a terminal.
+- **Re-send.** `daimon trust republish` (a person at a terminal, never
+  `--by agent`) re-sends the standing quarantines of the project and the latest
+  release of each released one, unchanged. Use it after a failed publish
+  (`trust` exits 4 and says which sidecar), after enabling the team, after being
+  granted a sidecar, or after `daimon ledger repair trust`. Several authors
+  fold by union: one teammate's release lifts only their own claim.
+- **Authority.** Sidecar write access is the trust boundary, as for checkpoints
+  and tombstones. Published rows are declared claims, not authenticated ones. A
+  member with write access can over-suppress by publishing an `active` row, and
+  can lift a teammate's quarantine with a `released` row or by deleting lines
+  (deleting a tombstone already re-exposes a forgotten value). The sync warns
+  when a commit by someone other than the directory's owner changed a
+  published ledger. That is hygiene, not proof, and it does not detect a forged
+  row. Published rows are version 1; a reader that meets a row version it does
+  not know skips that author until upgraded.
+- **A damaged ledger skips the author.** A garbage line or a torn last line in
+  either published ledger of a teammate means their newest claim cannot be
+  proven, so their checkpoints are not admitted until the file is clean, and
+  you get the `author-skipped` note. The good rows before it still count.
+  Anyone with write access to the sidecar can do this to any author for the
+  whole team with one damaged line in that author's file; the cure is the owner
+  fixing the file in git.
+- **What it does not do.** The mirror still carries a checkpoint's text, and
+  git history keeps it. A quarantine withholds on read and never rewrites;
+  `daimon forget` is the deletion tool.
 
 ## Environment reference
 

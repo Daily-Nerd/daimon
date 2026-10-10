@@ -356,6 +356,7 @@ def test_no_ledger_column_is_filled_on_a_non_jsonl_shape():
     # The write column also governs the two append-only ledgers outside a
     # bucket (the own team tombstones, the recall delivery log).
     outside = {"team/{remote}/**/tombstones.jsonl",
+               "team/{remote}/**/quarantines.jsonl",
                "logs/recall-delivery.jsonl"}
     for s in surfaces.SURFACES:
         if s.write:
@@ -633,3 +634,31 @@ def test_per_store_recall_indexes_are_declared():
     # a user's own file beside it stays undeclared
     assert surfaces.match("recall/0123456789abcdef.db.bak.tmp") is None
     assert surfaces.match("recall/notes.txt") is None
+
+
+# ---- PR 13: the published team quarantine ledger -----------------------------
+
+
+def test_the_team_quarantine_ledger_is_declared_hash_only():
+    row = surfaces.match("team/r/projects/a/authors/b/quarantines.jsonl")
+    assert row is not None
+    assert row.shape == "team/{remote}/**/quarantines.jsonl"
+    assert row.owner == "store.publish_quarantine"
+    assert row.plaintext is False
+    assert row.delete == "exempt-no-plaintext"
+    flat = surfaces.match("team/r/authors/b/quarantines.jsonl")
+    assert flat is row
+    # Declared before the `*.json` known-gap row, which would otherwise be
+    # the first match for nothing but would still be the wrong neighbour.
+    shapes = [s.shape for s in surfaces.SURFACES]
+    assert (shapes.index("team/{remote}/**/quarantines.jsonl")
+            < shapes.index("team/{remote}/**/*.json"))
+
+
+def test_quarantines_jsonl_is_in_no_bucket_registry():
+    from daimon_briefing import buckets
+
+    assert "quarantines.jsonl" not in surfaces.bucket_ledger_names()
+    assert "quarantines.jsonl" not in surfaces.mergeable_files()
+    assert "quarantines.jsonl" not in surfaces.index_content_ledgers()
+    assert "quarantines.jsonl" not in buckets._REMOVABLE

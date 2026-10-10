@@ -218,17 +218,20 @@ def test_a_garbage_line_makes_the_author_unproven(tmp_checkpoint_dir):
     # The good line's key is still used: the set only grows.
     assert "k1" * 8 in store.foreign_forgotten_content_keys()
     assert view.team_notes() == (
-        "⚠ a teammate's tombstones cannot be read; "
-        "their checkpoints are not admitted",)
+        "⚠ a teammate's published forget or quarantine ledger cannot be "
+        "read; their checkpoints are not admitted",)
 
 
-def test_a_torn_line_degrades_the_author_without_skipping_them(
-        tmp_checkpoint_dir):
+def test_a_torn_tail_skips_the_author_h7(tmp_checkpoint_dir):
+    # The torn row is the author's newest claim, so the file cannot be proven
+    # complete: stricter than reading around it (PR 13, H7).
     _sidecar(data=_row() + b'{"ts": "x", "key": "tor')
-    assert store.foreign_tombstones().unproven == frozenset()
+    assert store.foreign_tombstones().unproven == frozenset({"alice"})
+    assert store.foreign_tombstones()._fields == ("keys", "unproven")
+    assert "k1" * 8 in store.foreign_forgotten_content_keys()
     assert view.team_notes() == (
-        "⚠ a teammate's tombstones ledger has torn lines; "
-        "their forgets may be incomplete",)
+        "⚠ a teammate's published forget or quarantine ledger cannot be "
+        "read; their checkpoints are not admitted",)
 
 
 def test_an_over_cap_sidecar_is_unproven(tmp_checkpoint_dir, monkeypatch):
@@ -328,7 +331,16 @@ def test_the_tombstone_reader_survives_a_path_it_cannot_stat(
 def test_the_tombstone_reader_survives_an_over_cap_file_it_cannot_open(
         tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setattr(store, "_MAX_TOMBSTONE_BYTES", 0)
-    directory = config.team_dir() / "dir-in-the-files-place"
-    directory.mkdir(parents=True)
-    got = store._tombstone_keys(directory)
+    path = config.team_dir() / "unopenable" / "tombstones.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"key": "abc"}\n', encoding="utf-8")
+    real_open = type(path).open
+
+    def refuse(self, *a, **k):
+        if self == path:
+            raise PermissionError(13, "denied")
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(type(path), "open", refuse)
+    got = store._tombstone_keys(path)
     assert got.keys == set() and got.over_cap and got.unproven

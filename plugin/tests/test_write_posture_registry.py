@@ -48,8 +48,9 @@ def test_the_quarantine_sidecar_is_a_human_write_target():
     assert dict(row.write) == {HUMAN: _H}
 
 
-def test_the_own_team_tombstones_proceed_in_every_state():
-    row = surfaces.match("team/r/projects/a/authors/b/tombstones.jsonl")
+@pytest.mark.parametrize("name", ["tombstones.jsonl", "quarantines.jsonl"])
+def test_the_own_team_ledgers_proceed_in_every_state(name):
+    row = surfaces.match(f"team/r/projects/a/authors/b/{name}")
     assert dict(row.write) == {HUMAN: (PROCEED, PROCEED, PROCEED)}
 
 
@@ -71,6 +72,7 @@ def test_no_other_row_declares_a_write_posture():
         "checkpoints/{slug}/relations.jsonl",
         "checkpoints/{slug}/trust.jsonl",
         "team/{remote}/**/tombstones.jsonl",
+        "team/{remote}/**/quarantines.jsonl",
         "logs/recall-delivery.jsonl",
     }
 

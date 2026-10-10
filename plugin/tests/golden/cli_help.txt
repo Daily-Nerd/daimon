@@ -98,6 +98,7 @@ trust list
 trust propose
 trust release
 trust repair
+trust republish
 trust show
 verify-receipt
 why
@@ -124,28 +125,28 @@ resolve's write path decide list what is waiting on YOU with the command that cl
 the human-side mirror of daimon loops refute author and query evidence-cited negative knowledge
 (#573) ruling standing rulings: human-ratified records that never decay (#693) amend record an
 evidence-carrying state transition on a briefed item (#691) trust record or settle a human
-quarantine on a checkpoint value (#1109); write-only in this release, nothing reads it yet ledger
-look after a bucket ledger file (#1132) request ask another project for something, and answer what
-it asks (#694) relations inspect and decide typed item relations (#678, shadow mode) handoff leave
-an authored baton for the next session — renders above everything in its next briefing (#523) log
-append a freeform timeline event (zero-LLM) to this project's event log (#102) recall-inject
-proactive-suggestion backend for the UserPromptSubmit hook (#125): prompt on stdin, prints 0-2
-prior-work lines, rc 0 always action-recall action-keyed recall backend for the PreToolUse hook
-(#1031): shell command on stdin, prints 0-1 prior-work lines, rc 0 always request-inject
-live-delivery backend for the UserPromptSubmit hook (#756): prints undecided asks this session has
-not been shown, rc 0 always status checkpoint presence/age + last serialize outcome verify-receipt
-verify a checkpoint's signed provenance receipt via the vitni CLI (#204) audit read-only auditors
-that verify stored guarantees heal re-serialize the most recent FAILED session if it can be done
-safely team shared team memory: sidecar repo init/sync/status (#113) configure detect the resolved
-LLM backend and fill gaps in ~/.daimon/env stats local usage + capture aggregates (#54) — nothing is
-transmitted; sharing the output is a deliberate paste check armed rulings' checks (#943): rebuild
-what a host hook reads hooks ship host hook scripts from the package (#43): list, install, status
-skill install the daimon agent skill into a host's rules/skills file (#66) mcp opt-in read-only MCP
-server (#261): recall/brief/projects/status as a self-describing tool surface for MCP-capable hosts
-options: -h, --help show this help message and exit --version show program's version number and exit
-Examples: daimon brief render the latest briefing daimon status checkpoint presence + last serialize
-daimon configure detect/repair the LLM backend Docs: https://daily-nerd.github.io/daimon/ Issues:
-https://github.com/Daily-Nerd/daimon/issues
+quarantine on a checkpoint value (#1109): an active one is withheld from every read, and is
+published to the team when one is enabled ledger look after a bucket ledger file (#1132) request ask
+another project for something, and answer what it asks (#694) relations inspect and decide typed
+item relations (#678, shadow mode) handoff leave an authored baton for the next session — renders
+above everything in its next briefing (#523) log append a freeform timeline event (zero-LLM) to this
+project's event log (#102) recall-inject proactive-suggestion backend for the UserPromptSubmit hook
+(#125): prompt on stdin, prints 0-2 prior-work lines, rc 0 always action-recall action-keyed recall
+backend for the PreToolUse hook (#1031): shell command on stdin, prints 0-1 prior-work lines, rc 0
+always request-inject live-delivery backend for the UserPromptSubmit hook (#756): prints undecided
+asks this session has not been shown, rc 0 always status checkpoint presence/age + last serialize
+outcome verify-receipt verify a checkpoint's signed provenance receipt via the vitni CLI (#204)
+audit read-only auditors that verify stored guarantees heal re-serialize the most recent FAILED
+session if it can be done safely team shared team memory: sidecar repo init/sync/status (#113)
+configure detect the resolved LLM backend and fill gaps in ~/.daimon/env stats local usage + capture
+aggregates (#54) — nothing is transmitted; sharing the output is a deliberate paste check armed
+rulings' checks (#943): rebuild what a host hook reads hooks ship host hook scripts from the package
+(#43): list, install, status skill install the daimon agent skill into a host's rules/skills file
+(#66) mcp opt-in read-only MCP server (#261): recall/brief/projects/status as a self-describing tool
+surface for MCP-capable hosts options: -h, --help show this help message and exit --version show
+program's version number and exit Examples: daimon brief render the latest briefing daimon status
+checkpoint presence + last serialize daimon configure detect/repair the LLM backend Docs:
+https://daily-nerd.github.io/daimon/ Issues: https://github.com/Daily-Nerd/daimon/issues
 
 === serialize ===
 usage: daimon serialize [-h] [--project PROJECT] [--session SESSION] transcript positional
@@ -534,15 +535,17 @@ message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DI
 machine-readable output
 
 === trust ===
-usage: daimon trust [-h] {propose,confirm,dismiss,release,list,repair,show} ... positional
-arguments: {propose,confirm,dismiss,release,list,repair,show} propose propose a quarantine; agent
-proposals stay candidates until a human confirms or dismisses them confirm activate a candidate
-quarantine as a human decision dismiss reject a candidate quarantine as a human decision release
-lift an active quarantine as a human decision list list project quarantines, candidates first repair
-alias for `daimon ledger repair trust`: heal trust.jsonl and re-run forget over it show show one
-quarantine record options: -h, --help show this help message and exit Examples: daimon trust propose
---text "the runbook was fabricated" --kind decision --reason "no matching PR" --evidence issue:1109
---by agent daimon trust confirm tr-0123456789ab daimon trust release tr-0123456789ab
+usage: daimon trust [-h] {propose,confirm,dismiss,release,republish,list,repair,show} ... positional
+arguments: {propose,confirm,dismiss,release,republish,list,repair,show} propose propose a
+quarantine; agent proposals stay candidates until a human confirms or dismisses them confirm
+activate a candidate quarantine as a human decision dismiss reject a candidate quarantine as a human
+decision release lift an active quarantine as a human decision republish re-send this project's
+active and released quarantines to the team sidecar; a human act, safe to repeat list list project
+quarantines, candidates first repair alias for `daimon ledger repair trust`: heal trust.jsonl and
+re-run forget over it show show one quarantine record options: -h, --help show this help message and
+exit Examples: daimon trust propose --text "the runbook was fabricated" --kind decision --reason "no
+matching PR" --evidence issue:1109 --by agent daimon trust confirm tr-0123456789ab daimon trust
+release tr-0123456789ab
 
 === trust propose ===
 usage: daimon trust propose [-h] --text TEXT --kind
@@ -575,10 +578,16 @@ arguments: quarantine_id exact tr-… id options: -h, --help show this help mess
 {agent} declare yourself an agent; release then refuses, because it requires a human channel
 --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
+=== trust republish ===
+usage: daimon trust republish [-h] [--by {agent}] [--project PROJECT] options: -h, --help show this
+help message and exit --by {agent} declare yourself an agent; republish then refuses, because it
+requires a human channel --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+
 === trust list ===
-usage: daimon trust list [-h] [--project PROJECT] [--json] options: -h, --help show this help
-message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
-machine-readable output
+usage: daimon trust list [-h] [--project PROJECT] [--json] [--team] options: -h, --help show this
+help message and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+--json machine-readable output --team list the quarantines teammates published instead: kind and
+count anywhere, author directory and ts at a terminal
 
 === trust repair ===
 usage: daimon trust repair [-h] [--project PROJECT] [--dry-run] options: -h, --help show this help

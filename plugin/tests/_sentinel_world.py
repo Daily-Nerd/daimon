@@ -65,6 +65,14 @@ PEER_TOKEN = token("peerforgot")
 PEER_TEXT = f"{PEER_TOKEN} the peer-forgotten sentinel text"
 
 
+# A value a TEAMMATE quarantined (PR 13, D6): every checkpoint the world
+# writes holds it as a decision, grace's mirrored copy included, and grace
+# quarantines it through the real writer on a machine of its own. This reader
+# never sees grace's trust ledger: only the hash-only row grace published.
+FOREIGNQ_TOKEN = token("foreignq")
+FOREIGNQ_TEXT = f"{FOREIGNQ_TOKEN} the teammate-quarantined sentinel text"
+
+
 def leaked_id(blob) -> bool:
     if isinstance(blob, bytes):
         blob = blob.decode("utf-8", errors="replace")
@@ -99,6 +107,8 @@ def leaked_kinds(blob) -> set[str]:
     found = {kind for kind, tok in TOKENS.items() if tok.lower() in low}
     if PEER_TOKEN.lower() in low:
         found.add("peerforgot")
+    if FOREIGNQ_TOKEN.lower() in low:
+        found.add("foreignq")
     return found
 
 
@@ -127,6 +137,7 @@ def checkpoint(sid, created):
             "recent_decisions": [
                 {"text": t["decision"], "trust": "inferred"},
                 {"text": ID_TEXT, "trust": "inferred"},
+                {"text": FOREIGNQ_TEXT, "trust": "inferred"},
                 {"text": "an unrelated decision stays visible",
                  "trust": "inferred"}]},
         "epistemic_snapshot": {
@@ -148,6 +159,7 @@ class World:
     amendment_id: str = ""
     request_id: str = ""
     peer: str = ""                                # a second project's directory
+    foreignq_id: str = ""                         # grace's quarantine id
     root: Path = None                             # the tmp root being watched
 
 
@@ -181,6 +193,12 @@ def build_world(tmp_path, monkeypatch) -> World:
     channel (stdin isatty True) as author `ada` with team mirroring on."""
     if shutil.which("git") is None:
         pytest.skip("git not on PATH: the sidecar needs it")
+    # The census lives under the tmp home it sets below. An exported store,
+    # team, log, recall or env-file location would point it at the machine's
+    # own files, so none of them may be inherited.
+    for name in ("DAIMON_CHECKPOINT_DIR", "DAIMON_TEAM_DIR", "DAIMON_LOG_DIR",
+                 "DAIMON_RECALL_DB", "DAIMON_ENV_FILE"):
+        monkeypatch.delenv(name, raising=False)
     proj = tmp_path / "proj"
     proj.mkdir()
     # `daimon anchor mod.py fn` resolves a real symbol (the anchor verb cases)
@@ -224,6 +242,8 @@ def build_world(tmp_path, monkeypatch) -> World:
                 world.ids[kind] = item_id
 
     for (k, text), item_id in by_text.items():
+        if k == "decision" and text == FOREIGNQ_TEXT:
+            world.ids["foreignq"] = item_id
         if text == "an unrelated open question stays visible":
             world.ids["other_question"] = item_id
         if text == "an unrelated decision stays visible":
@@ -260,7 +280,27 @@ def build_world(tmp_path, monkeypatch) -> World:
     _write_peer_requests(world, tmp_path, project)
     _write_forgotten_prose(world, project)
     _plant_quarantined_line(world)
+    _teammate_quarantines(world, monkeypatch)
     return world
+
+
+def _teammate_quarantines(world: World, monkeypatch) -> None:
+    """grace quarantines FOREIGNQ on a machine of its own, through the real
+    writer.
+
+    The proposal comes from the peer project, so ada's own `trust.jsonl` never
+    holds the record; the publisher routes the hash-only row into grace's author
+    directory of the same sidecar (the env grant routes the peer project there
+    too). The peer bucket is latched locally as a side effect, which is why
+    assertions cover ada's surfaces and the visible controls, never the peer
+    bucket. Then ada is back."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "grace")
+    try:
+        world.foreignq_id = trust.propose(
+            text=FOREIGNQ_TEXT, kind="decision", reason="grace's reason",
+            evidence=["issue:1"], channel="cli-tty", project_dir=world.peer)
+    finally:
+        monkeypatch.setenv("DAIMON_AUTHOR", "ada")
 
 
 def _write_ledger_prose(world: World, project: str) -> None:

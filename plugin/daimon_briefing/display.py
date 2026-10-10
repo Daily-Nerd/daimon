@@ -190,8 +190,6 @@ def recall_note(notes) -> str | None:
         lines.append(forget_incomplete_note())
     if "author-skipped" in notes:
         lines.append(author_skipped_note())
-    if "author-degraded" in notes:
-        lines.append(author_degraded_note())
     return "\n".join(lines) or None
 
 
@@ -241,15 +239,10 @@ def sender_skipped_note(count: int, scoped: bool) -> str:
 
 
 def author_skipped_note() -> str:
-    """`author-skipped`: a teammate's tombstones cannot be read."""
-    return marks.warning("a teammate's tombstones cannot be read; their "
-                         "checkpoints are not admitted")
-
-
-def author_degraded_note() -> str:
-    """`author-degraded`: a teammate's tombstones ledger has torn lines."""
-    return marks.warning("a teammate's tombstones ledger has torn lines; "
-                         "their forgets may be incomplete")
+    """`author-skipped`: a teammate's published ledger (forgets or
+    quarantines) cannot be read, is over the size cap, or has a torn tail."""
+    return marks.warning("a teammate's published forget or quarantine ledger "
+                         "cannot be read; their checkpoints are not admitted")
 
 
 def team_closed_note() -> str:

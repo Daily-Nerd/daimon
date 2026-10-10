@@ -120,14 +120,17 @@ def census_bucket(slug: str, *, checkpoints: bool = True) -> dict:
 
 def census_machine() -> dict:
     """Health only, for the ledger files that sit outside any one bucket:
-    the migration receipts, the published team tombstones and the two logs.
+    the migration receipts, the published team tombstones and quarantines and
+    the two logs.
     Keys are paths relative to the store's own roots."""
     found: dict[str, Path] = {
         f"checkpoints/{_MIGRATIONS}": config.checkpoint_dir() / _MIGRATIONS}
     for name in _LOG_LEDGERS:
         found[f"logs/{name}"] = config.log_dir() / name
     root = config.team_dir()
-    for path in sorted(root.rglob("tombstones.jsonl")):
+    for path in sorted(store._team_ledger_paths(
+            (store._TOMBSTONE_NAME, store._QUARANTINE_NAME),
+            include_own=True, include_local=True)):
         found[f"team/{path.relative_to(root).as_posix()}"] = path
     return {key: _counts(jsonl.read(path)) for key, path in found.items()}
 

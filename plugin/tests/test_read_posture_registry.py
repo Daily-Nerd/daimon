@@ -46,13 +46,18 @@ def test_foreign_read_is_declared_where_another_bucket_or_author_is_read():
     assert carrying == {"checkpoints/{slug}/requests.jsonl",
                         "checkpoints/{slug}/refutations.jsonl",
                         "checkpoints/{slug}/amendments.jsonl",
-                        "team/{remote}/**/tombstones.jsonl"}
+                        "team/{remote}/**/tombstones.jsonl",
+                        "team/{remote}/**/quarantines.jsonl"}
     assert surfaces.bucket_ledger("requests.jsonl").foreign_read == (
         OPEN, NOTE, SKIP, SKIP)
-    team = surfaces.match("team/r/projects/a/authors/b/tombstones.jsonl")
-    assert team.foreign_read == (OPEN, NOTE, SKIP, SKIP)
-    # Own rows of the team sidecar are a write target, never read for the set.
-    assert team.read == ()
+    # PR 13, H7: a torn tail on either published team ledger is the newest
+    # claim, so the author is skipped, not read around with a note.
+    for name in ("tombstones.jsonl", "quarantines.jsonl"):
+        team = surfaces.match(f"team/r/projects/a/authors/b/{name}")
+        assert team.foreign_read == (OPEN, SKIP, SKIP, SKIP), name
+        # Own rows of the team sidecar are a write target, never read for the
+        # set.
+        assert team.read == (), name
 
 
 def test_a_posture_is_always_one_of_the_four_and_has_one_per_state():

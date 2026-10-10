@@ -220,6 +220,8 @@ def init(url: str, project_dir=None) -> Path:
     config — the architect owns daimon-team.toml after birth. Raises TeamError
     on real user errors."""
     _validate_remote_url(url)
+    if reserved := teamproject.resolve_error(project_dir):
+        raise TeamError(reserved)
     slug = remote_slug(url)
     if shutil.which("git") is None:
         raise TeamError("git not found on PATH — team sync needs git")
@@ -273,25 +275,13 @@ def _ls_remote(sidecar, branch) -> tuple[str, str | None]:
 
 def _own_pathspecs(sidecar: Path, own: str) -> list[str]:
     """Own-author dirs in BOTH layout eras (#200): the legacy flat
-    authors/<own>/ plus every projects/**/authors/<own>/ at any depth. Found
-    by an explicit walk yielding explicit relative paths — exact by
-    construction, where a `projects/**/authors/<own>` glob pathspec would ride
-    on git's glob semantics. Descent stops at each authors/ dir (author dirs
-    hold only checkpoint files). Never raises (os.walk swallows errors)."""
-    specs = []
-    # Existence-gated: `git add` FAILS outright on a pathspec that matches
-    # nothing, so a nested-only sidecar must not carry a phantom flat spec
-    # (and vice versa). The nested specs come off the disk walk, so they
-    # exist by construction.
-    if (sidecar / "authors" / own).is_dir():
-        specs.append(f"authors/{own}")
-    for cur, dirnames, _files in os.walk(sidecar / "projects"):
-        cur_p = Path(cur)
-        if cur_p.name == "authors":
-            if own in dirnames:
-                specs.append((cur_p / own).relative_to(sidecar).as_posix())
-            dirnames[:] = []
-    return specs
+    authors/<own>/ plus every projects/**/authors/<own>/ at any depth, as
+    explicit relative paths from store's single author-directory walker (the
+    `authors` segment is reserved, so the walker is exact). A directory that
+    exists by construction, which `git add` needs: it FAILS outright on a
+    pathspec that matches nothing. Never raises."""
+    return [d.relative_to(sidecar).as_posix()
+            for d in store._team_author_dirs(sidecar) if d.name == own]
 
 
 def _commit_own(sidecar, report) -> None:
@@ -326,6 +316,45 @@ def _commit_own(sidecar, report) -> None:
 
 def _is_ancestor(sidecar, old, new) -> bool:
     return _git(sidecar, "merge-base", "--is-ancestor", old, new).returncode == 0
+
+
+# The two published ledgers of an author directory (PR 13, H5): both eras.
+_LEDGER_PATH = re.compile(
+    r"(?:projects/(?:[^/]+/)+)?authors/([^/]+)/(?:tombstones|quarantines)\.jsonl")
+
+
+def _check_ledger_authorship(sidecar, old, new, report) -> None:
+    """Hygiene, never proof (PR 13, H5): for each published ledger an author
+    directory holds that the fetch ADDED OR MODIFIED, flag every non-merge
+    commit in `old..new` that touched it under a git AUTHOR name whose slug is
+    not the directory's owner. A warning only: that name is declared, free to
+    forge, and a member who can write the owner's file can also write it. It makes a plain edit visible; it does not detect a forged
+    row (docs/team.md, authority)."""
+    if not old:
+        return  # first-ever content fetch: no arrival window to diff
+    # -z: git quotes a non-ASCII path otherwise, and the pattern would skip it
+    diff = _git(sidecar, "diff", "-z", "--name-only", "--diff-filter=AM",
+                old, new)
+    if diff.returncode != 0:
+        return
+    for path in diff.stdout.split("\0"):
+        path = path.strip()
+        match = _LEDGER_PATH.fullmatch(path)
+        if not match:
+            continue
+        owner = match.group(1)
+        log = _git(sidecar, "log", "--no-merges", "--format=%an",
+                   f"{old}..{new}", "--", path)
+        if log.returncode != 0:
+            continue
+        for name in sorted({ln.strip() for ln in log.stdout.splitlines()
+                            if ln.strip()}):
+            if store.project_slug(name) != store.project_slug(owner):
+                report["warnings"].append(
+                    f"author mismatch: {path} belongs to '{owner}' but was "
+                    f"changed in a commit by '{name}'; identity is "
+                    "declared, not authenticated; verify with your team"
+                )
 
 
 def _check_author_mismatch(sidecar, old, new, report) -> None:
@@ -404,6 +433,7 @@ def _integrate(sidecar, branch, report) -> bool:
         )
         return False
     _check_author_mismatch(sidecar, old, new, report)
+    _check_ledger_authorship(sidecar, old, new, report)
     return True
 
 

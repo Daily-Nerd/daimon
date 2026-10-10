@@ -133,7 +133,7 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     now = time.time()
     out = []
     if counts is not None:
-        # #1132 PR 10a: a teammate whose tombstones cannot be read is not
+        # #1132 PR 10a: a teammate whose published ledgers cannot be read is not
         # shown; the trailer says so instead of a shorter list.
         counts.notes = view.team_notes(project)
     for author, opened in view.team(project, live=True):

@@ -369,7 +369,11 @@ def _fingerprint() -> str:
         # runs, and the index keeps serving the value read_team already
         # withholds. Naming the file .jsonl to dodge the *.json walks is
         # exactly what made this easy to miss.
-        paths.extend(config.team_dir().rglob(store._TOMBSTONE_NAME))
+        # PR 13: the quarantine ledger is index content the same way, in both
+        # directions: an activation removes rows and a release restores them.
+        paths.extend(store._team_ledger_paths(
+            (store._TOMBSTONE_NAME, store._QUARANTINE_NAME),
+            include_own=True, include_local=True))
     except OSError:
         pass
     # #963: the bucket-migration receipt is index CONTENT for the same reason
@@ -1677,8 +1681,6 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     tombs = store.foreign_tombstones()
     if tombs.unproven:
         _note(notes, "author-skipped")    # the index left that author out
-    if tombs.degraded:
-        _note(notes, "author-degraded")
 
     sql = (
         "SELECT i.text, i.quote, i.trust, i.kind, i.author, i.stated_by,"

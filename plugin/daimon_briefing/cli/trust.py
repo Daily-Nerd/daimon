@@ -1,10 +1,13 @@
 """`daimon trust` verbs — the human-only quarantine ledger (#1109 Slice 1).
 
-Nothing here changes what a briefing, recall, or MCP tool renders — this
-slice is write-only. `propose` records a candidate (or, from a human
-channel, an immediately active quarantine); `confirm`/`dismiss`/`release`
-are human-only, refused at the library boundary (`trust._human_transition`)
-for any other channel, not merely hidden from this CLI.
+An active quarantine withholds its value from every briefing, recall and MCP
+read of the project (and, once published, from every teammate's: PR 13).
+`propose` records a candidate (or, from a human channel, an immediately active
+quarantine, published to the team when one is enabled); `confirm`/`dismiss`/
+`release` are human-only, refused at the library boundary
+(`trust._human_transition`) for any other channel, not merely hidden from this
+CLI. `republish` re-sends the standing ones; `list --team` shows what
+teammates have published.
 """
 
 import functools
@@ -85,6 +88,17 @@ def _masked_records(project, records: list, *, snap, human: bool) -> list:
     return out
 
 
+def _publish_lines(published, *, activating: bool) -> list:
+    """What a failed team publish cost, with the direction: a failed
+    activation leaves the value visible to teammates, a failed release leaves
+    it masked for them. Names the sidecar, never a row."""
+    effect = ("teammates still see the value" if activating
+              else "teammates keep masking the value")
+    return [f"warning: not published to the team sidecar {f.remote or f.path} "
+            f"({f.reason}); {effect}; fix {f.path}, then run: "
+            "daimon trust republish" for f in published.failed]
+
+
 def _record_line(record: dict) -> str:
     mark = {"candidate": "?", "active": "⛔", "dismissed": "×",
            "released": "✓"}.get(record["state"], "?")
@@ -114,7 +128,8 @@ def _cmd_trust_propose(args) -> int:
         render.render_ledger_lines(
             [f"  a human settles it with `daimon trust confirm {tid}` or "
              f"`daimon trust dismiss {tid}`"])
-    return 0
+    render.render_ledger_lines(_publish_lines(tid.published, activating=True))
+    return 4 if tid.published.failed else 0
 
 
 def _cmd_trust_verdict(args) -> int:
@@ -124,18 +139,68 @@ def _cmd_trust_verdict(args) -> int:
               "release": trust.release}[verb]
     try:
         channel = _trust_channel(args)
-        verb_fn(args.quarantine_id, channel=channel, project_dir=project)
+        published = verb_fn(args.quarantine_id, channel=channel,
+                            project_dir=project)
     except trust.TrustError as exc:
         print(_refusal_message(f"quarantine {verb} refused", exc))
         return 1
     record = trust.get(args.quarantine_id, project_dir=project)
     render.render_ledger_lines(
-        [f"{args.quarantine_id}: {record['state'] if record else 'unknown'}"])
+        [f"{args.quarantine_id}: {record['state'] if record else 'unknown'}"]
+        + _publish_lines(published, activating=verb != "release"))
+    return 4 if published.failed else 0
+
+
+@_cli.guarded(writes=True)
+def _cmd_trust_republish(args) -> int:
+    """`trust republish`: re-send this project's standing quarantines to the
+    team. Human channel only; counts, never a value or a key."""
+    project = _resolve_project(args.project)
+    try:
+        channel = _trust_channel(args)
+        published = trust.republish(channel=channel, project_dir=project)
+    except trust.TrustError as exc:
+        print(_refusal_message("quarantine republish refused", exc))
+        return 1
+    if not config.team_enabled():
+        render.render_ledger_lines(["no team is enabled; nothing to republish"])
+        return 0
+    render.render_ledger_lines(
+        [f"republished {len(published.keys)} quarantine(s) to the team "
+         "sidecar"] + _publish_lines(published, activating=True))
+    return 4 if published.failed else 0
+
+
+def _cmd_trust_list_team(args) -> int:
+    """`trust list --team`: the quarantines teammates have published. Kind and
+    count on any channel; the author directory and ts at a terminal only, the
+    same split the evidence column makes. Never a value, a key or an id."""
+    claims = view.team_quarantines()
+    human = _human_channel()
+    if human:
+        rows = [{"kind": kind, "author": author, "ts": ts}
+                for kind, author, ts in sorted(claims)]
+    else:
+        counts: dict = {}
+        for kind, _author, _ts in claims:
+            counts[kind] = counts.get(kind, 0) + 1
+        rows = [{"kind": kind, "count": counts[kind]} for kind in sorted(counts)]
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        render.render_ledger_lines(["no quarantines published by teammates"])
+        return 0
+    render.render_ledger_lines(
+        [f"{r['kind']}  {r['author']}  {r['ts']}" if human
+         else f"{r['kind']}  {r['count']} claim(s)" for r in rows])
     return 0
 
 
 @_cli.guarded
 def _cmd_trust_list(args) -> int:
+    if getattr(args, "team", False):
+        return _cmd_trust_list_team(args)
     project = _resolve_project(args.project)
     records = sorted(
         trust.records(project_dir=project).values(),
@@ -146,10 +211,14 @@ def _cmd_trust_list(args) -> int:
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
+    foreign = len(view.foreign_pairs())
+    footer = ([f"{foreign} quarantine(s) published by teammates are in force; "
+               "they release their own"] if foreign else [])
     if not rows:
-        render.render_ledger_lines(["no quarantines recorded for this project"])
+        render.render_ledger_lines(
+            ["no quarantines recorded for this project", *footer])
         return 0
-    render.render_ledger_lines([_record_line(r) for r in rows])
+    render.render_ledger_lines([_record_line(r) for r in rows] + footer)
     return 0
 
 
@@ -205,7 +274,8 @@ def register(sub, fmt) -> None:
     p_trust = sub.add_parser(
         "trust",
         help="record or settle a human quarantine on a checkpoint value "
-             "(#1109); write-only in this release, nothing reads it yet",
+             "(#1109): an active one is withheld from every read, and is "
+             "published to the team when one is enabled",
         epilog="Examples:\n"
                "  daimon trust propose --text \"the runbook was fabricated\" "
                "--kind decision --reason \"no matching PR\" "
@@ -257,10 +327,25 @@ def register(sub, fmt) -> None:
         pt_verb.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
         pt_verb.set_defaults(func=_cli._cmd_trust_verdict)
 
+    pt_rep = trust_sub.add_parser(
+        "republish",
+        help="re-send this project's active and released quarantines to the "
+             "team sidecar; a human act, safe to repeat")
+    pt_rep.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; republish then refuses, because it "
+             "requires a human channel")
+    pt_rep.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    pt_rep.set_defaults(func=_cli._cmd_trust_republish)
+
     pt_list = trust_sub.add_parser(
         "list", help="list project quarantines, candidates first")
     pt_list.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     pt_list.add_argument("--json", action="store_true", help="machine-readable output")
+    pt_list.add_argument(
+        "--team", action="store_true",
+        help="list the quarantines teammates published instead: kind and "
+             "count anywhere, author directory and ts at a terminal")
     pt_list.set_defaults(func=_cli._cmd_trust_list)
 
     pt_repair = trust_sub.add_parser(
