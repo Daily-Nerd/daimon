@@ -318,6 +318,45 @@ def _is_ancestor(sidecar, old, new) -> bool:
     return _git(sidecar, "merge-base", "--is-ancestor", old, new).returncode == 0
 
 
+# The two published ledgers of an author directory (PR 13, H5): both eras.
+_LEDGER_PATH = re.compile(
+    r"(?:projects/(?:[^/]+/)+)?authors/([^/]+)/(?:tombstones|quarantines)\.jsonl")
+
+
+def _check_ledger_authorship(sidecar, old, new, report) -> None:
+    """Hygiene, never proof (PR 13, H5): for each published ledger an author
+    directory holds that the fetch ADDED OR MODIFIED, flag every non-merge
+    commit in `old..new` that touched it under a git AUTHOR name whose slug is
+    not the directory's owner. A warning only: that name is declared, free to
+    forge, and a member who can write the owner's file can also write it. It makes a plain edit visible; it does not detect a forged
+    row (docs/team.md, authority)."""
+    if not old:
+        return  # first-ever content fetch: no arrival window to diff
+    # -z: git quotes a non-ASCII path otherwise, and the pattern would skip it
+    diff = _git(sidecar, "diff", "-z", "--name-only", "--diff-filter=AM",
+                old, new)
+    if diff.returncode != 0:
+        return
+    for path in diff.stdout.split("\0"):
+        path = path.strip()
+        match = _LEDGER_PATH.fullmatch(path)
+        if not match:
+            continue
+        owner = match.group(1)
+        log = _git(sidecar, "log", "--no-merges", "--format=%an",
+                   f"{old}..{new}", "--", path)
+        if log.returncode != 0:
+            continue
+        for name in sorted({ln.strip() for ln in log.stdout.splitlines()
+                            if ln.strip()}):
+            if store.project_slug(name) != store.project_slug(owner):
+                report["warnings"].append(
+                    f"author mismatch: {path} belongs to '{owner}' but was "
+                    f"changed in a commit by '{name}'; identity is "
+                    "declared, not authenticated; verify with your team"
+                )
+
+
 def _check_author_mismatch(sidecar, old, new, report) -> None:
     """Guard rail (issue #113 comment): for files newly arrived in a fetch,
     cross-check the stamped JSON `author` against the git author who introduced
@@ -394,6 +433,7 @@ def _integrate(sidecar, branch, report) -> bool:
         )
         return False
     _check_author_mismatch(sidecar, old, new, report)
+    _check_ledger_authorship(sidecar, old, new, report)
     return True
 
 

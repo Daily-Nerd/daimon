@@ -194,8 +194,9 @@ descarta esa ruta (venga de `DAIMON_TEAM_PROJECT`, del fallback derivado del
 origin o de una tabla `[projects."…"]`, que `daimon team status` reporta).
 Migración: renombra el segmento en `daimon-team.toml` o en
 `DAIMON_TEAM_PROJECT`. Los archivos que ya estén bajo una ruta que contenga
-`authors` no se leen hasta renombrarla, lo que se equivoca hacia leer menos,
-nunca más.
+`authors` no se leen hasta renombrarla. Leer menos no es la dirección segura para
+los tombstones: hasta el renombrado, un valor que alguien olvidó bajo esa ruta
+no se suprime en tu máquina y puede reaparecer.
 
 ## Qué proyectos sincronizan: la allowlist de alcance (cerrada por defecto)
 
@@ -252,6 +253,60 @@ Los checkpoints de compañeros se muestran dentro de una ventana de edad de
 lectura controlada por `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0`
 significa conservar todo). Salir por edad es solo un filtro de lectura —
 ningún archivo se borra físicamente de la rama compartida de solo-anexado.
+
+### Las cuarentenas también viajan
+
+Una cuarentena es la decisión de una persona de que un valor no es seguro para
+actuar sobre él (`daimon trust propose`, confirmada o liberada por un humano).
+Cuando activas una, o la levantas, y hay un equipo habilitado, daimon agrega
+una fila solo con hashes a tu propio `quarantines.jsonl`, junto a tus
+tombstones, en cada sidecar al que el proyecto enruta: el tipo, un hash del
+valor, `active` o `released`, un sello de orden e ids. Nunca el texto, la razón
+ni la evidencia. El candidato de un agente y un descarte no publican nada. Una
+liberación también llega a todo sidecar tuyo que aún conserve la afirmación,
+lo enrute o no el proyecto ahora.
+
+- **Alcance.** La cuarentena de un compañero retiene ese valor, de ese tipo, en
+  toda tu máquina, en todos los proyectos, como lo hace un forget. Ves
+  `[withheld: quarantine]` sin id, en todos los canales, terminal incluida.
+  `daimon forget`, `daimon resolve` y `daimon reverify` sobre ese id exacto se
+  rechazan ("a teammate quarantined this; they release it"). Solo ese
+  compañero la libera.
+- **Las tuyas siguen siendo tuyas.** Tus cuarentenas propias siguen operando por
+  proyecto desde tu ledger local. La misma persona en una segunda máquina debe
+  proponerla también allí.
+- **Verlas.** `daimon trust list` termina con un conteo de las cuarentenas que
+  los compañeros tienen vigentes. `daimon trust list --team [--json]` muestra
+  tipo y conteo en cualquier canal, y el directorio del autor y la hora en una
+  terminal.
+- **Reenviar.** `daimon trust republish` (una persona en una terminal, nunca
+  `--by agent`) reenvía sin cambios las cuarentenas vigentes del proyecto y la
+  última liberación de cada una liberada. Úsalo tras una publicación fallida
+  (`trust` sale con 4 y dice qué sidecar), tras habilitar el equipo, tras recibir
+  acceso a un sidecar, o tras `daimon ledger repair trust`. Varios autores se
+  combinan por unión: la liberación de un compañero solo levanta su propia
+  afirmación.
+- **Autoridad.** El acceso de escritura al sidecar es la frontera de confianza,
+  igual que para checkpoints y tombstones. Las filas publicadas son
+  afirmaciones declaradas, no autenticadas. Un miembro con acceso de escritura
+  puede sobre-retener publicando una fila `active`, y puede levantar la
+  cuarentena de un compañero con una fila `released` o borrando líneas (borrar
+  un tombstone ya vuelve a exponer un valor olvidado). El sync avisa cuando un
+  commit de alguien distinto del dueño del directorio cambió un ledger
+  publicado. Es higiene, no prueba, y no detecta una fila falsificada. Las filas publicadas
+  son de versión 1; un lector que encuentra una versión de fila que no conoce
+  omite a ese autor hasta actualizarse.
+- **Un ledger dañado omite al autor.** Una línea basura o una última línea
+  cortada en cualquiera de los ledgers publicados de un compañero significa que
+  su afirmación más nueva no se puede probar, así que sus checkpoints no se
+  admiten hasta que el archivo esté limpio, y recibes la nota `author-skipped`.
+  Las filas buenas anteriores siguen contando. Cualquiera con acceso de
+  escritura al sidecar puede hacerle esto a cualquier autor, para todo el
+  equipo, con una sola línea dañada en el archivo de ese autor; la cura es que
+  el dueño arregle el archivo en git.
+- **Lo que no hace.** El mirror sigue llevando el texto de un checkpoint, y el
+  historial de git lo conserva. Una cuarentena retiene al leer y nunca
+  reescribe; `daimon forget` es la herramienta de borrado.
 
 ## Referencia de entorno
 

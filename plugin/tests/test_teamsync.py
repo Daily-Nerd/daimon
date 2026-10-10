@@ -1034,3 +1034,133 @@ def test_commit_own_stages_the_quarantine_ledger(bare_remote, monkeypatch):
     assert report["committed"] == 1
     assert "authors/Ada/quarantines.jsonl" in _git(
         sidecar, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
+
+
+# ---- PR 13 (H5): a published ledger changed by someone else is flagged ------
+
+
+def _plant_by(sidecar, committer, rel, line):
+    """Append `line` to `rel` and commit it as `committer` (a plain git commit,
+    the way a member with write access would)."""
+    path = sidecar / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "ab") as handle:
+        handle.write(line)
+    _git(sidecar, "add", "--", rel)
+    _git(sidecar, "-c", f"user.name={committer}", "-c", "user.email=m@x",
+         "commit", "-m", "edit")
+
+
+@pytest.mark.parametrize("name", ["quarantines.jsonl", "tombstones.jsonl"])
+def test_a_ledger_added_or_edited_by_another_committer_warns(
+        bare_remote, tmp_path, monkeypatch, name):
+    rel = f"authors/Ada/{name}"
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    mallory = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory",
+                              "team-m")
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    _plant_by(ada, "Ada", rel, b'{"ts": "x", "key": "abcd1234"}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+
+    # Bob arrives at the honest history: the first pull has no arrival window
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)
+
+    # Mallory edits Ada's file (a modification, not an addition)
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory", "team-m")
+    teamsync.sync_remote(mallory)
+    _plant_by(mallory, "Mallory", rel, b'{"ts": "y", "key": "ffff0000"}\n')
+    assert teamsync.sync_remote(mallory)["pushed"] is True
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    r = teamsync.sync_remote(bob)
+    assert any(rel in w and "Ada" in w and "Mallory" in w
+               and "not authenticated" in w for w in r["warnings"]), \
+        r["warnings"]
+    assert (bob / rel).exists(), "a warning, never a block"
+
+
+def test_a_ledger_published_by_its_owner_never_warns(bare_remote, tmp_path,
+                                                     monkeypatch):
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)           # arrive before anything exists
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    rel = "projects/squad/census/authors/Ada/quarantines.jsonl"
+    _plant_by(ada, "Ada", rel, b'{"state": "active"}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    _plant_by(ada, "Ada", rel, b'{"state": "released"}\n')   # an append
+    assert teamsync.sync_remote(ada)["pushed"] is True
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    r = teamsync.sync_remote(bob)
+    assert r["fetched"] is True and r["warnings"] == []
+
+
+def test_a_merge_commit_is_not_blamed_for_the_files_it_carries(
+        bare_remote, tmp_path, monkeypatch):
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    _plant_by(ada, "Ada", "authors/Ada/quarantines.jsonl", b'{"a": 1}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    _plant_by(bob, "Bob", "authors/Bob/quarantines.jsonl", b'{"b": 1}\n')
+    r = teamsync.sync_remote(bob)       # Bob merges Ada's, pushes the merge
+    assert r["warnings"] == []
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "team-a")
+    r = teamsync.sync_remote(ada)       # Ada pulls Bob's file and the merge
+    assert r["fetched"] is True and r["warnings"] == []
+
+
+def test_the_ledger_check_is_quiet_without_a_window_or_on_a_git_failure(
+        bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    report = {"warnings": []}
+    teamsync._check_ledger_authorship(sidecar, None, "HEAD", report)
+    teamsync._check_ledger_authorship(sidecar, "deadbeef", "cafebabe", report)
+    assert report["warnings"] == []
+
+    real = teamsync._git
+    _plant_by(sidecar, "Mallory", "authors/Ada/quarantines.jsonl", b"{}\n")
+
+    def broken_log(sidecar_, *args, **kw):
+        out = real(sidecar_, *args, **kw)
+        if args and args[0] == "log":
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return out
+
+    monkeypatch.setattr(teamsync, "_git", broken_log)
+    teamsync._check_ledger_authorship(sidecar, "HEAD~1", "HEAD", report)
+    assert report["warnings"] == []
+
+
+def test_a_non_ascii_ledger_path_is_still_checked(bare_remote, tmp_path,
+                                                  monkeypatch):
+    rel = "authors/Ädä/quarantines.jsonl"
+    ada = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ädä", "team-a")
+    bob = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    mallory = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory",
+                              "team-m")
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ädä", "team-a")
+    _plant_by(ada, "Ädä", rel, b'{"a": 1}\n')
+    assert teamsync.sync_remote(ada)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    teamsync.sync_remote(bob)
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Mallory", "team-m")
+    teamsync.sync_remote(mallory)
+    _plant_by(mallory, "Mallory", rel, b'{"a": 2}\n')
+    assert teamsync.sync_remote(mallory)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Bob", "team-b")
+    r = teamsync.sync_remote(bob)
+    assert any("Mallory" in w and "Ädä" in w for w in r["warnings"]), \
+        r["warnings"]

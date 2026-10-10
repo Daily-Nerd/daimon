@@ -280,3 +280,16 @@ def test_a_failed_local_fold_keeps_the_teammates_pairs_and_forgets(
     assert normalize.content_key(forgotten) in snap.forgotten
     item = {"text": TEXT, "id": "d-aaaaaa"}
     assert isinstance(view.classify(DECISION, item, snap), view.Withheld)
+
+
+def test_a_failed_local_fold_and_a_failed_teammate_walk_close_the_snapshot(
+        tmp_checkpoint_dir, monkeypatch):
+    slug = _write()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("fold failed")
+
+    monkeypatch.setattr(store, "fold_resolutions", boom)
+    monkeypatch.setattr(store, "foreign_team", boom)
+    snap = view.snapshot(slug)
+    assert snap.closed is True
