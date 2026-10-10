@@ -5,6 +5,33 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.55.0](https://github.com/Daily-Nerd/daimon/compare/v0.54.0...v0.55.0) (2026-10-10)
+
+
+### Features
+
+* **cli:** a reader is told when a teammate's quarantine withholds a value ([739931c](https://github.com/Daily-Nerd/daimon/commit/739931c60dc7830ee2962bf3d4627578e32cd8e9))
+* **policy:** fold a teammate's published quarantine rows per id, then per pair ([851095e](https://github.com/Daily-Nerd/daimon/commit/851095e075fa8055ddc8e0a15fee83f74c854b47))
+* **store:** one walk reads both team ledgers per author, memoised on their stat ([5a1d7a3](https://github.com/Daily-Nerd/daimon/commit/5a1d7a3dd4d63884a4633a7b449cdc8f29d64bf7))
+* **store:** publish a human quarantine as a hash-only row to the team sidecar ([9f20e37](https://github.com/Daily-Nerd/daimon/commit/9f20e37b6d2e2a503e46fc64e96bafbb78352eff))
+* **store:** the forgotten stamp, recall fingerprint and census learn the quarantine ledger ([c35df02](https://github.com/Daily-Nerd/daimon/commit/c35df0263bb9a36ce56ea73fdcda4359f8f3fbd0))
+* **surfaces:** declare the published team quarantine ledger ([eb69e0e](https://github.com/Daily-Nerd/daimon/commit/eb69e0e3678a76bbc54d5f261b42ba834ff5accd))
+* **team:** a human quarantine reaches every teammate as a hash-only row ([#1173](https://github.com/Daily-Nerd/daimon/issues/1173)) ([dbc90db](https://github.com/Daily-Nerd/daimon/commit/dbc90dbe79b261567c764144bc37b711037110f0))
+* **teamsync:** flag a published ledger changed by someone other than its owner ([f36d2c1](https://github.com/Daily-Nerd/daimon/commit/f36d2c1212b7f2e41b6cdb7034dcd32336c81102))
+* **trust:** `daimon trust republish` re-sends standing quarantines to the team ([acc8142](https://github.com/Daily-Nerd/daimon/commit/acc8142c8b1d439ec584acb2f3335469851787ed))
+* **trust:** a human quarantine reaches the team when it turns active or is released ([82b0f4a](https://github.com/Daily-Nerd/daimon/commit/82b0f4ab21a1772e116f3c5937c4ff64b472e334))
+* **view:** a teammate's quarantine withholds in every snapshot and every judge ([a891ae3](https://github.com/Daily-Nerd/daimon/commit/a891ae347d735ffba312340f65f866181e39ed45))
+* **view:** binding verbs bind through the view, never on a withheld id ([#1170](https://github.com/Daily-Nerd/daimon/issues/1170)) ([d4ad94b](https://github.com/Daily-Nerd/daimon/commit/d4ad94be5c0764ca5ca7b83d1a88f60d72a07b16))
+* **view:** every ledger prose printer reads through the view ([#1171](https://github.com/Daily-Nerd/daimon/issues/1171)) ([e5aea9e](https://github.com/Daily-Nerd/daimon/commit/e5aea9ef833e3fe51b52351e0845c94767236c6c))
+* **view:** id verbs answer through the view in four bounded tiers ([#1169](https://github.com/Daily-Nerd/daimon/issues/1169)) ([8448938](https://github.com/Daily-Nerd/daimon/commit/844893826fbfc8c9dd67808cbd9cb459b2c37caa))
+* **write:** every write exit judges its ledger, a refused admission heals itself ([#1168](https://github.com/Daily-Nerd/daimon/issues/1168)) ([4c77c7f](https://github.com/Daily-Nerd/daimon/commit/4c77c7fd0b7bf9e66779fb0f06443ea2e45c4955))
+
+
+### Bug Fixes
+
+* **recall:** one index per store and effects-committed recall telemetry ([#1164](https://github.com/Daily-Nerd/daimon/issues/1164)) ([fb1ccd0](https://github.com/Daily-Nerd/daimon/commit/fb1ccd03e42f735568fd1477cea22c71af8956a6))
+* **view:** ledger health postures from the registry on every read host ([#1166](https://github.com/Daily-Nerd/daimon/issues/1166)) ([318cb10](https://github.com/Daily-Nerd/daimon/commit/318cb10fedfcaea1ade36e7f43994ed8caea18dc))
+
 ## [0.54.0](https://github.com/Daily-Nerd/daimon/compare/v0.53.0...v0.54.0) (2026-10-08)
 
 
