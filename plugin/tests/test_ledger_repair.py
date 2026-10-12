@@ -53,10 +53,11 @@ _DELETERS = (
     (amendments, "forget_item_id"), (requests, "forget_content_key"),
     (trust, "redact_content_key"),
     (ledger_repair, "forget_quarantined_lines"))
+# Phase order: the value-keyed steps in registry order, then the id-keyed ones.
 _ORDER = ["store.scrub_event_fields", "refutations.forget_content_key",
-          "relations.forget_item_id", "amendments.forget_content_key",
-          "amendments.forget_item_id", "requests.forget_content_key",
-          "trust.redact_content_key", "ledger_repair.forget_quarantined_lines"]
+          "amendments.forget_content_key", "requests.forget_content_key",
+          "ledger_repair.forget_quarantined_lines", "trust.redact_content_key",
+          "amendments.forget_item_id", "relations.forget_item_id"]
 
 
 @pytest.fixture
@@ -69,7 +70,8 @@ def calls(monkeypatch):
             seen.append((_label, args, kwargs))
             if _label.endswith("forget_quarantined_lines"):
                 return ledger_repair.Purged(0, 0)
-            return 0 if _label == "store.scrub_event_fields" else []
+            return (0 if _label == "store.scrub_event_fields"
+                    else jsonl.Reached(()))
         monkeypatch.setattr(module, name, spy)
     return seen
 
@@ -80,15 +82,16 @@ def test_scrub_forgotten_key_runs_every_ledger_deleter_in_order(calls):
         text="the value", project_dir="/p/x")
     assert [c[0] for c in calls] == [
         "store.scrub_event_fields", "refutations.forget_content_key",
-        "relations.forget_item_id", "amendments.forget_content_key",
+        "amendments.forget_content_key", "requests.forget_content_key",
+        "ledger_repair.forget_quarantined_lines", "trust.redact_content_key",
         "amendments.forget_item_id", "amendments.forget_item_id",
-        "amendments.forget_item_id", "requests.forget_content_key",
-        "trust.redact_content_key", "ledger_repair.forget_quarantined_lines"]
+        "amendments.forget_item_id", "relations.forget_item_id",
+        "relations.forget_item_id", "relations.forget_item_id"]
     by_label = {}
     for label, args, kwargs in calls:
         by_label.setdefault(label, []).append((args, kwargs))
-    assert by_label["relations.forget_item_id"] == [
-        (("i-1",), {"project_dir": "/p/x"})]
+    assert [a[0] for a, _ in by_label["relations.forget_item_id"]] == [
+        "i-1", "i-2", "i-3"]
     assert [a[0] for a, _ in by_label["amendments.forget_item_id"]] == [
         "i-1", "i-2", "i-3"]
     assert by_label["ledger_repair.forget_quarantined_lines"] == [
@@ -616,3 +619,25 @@ def test_a_concurrent_reader_during_a_dry_run_still_sees_the_real_store(
     assert _repair("trust", "--dry-run") == 0
     assert seen["own"] != real
     assert seen["other"] == real
+
+
+def test_the_events_judge_reads_the_prose_columns_the_registry_declares():
+    assert ledger_repair._event_holds({"item_text": VALUE}, KEY) is True
+    assert ledger_repair._event_holds({"item_text": "another"}, KEY) is False
+    assert ledger_repair._event_holds({"status": "resolved"}, KEY) is False
+
+
+def test_a_scrub_with_no_approver_over_an_active_ruling_says_it_refused(
+        tmp_checkpoint_dir):
+    from tests.test_rulings import PROJECT as RULING_PROJECT
+    from tests.test_rulings import _rule
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    key = normalize.content_key("internal numbers never appear in public posts")
+    bucket = config.checkpoint_dir() / store.project_slug(RULING_PROJECT)
+    before = {p: p.read_bytes() for p in bucket.rglob("*") if p.is_file()}
+    done = ledger_repair.scrub_forgotten_key(key, project_dir=RULING_PROJECT)
+    assert done.refusal.startswith("refused: this would remove ACTIVE")
+    assert done.events == 0 and done.refutations == ()
+    assert {p: p.read_bytes() for p in bucket.rglob("*")
+            if p.is_file()} == before
+    assert refutations.get(ruling_id, project_dir=RULING_PROJECT) is not None

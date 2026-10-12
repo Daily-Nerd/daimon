@@ -94,6 +94,8 @@ def test_a_forgotten_value_and_its_key_are_in_no_activity_row(base):
     got = _get(base, "/api/activity")
     blob = json.dumps(got)
     assert HIDE not in blob and normalize.content_key(HIDE) not in blob
+    # the forget's key row is bookkeeping: it is in the ledger, never in the feed
+    assert "forgotten-key" not in blob
     [tomb] = [r for r in got["rows"] if r["kind"] == "tombstone"]
     assert tomb["extra"]["status"] == "forgotten"
     assert tomb["extra"]["item_text"] is None and tomb["detail"] is None

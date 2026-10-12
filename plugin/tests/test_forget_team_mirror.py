@@ -144,7 +144,9 @@ def test_team_scrub_edge_guards(tmp_checkpoint_dir, monkeypatch):
         "epistemic_snapshot": "torn",
     }, ensure_ascii=False), encoding="utf-8")
     before = half.read_text()
-    _forget()
+    # The copy is the project's own and still holds the value, so forget says
+    # it was not reached (exit 4) instead of reporting a clean sweep.
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
     assert half.read_text() == before, \
         "a file re-admission cannot process is left byte-identical"
     # a resolver crash degrades to slug-only scoping, never aborts (belt —

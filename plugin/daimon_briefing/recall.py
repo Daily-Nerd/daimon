@@ -61,8 +61,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (buckets, config, index_locate, policy, redact, schema, scoring,
-               store, surfaces, teamproject, view)
+from . import (buckets, config, index_locate, jsonl, policy, redact, schema,
+               scoring, store, surfaces, teamproject, view)
 # The term functions moved to `terms` so `view` can sit under both `carry` and
 # `recall`. The three public names stay importable from here for one release.
 from .terms import (  # noqa: F401
@@ -809,10 +809,14 @@ def index_strays() -> list[Path]:
     return list(dict.fromkeys(out))
 
 
-def refresh_store_caches() -> None:
+def refresh_store_caches() -> "jsonl.Reached":
     """After a forget: the live index is rebuilt now and every sibling cache
     of the same store (another team dir) is dropped, so no cache of the store
-    keeps the value until its next read. Best-effort per file."""
+    keeps the value until its next read. Best-effort per file.
+
+    Returns a `jsonl.Reached` judged afterwards: a sibling cache that is still
+    on disk, or a rebuild that raised, leaves the result unreached. `detail`
+    is a fixed word or the exception TYPE, never a path or a message."""
     live = config.recall_db()
     for p in store_caches():
         if p == live:
@@ -822,10 +826,16 @@ def refresh_store_caches() -> None:
                 stray.unlink(missing_ok=True)
             except OSError:
                 pass
+    detail = ""
     try:
         rebuild()
     except Exception as exc:  # noqa: BLE001 - lazily rebuilt on the next read
         _note_error("refresh-store-caches", exc)
+        detail = type(exc).__name__
+    left = [p for p in store_caches() if p != live]
+    if left and not detail:
+        detail = "unwritable"
+    return jsonl.Reached((), reached=not (left or detail), detail=detail)
 
 
 _CACHE_STALE_SECONDS = 30 * 86400

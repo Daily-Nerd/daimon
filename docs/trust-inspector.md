@@ -283,12 +283,59 @@ Item-id verbs exist on the CLI, the viewer and the in-process api; the MCP
 tools take no item id by design (pinned by test).
 
 A forgotten id is never a write target for `resolve`, `reverify` or
-`amend propose`: any later event on an id lifts its tombstone, so writing one
-would bring the value back. `forget` does not take one either, so a tombstoned
-id reads as no match for a person and an agent alike; plaintext a forget left
-behind is `daimon ledger repair`'s to scrub and `forget --republish`'s to
-publish. An exact id on `forget` does outrank an outage of the trust ledger,
-because the id names no value.
+`amend propose`: these bind through the same judgement as every read, which
+reads a forgotten id as no match for a person and an agent alike. `forget`
+does not take one either. Plaintext a forget left behind is finished by
+`daimon forget --resume` (`daimon ledger repair <name>` for one ledger).
+An exact id on `forget` does outrank an outage of the trust ledger, because the
+id names no value.
+
+### What a forget writes, and the two verbs that finish or lift one
+
+A forget appends three kinds of row to `events.jsonl` in one write: the id row
+you named, a key row on a `forgotten-key:` ref of its own, and one row for every
+sibling id that held the same value on any surface (a prev-N copy counts). The
+id row names the content key in its status, so even a torn tail withholds the
+value. The key ref is a random token and is derived from nothing, so it tells a
+reader nothing about the value.
+
+A reopen on the id replaces only the id row, so the value stays withheld. Only
+`daimon unforget` lifts a forget:
+
+- `daimon unforget <id>` takes the exact id the forget receipt printed and
+  lifts every standing ref that carries the key, in one append of
+  `reopened:unforget` rows. It needs a person at a terminal and has no agent
+  channel. The check is whether stdin is a terminal, as for `trust release`, so
+  a host that runs an agent's commands inside a pseudo-terminal passes it.
+- It restores nothing. The value was removed from every surface, so the lift
+  only lets a new capture of the same claim back in.
+- It proves the lift or exits 4. Exit 0 means no other project on this machine,
+  no teammate's published row and no unproven ledger still withholds the value.
+  Otherwise it says which class does: another project on this machine, a
+  teammate's published row (they lift it), or a ledger it could not prove. It
+  never names a project or an author.
+- An agent channel, an unknown id and a forgotten id all get the same refusal,
+  before any lookup, so the verb cannot be used to ask whether an id was
+  forgotten.
+
+`daimon forget --resume` takes no target and needs a person at a terminal. It
+finishes every phase for every standing forget of the project: the key row, the
+team publish, the value-keyed and id-keyed scrubs, the wholesale purges and the
+derived caches. A surface it could not reach is listed as `unreached:` with its
+cure and the run exits 4; run it again after fixing the cause. A forget made
+before the key row existed is a single id row that a reopen still lifts.
+`--resume` writes the missing key row and prints one line with the count, and
+from then on only `unforget` lifts those too. `--only <phase>` runs one phase,
+and `--republish` is the publish phase (`--resume --only publish`); it goes in
+the next release. `--dry-run` previews a resume (how many forgets, how many
+would get a key row, which phases, which ACTIVE rulings) and writes nothing.
+A checkpoint copy or team mirror copy that cannot be parsed keeps `forget` at
+exit 4 until a person fixes the file by hand; `--resume` reports it each run.
+
+A published tombstone row has no retraction because tombstone rows carry no
+version and no fail-closed hook; that gate exists for quarantine rows only. So
+`unforget` lifts your machine and leaves the row you published, and a teammate
+who already folded it keeps withholding the value until they remove it.
 
 **Nothing writes the value.** The event `resolve` and `reverify` append holds
 the id, the status and the note, never the item's text, and the serializer's

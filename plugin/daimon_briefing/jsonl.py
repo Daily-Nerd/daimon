@@ -448,6 +448,16 @@ class Reached(list):
         self.unscannable = unscannable
 
 
+def raised(exc: BaseException) -> Reached:
+    """A forget step that raised, as a `Reached` that was not reached.
+
+    `detail` is the exception TYPE and nothing else: an exception message can
+    carry the very value being forgotten (a path, a repr, a decoded byte), and
+    this text reaches a terminal. A step that fails must say so and name the
+    class of failure, never quote it."""
+    return Reached((), reached=False, detail=type(exc).__name__)
+
+
 def judge_reach(path, removed, holds: Callable[[dict], bool], *,
                 plaintext: bool = True) -> Reached:
     """`removed` as a `Reached`, judged by reading `path` again: the ledger
@@ -580,6 +590,21 @@ def surface_refusals() -> Iterator[None]:
         _SURFACE_REFUSALS.reset(token)
 
 
+def append_rows_as(path: Path, rows: list, writer: Writer, *,
+                   lock: bool = True) -> bool:
+    """`append_as` for several rows in ONE append: the posture is judged once,
+    under the lock, and the bytes are written in one call, so a crash leaves at
+    most one torn tail (the last line) and the rows before it intact."""
+    try:
+        return append_lines(
+            path, [json.dumps(row, ensure_ascii=False) for row in rows],
+            posture=lazy_posture(path, writer), lock=lock) > 0
+    except Refused:
+        if _SURFACE_REFUSALS.get():
+            raise
+        return False
+
+
 def append_as(path: Path, row: dict, writer: Writer, *,
               lock: bool = True) -> bool:
     """The module appenders' write exit: judge the ledger under the lock for
@@ -587,13 +612,7 @@ def append_as(path: Path, row: dict, writer: Writer, *,
     caller's "not written" (False); a REFUSE is that same False unless the run
     surfaces refusals (`surface_refusals`); a SKIP is False too, and leaves
     its usage line."""
-    try:
-        return append(path, row, posture=lazy_posture(path, writer),
-                      lock=lock) > 0
-    except Refused:
-        if _SURFACE_REFUSALS.get():
-            raise
-        return False
+    return append_rows_as(path, [row], writer, lock=lock)
 
 
 def require_writable(path: Path, writer: Writer, *,

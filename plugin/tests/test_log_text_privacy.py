@@ -100,9 +100,11 @@ def test_registry_declares_backend_stderr_log_reachable():
     assert s is not None
     assert s.plaintext is True and s.delete == "wholesale-purge"
     assert s.walker == "forget"
-    # serialize.log keeps the exempt claim — true again by construction once
-    # the downgrade writers log hashes (and forget scrubs the legacy lines).
-    assert surfaces.match("logs/serialize.log").delete == "exempt-no-plaintext"
+    # serialize.log is its own row: current writers log hashes, and forget
+    # scrubs the legacy payloads in place (it is also the ledger `status`
+    # parses, so it is never purged wholesale).
+    assert surfaces.match("logs/serialize.log").delete == "rewrite"
+    assert surfaces.match("logs/other.log").delete == "exempt-no-plaintext"
     assert not any(x.issue == "#616" for x in surfaces.SURFACES), \
         "#616 is closed — no entry may still cite it as an open gap"
 
@@ -160,8 +162,12 @@ def test_forget_survives_a_failed_backend_purge(tmp_checkpoint_dir,
     _write_checkpoint()
     monkeypatch.setattr(store, "purge_backend_stderr_log",
                         lambda: (0, "disk on fire"))
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
-    assert "disk on fire" in capsys.readouterr().out
+    # Not fatal, and not clean either: the step is unreached (exit 4) and the
+    # purge's own error text never reaches the terminal.
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    out = capsys.readouterr().out
+    assert "unreached: backend stderr log " in out
+    assert "disk on fire" not in out
 
 
 def test_forget_survives_a_backend_purge_that_raises(tmp_checkpoint_dir,
@@ -175,8 +181,10 @@ def test_forget_survives_a_backend_purge_that_raises(tmp_checkpoint_dir,
         raise RuntimeError("backend purge exploded")
 
     monkeypatch.setattr(store, "purge_backend_stderr_log", boom)
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
-    assert "backend purge exploded" in capsys.readouterr().out
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    out = capsys.readouterr().out
+    assert "unreached: backend stderr log could not be reached (RuntimeError)" in out
+    assert "backend purge exploded" not in out
 
 
 # ---- serialize.log: legacy downgrade payloads scrubbed at forget ----------
@@ -276,8 +284,10 @@ def test_forget_survives_a_failed_scrub(tmp_checkpoint_dir, monkeypatch,
     _write_checkpoint()
     monkeypatch.setattr(store, "scrub_serialize_log",
                         lambda: (0, "scrub exploded"))
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
-    assert "scrub exploded" in capsys.readouterr().out
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    out = capsys.readouterr().out
+    assert "unreached: serialize.log " in out
+    assert "scrub exploded" not in out
 
 
 def test_forget_survives_a_scrub_that_raises(tmp_checkpoint_dir, monkeypatch,
@@ -289,8 +299,10 @@ def test_forget_survives_a_scrub_that_raises(tmp_checkpoint_dir, monkeypatch,
         raise RuntimeError("scrub blew up")
 
     monkeypatch.setattr(store, "scrub_serialize_log", boom)
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
-    assert "scrub blew up" in capsys.readouterr().out
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    out = capsys.readouterr().out
+    assert "unreached: serialize.log could not be reached (RuntimeError)" in out
+    assert "scrub blew up" not in out
 
 
 def test_scrub_a_corrupt_env_file_fails_closed(monkeypatch, tmp_path):

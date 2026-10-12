@@ -34,7 +34,7 @@ stays searchable, and the event trail shows when and why it closed.
 `--status` accepts a free-form lifecycle status; any status starting with
 `reopen` revives the item. A status starting with `forgotten:` is refused:
 that is a tombstone, and only `daimon forget` writes one (it also removes
-the value from the files).
+the value from the files). Only `daimon unforget` lifts one.
 
 ## `daimon reverify` — assert it's still true
 
@@ -72,7 +72,11 @@ What happens on forget:
 - An append-only **tombstone event** records `forgotten:<12-char content
   hash>` — the hash, never the text. Removal means the content leaves the
   audit trail too; the trail can still prove *that* something was removed,
-  when, and why (`--reason`, redacted like any note).
+  when, and why (`--reason`, redacted like any note). It is written together
+  with a **key row** on a ref of its own and a row for every sibling id that
+  held the same value, in one append. A later `reopen` on the id replaces only
+  the id row, so the value stays withheld; `daimon unforget <id>` is what lifts
+  a forget (see below).
 - The recall index deletes the item's rows across **all** historical
   checkpoint copies in your local index — including your local copies of team
   mirrors — so recall cannot resurrect it. (Propagating tombstones into
@@ -84,10 +88,30 @@ What happens on forget:
   Forget clears all of it (the cost: chunks younger than the rotation window,
   `chunk_cache_days`, default 3 days, get re-extracted next time). Entries
   are also age-reaped at that window independently of forget. The purge is
-  never fatal — removal of the belief state always completes — and the
-  command reports honestly whether the purge succeeded.
+  never fatal (removal of the belief state always completes), and a purge
+  that could not finish is listed as `unreached` and makes the command exit 4.
 - Briefing withhold, carry suppression, and `daimon stats` all inherit the
   tombstone through the same event stream.
+- Every step above is a row of the surface registry, run in phase order, and
+  each step reports whether it reached its surface. A surface forget could not
+  reach is named with its cure and the exit code is 4. `daimon forget --resume`
+  finishes every phase for every standing forget once the cause is fixed.
+
+### `daimon unforget`: lift a forget on this machine
+
+```sh
+daimon unforget o-3f8a2c --reason "forgot the wrong one"
+daimon unforget o-3f8a2c --dry-run
+```
+
+Unforget takes the id the forget receipt printed, from a person at a terminal
+(an agent has no way to run it), and lifts the forget on every ref that carries
+its key. It restores nothing: the value was removed from every surface, so the
+lift only lets a new capture of the same claim back in. It exits 0 only when
+nothing else still withholds the value; if another project on this machine, a
+teammate's published row or a ledger it could not prove does, it says which
+and exits 4. A published tombstone row has no retraction, so the row you
+published stays and your teammates keep withholding the value until they lift it.
 
 ### Deletion-durability compliance
 

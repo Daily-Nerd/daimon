@@ -20,23 +20,21 @@ from .. import (
     config,
     display,
     effects_commit,
+    forget,
     jsonl,
-    ledger_repair,
     normalize,
     pending,
-    recall,
     refutations,
     render,
     requests,
     schema,
-    serializer,
     store,
     trust,
     view,
 )
 from ..effects import Effects
-from ..surfaces import Writer
-from ._ledger import _check_sync_warning, refuse_teammate_pair
+from ..surfaces import PHASES, Writer
+from ._ledger import refuse_teammate_pair
 
 
 def _human_cli_channel(verb: str, *, agent_path: bool = False) -> str | None:
@@ -220,6 +218,17 @@ def _unreached_line(u) -> str:
     """One line for a surface forget could not vouch for (D10.5): which
     ledger, why, and the cure. The human channel names the file."""
     stem = u.name.removesuffix(".jsonl")
+    if u.name == "armed-check manifest":
+        # a forgotten ruling's check leaves the disk by re-deriving the
+        # manifest; when that fails the body is still armed
+        return ("armed-check manifest could not be updated; a forgotten "
+                "ruling's check may still be armed on this host; run: "
+                "daimon check sync")
+    if not u.name.endswith((".jsonl", ".quarantined-lines")):
+        # a surface that is not a ledger (a cache, a log, the live checkpoint)
+        shown = f" ({u.detail})" if u.detail else ""
+        return (f"{u.name} could not be reached{shown}; the value may still "
+                "be in it; fix the cause, then run: daimon forget --resume")
     if u.name.endswith(".quarantined-lines"):
         return (f"{u.name} holds {u.torn or 'a'} line(s) forget cannot read "
                 f"({u.state.value}); review that file by hand")
@@ -253,11 +262,159 @@ def _cmd_forget_republish(args) -> int:
     if not config.team_enabled():
         print("no team is enabled; nothing to republish")
         return 0
+    if getattr(args, "dry_run", False):
+        keys = store.forgotten_content_keys(project)
+        print(f"would publish up to {len(keys)} standing tombstone(s) the "
+              "team sidecar is missing; nothing was written")
+        return 0
     published = store.republish_tombstones(project_dir=project)
     lines = [f"republished {len(published.keys)} tombstone(s) to the team "
              "sidecar"] + _published_lines(published)
     render.render_lifecycle_lines(lines)
     return 4 if published.failed else 0
+
+
+def forget_phases() -> tuple:
+    """The phases a resume can run, in the order they run."""
+    return tuple(p for p in PHASES if p != "tombstone")
+
+
+def _cmd_forget_resume(args) -> int:
+    """`forget --resume`: finish every phase for every standing tombstone of
+    this project. A forget that could not reach a surface, one that stopped
+    after its first write, and every forget made before the key row existed
+    all leave a tombstone with work behind it, and this is the one verb that
+    does it. Idempotent: a surface already clean is reached again at no cost.
+
+    A standing tombstone with no key row gets one (the old shape was an id row
+    alone), and the receipt counts them in one line: from then on only
+    `daimon unforget` lifts the forget, a reopen on the id no longer does.
+    Human only, because that last step makes a liftable forget stricter and
+    the run may remove an ACTIVE ruling, which asks first like forget does."""
+    if _human_cli_channel("forget --resume") is None:
+        return 1
+    project = _cli._resolve_project(args.project)
+    events_path = store._events_path(store._resolved(project))
+    if events_path is not None:
+        jsonl.require_writable(events_path, Writer.HUMAN)
+    only = getattr(args, "only", None)
+    dry_run = getattr(args, "dry_run", False)
+    if only == "publish":
+        return _cmd_forget_republish(args)
+    standing = store.project_standing(project)
+    if not standing:
+        print("no standing forget in this project; nothing to finish")
+        return 0
+    phases = {"publish", "value", "id", "wholesale", "derived"}
+    if only:
+        phases = {only}
+    legacy = [k for k, held in standing.items()
+              if held.ids and not held.key_refs]
+    doomed: tuple = ()
+    if "value" in phases:
+        doomed = tuple(refutations.active_rulings_reached(
+            set(standing),
+            item_ids={i for held in standing.values() for i in held.ids},
+            project_dir=project))
+    if dry_run:
+        # A real preview: nothing runs, no row is written, nobody is asked.
+        lines = [f"would finish {len(standing)} standing forget(s); nothing "
+                 "was written"]
+        if only is None and legacy:
+            lines.append(f"would write the key row for {len(legacy)} "
+                         "standing tombstone(s)")
+        lines.append("phases that would run: " + ", ".join(
+            p for p in forget_phases() if p in phases))
+        if doomed:
+            lines.append("would remove ACTIVE ruling(s): " + ", ".join(doomed))
+        render.render_lifecycle_lines(lines)
+        return 0
+    from .ledger_cmd import _approve_rulings
+    if doomed:
+        refusal = _approve_rulings(list(doomed))
+        if refusal:
+            print(refusal)
+            return 1
+    unreached: dict = {}
+    upgraded = 0
+    for key, held in standing.items():
+        # the key-row upgrade is a tombstone-phase write: `--only` skips it
+        if only is None and held.ids and not held.key_refs:
+            wrote = forget.write_tombstones(
+                forget.Target(key, held.ids[0], held.ids, project))
+            if wrote.reached:
+                upgraded += 1
+            else:
+                unreached.setdefault("tombstone key row", forget.Unreached(
+                    "tombstone key row", jsonl.Health.OK, 0, True,
+                    "could not be written"))
+    totals: dict = {}
+    published_failed = 0
+    ledger_fns = {p.step.fn for p in forget.STEPS if p.ledger}
+    steps = {p.step.fn: p.step for p in forget.STEPS}
+    reached_all: dict = {}
+    for key, held in store.project_standing(project).items():
+        ids = tuple(held.ids)
+        outcome = forget.run(
+            forget.Target(key, ids[0] if ids else "", ids, project),
+            phases=phases, approve_rulings=lambda _rulings: "")
+        for item in outcome.done:
+            fn = item.step.fn
+            totals[fn] = totals.get(fn, 0) + item.n
+            reached_all[fn] = reached_all.get(fn, True) and item.reached
+            if item.step.phase == "publish":
+                published_failed += len(getattr(item.result, "failed", ()))
+                continue
+            for u in item.unreached:
+                unreached.setdefault(u.name, u)
+    lines = []
+    if upgraded:
+        lines.append(
+            f"wrote the key row for {upgraded} standing tombstone(s); from "
+            "now only `daimon unforget` lifts them, a reopen on the id no "
+            "longer does")
+    rows = sum(n for fn, n in totals.items() if fn in ledger_fns)
+    lines.append(f"finished {len(standing)} standing forget(s): {rows} "
+                 "record(s) removed or redacted in the ledgers")
+    for fn, step in steps.items():
+        if step.done and fn in totals and reached_all.get(fn):
+            lines.append(step.done.format(n=totals[fn]))
+    for u in unreached.values():
+        lines.append(
+            f"unreached: {_unreached_line(u)}" if u.plaintext else
+            f"note: {_unreached_line(u)}; it holds no plaintext, so this "
+            "does not block forget")
+    failing = [u for u in unreached.values() if u.plaintext]
+    if published_failed:
+        lines.append(f"warning: {published_failed} team sidecar(s) could not "
+                     "be written; fix them, then run this again")
+    if failing or published_failed:
+        lines.append(
+            "forget scrubbed everything it could read; "
+            f"{len(failing) + published_failed} surface(s) were not reached "
+            "(exit 4)")
+    _cli._note_usage("forget:resume")
+    render.render_lifecycle_lines(lines)
+    return 4 if (failing or published_failed) else 0
+
+
+def _approve_forget(rulings: list) -> str:
+    """The #693 gate forget holds: it takes no --by and asks no confirmation,
+    so without this it is an agent path that un-renders a human-ratified
+    standing constraint. A human at a terminal may say y (deletion stays the
+    user's call, #421); a non-interactive caller is pointed at the human.
+    Returns "" to proceed, else the refusal."""
+    if not sys.stdin.isatty():
+        return ("refused: this would remove ACTIVE ruling(s) "
+                + ", ".join(rulings)
+                + " — a human decision. Run it from a terminal, or ask the "
+                "user; `daimon ruling retire` records the verdict instead.")
+    # Deleting what renders is strictly more power than rewriting it, and
+    # rewriting confirms.
+    render.render_lifecycle_lines(
+        ["WARNING — this removes ACTIVE ruling(s): " + ", ".join(rulings)])
+    answer = input("Remove? [y/N]: ").strip().casefold()
+    return "" if answer in ("y", "yes") else "not removed"
 
 
 @_cli.guarded(writes=True)
@@ -272,7 +429,19 @@ def _cmd_forget(args) -> int:
     rides the resolutions fold, so withhold, carry suppression, and the
     recall index deletion all inherit it with no new plumbing. The rewritten
     checkpoint re-mints its receipt, so the post-removal state is signed."""
+    only = getattr(args, "only", None)
+    if only and not (getattr(args, "resume", False)
+                     or getattr(args, "republish", False)):
+        print("error: --only goes with --resume", file=sys.stderr)
+        return 2
+    if getattr(args, "resume", False):
+        if args.target:
+            print("error: --resume takes no target; it finishes the forgets "
+                  "already recorded", file=sys.stderr)
+            return 2
+        return _cmd_forget_resume(args)
     if getattr(args, "republish", False):
+        # the publish phase of a resume, kept as its own flag for one release
         if args.target:
             print("error: --republish takes no target; it publishes the "
                   "forgets already recorded", file=sys.stderr)
@@ -607,29 +776,6 @@ def _cmd_forget(args) -> int:
     # suppressed at capture. Still a hash, never the text: removal means the
     # content leaves the audit trail too (#321).
     content_hash = normalize.content_key(target.get("text") or "")
-    # #693: forget takes no --by and asks no confirmation, so without this
-    # gate it is an agent path that un-renders a human-ratified standing
-    # constraint — the one thing no agent path may do. A human at a terminal
-    # proceeds (deletion stays the user's call, #421 posture unchanged); a
-    # non-interactive caller is pointed at the human.
-    doomed_rulings = refutations.active_rulings_reached(
-        {content_hash}, item_ids={str(target["id"])}, project_dir=project)
-    if doomed_rulings:
-        if not sys.stdin.isatty():
-            print("refused: this would remove ACTIVE ruling(s) "
-                  + ", ".join(doomed_rulings)
-                  + " — a human decision. Run it from a terminal, or ask the "
-                  "user; `daimon ruling retire` records the verdict instead.")
-            return 1
-        # Deleting what renders is strictly more power than rewriting it,
-        # and rewriting confirms. A human can still say y (#421 unchanged).
-        render.render_lifecycle_lines(
-            ["WARNING — this removes ACTIVE ruling(s): "
-             + ", ".join(doomed_rulings)])
-        answer = input("Remove? [y/N]: ").strip().casefold()
-        if answer not in ("y", "yes"):
-            print("not removed")
-            return 1
     sid = str((checkpoint or {}).get("session_id") or "")
     # A checkpoint-bearing project still needs its session id to rewrite. A
     # ledger-only value has no checkpoint to rewrite, so the missing id is not
@@ -637,127 +783,136 @@ def _cmd_forget(args) -> int:
     if isinstance(checkpoint, dict) and not sid:
         print("checkpoint has no session_id — cannot rewrite")
         return 1
-    # Tombstone BEFORE the rewrite (#418): write_checkpoint's forget gate
-    # consults the ledger during the write — appended after, the new key is
-    # invisible to that scrub and sibling ids carrying the same value survive.
-    # Failing here leaves the checkpoint untouched: no half-removal without an
-    # audit-trail record. allow_disabled (#421): forget is the ratified
-    # deletion exemption to the kill switch — the tombstone (and the rewrite
-    # below, which #418 chains to it) must land even while daimon is disabled.
-    ok = store.append_event(str(target["id"]), f"forgotten:{content_hash}",
-                            note=args.reason or "", kind="tombstone",
-                            project_dir=project, allow_disabled=True,
-                            tombstone=True, writer=Writer.HUMAN)
-    if not ok:
+    # Every id that held the value, from every surface the project holds, is
+    # read BEFORE any scrub: afterwards there is nothing left to find, and the
+    # id-keyed ledgers (relations, amendments) need all of them (#418, #691).
+    ids = forget.siblings(project, content_hash, str(target["id"]))
+    # The registry runs every step in phase order: the tombstone first (#418:
+    # write_checkpoint's forget gate consults the ledger, so the key must land
+    # before the rewrite), then the team publish, the value-keyed scrubs, the
+    # id-keyed ones, the wholesale purges and the derived caches. One that
+    # fails or raises is reported and never stops the ones after it.
+    outcome = forget.run(forget.Target(
+        content_hash, str(target["id"]), ids, project,
+        str(target.get("text") or ""),
+        checkpoint if isinstance(checkpoint, dict) else None, sid,
+        args.reason or ""), approve_rulings=_approve_forget)
+    if outcome.refusal:
+        print(outcome.refusal)
+        return 1
+    if outcome.refused:
         print("tombstone event not written (project unknown or ledger unwritable)")
         return 1
-    # Splice by VALUE, not only id (#418): one value can hold sibling ids —
-    # the same sentence in two sections, or a widened hash within one
-    # (store._stamp_item_ids). Removal is content removal, so every item
-    # folding to the tombstoned key goes. Id kept in the predicate as a belt
-    # for non-string text, which content_key canonicalizes to "".
-    spliced_ids = {str(target["id"] or "")}
-    if isinstance(checkpoint, dict):
-        for section, key in schema.ITEM_LISTS:
-            lst = (checkpoint.get(section) or {}).get(key)
-            if isinstance(lst, list):
-                doomed = [i for i in lst
-                          if isinstance(i, dict)
-                          and (i.get("id") == target["id"]
-                               or normalize.content_key(i.get("text") or "")
-                               == content_hash)]
-                # #691: every spliced sibling id, not only the named target —
-                # amendments are keyed by item id, and an amendment about a
-                # sibling holding the same value is plaintext ABOUT the
-                # forgotten content (the #418 sibling rule, extended to the
-                # ledger that references the siblings).
-                spliced_ids.update(str(i.get("id") or "") for i in doomed)
-                lst[:] = [i for i in lst if i not in doomed]
-        # allow_disabled (#421): the ONE write_checkpoint call that may run under
-        # the kill switch — the rewrite that makes the deletion real on disk.
-        # rotate=False: rotation copies the CURRENT latest into prev-1 before
-        # writing, and the current latest is the PRE-forget bytes. Rotating here
-        # made the deletion manufacture a fresh copy of the value it was asked to
-        # remove, in a file that did not exist when the user ran the command.
-        store.write_checkpoint(sid, checkpoint, project_dir=project,
-                               allow_disabled=True, rotate=False,
-                               writer=Writer.CURE)
-    # The live checkpoint is one surface of several. prev-N and superseded
-    # session files hold the same plaintext and were never in the contract
-    # (#419: plaintext is what puts a file inside it, not its role). Runs even
-    # with no live checkpoint: a ledger-only project still has these surfaces.
-    store.scrub_content_key(content_hash, project_dir=project)
-    # #600 slice A: the author's own team-mirror copies are plaintext this
-    # machine owns (#419) — scrubbed here; teammates' copies and upstream
-    # git history are the sync protocol's to converge (tombstone
-    # propagation), not a local rewrite's.
-    team_scrubbed = store.scrub_team_copies(content_hash,
-                                            project_dir=project)
-    # #600 slice B: publish the deletion itself (hash only) so teammates can
-    # suppress the value without waiting to pull the scrubbed file — and so
-    # a copy THEY extracted independently can be acted on at all.
-    published = store.publish_tombstone(content_hash, project_dir=project)
-    # Every ledger deleter, in one shared entry that `daimon ledger repair`
-    # also calls (ledger_repair.scrub_forgotten_key). Events are redacted in
-    # place (#599), refutations/amendments/requests drop the records holding
-    # the value (#578, #691, #694), relations and amendments also go by the
-    # id of the forgotten item and its spliced siblings (#678, #691), and the
-    # trust ledger is redacted, never dropped (#1132: a quarantine withholds).
-    spliced_ids.discard("")
-    scrubbed = ledger_repair.scrub_forgotten_key(
-        content_hash, item_id=str(target["id"]), sibling_ids=spliced_ids,
-        text=str(target.get("text") or ""), project_dir=project)
-    events_scrubbed = scrubbed.events
-    forgotten_refutations = list(scrubbed.refutations)
-    forgotten_relations = list(scrubbed.relations)
-    forgotten_amendments = list(scrubbed.amendments)
-    forgotten_requests = list(scrubbed.requests)
-    redacted_quarantines = list(scrubbed.quarantines)
-    # #422: the serializer chunk cache holds PRE-redaction extraction output
-    # (quote verification forbids redacting before caching, #125), keyed by
-    # chunk text — the forgotten value cannot be located selectively, so the
-    # purge is WHOLESALE and default-on. Never fatal: the belief-state
-    # deletion above is the primary contract; a failed purge is reported
-    # honestly below, and the age reaper still bounds any survivor at
-    # chunk_cache_days.
-    try:
-        purged, purge_err = serializer.purge_chunk_cache()
-    except Exception as e:  # belt: purge_chunk_cache itself never raises
-        purged, purge_err = 0, str(e)
-    # #607: the Windsurf adapter writes its own transcripts when Cascade
-    # gives it none — daimon-authored plaintext, so inside the contract.
-    # Wholesale for the same reason as the chunk cache: the tombstone is a
-    # hash, so a value inside prose cannot be located to remove selectively.
-    try:
-        ws_purged, ws_err = store.purge_windsurf_state()
-    except Exception as e:  # belt: purge_windsurf_state never raises
-        ws_purged, ws_err = 0, str(e)
-    # #605: serialize-crash.log is the detached child's RAW stderr — an
-    # uncaught traceback carries whatever the crashing frame held, and the
-    # bytes were never scrubbed (status redacted its tail on READ, #513, over
-    # a file nothing deleted). Wholesale like the two purges above: the
-    # tombstone is a hash, so a value inside a traceback cannot be located.
-    try:
-        crash_purged, crash_err = store.purge_crash_log()
-    except Exception as e:  # belt: purge_crash_log never raises
-        crash_purged, crash_err = 0, str(e)
-    # #616: backend-stderr.log holds backend stderr/stdout, which CLI
-    # backends can seed with transcript text (#141). Wholesale like the
-    # crash sink: prose diagnostics, hash tombstone, value unlocatable.
-    try:
-        backend_purged, backend_err = store.purge_backend_stderr_log()
-    except Exception as e:  # belt: purge_backend_stderr_log never raises
-        backend_purged, backend_err = 0, str(e)
-    # #616: pre-fix downgrade lines logged item text into serialize.log.
-    # Shape-targeted scrub, NOT a purge — serialize.log is also the ledger
-    # `status` parses, and the capture record must survive a forget.
-    try:
-        scrubbed_lines, scrub_err = store.scrub_serialize_log()
-    except Exception as e:  # belt: scrub_serialize_log never raises
-        scrubbed_lines, scrub_err = 0, str(e)
-    # Every cache of this store leaves the index now, not at the next read.
-    recall.refresh_store_caches()
     _cli._note_usage("forget")
+    return _forget_report(outcome, target, content_hash, checkpoint,
+                          ledger_meta)
+
+
+@_cli.guarded(writes=True)
+def _cmd_unforget(args) -> int:
+    """Lift a forget on this machine (human only). Binds by the exact id the
+    forget receipt printed and lifts the forget on EVERY ref that carries its
+    key, in one append; it restores nothing, because the value was removed from
+    every surface. It proves the lift or exits 4: the value counts as lifted
+    only when no other project, no teammate's published row and no ledger it
+    could not prove still withholds it. The published row stays: a published
+    tombstone has no retraction."""
+    # The gate comes first and looks at nothing: an unknown id, a forgotten one
+    # and a dry run all meet the same refusal on an agent channel, so the verb
+    # cannot be used to ask whether an id was forgotten.
+    if _human_cli_channel("unforget") is None:
+        return 1
+    project = _cli._resolve_project(args.project)
+    events_path = store._events_path(store._resolved(project))
+    if events_path is not None:
+        jsonl.require_writable(events_path, Writer.HUMAN)
+    # The view's snapshot must be buildable before a person lifts anything: a
+    # lift is judged against what the view withholds, never against a guess.
+    view.judge(store.project_slug(config.resolve_project_dir(project)))
+    key = forget.key_of(project, args.target)
+    if not key:
+        print("no forgotten item with that id in this project")
+        return 1
+    if key not in store.project_standing(project):
+        # nothing in this project withholds it any more; the verdict still
+        # proves the rest, so a retry after an exit 4 cannot turn green
+        # without the cause being fixed
+        return _lift_verdict(key, 0, wrote=False,
+                             held=key in view.machine_sets()[0])
+    dry_run = getattr(args, "dry_run", False)
+    lifted = forget.lift(project, key, reason=args.reason or "",
+                         dry_run=dry_run)
+    if dry_run:
+        print(f"would lift {len(lifted.refs)} ref(s) on this machine; "
+              "nothing was written")
+        return 0
+    if not lifted.written:
+        print("lift not written (daimon disabled or ledger unwritable)")
+        return 1
+    _cli._note_usage("unforget")
+    return _lift_verdict(key, len(lifted.refs), wrote=True,
+                         held=key in view.machine_sets()[0])
+
+
+def _lift_verdict(key: str, n: int, *, wrote: bool, held: bool) -> int:
+    """Say what the lift did and prove it. Exit 0 only when the key is absent
+    from the machine-wide set (`held` False) and no ledger was left unproven;
+    otherwise exit 4 with the CLASS of what still withholds it, never a project
+    or an author. Every exit 0 of the verb passes through here."""
+    unproven = bool(store.forgotten_incomplete()
+                    or store.foreign_tombstones().unproven)
+    lines = []
+    if wrote:
+        lines.append(f"lifted the forget on this machine: {n} ref(s) written")
+        lines.append("nothing was restored: the value was removed from every "
+                     "surface, so only a new capture can bring it back")
+    else:
+        lines.append("already lifted here: nothing in this project "
+                     "withholds that value")
+    reasons = []
+    if held:
+        # the machine-wide set is the local projects' keys plus what teammates
+        # published, so a key held by no local project is a teammate's
+        if key in store.all_forgotten_content_keys():
+            reasons.append("still withheld by another project on this machine")
+        else:
+            reasons.append("withheld by a teammate's published row; they "
+                           "lift it")
+    if unproven:
+        reasons.append("a ledger could not be proven; run daimon status")
+    lines.append("the row your teammates already folded stays: a published "
+                 "tombstone has no retraction")
+    lines.extend(f"not fully lifted: {why}" for why in reasons)
+    render.render_lifecycle_lines(lines)
+    return 4 if reasons else 0
+
+
+def _removed(outcome, *fns) -> list:
+    """The ids the named steps removed, sorted and de-duplicated."""
+    got: set = set()
+    for fn in fns:
+        item = outcome.get(fn)
+        if item is not None:
+            got.update(str(r) for r in item.removed)
+    return sorted(got)
+
+
+def _forget_report(outcome, target, content_hash, checkpoint,
+                   ledger_meta) -> int:
+    """What a forget did, one line per thing, and the exit code: 0 when every
+    surface was reached, 4 when something that holds plaintext was not."""
+    forgotten_refutations = _removed(outcome, "refutations.forget_content_key")
+    forgotten_relations = _removed(outcome, "relations.forget_item_id")
+    forgotten_amendments = _removed(outcome, "amendments.forget_content_key",
+                                    "amendments.forget_item_id")
+    forgotten_requests = _removed(outcome, "requests.forget_content_key")
+    redacted_quarantines = _removed(outcome, "trust.redact_content_key")
+    team_scrubbed = _removed(outcome, "store.scrub_team_copies")
+    events = outcome.get("store.scrub_event_fields")
+    events_scrubbed = events.n if events else 0
+    lines = outcome.get("ledger_repair.forget_quarantined_lines")
+    purged_lines = lines.n if lines else 0
+    kept_lines = lines.kept if lines else 0
     surfaces = []
     if isinstance(checkpoint, dict):
         surfaces.append("the live checkpoint")
@@ -797,93 +952,42 @@ def _cmd_forget(args) -> int:
         report.append(f"redacted prose in {len(redacted_quarantines)} "
                       f"quarantine(s) ({', '.join(redacted_quarantines)}); "
                       "records kept, the quarantine still withholds")
-    if scrubbed.lines.purged or scrubbed.lines.kept:
+    if purged_lines or kept_lines:
         report.append(
-            f"purged {scrubbed.lines.purged} quarantined line(s) carrying "
-            f"the value; kept {scrubbed.lines.kept} unrelated one(s)")
-    if purge_err is not None:
-        report.append(f"warning: chunk cache purge failed: {purge_err} — "
-                      "cached pre-redaction chunks may persist up to "
-                      f"{config.chunk_cache_days()} day(s) (age reaper)")
-    else:
-        report.append(f"purged {purged} cached chunk extraction(s) "
-                      "(pre-redaction serializer cache)")
-    if ws_err is not None:
-        report.append(
-            f"warning: windsurf transcript purge failed: {ws_err} — "
-            "daimon-authored conversation text may persist up to "
-            f"{config.windsurf_state_days()} day(s) (age reaper)")
-    else:
-        # Always reported, like the chunk-cache line: a silent zero is how a
-        # misconfigured store (writer and deleter disagreeing about the
-        # directory) stays invisible. The scope note is not decoration —
-        # the store is keyed by trajectory and carries no project
-        # attribution, so this purge is machine-wide by construction.
-        report.append(
-            f"purged {ws_purged} daimon-authored windsurf transcript "
-            "file(s) across all projects (machine-wide: the store is keyed "
-            "by trajectory, not project); host-authored transcripts are "
-            "untouched")
-    if crash_err is not None:
-        report.append(
-            f"warning: crash log purge failed: {crash_err} — serializer "
-            "tracebacks may persist (bounded to a trimmed tail at the next "
-            "spawn, never removed)")
-    else:
-        # Reported even at zero, like the two lines above: a silent zero is
-        # how a writer and a deleter disagreeing about DAIMON_LOG_DIR stays
-        # invisible. One crash log per machine, so the scope note is the
-        # same honesty the windsurf line owes.
-        report.append(
-            f"purged {crash_purged} serializer crash log(s) across all "
-            "projects (machine-wide: the log is raw child stderr, not "
-            "keyed by project)")
-    if backend_err is not None:
-        report.append(
-            f"warning: backend log purge failed: {backend_err} — backend "
-            "echo of transcript text may persist (byte-bounded at the "
-            "write seam, never removed)")
-    else:
-        # Same silent-zero rule as the three lines above.
-        report.append(
-            f"purged {backend_purged} backend stderr log(s) across all "
-            "projects (machine-wide: backend diagnostics are not keyed "
-            "by project)")
-    if scrub_err is not None:
-        report.append(
-            f"warning: serialize.log scrub failed: {scrub_err} — legacy "
-            "downgrade lines may still carry item text")
-    else:
-        # Reported even at zero, same rule again: a scrubber resolving a
-        # different log dir than the writer must not read as "nothing left".
-        report.append(
-            f"scrubbed {scrubbed_lines} legacy downgrade line(s) in "
-            "serialize.log (payload replaced; ledger lines kept)")
-    # #943: a forgotten ruling's check has to leave the disk with it, and
-    # the removal happens by re-deriving the manifest from the ledger this
-    # forget just rewrote. When that derivation fails, the body is still
-    # armed and the report must say so rather than claiming a clean sweep.
-    check_warning = _check_sync_warning()
-    if check_warning:
-        report.append(f"{check_warning} — a forgotten ruling's check may "
-                      "still be armed on this host")
-    # D10.5: what forget could not vouch for. A plaintext ledger it did not
-    # reach, or a team publish that failed, makes the exit 4 ("scrubbed, with
-    # unreached surfaces"); a ledger that holds no plaintext is only noted.
-    failing = [u for u in scrubbed.unreached if u.plaintext]
-    for u in scrubbed.unreached:
-        report.append(
-            f"unreached: {_unreached_line(u)}" if u.plaintext else
-            f"note: {_unreached_line(u)}; it holds no plaintext, so this "
-            "does not block forget")
-    report.extend(_published_lines(published))
-    if failing or published.failed:
+            f"purged {purged_lines} quarantined line(s) carrying "
+            f"the value; kept {kept_lines} unrelated one(s)")
+    # A count line for every wholesale step that reached its store, even at
+    # zero: a silent zero is how a deleter and a writer that disagree about a
+    # directory stay invisible. The scope note rides in the registry's text.
+    for item in outcome.done:
+        if item.step.done and item.reached:
+            report.append(item.step.done.format(n=item.n))
+    # D10.5: what forget could not vouch for. A surface that holds plaintext
+    # and was not reached makes the exit 4 ("scrubbed, with unreached
+    # surfaces"); one that holds none is only noted. A failed team publish
+    # keeps its own line, with the cure, from the publish itself.
+    published = outcome.get("store.publish_tombstone")
+    for item in outcome.done:
+        if item.step.phase == "publish":
+            continue
+        for u in item.unreached:
+            report.append(
+                f"unreached: {_unreached_line(u)}" if u.plaintext else
+                f"note: {_unreached_line(u)}; it holds no plaintext, so this "
+                "does not block forget")
+    if published is not None:
+        report.extend(_published_lines(published.result))
+    failing = [u for item in outcome.done if item.step.phase != "publish"
+               for u in item.unreached if u.plaintext]
+    failed_publishes = (len(published.result.failed)
+                        if published is not None else 0)
+    if failing or failed_publishes:
         report.append(
             f"forget scrubbed everything it could read; "
-            f"{len(failing) + len(published.failed)} surface(s) were not "
+            f"{len(failing) + failed_publishes} surface(s) were not "
             "reached (exit 4)")
     render.render_lifecycle_lines(report)
-    return 4 if (failing or published.failed) else 0
+    return 4 if (failing or failed_publishes) else 0
 
 def _is_supersede_candidate(item_id: str, project) -> bool:
     """True when the item's LATEST lifecycle event is a serializer-authored
@@ -1388,10 +1492,35 @@ def register(sub, fmt) -> None:
         "--dry-run", action="store_true",
         help="show what would be forgotten without writing — look before a destructive op")
     p_forget.add_argument(
+        "--resume", action="store_true",
+        help="finish every phase for every forget already recorded: the cure "
+             "for a surface that could not be reached; a person at a "
+             "terminal, takes no target")
+    p_forget.add_argument(
+        "--only", choices=["publish", "value", "id", "wholesale", "derived"],
+        help="with --resume, run only this phase")
+    p_forget.add_argument(
         "--republish", action="store_true",
         help="publish every local forget the team sidecar is missing "
-             "(the cure for a publish that failed); takes no target")
+             "(the cure for a publish that failed); takes no target; the "
+             "same as --resume --only publish, and it goes in the next "
+             "release")
     p_forget.set_defaults(func=_cli._cmd_forget)
+
+    p_unforget = sub.add_parser(
+        "unforget", help="lift a forget on this machine, from a terminal: the "
+        "value is not restored, a new capture is admitted again",
+        epilog="Examples:\n  daimon unforget o-3f8a2c --reason \"forgot the "
+               "wrong one\"\n  daimon unforget o-3f8a2c --dry-run\n",
+    )
+    p_unforget.add_argument(
+        "target", help="the item id the forget receipt printed (exact only)")
+    p_unforget.add_argument("--reason", help="recorded on the lift rows (redacted like any note)")
+    p_unforget.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
+    p_unforget.add_argument(
+        "--dry-run", action="store_true",
+        help="count the refs that would be lifted without writing")
+    p_unforget.set_defaults(func=_cli._cmd_unforget)
 
     p_reverify = sub.add_parser(
         "reverify", help="evidence-gated human reopen of a resolved item (#103) — "

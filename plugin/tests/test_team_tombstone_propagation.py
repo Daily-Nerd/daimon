@@ -129,11 +129,12 @@ def test_no_team_dir_yields_no_foreign_keys(tmp_checkpoint_dir):
 
 def test_own_rows_are_never_read_back_as_foreign(tmp_checkpoint_dir,
                                                  monkeypatch):
-    """Adversarial finding (MAJOR): a published row has no retraction, but a
-    local `reopen` lifts the local tombstone — so folding your own rows back
-    in would let a value you deliberately reopened stay suppressed forever,
-    and (with the opt-in on) be re-scrubbed on every sync, because reopen
-    also removes it from the subtrahend."""
+    """Adversarial finding (MAJOR): a published row has no retraction, but
+    `daimon unforget` lifts the local forget — so folding your own rows back
+    in would let a value you deliberately un-forgot stay suppressed forever,
+    and (with the opt-in on) be re-scrubbed on every sync, because the lift
+    also removes it from the subtrahend. (A reopen on the id no longer lifts a
+    forget: the key stands on a ref of its own.)"""
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     adir = config.team_dir() / "team-a" / "authors" / "ada"
     adir.mkdir(parents=True)

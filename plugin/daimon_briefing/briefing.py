@@ -1291,39 +1291,6 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
     return lines
 
 
-def prose_mask(snap):
-    """`text -> text` for the prose a panel prints: a whole value that is
-    forgotten or quarantined in `snap` becomes the one-line withheld marker
-    (reason and record id, never the value). None (a caller with no snapshot)
-    masks nothing. A closed snapshot is NOT applied to prose here: the
-    standing rulings and the panels are human-ratified furniture that must
-    keep rendering when the trust ledger is unreadable (the items are what
-    the closed view withholds).
-
-    A request row is a join, so `mask.for_row(row)` returns the same mapper
-    that also judges by the snapshot of each bucket the row names (its sender
-    and recipient): a value only the other project quarantined is withheld in
-    this panel too."""
-    if snap is None:
-        def identity(text):
-            return text
-        identity.for_row = lambda row: identity   # type: ignore[attr-defined]
-        return identity
-    from . import view
-    others: dict = {}
-
-    def mapper(snaps):
-        def mask(text):
-            verdict = view.prose_verdict_over(text, snaps, closed_masks=False)
-            return display.withheld_marker(verdict) if verdict else text
-        return mask
-
-    own_only = mapper([snap])
-    own_only.for_row = (   # type: ignore[attr-defined]
-        lambda row: mapper([snap, *view.named_snapshots(row, others)]))
-    return own_only
-
-
 def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
     """The section's rendered lines ([] when there is nothing at all to show
     — the section is skeleton furniture, but empty furniture is noise).
@@ -1368,10 +1335,18 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
     wrote the words survives who approved them. Neither the authority
     suffix, the layer suffix, nor the cap counts the code-enforced classes
     any differently: a compact ruling is still one ruling against the cap."""
-    mask = prose_mask(snap)
     rows = [r for r in active_rulings(
                 project_dir, own=_own_read(snap))
             if str(r.get("verdict") or "").strip()]
+    if rows:
+        # The one mask policy: the standing rulings are human-ratified
+        # furniture, so a closed trust ledger does not blank them (the
+        # refutations columns are `False` in view.MASK_POLICY), but a whole
+        # value that is forgotten is blank and a quarantined one the marker.
+        # The empty-verdict filter above looks at the raw rule, so a forgotten
+        # verdict leaves its row in place, blank.
+        from . import view
+        rows = view.masked(project_dir, "refutations.jsonl", rows, snap=snap)
     try:
         cap = config.ruling_cap()
     except Exception:
@@ -1398,7 +1373,7 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
             if cls == "policy":
                 policy_rendered = True
             continue
-        verdict = mask(str(row.get("verdict") or ""))
+        verdict = str(row.get("verdict") or "")
         if len(verdict) > refutations._MAX_RULING_TEXT:
             verdict = verdict[:refutations._MAX_RULING_TEXT] + "…"
         authored = row.get("text_authored_by")
@@ -1509,12 +1484,21 @@ class Card(NamedTuple):
     reply_event_id: str | None = None
 
 
-def request_panel_lines(project_dir=None, *, mask=None) -> list[str]:
+def request_panel_lines(project_dir=None, *, snap=None) -> list[str]:
     """The lines of `request_panel`; see it."""
-    return request_panel(project_dir, mask=mask)[0]
+    return request_panel(project_dir, snap=snap)[0]
 
 
-def request_panel(project_dir=None, *, mask=None):
+def _masked_rows(project_dir, ledger: str, rows, snap) -> list:
+    """The panel's rows as a reader may see them, through the one policy
+    (`view.masked`): a forgotten whole value is blank, a quarantined one the
+    withheld marker, and a request row is also judged by the buckets it names.
+    Read once, here, so no panel has a mask of its own."""
+    from . import view
+    return view.masked(project_dir, ledger, rows, snap=snap)
+
+
+def request_panel(project_dir=None, *, snap=None):
     """The recipient-side panel as `(lines, cards)`: its rendered lines ([]
     when nothing is addressed to this project, or `project_dir` is None — the section is
     skeleton furniture, but empty furniture is noise).
@@ -1552,11 +1536,11 @@ def request_panel(project_dir=None, *, mask=None):
     notes = list(entry.get("notes") or ())
     if not rows:
         return notes, ()
-    mask = mask or (lambda text: text)
+    cards = [Card(row["request_id"], requests.needs_surfaced_stamp(row))
+             for row in rows]
+    rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
     lines = [_REQUEST_PANEL_HEADER]
-    cards = []
     for row in rows:
-        cards.append(Card(row["request_id"], requests.needs_surfaced_stamp(row)))
         # #961 slice 3: no `[info]` marker here any more — `decision_
         # renderable` already excludes `kind == "info"`, so every row this
         # loop sees is `work` by construction; the marker lives on
@@ -1567,7 +1551,7 @@ def request_panel(project_dir=None, *, mask=None):
         # ask so the id stays in its own span.
         claim_marker = "  [done claimed]" if row.get("done_pending") else ""
         lines.append(f"→ {row['request_id']}  "
-                     f"{_truncate_request_ask(_row_mask(mask, row)(row.get('ask', '')))}"
+                     f"{_truncate_request_ask(row.get('ask', ''))}"
                      f"{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1587,7 +1571,7 @@ def request_panel(project_dir=None, *, mask=None):
 _OWED_PANEL_HEADER = "Requests you accepted and still owe:"
 
 
-def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
+def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
     """#885: the recipient's OWED panel ([] when this project owes nothing,
     or `project_dir` is None). Same posture as the two panels around it:
     fail-open, skeleton furniture, never silently truncated over RENDER_CAP.
@@ -1607,14 +1591,14 @@ def owed_panel_lines(project_dir=None, *, mask=None) -> list[str]:
     notes = list(entry.get("notes") or ())
     if not rows:
         return notes
-    mask = mask or (lambda text: text)
+    rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
     lines = [_OWED_PANEL_HEADER]
     for row in rows:
         # #961 slice 2: same marker, same posture as `request_panel_lines`.
         kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
         lines.append(f"✓ {row['request_id']}  "
-                     f"{_truncate_request_ask(_row_mask(mask, row)(row.get('ask', '')))}"
+                     f"{_truncate_request_ask(row.get('ask', ''))}"
                      f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1637,30 +1621,12 @@ _VERDICT_MARKS = {"needs-info": "?", "accepted": "✓", "rejected": "×",
                   "done": "✔"}
 
 
-def _row_mask(mask, row: dict):
-    """The panel's mapper bound to one request row (it also judges by the
-    buckets the row names), or the mapper itself when it cannot."""
-    bind = getattr(mask, "for_row", None)
-    return bind(row) if bind is not None else mask
-
-
-def _mask_reply(row: dict, mask) -> dict:
-    """The record with its latest reply's note masked, so the one reply line
-    the panel prints can never carry a withheld value."""
-    replies = row.get("replies") or []
-    if not replies:
-        return row
-    latest = dict(replies[-1])
-    latest["note"] = mask(latest.get("note") or "")
-    return {**row, "replies": [*replies[:-1], latest]}
-
-
-def verdict_panel_lines(project_dir=None, *, mask=None) -> list[str]:
+def verdict_panel_lines(project_dir=None, *, snap=None) -> list[str]:
     """The lines of `verdict_panel`; see it."""
-    return verdict_panel(project_dir, mask=mask)[0]
+    return verdict_panel(project_dir, snap=snap)[0]
 
 
-def verdict_panel(project_dir=None, *, mask=None):
+def verdict_panel(project_dir=None, *, snap=None):
     """The sender-side panel as `(lines, cards)`: its rendered lines ([] when
     nothing this project sent has been decided yet, or `project_dir` is None). Same posture as
     `request_panel_lines`: fail-open, skeleton furniture, never silently
@@ -1682,16 +1648,19 @@ def verdict_panel(project_dir=None, *, mask=None):
     notes = list(entry.get("notes") or ())
     if not rows:
         return notes, ()
-    mask = mask or (lambda text: text)
-    lines = [_VERDICT_PANEL_HEADER]
     cards = []
     for row in rows:
         # #1117: one stamp row carries whichever of the epoch and the late
-        # reply the brief shows.
+        # reply the brief shows. Decided on the raw row, before the mask: a
+        # card is owed for a row the panel rendered, and one renders for every
+        # row.
         reply_id = requests.unseen_reply_id(row)
         cards.append(Card(row["request_id"],
                           bool(requests.needs_verdict_surfaced_stamp(row)
                                or reply_id), reply_id))
+    rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
+    lines = [_VERDICT_PANEL_HEADER]
+    for row in rows:
         state = str(row.get("state") or "")
         mark = _VERDICT_MARKS.get(state, "?")
         # #961 slice 3: an agent-landed accept reads distinctly from a human
@@ -1703,19 +1672,18 @@ def verdict_panel(project_dir=None, *, mask=None):
         state_label = ("accepted (by agent)"
                        if state == "accepted" and row.get("accepted_by") == "agent"
                        else state)
-        rmask = _row_mask(mask, row)
         lines.append(f"{mark} {state_label}  {row['request_id']}  "
-                     f"{_truncate_request_ask(rmask(row.get('ask', '')))}")
+                     f"{_truncate_request_ask(row.get('ask', ''))}")
         lines.append(f"  To: {row.get('to') or '?'}")
         note = str(row.get("note") or "").strip()
         if note:
-            lines.append(f"  Note: {_truncate_request_ask(rmask(note))}")
+            lines.append(f"  Note: {_truncate_request_ask(note)}")
         done_evidence = str(row.get("done_evidence") or "").strip()
         if done_evidence:
             lines.append(
-                f"  Done: {_truncate_request_ask(rmask(done_evidence))}")
+                f"  Done: {_truncate_request_ask(done_evidence)}")
         # #1117: ONE capped line (skeleton the trimmer keeps).
-        reply_line = requests.latest_reply_line(_mask_reply(row, rmask))
+        reply_line = requests.latest_reply_line(row)
         if reply_line:
             lines.append(f"  {reply_line}")
     overflow = entry.get("overflow") or 0
@@ -2442,7 +2410,6 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     # #1132 PR 7a: `snap` is the view's snapshot (the rulings are read once
     # out of it and every panel masks a withheld whole value); `notes` are its
     # ledger-health lines. Neither given: the legacy behavior, nothing masked.
-    mask = prose_mask(snap)
     rulings = (ruling_lines(project_dir, snap=snap)
                if project_dir is not None else [])
     # #766 slice 5: same gate as the request panel below, not the rulings
@@ -2452,9 +2419,9 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     decision_count = (decision_count_line(worldcheck_project)
                       if worldcheck_project is not None else None)
     decision_count_block = [decision_count] if decision_count else []
-    request_lines, request_cards = request_panel(worldcheck_project, mask=mask)
-    verdict_lines, verdict_cards = verdict_panel(worldcheck_project, mask=mask)
-    owed_lines = (owed_panel_lines(worldcheck_project, mask=mask)
+    request_lines, request_cards = request_panel(worldcheck_project, snap=snap)
+    verdict_lines, verdict_cards = verdict_panel(worldcheck_project, snap=snap)
+    owed_lines = (owed_panel_lines(worldcheck_project, snap=snap)
                   if worldcheck_project is not None else [])
     request_lines, verdict_lines, owed_lines = drop_repeated_notes(
         request_lines, verdict_lines, owed_lines, notes=notes)

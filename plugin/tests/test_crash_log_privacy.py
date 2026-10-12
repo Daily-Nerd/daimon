@@ -340,8 +340,10 @@ def test_forget_survives_a_failed_purge(tmp_checkpoint_dir, monkeypatch,
     _seed_crash_log()
     _write_checkpoint()
     monkeypatch.setattr(store, "purge_crash_log", lambda: (0, "disk on fire"))
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
-    assert "disk on fire" in capsys.readouterr().out
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    out = capsys.readouterr().out
+    assert "unreached: serializer crash log " in out
+    assert "disk on fire" not in out
 
 
 def test_forget_survives_a_purge_that_raises(tmp_checkpoint_dir, monkeypatch,
@@ -357,9 +359,11 @@ def test_forget_survives_a_purge_that_raises(tmp_checkpoint_dir, monkeypatch,
         raise RuntimeError("purge exploded")
 
     monkeypatch.setattr(store, "purge_crash_log", boom)
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
     out = capsys.readouterr().out
-    assert "purge exploded" in out, "a swallowed failure is an invisible leak"
+    assert "unreached: serializer crash log could not be reached (RuntimeError)" in out, \
+        "a swallowed failure is an invisible leak"
+    assert "purge exploded" not in out, "the exception text never prints"
     latest = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                     admit=store.Admit.ANY)
     texts = [i["text"] for i
@@ -506,4 +510,8 @@ def test_registry_declares_the_crash_log_reachable():
     assert s.walker == "forget"
     assert not any(x.issue == "#605" for x in surfaces.SURFACES), \
         "#605 is closed — no entry may still cite it as an open gap"
-    assert surfaces.match("logs/serialize.log").delete == "exempt-no-plaintext"
+    # serialize.log has its own row since the forget registry: the legacy
+    # downgrade payloads are scrubbed in place, the capture record is kept.
+    log = surfaces.match("logs/serialize.log")
+    assert log.shape == "logs/serialize.log" and log.delete == "rewrite"
+    assert log.walker == "forget"

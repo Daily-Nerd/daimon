@@ -86,6 +86,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/config.py": "write",  # settings and paths; reads no checkpoint
     "daimon_briefing/configure.py": "write",  # writes ~/.daimon/env
     "daimon_briefing/field_table.py": "write",  # the checkpoint field contract and validator
+    "daimon_briefing/forget.py": "write",  # runs every step of the forget registry in phase order
     "daimon_briefing/harvest.py": "write",  # harvests host memory files into checkpoints
     "daimon_briefing/host_detect.py": "write",  # host and plugin detection for installers
     "daimon_briefing/host_mcp_caps.py": "write",  # host MCP capability table

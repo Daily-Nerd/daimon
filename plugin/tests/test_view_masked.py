@@ -247,18 +247,25 @@ def test_withheld_in_sees_a_field_that_is_only_a_deleter_marker():
     assert [w.reason for w in got] == ["forgotten"]
 
 
-def test_the_briefing_mask_also_judges_a_row_by_the_buckets_it_names(
-        monkeypatch):
-    from daimon_briefing import briefing
+def test_a_request_row_is_also_judged_by_the_buckets_it_names(monkeypatch):
+    """What the briefing panels rely on: they take their rows through this one
+    policy, so a value only the other project quarantined is withheld in the
+    panel of this one too."""
     peer = snap(quarantined=[QUARANTINED])
     monkeypatch.setattr(view, "judge", lambda slug, **_k: view.Judge(
         peer if slug == OTHER else snap()))
-    mask = briefing.prose_mask(snap())
-    assert mask(QUARANTINED) == QUARANTINED                 # own: nothing
-    row = {"from_slug": OTHER, "to": SLUG}
-    assert mask.for_row(row)(QUARANTINED) == f"[withheld: quarantine {QID}]"
-    assert mask.for_row({"to": SLUG})(QUARANTINED) == QUARANTINED
-    assert briefing.prose_mask(None).for_row(row)(QUARANTINED) == QUARANTINED
+    own = masked("requests.jsonl", [{"ask": QUARANTINED, "to": SLUG}],
+                 snap=snap())
+    assert own[0]["ask"] == QUARANTINED                     # own: nothing
+    row = {"ask": QUARANTINED, "from_slug": OTHER, "to": SLUG}
+    assert masked("requests.jsonl", [row], snap=snap())[0]["ask"] \
+        == f"[withheld: quarantine {QID}]"
+
+
+def test_the_briefing_has_no_mask_of_its_own():
+    from daimon_briefing import briefing
+    for gone in ("prose_mask", "_row_mask", "_mask_reply"):
+        assert not hasattr(briefing, gone), gone
 
 
 def test_withheld_in_sees_an_event_status_that_was_only_a_marker():

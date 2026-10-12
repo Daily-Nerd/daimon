@@ -606,7 +606,8 @@ def test_forget_says_so_when_the_armed_body_may_have_outlived_the_ruling(
     monkeypatch.setattr(checks, "sync",
                         lambda *a, **k: checks.SyncReport(
                             False, 0, "-p-checks-sync", "the disk said no"))
-    assert cli.main(["forget", item_id, "--project", PROJECT]) == 0
+    assert cli.main(["forget", item_id, "--project", PROJECT]) == 4
     out = capsys.readouterr().out
-    assert "check manifest not updated (the disk said no)" in out
+    assert "unreached: armed-check manifest could not be updated" in out
     assert "may still be armed" in out
+    assert "the disk said no" not in out

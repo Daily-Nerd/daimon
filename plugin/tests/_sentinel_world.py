@@ -13,6 +13,7 @@ leaks when any token appears in what it hands back.
 
 import hashlib
 import io
+import json
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -89,14 +90,19 @@ KEY_TOKENS = {
 }
 
 
-def leaked_keys(blob) -> set[str]:
+def leaked_keys(blob, key_refs=()) -> set[str]:
     """The forgotten-value names whose content key appears in `blob` (str or
-    bytes), as `key:<name>`."""
+    bytes), as `key:<name>`, and the key refs of the world's forgets as
+    `key:ref-<n>` (n the position in the sorted refs): a ref is not a key, but
+    it is the bookkeeping row of a forget, and no route may hand one back."""
     if isinstance(blob, bytes):
         blob = blob.decode("utf-8", errors="replace")
     low = blob.lower()
-    return {f"key:{name}" for name, key in KEY_TOKENS.items()
-            if key.lower() in low}
+    found = {f"key:{name}" for name, key in KEY_TOKENS.items()
+             if key.lower() in low}
+    found |= {f"key:ref-{n}" for n, ref in enumerate(sorted(key_refs))
+              if ref.lower() in low}
+    return found
 
 
 def leaked_kinds(blob) -> set[str]:
@@ -161,6 +167,9 @@ class World:
     peer: str = ""                                # a second project's directory
     foreignq_id: str = ""                         # grace's quarantine id
     root: Path = None                             # the tmp root being watched
+    # every forget's key ref in the events ledger, as the real verb wrote them:
+    # a ref names a forget without naming its value, and no route may show one
+    key_refs: tuple = ()
 
 
 def _plant_transcripts(world: World, tmp_path, monkeypatch) -> None:
@@ -263,6 +272,21 @@ def build_world(tmp_path, monkeypatch) -> World:
                 "forgotten:" + normalize.content_key("a different value"),
                 kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
             world.ids["idforgot"] = item_id
+
+    # a key row nothing else names, written by hand with the independent byte
+    # writer (the shape a hand-edited or half-repaired ledger can hold): its
+    # ref must reach no route either, whoever wrote it
+    with open(world.bucket / "events.jsonl", "ab") as handle:
+        handle.write((json.dumps({
+            "ts": "2026-08-02T00:00:00Z", "kind": "tombstone",
+            "item_ref": "forgotten-key:5c1de49a0b7e3f28",
+            "status": "forgotten:" + normalize.content_key(
+                "a value only a hand-planted key row names"),
+            "source": "cli"}) + "\n").encode("utf-8"))
+    world.key_refs = tuple(sorted(
+        ref for held in store.project_standing(project).values()
+        for ref in held.key_refs))
+    assert len(world.key_refs) == len(FORGOTTEN) + 1, world.key_refs
 
     # quarantine three, by a human
     for kind in QUARANTINED:       # the evidence-shaped copies, quarantined

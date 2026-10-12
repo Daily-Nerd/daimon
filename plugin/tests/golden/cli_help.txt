@@ -100,6 +100,7 @@ trust release
 trust repair
 trust republish
 trust show
+unforget
 verify-receipt
 why
 write-checkpoint
@@ -118,14 +119,15 @@ projects list every project daimon has a checkpoint for bucket maintain the chec
 project reads and writes slug print the checkpoint directory name daimon derives from a project path
 resolve mark a checkpoint item resolved — append-only event, folds at read so the item stops
 carrying (#102) forget remove ONE item from the live checkpoint and record a signed-state tombstone
-— content leaves disk and index; the event carries only a hash (#321) reverify evidence-gated human
-reopen of a resolved item (#103) — requires an interactive terminal and refuses without proof loops
-list open, briefable loop items with ids for this project (#480) — the read counterpart to daimon
-resolve's write path decide list what is waiting on YOU with the command that closes each (#766) —
-the human-side mirror of daimon loops refute author and query evidence-cited negative knowledge
-(#573) ruling standing rulings: human-ratified records that never decay (#693) amend record an
-evidence-carrying state transition on a briefed item (#691) trust record or settle a human
-quarantine on a checkpoint value (#1109): an active one is withheld from every read, and is
+— content leaves disk and index; the event carries only a hash (#321) unforget lift a forget on this
+machine, from a terminal: the value is not restored, a new capture is admitted again reverify
+evidence-gated human reopen of a resolved item (#103) — requires an interactive terminal and refuses
+without proof loops list open, briefable loop items with ids for this project (#480) — the read
+counterpart to daimon resolve's write path decide list what is waiting on YOU with the command that
+closes each (#766) — the human-side mirror of daimon loops refute author and query evidence-cited
+negative knowledge (#573) ruling standing rulings: human-ratified records that never decay (#693)
+amend record an evidence-carrying state transition on a briefed item (#691) trust record or settle a
+human quarantine on a checkpoint value (#1109): an active one is withheld from every read, and is
 published to the team when one is enabled ledger look after a bucket ledger file (#1132) request ask
 another project for something, and answer what it asks (#694) relations inspect and decide typed
 item relations (#678, shadow mode) handoff leave an authored baton for the next session — renders
@@ -276,14 +278,25 @@ an event — look before the write (#304) Examples: daimon resolve o-3f8a2c daim
 pipeline approval" --note "shipped in 0.9"
 
 === forget ===
-usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] [--republish] [target]
-positional arguments: target item id (exact) or a query that must match exactly one item options:
--h, --help show this help message and exit --reason REASON recorded on the tombstone event (redacted
-like any note) --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run
-show what would be forgotten without writing — look before a destructive op --republish publish
-every local forget the team sidecar is missing (the cure for a publish that failed); takes no target
-Examples: daimon forget o-3f8a2c --reason "contains client name" daimon forget "wrong belief about
-retry nonce" --dry-run
+usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] [--resume] [--only
+{publish,value,id,wholesale,derived}] [--republish] [target] positional arguments: target item id
+(exact) or a query that must match exactly one item options: -h, --help show this help message and
+exit --reason REASON recorded on the tombstone event (redacted like any note) --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run show what would be forgotten
+without writing — look before a destructive op --resume finish every phase for every forget already
+recorded: the cure for a surface that could not be reached; a person at a terminal, takes no target
+--only {publish,value,id,wholesale,derived} with --resume, run only this phase --republish publish
+every local forget the team sidecar is missing (the cure for a publish that failed); takes no
+target; the same as --resume --only publish, and it goes in the next release Examples: daimon forget
+o-3f8a2c --reason "contains client name" daimon forget "wrong belief about retry nonce" --dry-run
+
+=== unforget ===
+usage: daimon unforget [-h] [--reason REASON] [--project PROJECT] [--dry-run] target positional
+arguments: target the item id the forget receipt printed (exact only) options: -h, --help show this
+help message and exit --reason REASON recorded on the lift rows (redacted like any note) --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run count the refs that
+would be lifted without writing Examples: daimon unforget o-3f8a2c --reason "forgot the wrong one"
+daimon unforget o-3f8a2c --dry-run
 
 === reverify ===
 usage: daimon reverify [-h] [--evidence EVIDENCE] [--project PROJECT] target positional arguments:

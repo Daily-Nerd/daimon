@@ -168,7 +168,8 @@ def test_unknown_project_is_a_quiet_noop(tmp_checkpoint_dir):
     assert store.forget_hit_stats(project_dir="") == {"count": 0, "ruling_echo_count": 0, "last_hit_at": None, "ruling_echo_last_at": None}
 
 
-def test_forgotten_key_lifted_by_reopen(tmp_checkpoint_dir, monkeypatch):
+def test_a_forgotten_key_survives_a_reopen_on_the_id(tmp_checkpoint_dir,
+                                                     monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", _A)
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
                            project_dir=_A, writer=Writer.HUMAN)
@@ -178,6 +179,20 @@ def test_forgotten_key_lifted_by_reopen(tmp_checkpoint_dir, monkeypatch):
     assert cli.main(["forget", x_id]) == 0
     key = normalize.content_key(_S)
     assert key in store.forgotten_content_keys(_A)
-    # a later reopen is the latest event -> the tombstone (and its key) lifts
+    # a later reopen replaces the latest event of the ID, but the key stands
+    # on a ref of its own that no reopen reaches
     store.append_event(x_id, "reopen", project_dir=_A, writer=Writer.HUMAN)
+    assert key in store.forgotten_content_keys(_A)
+
+
+def test_a_legacy_one_row_tombstone_is_lifted_by_a_reopen(tmp_checkpoint_dir):
+    """The tombstone shape before the key row existed: the id row alone, so a
+    reopen on the id is the latest event and the key lifts with it."""
+    key = normalize.content_key(_S)
+    assert store.append_event(
+        "i-legacy", f"forgotten:{key}", kind="tombstone", project_dir=_A,
+        allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+    assert key in store.forgotten_content_keys(_A)
+    store.append_event("i-legacy", "reopen", project_dir=_A,
+                       writer=Writer.HUMAN)
     assert key not in store.forgotten_content_keys(_A)

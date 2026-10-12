@@ -10,21 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (amendments, config, jsonl, normalize, refutations,
-               relations, requests, store, surfaces, trust)
-
-
-class Unreached(NamedTuple):
-    """A surface forget could not vouch for (#1132 PR 10b, D10.5): which
-    ledger file, what `read` judged it, how many torn lines it holds, and
-    whether it carries plaintext (a ledger that does not never fails forget;
-    it is only reported)."""
-    name: str
-    state: jsonl.Health
-    torn: int
-    plaintext: bool = True
-    detail: str = ""
-    unscannable: str = ""
+from . import (config, forget, jsonl, normalize, refutations, store,
+               surfaces)
+from .forget import Unreached  # noqa: F401 - the type moved; callers import it here too
 
 
 class Purged(NamedTuple):
@@ -130,83 +118,64 @@ class Scrubbed(NamedTuple):
     lines: Purged = Purged(0, 0)
     # The surfaces forget could not vouch for (`Unreached`), in ledger order.
     unreached: tuple = ()
+    # Set when the active-ruling gate stopped the scrub before any write: an
+    # empty result with a refusal is "refused", never "nothing to scrub".
+    refusal: str = ""
 
 
 def scrub_forgotten_key(content_key: str, *, item_id: str = "",
                         sibling_ids=(), text: str = "",
-                        project_dir=None) -> Scrubbed:
-    """Run every ledger deleter for ONE forgotten value, in the order forget
-    has always run them. `daimon forget` and `daimon ledger repair` both call
-    this, so a deleter added to forget cannot be missed by repair.
+                        project_dir=None, approve=None) -> Scrubbed:
+    """Run every ledger step of the forget registry for ONE forgotten value.
+    `daimon forget` and `daimon ledger repair` both reach the ledgers through
+    `forget.run`, so a deleter added to the registry cannot be missed by repair.
 
     `item_id` is the tombstone's `item_ref` (the id the user named) and
-    `sibling_ids` the other checkpoint items that held the value, which only
-    forget can see; the id-keyed deleters (relations, amendments) take
-    both. `text` is the value itself when the caller has it: forget does,
-    repair does not. A repair has only the tombstone, so everything it
-    reaches is matched by `content_key` (and by id), never by text: a value
-    a ledger holds inside a longer string, which no whole-value key matches,
-    is the part only a forget with the text can reach.
+    `sibling_ids` the other items that held the value; the id-keyed steps
+    (relations, amendments) run once for each. `text` is the value itself when
+    the caller has it: forget does, repair does not. A repair has only the
+    tombstone, so everything it reaches is matched by `content_key` (and by
+    id), never by text: a value a ledger holds inside a longer string, which no
+    whole-value key matches, is the part only a forget with the text can
+    reach.
 
-    Each deleter is best-effort and never raises, so one unwritable ledger
-    does not stop the rest."""
-    events = store.scrub_event_fields(content_key, project_dir=project_dir)
-    # events.jsonl carries plaintext too (item_text, note and free-form
-    # status, #599) and `rewrite` writes a torn line back verbatim, so it is
-    # judged for reach like every other plaintext ledger.
-    events_reach = jsonl.judge_reach(
-        store._events_path(store._resolved(project_dir)), [],
-        lambda row: _event_holds(row, content_key))
-    refuted = refutations.forget_content_key(content_key,
-                                             project_dir=project_dir)
-    related = relations.forget_item_id(item_id, project_dir=project_dir)
-    amend_parts = [amendments.forget_content_key(content_key,
-                                                 project_dir=project_dir)]
-    for doomed in sorted(({item_id} | set(sibling_ids)) - {""}):
-        amend_parts.append(amendments.forget_item_id(doomed,
-                                                     project_dir=project_dir))
-    amended = {rid for part in amend_parts for rid in part}
-    requested = requests.forget_content_key(content_key,
-                                            project_dir=project_dir)
-    # A quarantine is a human verdict that withholds a value: redacted in
-    # place, never dropped (scar trust-deleter-redacts-never-drops).
-    quarantined = trust.redact_content_key(content_key,
-                                           project_dir=project_dir)
-    lines = forget_quarantined_lines(content_key, text=text,
-                                     project_dir=project_dir)
-    unreached = [u for u in (
-        _unreached("events.jsonl", [events_reach], True),
-        _unreached("refutations.jsonl", [refuted], True),
-        _unreached("relations.jsonl", [related], False),
-        _unreached("amendments.jsonl", amend_parts, True),
-        _unreached("requests.jsonl", [requested], True),
-        _unreached("trust.jsonl", [quarantined], True)) if u]
-    return Scrubbed(events, tuple(refuted), tuple(related),
-                    tuple(sorted(amended)), tuple(requested),
-                    tuple(quarantined), lines,
-                    tuple(unreached) + tuple(lines.unreached))
+    `approve` answers the active-ruling gate `forget.run` holds (ids -> ""
+    to proceed, else the refusal): with none, a value that a human-ratified
+    ruling carries is not touched.
+
+    Each step is best-effort and never raises, so one unwritable ledger does
+    not stop the rest."""
+    ids = tuple(sorted(({item_id} | set(sibling_ids)) - {""}))
+    outcome = forget.run(
+        forget.Target(content_key, item_id, ids, project_dir, text),
+        scope="ledgers", approve_rulings=approve)
+
+    def removed(*fns) -> tuple:
+        return tuple(sorted({r for fn in fns
+                             for r in (outcome.get(fn).removed
+                                       if outcome.get(fn) else ())}))
+
+    events = outcome.get("store.scrub_event_fields")
+    lines = outcome.get("ledger_repair.forget_quarantined_lines")
+    seen: dict = {}
+    for u in outcome.unreached:
+        seen.setdefault(u.name, u)
+    return Scrubbed(
+        events.n if events else 0,
+        removed("refutations.forget_content_key"),
+        removed("relations.forget_item_id"),
+        removed("amendments.forget_content_key", "amendments.forget_item_id"),
+        removed("requests.forget_content_key"),
+        removed("trust.redact_content_key"),
+        lines.result if lines and isinstance(lines.result, Purged)
+        else Purged(0, 0),
+        tuple(seen.values()), outcome.refusal)
 
 
 def _event_holds(row, content_key: str) -> bool:
     """Does an events row still carry the forgotten value in a prose field
     (the fields `store.scrub_event_fields` redacts)."""
-    return any(
-        isinstance(row.get(field), str) and row[field]
-        and normalize.content_key(row[field]) == content_key
-        for field in surfaces.scalar_prose_fields("events.jsonl"))
-
-
-def _unreached(name: str, parts, plaintext: bool) -> Unreached | None:
-    """The `Unreached` for a ledger one or more deleter calls ran on: None
-    when every call reached it (a per-sibling deleter ANDs across its
-    calls)."""
-    # A deleter that returned a plain list says nothing about its ledger and
-    # counts as reached (a stub in a test, a deleter not yet converted).
-    bad = [p for p in parts if not getattr(p, "reached", True)]
-    if not bad:
-        return None
-    return Unreached(name, bad[0].state, max(p.torn for p in bad), plaintext,
-                     bad[0].detail, bad[0].unscannable)
+    return forget.holds_prose(row, content_key, "events.jsonl")
 
 
 class Report(NamedTuple):
@@ -239,22 +208,6 @@ def resolve_name(name: str) -> str | None:
         if name in (declared, declared.removesuffix(".jsonl")):
             return declared
     return None
-
-
-_MARKER = "forgotten:"
-
-
-def _forgotten_keys(project_dir) -> dict[str, list[str]]:
-    """{content key: the item ids tombstoned for it}, from the events fold.
-    A reopened tombstone is not in the fold, so it is not here either."""
-    keys: dict[str, list[str]] = {}
-    for ref, evt in sorted(store.resolutions(project_dir=project_dir).items()):
-        status = str(evt.get("status") or "")
-        if store.is_tombstone_status(status):
-            key = status.strip()[len(_MARKER):].strip()
-            if key:
-                keys.setdefault(key, []).append(ref)
-    return keys
 
 
 def _now() -> str:
@@ -342,19 +295,27 @@ def _rescrub(project_dir, approve, dry_run: bool
         return 0, 0, (f"events.jsonl is {health.value}, so the forgotten "
                       "keys cannot be read; run `daimon ledger repair "
                       "events` first"), (), ""
-    forgotten = _forgotten_keys(project_dir)
+    # One parse of the tombstones (`store.standing_tombstones`): a key whose
+    # only standing ref is its key ref has no id and is still repaired.
+    forgotten = store.project_standing(project_dir)
     doomed = tuple(refutations.active_rulings_reached(
-        forgotten, item_ids={r for refs in forgotten.values() for r in refs},
+        forgotten,
+        item_ids={r for standing in forgotten.values() for r in standing.ids},
         project_dir=project_dir)) if forgotten else ()
     if doomed and not dry_run:
         refusal = approve(list(doomed))
         if refusal:
             return 0, 0, "", doomed, refusal
     rows = 0
-    for key, refs in forgotten.items():
-        done = scrub_forgotten_key(key, item_id=refs[0],
-                                   sibling_ids=refs[1:],
-                                   project_dir=project_dir)
+    for key, standing in forgotten.items():
+        ids = standing.ids
+        # the gate above already asked once for every key of this run
+        done = scrub_forgotten_key(key, item_id=ids[0] if ids else "",
+                                   sibling_ids=ids[1:],
+                                   project_dir=project_dir,
+                                   approve=lambda _rulings: "")
+        if done.refusal:
+            return 0, rows, "", doomed, done.refusal
         rows += (done.events + len(done.refutations) + len(done.relations)
                  + len(done.amendments) + len(done.requests)
                  + len(done.quarantines) + done.lines.purged)

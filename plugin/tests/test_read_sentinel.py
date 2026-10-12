@@ -11,10 +11,11 @@ any byte its run wrote.
 
 Registries are two-way: a surface (or dest, mode, exemption) that exists and
 is not classified fails, and a classification of something that no longer
-exists fails. `KNOWN_LEAKS` is the allowlist of leaks the drive finds today;
-it only shrinks: each listed entry must still leak and nothing else may.
-`UNCONVERTED` lists the surfaces that do not yet go through `view`; PR 7
-onward deletes them. The recall surfaces read through the judged core of
+exists fails. There is no allowlist of leaks: the drive asserts that nothing
+leaks, and what a surface may show on purpose is a declared exemption with a
+reason (`KEY_EXEMPT`, `HUMAN_CHANNEL`, `WRITE_CARRY`). `NO_PROSE_READ` lists
+the surfaces that print state words, ids and counts and read no ledger prose,
+so they have no view call to fail. The recall surfaces read through the judged core of
 `recall` (`CONVERTED_RECALL`): the index they query is built and queried with
 `view.judge`, the view's one verdict per bucket.
 
@@ -445,6 +446,12 @@ case("cli:forget", "dry", A("forget", I("question"), "--dry-run"), tty=True,
      rc=(0, 1, 2), dests=("dry_run", "project"), axes=("STDIN_TTY",))
 case("cli:forget", "republish", A("forget", "--republish"), tty=True,
      rc=(0, 1, 4), dests=("project", "republish"))
+# finishing what a forget left: every standing tombstone, every phase, from a
+# person's terminal; it binds no item and prints counts and surface names
+case("cli:forget", "resume", A("forget", "--resume"), tty=True,
+     rc=(0, 1, 4), dests=("resume",))
+case("cli:forget", "resume-publish", A("forget", "--resume", "--only",
+     "publish"), tty=True, rc=(0, 1, 4), dests=("only",))
 # a real forget of the quarantined sentinel by its exact id, from a person's
 # terminal: the receipt prints the content hash of the value just forgotten
 case("cli:forget", "receipt", A("forget", I("question"), "--reason", "r"),
@@ -456,6 +463,16 @@ case("cli:forget", "idforgot-agent", A("forget", I("idforgot"), "--dry-run"),
      tty=False, rc=(1,), shows="no item matches", dests=("dry_run",))
 case("cli:reverify", "id", A("reverify", I("question"), "--evidence",
      "checked"), tty=True, rc=(0, 1), dests=("target", "project"))
+# the lift, from a person's terminal, by the exact id of a forget the world made
+# through the real verb: it prints counts and the class of what still withholds
+# the value, never an id, a key or a value. An agent meets the refusal and
+# nothing else (the gate looks at nothing before it refuses).
+case("cli:unforget", "id", A("unforget", I("decision")), tty=True,
+     rc=(0, 1, 2, 4), dests=("target", "project"))
+case("cli:unforget", "dry", A("unforget", I("decision"), "--dry-run"),
+     tty=True, rc=(0, 1, 2, 4), dests=("dry_run",))
+case("cli:unforget", "agent", A("unforget", I("decision")), rc=(1,),
+     shows="requires an interactive terminal")
 
 # ---- R1 dests (which bucket is read) on the verbs that act on a record ----
 def _bucket_variants():
@@ -614,17 +631,19 @@ def drive_case(surface, tag, world, pristine, *, tty_override=None,
         if tty_now and (surface, tag) in HUMAN_RAW:
             found = {f for f in found if f[2] not in HUMAN_RAW[(surface, tag)]}
         leaks |= found
+        # What a run PRINTS is scanned for every case that is not a declared
+        # key-naming command; what it WRITES is skipped as well for the cases
+        # that write a key or a key ref on purpose (KEY_EXEMPT_WRITE), so
+        # "it prints none" is asserted here, not claimed in a comment.
+        if (surface, tag) in KEY_EXEMPT_WRITE:
+            scanned = res.text()
+        else:
+            scanned = blob
         if (surface, tag) not in KEY_EXEMPT:
-            leaks |= {(surface, tag, k) for k in sw.leaked_keys(blob)}
+            leaks |= {(surface, tag, k)
+                      for k in sw.leaked_keys(scanned, world.key_refs)}
         results.append((label, res))
     return leaks, results
-
-
-# ===========================================================================
-# Allowlists (seeded from the run; shrink-only)
-# ===========================================================================
-# {(surface, kind)}: seeded from the run, each must still leak, nothing else may
-KNOWN_LEAKS: set = set()
 
 
 @pytest.fixture(scope="module")
@@ -657,11 +676,14 @@ def test_viewer_routes_are_the_table_and_the_owner_less_ones_show_no_items():
 
 def test_dests_match_the_parser_and_are_classified():
     import argparse
+    from_parser = 0
     for leaf, parser in _leaves.leaf_parsers(cli.build_parser()).items():
         dests = {a.dest for a in parser._actions
                  if not isinstance(a, argparse._HelpAction)}
         assert dests == set(DESTS[" ".join(leaf)]), leaf
-    assert sum(len(v) for v in DESTS.values()) == 342
+        from_parser += len(dests)
+    # the total is the parser's own, never a literal that has to be bumped
+    assert sum(len(v) for v in DESTS.values()) == from_parser
     for leaf, row in DESTS.items():
         for name, (cls, code) in row.items():
             assert cls in ("OUT", "INE"), (leaf, name)
@@ -717,15 +739,14 @@ def test_the_drive_runs_and_nothing_unexpected_leaks(world_run):
     _world, leaks, _details = world_run
     seen = {(s, kind) for (s, kind) in leaks if not kind.startswith("key:")}
     print("LEAKS", sorted(seen))
-    assert seen == KNOWN_LEAKS
+    assert seen == set()
 
 
 # A forgotten value's content key names the value it hashes (scar 0119): a
 # raw tombstone status or scrub marker printed by a reader brings it back
 # without the value sentinel noticing. Every case is scanned for the keys too.
-# `KNOWN_KEY_LEAKS` is shrink-only like KNOWN_LEAKS. `KEY_EXEMPT` declares the
-# cases whose job is to name a key: a person-run proof or publish tool.
-KNOWN_KEY_LEAKS: set = set()
+# `KEY_EXEMPT` declares the cases whose job is to name a key: a person-run proof
+# or publish tool. Nothing else may.
 KEY_EXEMPT = {
     ("cli:audit privacy", "default"):
         "the residue audit names the content hash of each residue it proves",
@@ -735,8 +756,23 @@ KEY_EXEMPT = {
         "the receipt prints the content hash of the value just forgotten, "
         "which is the tombstone key the team sidecar carries too; it is a "
         "person's command (the agent run is refused)",
+}
+
+# Cases that WRITE a key or a key ref on purpose and print none: the scan skips
+# their written bytes and still reads everything they print (a person's
+# commands; the agent run is refused).
+KEY_EXEMPT_WRITE = {
     ("cli:forget", "republish"):
         "re-publishing a tombstone writes its key into the team sidecar",
+    ("cli:forget", "resume"):
+        "finishing a forget writes the missing key row into the events "
+        "ledger, which is where the key lives",
+    ("cli:unforget", "id"):
+        "the lift appends its rows on the very refs the forget wrote, inside "
+        "the events ledger where those refs live",
+    ("cli:forget", "resume-publish"):
+        "the publish phase writes the key into the team sidecar, as "
+        "republish does",
 }
 
 
@@ -744,7 +780,7 @@ def test_no_surface_hands_back_a_forgotten_key(world_run):
     _world, leaks, _details = world_run
     seen = {(s, kind) for (s, kind) in leaks if kind.startswith("key:")}
     print("KEY LEAKS", sorted(seen))
-    assert seen == KNOWN_KEY_LEAKS
+    assert seen == set()
 
 
 def test_the_prose_columns_are_planted_in_the_world(world_run, monkeypatch):
@@ -877,19 +913,28 @@ def test_the_forgotten_keys_are_stored_in_the_world(world_run):
     """Anti-vacuity: the tombstones the scan looks for are on disk."""
     world, _leaks, _details = world_run
     raw = b"\n".join(p.read_bytes() for p in world.bucket.rglob("events.jsonl"))
-    assert sw.leaked_keys(raw) == {f"key:{n}" for n in sw.KEY_TOKENS}
+    assert len(world.key_refs) == len(sw.FORGOTTEN) + 1   # + one by hand
+    # every key and every key ref the real forgets wrote is in the ledger, so a
+    # route that hands one back is a leak the scan can see
+    assert sw.leaked_keys(raw, world.key_refs) == (
+        {f"key:{n}" for n in sw.KEY_TOKENS}
+        | {f"key:ref-{n}" for n in range(len(world.key_refs))})
 
 
 def test_the_key_scan_finds_what_it_bans():
     assert sw.leaked_keys("x " + sw.KEY_TOKENS["decision"].upper()) == {
         "key:decision"}
+    refs = ("forgotten-key:00aa11bb22cc33dd", "forgotten-key:44ee55ff66aa77bb")
+    assert sw.leaked_keys("a " + refs[1].upper(), refs) == {"key:ref-1"}
+    assert sw.leaked_keys("a " + refs[1], ()) == set()
     assert sw.leaked_keys(b"nothing here") == set()
     assert set(sw.KEY_TOKENS) == set(sw.FORGOTTEN) | {"idforgot"}
 
 
 def test_the_key_exemptions_name_real_cases():
-    for key in KEY_EXEMPT:
+    for key in (*KEY_EXEMPT, *KEY_EXEMPT_WRITE):
         assert key in CASES, key
+    assert not set(KEY_EXEMPT) & set(KEY_EXEMPT_WRITE)
 
 
 def test_cases_ran_and_said_what_they_should(world_run):
@@ -1031,6 +1076,10 @@ CONVERTED = {
     "cli:amend propose": ("cli/amend.py", frozenset({"match"})),
     "cli:anchor": ("cli/brief.py", frozenset({"match"})),
     "cli:forget": ("cli/lifecycle.py", frozenset({"label"})),
+    # 12: the lift reads the view's snapshot before it writes, and proves the
+    # lift against the machine-wide forgotten set after (the second is pinned
+    # inside the verb itself by test_unforget.py)
+    "cli:unforget": ("cli/lifecycle.py", frozenset({"judge"})),
     "cli:audit quotes": ("cli/audit.py", frozenset({"open_sessions"})),
     "cli:audit-quotes": ("cli/audit.py", frozenset({"open_sessions"})),
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
@@ -1078,9 +1127,9 @@ CONVERTED_RECALL = {
 # ids and counts and no ledger prose (amend ratify and reject, trust confirm,
 # dismiss, release and repair, relations confirm, reject and retract, ruling
 # checks, audit privacy, check sync, heal, ledger repair, stats, team status,
-# trust republish, verify-receipt, the session-end hook, daimon_status). PR 12 deletes the
-# mechanism itself, the KNOWN_LEAKS set and this table with it.
-UNCONVERTED = ({s for s, _ in CASES} - set(CONVERTED)
+# trust republish, verify-receipt, the session-end hook, daimon_status). The
+# list is derived, and its size is pinned below: it only shrinks.
+NO_PROSE_READ = ({s for s, _ in CASES} - set(CONVERTED)
                - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
 
 
@@ -1095,7 +1144,10 @@ NO_ITEM_READ = {("cli:status", "default"), ("cli:status", "json"),
 NO_ITEM_READ |= {(s, t) for (s, t) in CASES
                  if s == "cli:anchor" and t != "attach"}
 # `forget --republish` publishes tombstone keys already recorded; it binds no item
-NO_ITEM_READ |= {("cli:forget", "republish")}
+NO_ITEM_READ |= {("cli:forget", "republish"), ("cli:forget", "resume"),
+                  ("cli:forget", "resume-publish")}
+# an agent's `unforget` is refused at the gate, before any read
+NO_ITEM_READ |= {("cli:unforget", "agent")}
 
 
 def _calls_view(rel, names):
@@ -1108,13 +1160,13 @@ def _calls_view(rel, names):
 
 
 def test_unconverted_is_a_subset_of_the_registry():
-    assert UNCONVERTED <= all_surfaces()
-    assert not UNCONVERTED & set(CONVERTED)
-    assert not UNCONVERTED & set(CONVERTED_RECALL)
+    assert NO_PROSE_READ <= all_surfaces()
+    assert not NO_PROSE_READ & set(CONVERTED)
+    assert not NO_PROSE_READ & set(CONVERTED_RECALL)
     assert not set(CONVERTED) & set(CONVERTED_RECALL)
     assert not set(CONVERTED_HOOK) & (set(CONVERTED) | set(CONVERTED_RECALL)
-                                      | UNCONVERTED)
-    assert (UNCONVERTED | set(CONVERTED) | set(CONVERTED_RECALL)
+                                      | NO_PROSE_READ)
+    assert (NO_PROSE_READ | set(CONVERTED) | set(CONVERTED_RECALL)
             | set(CONVERTED_HOOK) == {s for s, _ in CASES})
 
 
@@ -1126,8 +1178,7 @@ def test_a_converted_surface_reaches_the_view():
 def test_the_unconverted_surfaces_are_pinned_and_only_shrink():
     # 19 after 11c; PR 13 adds `cli:trust republish`, which prints counts
     # and a hash-only publish result and reads no item.
-    assert len(UNCONVERTED) == 20, sorted(UNCONVERTED)
-    assert KNOWN_LEAKS == set()
+    assert len(NO_PROSE_READ) == 20, sorted(NO_PROSE_READ)
 
 
 def test_a_hook_surface_reaches_the_view():
@@ -1144,7 +1195,7 @@ def test_a_converted_surface_renders_nothing_when_view_open_raises(
         world_run, monkeypatch):
     from daimon_briefing import view
     world, _l, _d = world_run
-    converted = ({s for s, _ in CASES} - UNCONVERTED
+    converted = ({s for s, _ in CASES} - NO_PROSE_READ
                  - set(CONVERTED_RECALL) - set(CONVERTED_HOOK))
     assert converted == set(CONVERTED)
 
@@ -1282,7 +1333,7 @@ def test_a_recall_surface_shows_nothing_when_the_judge_withholds_everything(
 # A forgotten ID whose value no tombstone key names: only the id rule withholds
 # it. It is asserted absent on every surface that reads through the view or the
 # judged recall core. The surfaces that still read the store themselves are
-# listed (shrink-only, like KNOWN_LEAKS): each converts in a later PR.
+# listed (shrink-only): each converts in a later PR.
 # The binding verbs (`resolve`, `reverify`, `amend propose`, `anchor`,
 # `forget`) judge every candidate through the view, so no surface prints it.
 def _id_leaking_surfaces(details):

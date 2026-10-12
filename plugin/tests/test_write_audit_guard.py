@@ -144,6 +144,14 @@ KNOWN_BYPASSES = frozenset({
     ("trust repair", "checkpoints/{slug}/trust.jsonl"),
     ("trust repair", "checkpoints/{slug}/trust.quarantined-lines"),
     ("trust repair", "checkpoints/{slug}/.ledger-census"),
+    # forget's team publish (#600 slice B): one {ts, key, author} row, the
+    # canonical hash and never the text, appended to the author's own
+    # tombstone sidecar. There is no prose to admit. It used to read as
+    # governed only because the same stack frame still held the checkpoint the
+    # splice had just admitted, and the publish ran after it; the publish
+    # phase now runs second, ahead of every scrub, so the correlation no longer
+    # reaches it and the bypass is stated instead of inherited.
+    ("forget", "team/local/authors/ada/tombstones.jsonl"),
 })
 
 # Commands that genuinely cannot be driven headless would be named here with
@@ -792,6 +800,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
             project_dir=proj, writer=Writer.HUMAN)
         run(["forget", ctx["ids"][_T_FORGET], "--reason", "stale"], 0)
 
+    def r_unforget():
+        # a lift needs a standing forget in the same environment: the one the
+        # `forget` recipe above made. It appends `reopened:unforget` rows on
+        # every ref that carries the key; each row is admitted like any
+        # events row, so the lift is governed by the seam too.
+        run(["unforget", ctx["ids"][_T_FORGET], "--reason", "wrong one"], 0)
+
     def r_reverify():
         run(["reverify", ctx["ids"][_T_KEEP], "--evidence",
              "checked the release page"], 0)
@@ -1021,6 +1036,9 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("skill", "status"): r_skill_status,
         ("skill", "uninstall"): r_skill_uninstall,
         ("mcp", "serve"): r_mcp_serve,
+        # last on purpose: `heal` above asserts the forgotten text stays out,
+        # and a lift would let a re-assertion back in
+        ("unforget",): r_unforget,
     }
 
     # No silent skips: every registered command has a recipe or a named SKIPPED

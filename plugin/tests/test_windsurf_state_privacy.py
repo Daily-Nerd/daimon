@@ -239,14 +239,18 @@ def test_purge_survives_an_unreadable_state_dir(tmp_checkpoint_dir,
     assert purged == 0 and err is not None
 
 
-def test_forget_survives_a_failed_purge(tmp_checkpoint_dir, monkeypatch):
+def test_forget_survives_a_failed_purge(tmp_checkpoint_dir, monkeypatch,
+                                        capsys):
     """The belief-state deletion is the primary contract — a failed purge is
     reported honestly, never fatal (the #422 posture)."""
     _seed_state()
     _write_checkpoint()
     monkeypatch.setattr(store, "purge_windsurf_state",
                         lambda: (0, "disk on fire"))
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
+    out = capsys.readouterr().out
+    assert "unreached: windsurf transcripts " in out
+    assert "disk on fire" not in out
 
 
 def test_forget_survives_a_purge_that_raises(tmp_checkpoint_dir, monkeypatch,
@@ -265,11 +269,13 @@ def test_forget_survives_a_purge_that_raises(tmp_checkpoint_dir, monkeypatch,
         raise RuntimeError("purge exploded")
 
     monkeypatch.setattr(store, "purge_windsurf_state", boom)
-    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 0
+    assert cli.main(["forget", CANARY, "--project", PROJECT]) == 4
     assert _holding(tmp_checkpoint_dir, CANARY) == [], \
         "the checkpoint scrub must survive a purge that blew up"
     out = capsys.readouterr().out
-    assert "purge exploded" in out, "a swallowed failure is an invisible leak"
+    assert "unreached: windsurf transcripts could not be reached (RuntimeError)" in out, \
+        "a swallowed failure is an invisible leak"
+    assert "purge exploded" not in out, "the exception text never prints"
 
 
 # ---- what the store must NOT delete, and what it must not claim ----------

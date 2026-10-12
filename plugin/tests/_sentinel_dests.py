@@ -93,6 +93,14 @@ DESTS = {
         "project": ("OUT", "R1"),
         "dry_run": ("OUT", "R3"),
         "republish": ("OUT", "R3"),
+        "resume": ("OUT", "R3"),
+        "only": ("OUT", "R4"),
+    },
+    "unforget": {
+        "target": ("OUT", "R2"),
+        "reason": ("INE", "R6"),
+        "project": ("OUT", "R1"),
+        "dry_run": ("OUT", "R3"),
     },
     "reverify": {
         "target": ("OUT", "R2"),

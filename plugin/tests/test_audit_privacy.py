@@ -128,7 +128,9 @@ def test_clean_tree_reports_nothing(tmp_checkpoint_dir):
     assert result["surfaces_scanned"] > 0
 
 
-def test_reopened_tombstone_not_flagged(tmp_checkpoint_dir):
+def test_a_reopened_legacy_tombstone_is_not_flagged(tmp_checkpoint_dir):
+    """The one-row tombstone shape from before the key row existed: a reopen
+    on its id is the latest event, so the key lifts and the value is allowed."""
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
@@ -136,6 +138,20 @@ def test_reopened_tombstone_not_flagged(tmp_checkpoint_dir):
     store.append_event("i-x", "reopened", project_dir=PROJECT, writer=Writer.HUMAN)
     result = privacy.audit_project(project_dir=PROJECT)
     assert not any(f["content_hash"] == key for f in result["findings"])
+
+
+def test_a_reopened_new_format_tombstone_still_flags_the_value(
+        tmp_checkpoint_dir):
+    """A forget now writes the key on a ref of its own, so a reopen on the id
+    does not lift it: the value on a surface is still residue."""
+    from daimon_briefing import forget
+    _write("S1", CANARY)
+    key = normalize.content_key(CANARY)
+    assert forget.write_tombstones(
+        forget.Target(key, "i-x", ("i-x",), PROJECT)).reached
+    store.append_event("i-x", "reopened", project_dir=PROJECT, writer=Writer.HUMAN)
+    result = privacy.audit_project(project_dir=PROJECT)
+    assert any(f["content_hash"] == key for f in result["findings"])
 
 
 def test_other_projects_residue_not_flagged(tmp_checkpoint_dir):

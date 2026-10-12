@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import stat
 import time
 from datetime import datetime, timezone
@@ -88,6 +89,15 @@ def project_slug(project_dir) -> str | None:
     if not s:
         return None
     return re.sub(r"[^\w-]", "-", s) or None
+
+
+def _own_author_dir() -> str:
+    """The author's own directory name in a team mirror: the same identity
+    `_dual_write_team` writes and `scrub_team_copies` walks."""
+    return project_slug(config.author()) or "unknown"
+
+
+surfaces.register_own_author(_own_author_dir)
 
 
 def _resolved(project_dir):
@@ -471,17 +481,44 @@ def items_for_project(project_dir=None) -> list[tuple[Path, str, str, dict]]:
     return found
 
 
-def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
+def _judged(rewritten: list[str], still: int, unreadable: int
+            ) -> jsonl.Reached:
+    """`rewritten` as a `Reached`, judged by the re-scan the caller just made
+    (scar 0135: never trust a deleter's own return). A surface that still
+    holds the value, or that could not be read to prove it does not, is not
+    reached; `detail` is a fixed word, never a path or a message."""
+    if still:
+        detail = "unwritable"
+    elif unreadable:
+        detail = "unreadable"
+    else:
+        detail = ""
+    return jsonl.Reached(rewritten, reached=not (still or unreadable),
+                         detail=detail)
+
+
+def _holds_key(payload: dict, keys) -> bool:
+    """Whether a checkpoint payload still carries a forgotten key anywhere the
+    write gate would scrub it: the read-only twin of the splice."""
+    _, changed = policy.scrub_forgotten_payload(
+        json.loads(json.dumps(payload)), set(keys))
+    return bool(changed)
+
+
+def scrub_content_key(content_hash: str, project_dir=None) -> jsonl.Reached:
     """Remove every item folding to `content_hash` from all plaintext surfaces.
 
-    Returns the paths rewritten, so the caller can report what deletion
-    actually reached instead of asserting it. Best-effort per file: one
-    unreadable or unwritable surface must not abort the rest of the scrub, and
-    a file that cannot be parsed is left byte-identical rather than truncated —
-    the same posture the ledger rewrite takes toward rows it cannot interpret.
+    Returns the paths rewritten (a `jsonl.Reached`, so it is the list it always
+    was), and whether the surfaces were REACHED: after the scrub every surface
+    is read again, and one that still holds the value, or that cannot be
+    parsed to prove it does not, makes the result unreached. Best-effort per
+    file: one unreadable or unwritable surface must not abort the rest of the
+    scrub, and a file that cannot be parsed is left byte-identical rather than
+    truncated, the same posture the ledger rewrite takes toward rows it cannot
+    interpret.
     """
     if not content_hash:
-        return []
+        return jsonl.Reached(())
     rewritten: list[str] = []
     for path in project_surfaces(project_dir):
         try:
@@ -502,10 +539,19 @@ def scrub_content_key(content_hash: str, project_dir=None) -> list[str]:
         except OSError:
             continue
         rewritten.append(str(path))
-    return rewritten
+    still = unreadable = 0
+    for path in project_surfaces(project_dir):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            unreadable += 1
+            continue
+        if isinstance(payload, dict) and _holds_key(payload, {content_hash}):
+            still += 1
+    return _judged(rewritten, still, unreadable)
 
 
-def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
+def scrub_team_copies(content_hash: str, project_dir=None) -> jsonl.Reached:
     """#600 slice A: scrub the author's OWN team-mirror checkpoint copies.
 
     The mirror holds full plaintext copies of every mirrored session, and
@@ -543,14 +589,58 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
     skipped — privacy._scan_team_dir misses it by the identical rule, so
     scrub and audit at least agree.
 
-    Best-effort per file; returns the paths rewritten."""
+    Best-effort per file; returns the paths rewritten as a `jsonl.Reached`.
+    After the pass the own copies are read again: one that still holds the
+    value, or that cannot be parsed to prove it does not, is not reached."""
     if not content_hash:
-        return []
+        return jsonl.Reached(())
     project_dir = _resolved(project_dir)
+    keys = forgotten_content_keys(project_dir) | {content_hash}
+    rewritten: list[str] = []
+    for path, payload in _own_team_files(project_dir):
+        if payload is None:
+            continue
+        # Probe on a copy first: only files the forget actually changes
+        # are re-admitted and rewritten — admission drift (missing ids,
+        # a new redact pattern) must not masquerade as a scrub, and a
+        # torn payload the probe cannot change is skipped before the
+        # stricter admission can trip on it.
+        probe = json.loads(json.dumps(payload))
+        _, changed = policy.scrub_forgotten_payload(probe, keys)
+        if not changed:
+            continue
+        try:
+            policy.admit_checkpoint(payload, keys)
+            _atomic_write(path, json.dumps(payload, indent=2,
+                                           ensure_ascii=False) + "\n")
+        except Exception:
+            # best-effort per file: one unwritable or half-torn surface
+            # must not abort the rest of the scrub — nor the forget's
+            # remaining steps (event scrub, cache purge) behind it. The
+            # re-scan below is what says it was not reached.
+            continue
+        rewritten.append(str(path))
+    still = unreadable = 0
+    for _path, payload in _own_team_files(project_dir):
+        if payload is None:
+            unreadable += 1
+        elif _holds_key(payload, keys):
+            still += 1
+    return _judged(rewritten, still, unreadable)
+
+
+def _own_team_files(project_dir) -> list:
+    """`(path, payload)` for this author's own team-mirror files that belong
+    to this project, `payload` None when the file cannot be parsed.
+
+    A file whose project is told by its path (the nested layout) and cannot be
+    parsed is returned with no payload, because it is this project's and
+    cannot be proven clean. A file attributed only by its payload's
+    `project_slug` stamp and unparseable is left out: nothing says whose it
+    is (the audit's own blindness, shared so scrub and audit agree)."""
     team = config.team_dir()
     own = project_slug(config.author()) or "unknown"
     slug = project_slug(project_dir)
-    keys = forgotten_content_keys(project_dir) | {content_hash}
     try:
         segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
     except Exception:
@@ -559,7 +649,7 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
         remotes = [d for d in team.iterdir() if d.is_dir()]
     except OSError:
         return []
-    rewritten: list[str] = []
+    out: list = []
     for remote in remotes:
         candidates = list(remote.glob(f"authors/{own}/*.json"))
         candidates += remote.glob(f"projects/**/authors/{own}/*.json")
@@ -577,31 +667,15 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> list[str]:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
+                if nested_ok:
+                    out.append((path, None))
                 continue
             if not isinstance(payload, dict):
                 continue
             if not nested_ok and payload.get("project_slug") != slug:
                 continue
-            # Probe on a copy first: only files the forget actually changes
-            # are re-admitted and rewritten — admission drift (missing ids,
-            # a new redact pattern) must not masquerade as a scrub, and a
-            # torn payload the probe cannot change is skipped before the
-            # stricter admission can trip on it.
-            probe = json.loads(json.dumps(payload))
-            _, changed = policy.scrub_forgotten_payload(probe, keys)
-            if not changed:
-                continue
-            try:
-                policy.admit_checkpoint(payload, keys)
-                _atomic_write(path, json.dumps(payload, indent=2,
-                                               ensure_ascii=False) + "\n")
-            except Exception:
-                # best-effort per file: one unwritable or half-torn surface
-                # must not abort the rest of the scrub — nor the forget's
-                # remaining steps (event scrub, cache purge) behind it.
-                continue
-            rewritten.append(str(path))
-    return rewritten
+            out.append((path, payload))
+    return out
 
 
 # Daimon-authored Windsurf state that holds conversation text (#607). The
@@ -1807,7 +1881,7 @@ def admission_gate(project_dir, writer: Writer) -> set[str]:
         raise jsonl.Posture(result.health, result.detail, result.undecodable,
                             write, "events.jsonl", result.cannot_scan,
                             writer is Writer.ADMISSION).refusal()
-    return _tombstoned_keys(fold_resolutions(result.rows))
+    return _tombstoned_keys(result.rows)
 
 
 def admission_state(project_dir) -> tuple[str, str] | None:
@@ -3096,6 +3170,101 @@ def is_tombstone_status(status) -> bool:
     return str(status or "").strip().lower().startswith("forgotten:")
 
 
+# A forget also writes its key on a ref of its own, so a reopen on the item id
+# cannot lift the value (decision 10). The ref is a namespace no item id can
+# equal (no id this codebase mints contains a colon), and the item fold never
+# returns it: a key ref is not an item, so no reader of `resolutions()` meets
+# one. `standing_tombstones` is the one parser that reads both kinds of ref.
+_KEY_REF_PREFIX = "forgotten-key:"
+
+# The status a lift writes, on every standing ref that carries a key. It
+# starts with `reopen`, so `is_resolved` is False and `_tie_rank` is highest
+# (a lift wins a same-second tie by rule); `is_lift_status` names the class.
+LIFT_STATUS = "reopened:unforget"
+
+
+def tombstone_key(status) -> str:
+    """The content key a `forgotten:` status names (stripped, any case), or ""
+    for a status that is not a tombstone. The one parse of the prefix."""
+    if not is_tombstone_status(status):
+        return ""
+    return str(status).strip()[len(_FORGOTTEN_PREFIX):].strip()
+
+
+def is_key_ref(ref) -> bool:
+    """Whether `ref` is a forget's key ref rather than an item or record id."""
+    return str(ref or "").startswith(_KEY_REF_PREFIX)
+
+
+def is_lift_status(status) -> bool:
+    """Whether a status is a lift of a forget (`LIFT_STATUS`), stripped, any
+    case: the one predicate for the class, so a new status word is ranked in
+    `_tie_rank` and kept by `_class_preserving_marker` on purpose."""
+    return str(status or "").strip().lower().startswith(LIFT_STATUS)
+
+
+class Standing(NamedTuple):
+    """Every ref that still carries one forgotten key: the item or record ids
+    (`ids`) and the forget's own key refs (`key_refs`), each sorted."""
+    ids: tuple = ()
+    key_refs: tuple = ()
+
+
+def standing_tombstones(rows) -> dict:
+    """`{content key: Standing}` for the tombstones that still stand in
+    `rows` (events rows): the latest event of a ref is a `forgotten:` status.
+    A reopen or a lift replaces the latest event of its ref and drops it.
+
+    The ONE parse of the status (stripped, any case) and the one place that
+    tells an id ref from a key ref. `_tombstoned_keys`, ledger repair, the
+    forget verbs and the lift read this; nothing else parses the prefix."""
+    ids: dict[str, list[str]] = {}
+    key_refs: dict[str, list[str]] = {}
+    for ref, evt in sorted(_fold(rows, keys=True).items()):
+        status = evt.get("status")
+        if not (is_resolved(evt) and is_tombstone_status(status)):
+            continue
+        key = tombstone_key(status)
+        if key:
+            (key_refs if is_key_ref(ref) else ids).setdefault(
+                key, []).append(ref)
+    return {key: Standing(tuple(ids.get(key, ())),
+                          tuple(key_refs.get(key, ())))
+            for key in sorted(set(ids) | set(key_refs))}
+
+
+def project_standing(project_dir=None) -> dict:
+    """`standing_tombstones` of this project's events ledger. An unknown
+    project or an unreadable ledger reads as nothing standing (callers that
+    must know a ledger is unproven ask `jsonl.read` themselves)."""
+    path = _events_path(_resolved(project_dir))
+    if path is None:
+        return {}
+    return standing_tombstones(jsonl.read(path).rows)
+
+
+def _event_row(item_ref: str, status: str, note: str = "",
+               kind: str = "resolution", source: str = "cli",
+               item_text: str = "") -> dict:
+    """The one builder of an events row, so every writer of the ledger admits
+    its row the same way. The scrub runs through policy.admit_row (#431): the
+    same redaction as before (status is free-form by design, readers
+    prefix-match, so it can carry a secret-shaped value and is scrubbed too,
+    #141), mounted on the policy seam so the write-audit guard can correlate
+    the row on disk with its admission."""
+    evt = policy.admit_row(
+        {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+         "kind": kind, "item_ref": item_ref, "status": status,
+         "source": source, "note": note, "item_text": item_text},
+        redact_fields=("status", "note", "item_text"))
+    # Empty optional fields never land on the row — unchanged shape.
+    if not evt["note"]:
+        del evt["note"]
+    if not evt["item_text"]:
+        del evt["item_text"]
+    return evt
+
+
 def append_event(item_ref: str, status: str, note: str = "",
                  kind: str = "resolution", source: str = "cli",
                  project_dir=None, item_text: str = "",
@@ -3109,7 +3278,7 @@ def append_event(item_ref: str, status: str, note: str = "",
     the kill switch
     and when the project is unknown (an event without a bucket has no
     reader). `allow_disabled` (#421) is the narrow deletion exemption:
-    passed ONLY by cli._cmd_forget's tombstone append — forget must work
+    passed ONLY by forget's tombstone append — forget must work
     while disabled, and #418 mandates its tombstone lands before the
     rewrite, so the tombstone shares the rewrite's exemption. No other
     caller may pass it.
@@ -3120,7 +3289,25 @@ def append_event(item_ref: str, status: str, note: str = "",
     the value everywhere. A free-form `resolve --status` or `log --status`
     that reached here would tombstone with no scrub, so the status is
     refused unless the caller is the forget path."""
-    if is_tombstone_status(status) and not tombstone:
+    return append_events(
+        [{"item_ref": item_ref, "status": status, "note": note, "kind": kind,
+          "source": source, "item_text": item_text}],
+        project_dir=project_dir, allow_disabled=allow_disabled,
+        tombstone=tombstone, writer=writer)
+
+
+def append_events(specs, project_dir=None, allow_disabled: bool = False,
+                  tombstone: bool = False, *, writer: Writer) -> bool:
+    """Several lifecycle facts in ONE append: every spec (a dict of
+    `item_ref`, `status` and optionally `note`, `kind`, `source`, `item_text`)
+    is built and admitted by `_event_row`, one admission frame each, then all
+    the rows are written in a single call under one posture judgement. A crash
+    leaves at most the last row torn. The gates are `append_event`'s: a
+    `forgotten:` status is refused unless `tombstone` is set, nothing is
+    written under the kill switch without `allow_disabled`, and an unknown
+    project has no ledger. Returns whether the rows landed."""
+    if any(is_tombstone_status(spec["status"]) for spec in specs) \
+            and not tombstone:
         return False
     if config.is_disabled() and not allow_disabled:
         return False
@@ -3129,31 +3316,28 @@ def append_event(item_ref: str, status: str, note: str = "",
     if path is None:
         return False
     try:
-        # #431: the scrub runs through policy.admit_row — same redaction as
-        # before (status is free-form by design, readers prefix-match, so it
-        # can carry a secret-shaped value and is scrubbed too, #141), but
-        # mounted on the policy seam so the write-audit guard can correlate
-        # the row on disk with its admission.
-        evt = policy.admit_row(
-            {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-             "kind": kind, "item_ref": item_ref, "status": status,
-             "source": source, "note": note, "item_text": item_text},
-            redact_fields=("status", "note", "item_text"))
-        # Empty optional fields never land on the row — unchanged shape.
-        if not evt["note"]:
-            del evt["note"]
-        if not evt["item_text"]:
-            del evt["item_text"]
+        rows = []
+        for spec in specs:
+            evt = _event_row(**spec)
+            rows.append(evt)
         path.parent.mkdir(parents=True, exist_ok=True)
         record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
         # `writer` picks the row of the registry's write column (#1132 PR
         # 10b): a person and an admission are REFUSED an unproven events
         # ledger, a machine row is SKIPPED, a cure always writes.
-        return jsonl.append_as(path, evt, writer)
+        return jsonl.append_rows_as(path, rows, writer)
     except jsonl.Refused:
         raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
         return False
+
+
+def new_key_ref() -> str:
+    """The ref of a forget's key row: the namespace plus a random token. Random
+    on purpose: nothing needs it derivable (`standing_tombstones` maps a key to
+    its refs from the status), and a ref derived from the key would be one more
+    oracle for whether a value was forgotten."""
+    return _KEY_REF_PREFIX + secrets.token_hex(8)
 
 
 # The in-place redaction marker for event fields (#599). Carries the
@@ -3168,7 +3352,8 @@ _FORGOTTEN_FIELD_MARKER = "[forgotten:{}]"
 # item forever. Longest-match order: candidate forms before their shorter
 # cousins. The kept token is generic lifecycle vocabulary, not the value.
 _STATUS_CLASS_PREFIXES = ("supersede-candidate", "superseded-by:",
-                          "resolving-candidate", "reopen", "forgotten")
+                          "resolving-candidate", LIFT_STATUS, "reopen",
+                          "forgotten")
 
 
 def _class_preserving_marker(status: str, marker: str) -> str:
@@ -3271,7 +3456,7 @@ def _tie_rank(evt: dict) -> int:
     status = str(evt.get("status") or "").lower()
     if status.startswith(("supersede-candidate", "resolving-candidate")):
         return 0
-    if status.startswith("reopen"):
+    if is_lift_status(status) or status.startswith("reopen"):
         return 2
     return 1
 
@@ -3310,13 +3495,21 @@ def fold_resolutions(rows) -> dict:
     Latest by `ts`, never by row position; equal-ts ties break on content
     (`_tie_wins`). A row with no `item_ref` is skipped, a row with no usable
     `ts` never displaces a stamped one, and the first of two unstamped rows
-    on one ref stays. No dedupe: every ref keeps its own latest event."""
+    on one ref stays. No dedupe: every ref keeps its own latest event.
+
+    The ITEM fold: a forget's key ref (`is_key_ref`) is not an item, so it is
+    skipped here and no reader of this map can count it, show it or mistake it
+    for an id. `standing_tombstones` is the one reader of key refs."""
+    return _fold(rows, keys=False)
+
+
+def _fold(rows, *, keys: bool) -> dict:
     out: dict = {}
     for evt in rows:
         if not isinstance(evt, dict):
             continue
         ref = str(evt.get("item_ref") or "")
-        if not ref:
+        if not ref or (is_key_ref(ref) and not keys):
             continue
         cur = out.get(ref)
         if cur is None:
@@ -3571,20 +3764,13 @@ def forgotten_content_keys(project_dir=None) -> set[str]:
     under a different framing. Only the LATEST event per ref counts, so a later
     `reopen` lifts the tombstone (same fold recall and the view use). Fails open to
     an empty set (missing/corrupt log, unknown project)."""
-    return _tombstoned_keys(resolutions(project_dir=project_dir))
+    return set(project_standing(project_dir))
 
 
-def _tombstoned_keys(resolved: dict) -> set[str]:
-    """The canonical keys of the `forgotten:` statuses in a
-    `fold_resolutions` result."""
-    keys: set[str] = set()
-    for evt in resolved.values():
-        status = str(evt.get("status") or "")
-        if status.lower().startswith(_FORGOTTEN_PREFIX):
-            key = status[len(_FORGOTTEN_PREFIX):].strip()
-            if key:
-                keys.add(key)
-    return keys
+def _tombstoned_keys(rows) -> set[str]:
+    """The canonical keys of the tombstones that stand in events `rows`: a
+    view of `standing_tombstones`, id refs and key refs alike."""
+    return set(standing_tombstones(rows))
 
 
 # (checkpoint root) -> (stamp, keys): see all_forgotten_content_keys. Only a
@@ -3625,7 +3811,7 @@ def _forgotten_walk() -> tuple[frozenset, frozenset]:
         read = jsonl.read(child / "events.jsonl")
         if read.health in (jsonl.Health.TRANSIENT, jsonl.Health.UNREADABLE):
             incomplete.add(child.name)
-        keys |= _tombstoned_keys(fold_resolutions(read.rows))
+        keys |= _tombstoned_keys(read.rows)
     if not incomplete:
         _all_forgotten_cache[root] = (key, frozenset(keys))
     return frozenset(keys), frozenset(incomplete)

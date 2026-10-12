@@ -296,6 +296,12 @@ lo enrute o no el proyecto ahora.
   publicado. Es higiene, no prueba, y no detecta una fila falsificada. Las filas publicadas
   son de versión 1; un lector que encuentra una versión de fila que no conoce
   omite a ese autor hasta actualizarse.
+- **Un olvido no se retracta.** Una fila de tombstone publicada no tiene
+  retractación porque las filas de tombstone no llevan versión ni un gancho que
+  falle cerrado; esa compuerta existe solo para las filas de cuarentena.
+  `daimon unforget` levanta un olvido en tu propia máquina y deja la fila que
+  publicaste: la fila que tus compañeros ya integraron se queda, y siguen
+  reteniendo el valor hasta que la quiten ellos.
 - **Un ledger dañado omite al autor.** Una línea basura o una última línea
   cortada en cualquiera de los ledgers publicados de un compañero significa que
   su afirmación más nueva no se puede probar, así que sus checkpoints no se
