@@ -114,7 +114,7 @@ def fake_gh(tmp_path):
 
 def _enable_probes(monkeypatch, gh_path):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh_path)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: True)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "github")
 
 
 def _calls(log):
@@ -227,7 +227,7 @@ def test_check_contradicted_stamps_item(monkeypatch, fake_gh, proj):
 
 def test_check_gh_missing_skips_silently(monkeypatch):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: True)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "github")
     cp = _cp(["PR #60 awaiting review"])
     stats = worldcheck.check(cp, "/p/A")
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
@@ -238,7 +238,7 @@ def test_check_gh_missing_skips_silently(monkeypatch):
 def test_check_no_github_remote_skips_without_probing(monkeypatch, fake_gh):
     gh, log = fake_gh()
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: False)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "no-remote")
     cp = _cp(["PR #60 awaiting review"])
     stats = worldcheck.check(cp, "/p/A")
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
@@ -360,6 +360,47 @@ def test_github_repo_gate_against_real_git(tmp_path):
     assert worldcheck._github_repo(str(plain)) is False
 
 
+def test_remote_state_tri_state(tmp_path):
+    # #1181: git ANSWERED with no GitHub remote ("no-remote") is a different
+    # fact from git failing ("git-failed"), which says nothing about remotes.
+    def git(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    repo = tmp_path / "with-remote"
+    repo.mkdir()
+    git("init", cwd=repo)
+    git("remote", "add", "origin", "https://github.com/example/example.git", cwd=repo)
+    assert worldcheck._remote_state(str(repo)) == "github"
+
+    bare = tmp_path / "no-remote"
+    bare.mkdir()
+    git("init", cwd=bare)
+    assert worldcheck._remote_state(str(bare)) == "no-remote"
+
+    gitlab = tmp_path / "gitlab"
+    gitlab.mkdir()
+    git("init", cwd=gitlab)
+    git("remote", "add", "origin", "https://gitlab.com/example/example.git", cwd=gitlab)
+    assert worldcheck._remote_state(str(gitlab)) == "no-remote"
+
+    # git exits non-zero (not a repository): a failure, not an answer.
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    assert worldcheck._remote_state(str(plain)) == "git-failed"
+
+
+@pytest.mark.parametrize("exc", [
+    FileNotFoundError("git"),
+    subprocess.TimeoutExpired(cmd="git", timeout=2),
+])
+def test_remote_state_git_missing_or_slow_is_git_failed(monkeypatch, exc):
+    def boom(*_a, **_k):
+        raise exc
+    monkeypatch.setattr(worldcheck.subprocess, "run", boom)
+    assert worldcheck._remote_state("/p/A") == "git-failed"
+    assert worldcheck._github_repo("/p/A") is False
+
+
 # ---- #397 slice 2: file-exists claims ---------------------------------------
 
 
@@ -420,7 +461,7 @@ def test_check_file_exists_confirmed(monkeypatch, tmp_path):
     (project / "src" / "fix.py").write_text("x = 1\n")
     # No gh, no GitHub remote: a deterministic disk probe must not need either.
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: False)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "no-remote")
     cp = _cp(["the fix lives in src/fix.py"])
     stats = worldcheck.check(cp, str(project))
     assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (

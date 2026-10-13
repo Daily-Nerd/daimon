@@ -440,18 +440,28 @@ def _gh_path():
     return shutil.which("gh")
 
 
-def _github_repo(project) -> bool:
-    """True only when `project` is inside a git repo with a GitHub remote —
-    the context `gh` resolves "#N" against. Anything else (no git, no
-    remote, git itself missing/slow) -> False, and the caller skips: probing
-    from the wrong repo answers the wrong question."""
+def _remote_state(project) -> str:
+    """What `git remote -v` says about `project`, three ways (#1181):
+    "github" (a GitHub remote), "no-remote" (git ANSWERED and listed none),
+    "git-failed" (git is missing, slow past 2 s, or exited non-zero, which
+    says nothing about remotes). The skip reason depends on the difference."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(project), "remote", "-v"],
             capture_output=True, text=True, timeout=2)
     except Exception:
-        return False
-    return proc.returncode == 0 and "github.com" in proc.stdout
+        return "git-failed"
+    if proc.returncode != 0:
+        return "git-failed"
+    return "github" if "github.com" in proc.stdout else "no-remote"
+
+
+def _github_repo(project) -> bool:
+    """True only when `project` is inside a git repo with a GitHub remote,
+    the context `gh` resolves "#N" against. Anything else (no git, no
+    remote, git itself missing/slow) -> False, and the caller skips: probing
+    from the wrong repo answers the wrong question."""
+    return _remote_state(project) == "github"
 
 
 def _probe_path(project, relpath):
@@ -616,7 +626,7 @@ def _gh_probes(plan: dict, project) -> dict:
     if not wanted:
         return {}
     gh = _gh_path()
-    if gh is None or not _github_repo(project):
+    if gh is None or _remote_state(project) != "github":
         return {}
     probes = {}
     for key, claim in wanted.items():
