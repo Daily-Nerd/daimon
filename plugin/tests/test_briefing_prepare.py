@@ -149,12 +149,54 @@ def test_worldcheck_runs_for_the_same_project_and_returns_its_rows(
         tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import config, worldcheck
     monkeypatch.setattr(config, "worldcheck_enabled", lambda: True)
-    monkeypatch.setattr(worldcheck, "check", lambda cp, project: {
-        "confirmed": 2, worldcheck.LEDGER_KEY: [("o-aaaaaa", "pr", "gone")]})
+
+    def _fake_check(cp, project, **_k):
+        return {"confirmed": 2,
+                worldcheck.LEDGER_KEY: [("o-aaaaaa", "pr", "gone")]}
+    monkeypatch.setattr(worldcheck, "check", _fake_check)
     _write()
     got = briefing.prepare(PROJECT, NOW, worldcheck_project=PROJECT)
     assert got.worldcheck == {"confirmed": 2}
     assert got.ledger_rows == [("o-aaaaaa", "pr", "gone")]
+
+
+def test_worldcheck_skip_reasons_ride_the_annotated_result(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import config, worldcheck
+    monkeypatch.setattr(config, "worldcheck_enabled", lambda: True)
+
+    def fake_check(cp, project, *, skip_reasons=None):
+        skip_reasons.append("pr-state:skipped-cap")
+        return {"skipped": 1, "pr-state:skipped": 1}
+    monkeypatch.setattr(worldcheck, "check", fake_check)
+    _write()
+    got = briefing.prepare(PROJECT, NOW, worldcheck_project=PROJECT)
+    assert got.worldcheck_skips == ("pr-state:skipped-cap",)
+
+
+def test_prepare_hands_check_the_skip_reasons_keyword(
+        tmp_checkpoint_dir, monkeypatch):
+    # A stub of check() that drops the keyword must fail LOUDLY here: prepare
+    # swallows a TypeError from check() by design, so a two-argument stub
+    # elsewhere would otherwise pass vacuously.
+    from daimon_briefing import config, worldcheck
+    monkeypatch.setattr(config, "worldcheck_enabled", lambda: True)
+    seen: list = []
+
+    def recording_check(cp, project, **kwargs):
+        seen.append(kwargs)
+        return {}
+    monkeypatch.setattr(worldcheck, "check", recording_check)
+    _write()
+    got = briefing.prepare(PROJECT, NOW, worldcheck_project=PROJECT)
+    assert got.worldcheck == {}
+    assert len(seen) == 1 and isinstance(seen[0]["skip_reasons"], list)
+
+
+def test_skip_reasons_are_empty_when_worldcheck_did_not_run(tmp_checkpoint_dir):
+    _write()
+    got = briefing.prepare(PROJECT, NOW)
+    assert got.worldcheck is None and got.worldcheck_skips == ()
 
 
 def test_a_failing_worldcheck_costs_only_the_worldcheck(tmp_checkpoint_dir,
@@ -168,6 +210,7 @@ def test_a_failing_worldcheck_costs_only_the_worldcheck(tmp_checkpoint_dir,
     _write()
     got = briefing.prepare(PROJECT, NOW, worldcheck_project=PROJECT)
     assert got.worldcheck is None and got.ledger_rows == []
+    assert got.worldcheck_skips == ()
     assert T_KEPT in _texts(got.checkpoint)
 
 

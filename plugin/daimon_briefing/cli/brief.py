@@ -231,7 +231,7 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     if checkpoint and annotated.worldcheck is not None:
         fx.add(effects_commit.worldcheck_effects(
             worldcheck_project, route, annotated.worldcheck,
-            annotated.ledger_rows))
+            annotated.ledger_rows, annotated.worldcheck_skips))
     # #694 PR 2 (D1): the surfaced stamps, AFTER the render+print pipeline
     # above completes — the card has already reached the terminal, so a
     # crash before the commit just re-renders it next brief (the safe

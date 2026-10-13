@@ -36,11 +36,13 @@ class Surfaced:
 @dataclass(frozen=True)
 class Verification:
     """The worldcheck bookkeeping of one brief: `stats` (counters), `rows`
-    (ledger rows for `route`), `project` (the receipt-probe usage scope)."""
+    (ledger rows for `route`), `project` (the receipt-probe usage scope) and
+    `skips` ("<class>:skipped-<reason>" per skipped claim, #1181)."""
     project: str
     route: str
     stats: dict
     rows: tuple
+    skips: tuple = ()
 
 
 @dataclass(frozen=True)

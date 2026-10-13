@@ -91,6 +91,26 @@ def test_one_failing_write_blocks_no_other(monkeypatch, events):
     assert ("usage", "u") in events and ("usage", "worldcheck:fired") in events
 
 
+def test_commit_writes_skip_reason_lines_after_the_counters(events, monkeypatch):
+    events.tap(monkeypatch)
+    monkeypatch.setattr(cli, "_write_worldcheck_ledger", lambda rows, route: None)
+    fx = effects_commit.worldcheck_effects(
+        "/p", "/p", {"skipped": 1, "pr-state:skipped": 1}, (),
+        skips=("pr-state:skipped-cap",))
+    effects_commit.commit(fx)
+    usage = [e[1] for e in events if _is_usage(e)]
+    assert usage == ["worldcheck:pr-state:skipped", "worldcheck:skipped",
+                     "worldcheck:pr-state:skipped-cap"]
+
+
+def test_worldcheck_effects_skips_default_to_none(events, monkeypatch):
+    events.tap(monkeypatch)
+    monkeypatch.setattr(cli, "_write_worldcheck_ledger", lambda rows, route: None)
+    effects_commit.commit(effects_commit.worldcheck_effects(
+        "/p", "/p", {"fired": 1}, ()))
+    assert [e[1] for e in events if _is_usage(e)] == ["worldcheck:fired"]
+
+
 def test_commit_survives_a_stdout_that_cannot_flush(monkeypatch):
     seen = []
     monkeypatch.setattr(cli, "_note_usage", seen.append)
@@ -159,8 +179,10 @@ def test_brief_writes_its_usage_stamps_and_ledger_after_the_output(
         project_dir=store.project_slug("/p/ec-sender"))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", recipient)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
-    monkeypatch.setattr(worldcheck, "check", lambda cp, project: {
-        "fired": 1, worldcheck.LEDGER_KEY: []})
+
+    def _fake_check(cp, project, **_k):
+        return {"fired": 1, worldcheck.LEDGER_KEY: []}
+    monkeypatch.setattr(worldcheck, "check", _fake_check)
     real = requests.stamp_surfaced
 
     def stamp(*a, **k):

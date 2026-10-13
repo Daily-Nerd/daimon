@@ -57,11 +57,13 @@ def committing(fn):
     return run
 
 
-def worldcheck_effects(worldcheck_project, route, stats, rows) -> Effects:
+def worldcheck_effects(worldcheck_project, route, stats, rows,
+                       skips=()) -> Effects:
     """The worldcheck bookkeeping of one brief: its counters, the receipt
-    probe usage and the ledger rows, as one `verification` record."""
+    probe usage, the skip reasons and the ledger rows, as one `verification`
+    record."""
     return Effects(verification=(Verification(
-        worldcheck_project, route, dict(stats), tuple(rows)),))
+        worldcheck_project, route, dict(stats), tuple(rows), tuple(skips)),))
 
 
 def surfaced_effects(worldcheck_project, printed) -> Effects:
@@ -164,6 +166,12 @@ def _commit_worldcheck(cli, record: Verification) -> None:
     for counter, count in sorted(stats.items()):
         for _ in range(int(count)):
             _attempt(cli._note_usage, f"worldcheck:{counter}")
+    # #1181: one more line per skipped claim, `worldcheck:<class>:skipped-
+    # <reason>`, BESIDE the untagged ones above (which keep their meaning).
+    # The reason is glued into the command token so the line still has two
+    # whitespace fields and the `usage.log` readers keep it.
+    for tag in record.skips:
+        _attempt(cli._note_usage, f"worldcheck:{tag}")
     # #919: the receipt-probe axis, project-scoped.
     _attempt(cli._note_receipt_probe_usage, project, stats)
     # A POINTER and a REASON CODE, never the item's text (#376).

@@ -1174,6 +1174,72 @@ def test_stats_surfaces_worldcheck_counters(monkeypatch, tmp_path, capsys):
     assert usage.get("worldcheck:confirmed") == 2
 
 
+def _usage_count(lines, token):
+    """#1181: count usage lines whose COMMAND token is exactly `token`. Anchored
+    at the end of the line with the separating space, because an unanchored
+    count of `worldcheck:pr-state:skipped` also matches every tagged
+    `...:skipped-<reason>` line and reads double."""
+    return sum(1 for ln in lines if ln.endswith(" " + token))
+
+
+def test_cli_brief_no_gh_writes_reason_tagged_skips(
+    monkeypatch, tmp_path, capsys, proj
+):
+    _write_claim_checkpoint(project=proj)  # one PR claim, one issue claim
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    usage = _usage_lines(tmp_path)
+    # The untagged lines keep their meaning...
+    assert _usage_count(usage, "worldcheck:pr-state:skipped") == 2
+    assert _usage_count(usage, "worldcheck:skipped") == 2
+    # ...and each skip also says why.
+    assert _usage_count(usage, "worldcheck:pr-state:skipped-no-gh") == 2
+    # The counting rule: an unanchored match double counts.
+    assert sum(1 for ln in usage if "worldcheck:pr-state:skipped" in ln) == 4
+    # Two whitespace fields on every line, so the stats readers keep them all.
+    assert all(len(ln.split()) == 2 for ln in usage if "worldcheck" in ln)
+
+
+def test_usage_skip_lines_sum_per_class(monkeypatch, tmp_path, capsys):
+    project = tmp_path / "repo"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / "link").symlink_to(outside)
+    cp = _cp(["PR #60 awaiting review", "the fix lives in link/x.py"])
+    store.write_checkpoint("S-now", cp, project_dir=str(project), writer=Writer.HUMAN)
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project))
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    usage = _usage_lines(tmp_path)
+    for cls, reason in (("pr-state", "no-gh"), ("file-exists", "unanswerable")):
+        assert _usage_count(usage, f"worldcheck:{cls}:skipped") == 1
+        assert _usage_count(usage, f"worldcheck:{cls}:skipped-{reason}") == 1
+
+
+def test_stats_counts_tagged_skips_beside_the_untagged_one(
+    monkeypatch, tmp_path, capsys
+):
+    log_dir = tmp_path / ".daimon" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "usage.log").write_text(
+        "2026-07-21T00:00:00Z worldcheck:pr-state:skipped\n"
+        "2026-07-21T00:00:00Z worldcheck:pr-state:skipped-no-gh\n"
+        "2026-07-21T00:00:01Z worldcheck:pr-state:skipped\n"
+        "2026-07-21T00:00:01Z worldcheck:pr-state:skipped-cap\n"
+    )
+    assert cli.main(["stats", "--json"]) == 0
+    usage = json.loads(capsys.readouterr().out).get("usage") or {}
+    assert usage["worldcheck:pr-state:skipped"] == 2
+    assert usage["worldcheck:pr-state:skipped-no-gh"] == 1
+    assert usage["worldcheck:pr-state:skipped-cap"] == 1
+
+
 # ---- #439 slice 3: receipt-validity -----------------------------------------
 #
 # The first class whose subject is daimon's OWN artifact rather than the world

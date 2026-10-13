@@ -130,8 +130,11 @@ def test_cli_brief_records_worldcheck_counters_and_ledger(
     _write_checkpoint(ROUTE)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", ROUTE)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
-    monkeypatch.setattr(worldcheck, "check", lambda cp, project: {
-        "fired": 2, worldcheck.LEDGER_KEY: [("o-aaaaaa", "pr-state", "merged")]})
+
+    def _fake_check(cp, project, **_k):
+        return {"fired": 2,
+                worldcheck.LEDGER_KEY: [("o-aaaaaa", "pr-state", "merged")]}
+    monkeypatch.setattr(worldcheck, "check", _fake_check)
     usage, receipt, ledger = [], [], []
     monkeypatch.setattr(cli, "_note_usage", usage.append)
     monkeypatch.setattr(cli, "_note_receipt_probe_usage",
@@ -150,8 +153,10 @@ def test_cli_brief_survives_worldcheck_bookkeeping_failing(
     _write_checkpoint(ROUTE)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", ROUTE)
     monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
-    monkeypatch.setattr(worldcheck, "check",
-                        lambda cp, project: {"fired": 1, worldcheck.LEDGER_KEY: []})
+
+    def _fake_check(cp, project, **_k):
+        return {"fired": 1, worldcheck.LEDGER_KEY: []}
+    monkeypatch.setattr(worldcheck, "check", _fake_check)
     real = cli._note_usage
     monkeypatch.setattr(cli, "_note_usage", lambda c: _boom() if c.startswith("worldcheck:") else real(c))
     assert cli.main(["brief"]) == 0
