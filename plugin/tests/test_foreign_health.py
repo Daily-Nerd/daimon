@@ -129,6 +129,15 @@ def test_the_api_exports_the_typed_cores_and_the_health_map():
     assert "join" in api.__all__ and "ledger_health" in api.__all__
 
 
+def test_the_api_exports_the_transcript_exclusion_contract():
+    for name in ("admitted_messages", "Admitted", "EXCLUDED_ROWS"):
+        assert name in api.__all__
+    assert api.Admitted._fields == ("messages", "notes")
+    # Pin codes by inclusion: a code may be added, never removed.
+    assert {"sidechain", "meta", "attachment",
+            "compact-summary"} <= set(api.EXCLUDED_ROWS)
+
+
 def test_ledger_health_maps_each_ledger_file_to_its_state(tmp_checkpoint_dir):
     _open()
     with open(_ledger(), "ab") as handle:

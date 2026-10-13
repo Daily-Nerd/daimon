@@ -5,12 +5,12 @@ import ast
 from pathlib import Path
 
 from daimon_briefing import (api, display, inspector, pending, requests, store,
-                             surfaces, view)
+                             surfaces, transcript, view)
 
 REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing", "inbox",
              "join", "ledger_health", "project_slug", "receipt_state", "Writer",
-             "masked")
+             "masked", "EXCLUDED_ROWS", "Admitted", "admitted_messages")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -38,6 +38,9 @@ def test_every_name_is_the_source_object():
     assert api.receipt_state is view.receipt_state
     assert api.masked is view.masked
     assert api.Writer is surfaces.Writer
+    assert api.EXCLUDED_ROWS is transcript.EXCLUDED_ROWS
+    assert api.Admitted is transcript.Admitted
+    assert api.admitted_messages is transcript.admitted_messages
     assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
 
