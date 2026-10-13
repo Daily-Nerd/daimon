@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 149
 type: landmine
 title: The message loop and the coverage sidecar must share excluded_reason, or compacted sessions lose coverage
 severity: high
 confidence: 0.85
 created: 2026-10-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/transcript.py
   - pattern: "def excluded_reason"
@@ -14,7 +16,7 @@ evidence:
 expires:
   condition: "coverage is computed from the same pass that builds the messages"
   review_after: 2027-04-12
-status: candidate
+status: active
 ---
 
 `_from_jsonl` builds the messages and `_claude_coverage` builds the coverage

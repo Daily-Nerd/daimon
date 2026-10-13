@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 145
 type: landmine
 title: A published released row lifts a quarantine, and nothing authenticates who appended it to the owner's file
 severity: high
 confidence: 0.85
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/policy.py
   - pattern: "fold_published_quarantines"
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "published team rows carry a verified signature (the version 2 row with sig) and the fold skips an unsigned or badly signed one"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 A teammate's quarantine reaches a reader as hash-only rows in

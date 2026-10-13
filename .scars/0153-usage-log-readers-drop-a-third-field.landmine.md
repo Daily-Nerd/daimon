@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 153
 type: landmine
 title: usage.log readers keep only two-field lines, so a reason must be glued into the command token
 severity: medium
 confidence: 0.85
 created: 2026-10-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/stats.py
   - path: plugin/daimon_briefing/effects_commit.py
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "the usage.log readers parse more than two whitespace fields"
   review_after: 2027-04-12
-status: candidate
+status: active
 ---
 
 `_stats_usage` and the delivery-count reader in `cli/stats.py` split each

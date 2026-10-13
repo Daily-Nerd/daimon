@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 143
 type: landmine
 title: A new lifecycle status word must be ranked in _tie_rank, is_resolved and the status class tuple
 severity: medium
 confidence: 0.8
 created: 2026-10-10
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "def _tie_rank"
@@ -14,7 +16,7 @@ evidence:
 expires:
   condition: "the status vocabulary is an enum with one table of ranks"
   review_after: 2027-04-10
-status: candidate
+status: active
 ---
 
 Three places read the first word of a status: `is_resolved` (does it close the

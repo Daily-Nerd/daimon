@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 147
 type: fence
 title: Attachment rows are dropped by top-level type, never by an allow-list of inner types
 severity: medium
 confidence: 0.8
 created: 2026-10-12
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/transcript.py
   - pattern: 'get\("type"\) == "attachment"'
@@ -14,7 +16,7 @@ evidence:
 expires:
   condition: "a host writes conversation text into an attachment row that a capture must read"
   review_after: 2027-04-12
-status: candidate
+status: active
 ---
 
 Claude Code writes 34 inner attachment types (hook output, reminders,

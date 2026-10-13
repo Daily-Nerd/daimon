@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 151
 type: fence
 title: trust republish re-sends the original local rows verbatim, because presence and ordering key on order and event_id
 severity: medium
 confidence: 0.8
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/trust.py
   - pattern: "def republish"
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "the published row is ordered by something other than the local ledger's order and event_id"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 A published quarantine row copies `order`, `event_id` and `ts` from the local
