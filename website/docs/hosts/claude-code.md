@@ -137,6 +137,46 @@ These two capture/inject scripts are wired in one of two mutually exclusive
 ways — pick ONE (both at once double-fires every session: two briefing
 injections, two serialize LLM calls). See the install sections above.
 
+## Rows a capture never reads
+
+A capture reads the conversation and nothing a host or a hook wrote around it.
+Four rules decide which transcript rows are dropped, each with a stable code:
+
+| Code | Row dropped |
+|---|---|
+| `sidechain` | `isSidechain` is true (a sub-agent exchange) |
+| `meta` | `isMeta` is true |
+| `attachment` | the top-level `type` is `attachment`, whatever its inner type |
+| `compact-summary` | `isCompactSummary` is true |
+
+Hook output reaches a transcript as attachment rows, daimon's own briefing
+included, so none of it is read back. An attachment row is dropped even when
+it also carries a `message`. The contract a host can pin: a row read by the
+generic loader with top-level `type: attachment`, or with `isSidechain`,
+`isMeta` or `isCompactSummary` set to true, contributes no text, no id and no
+coverage row to any capture.
+
+A compaction summary is text the model wrote, so a capture keeps the
+conversation the summary was made from, which is almost always earlier in the
+same file. When a summary is the first conversation row of the file, the
+capture starts without that context. `serialize.log` then gets a line,
+`note for <session>: compact-summary-only-context`, and `admitted_messages`
+carries the same note.
+
+A host can pin its own tests to this:
+
+```python
+from daimon_briefing import api
+
+admitted = api.admitted_messages("session.jsonl")
+admitted.messages   # a tuple of read-only mappings: what a capture reads
+admitted.notes      # codes, or "code: detail"; never raises
+api.EXCLUDED_ROWS   # code -> one-line meaning
+```
+
+Removing a code is a breaking change. Pin codes by inclusion, not equality,
+because a code may be added.
+
 ## Teach the agent the protocol
 
 ```sh

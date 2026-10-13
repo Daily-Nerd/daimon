@@ -146,6 +146,48 @@ mutuamente excluyentes — elige UNA (ambas a la vez disparan todo dos veces
 por sesión: dos inyecciones de briefing, dos llamadas LLM de serialización).
 Mira las secciones de instalación de arriba.
 
+## Filas que una captura nunca lee
+
+Una captura lee la conversación y nada de lo que el anfitrión o un hook
+escribió alrededor. Cuatro reglas deciden qué filas de la transcripción se
+descartan, cada una con un código estable:
+
+| Código | Fila descartada |
+|---|---|
+| `sidechain` | `isSidechain` es verdadero (un intercambio de sub-agente) |
+| `meta` | `isMeta` es verdadero |
+| `attachment` | el `type` de nivel superior es `attachment`, sea cual sea su tipo interno |
+| `compact-summary` | `isCompactSummary` es verdadero |
+
+La salida de un hook llega a la transcripción como filas de tipo attachment,
+el briefing de daimon incluido, así que nada de eso se vuelve a leer. Una fila
+attachment se descarta aunque también lleve un `message`. El contrato que un
+anfitrión puede fijar: una fila leída por el cargador genérico con `type:
+attachment` de nivel superior, o con `isSidechain`, `isMeta` o
+`isCompactSummary` en verdadero, no aporta texto, ni id, ni fila de cobertura
+a ninguna captura.
+
+Un resumen de compactación es texto que escribió el modelo, así que la captura
+conserva la conversación a partir de la cual se hizo el resumen, que casi
+siempre está antes en el mismo archivo. Cuando un resumen es la primera fila de
+conversación del archivo, la captura arranca sin ese contexto. Entonces
+`serialize.log` recibe una línea, `note for <sesión>:
+compact-summary-only-context`, y `admitted_messages` lleva la misma nota.
+
+Un anfitrión puede atar sus propios tests a esto:
+
+```python
+from daimon_briefing import api
+
+admitted = api.admitted_messages("session.jsonl")
+admitted.messages   # tupla de mapeos de solo lectura: lo que lee una captura
+admitted.notes      # códigos, o "código: detalle"; nunca lanza
+api.EXCLUDED_ROWS   # código -> significado en una línea
+```
+
+Quitar un código es un cambio incompatible. Atá los códigos por inclusión, no
+por igualdad, porque se puede agregar uno.
+
 ## Enséñale el protocolo al agente
 
 ```sh
