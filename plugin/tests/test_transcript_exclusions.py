@@ -395,3 +395,68 @@ def test_the_hook_door_logs_no_note_when_the_session_db_is_the_source(
     log = _isolate_daimon_home / "logs" / "serialize.log"
     text = log.read_text(encoding="utf-8") if log.exists() else ""
     assert "note for" not in text
+
+
+# --- the public surface -------------------------------------------------
+
+def test_excluded_rows_names_each_code_and_is_read_only():
+    from daimon_briefing import api
+
+    assert set(api.EXCLUDED_ROWS) == set(transcript.EXCLUDED_CODES)
+    assert tuple(api.EXCLUDED_ROWS) == transcript.EXCLUDED_CODES
+    assert all(isinstance(v, str) and v and "\n" not in v
+               for v in api.EXCLUDED_ROWS.values())
+    with pytest.raises(TypeError):
+        api.EXCLUDED_ROWS["extra"] = "no"  # type: ignore[index]
+
+
+def test_admitted_messages_returns_exactly_what_capture_reads():
+    from daimon_briefing import api
+
+    got = api.admitted_messages(MIXED)
+    assert isinstance(got, api.Admitted)
+    assert [dict(m) for m in got.messages] == \
+        transcript.from_file_detailed(MIXED)["messages"]
+    assert got.notes == ()
+    blob = json.dumps([dict(m) for m in got.messages])
+    for marker in INJECTED:
+        assert marker not in blob
+
+
+def test_admitted_messages_are_read_only():
+    from daimon_briefing import api
+
+    got = api.admitted_messages(MIXED)
+    assert isinstance(got.messages, tuple)
+    with pytest.raises(TypeError):
+        got.messages[0]["content"] = "changed"  # type: ignore[index]
+
+
+def test_admitted_messages_carries_the_summary_first_note():
+    from daimon_briefing import api
+
+    got = api.admitted_messages(SUMMARY_FIRST)
+    assert "compact-summary-only-context" in got.notes
+    assert len(got.messages) == 2
+
+
+def test_admitted_messages_names_a_coverage_that_is_unavailable(tmp_path):
+    from daimon_briefing import api
+
+    md = tmp_path / "t.md"
+    md.write_text("user: hello there\nassistant: hi\n", encoding="utf-8")
+    got = api.admitted_messages(md)
+    assert got.notes == ("coverage-unavailable: unsupported_adapter",)
+    assert got.messages
+
+
+def test_admitted_messages_never_raises(tmp_path):
+    from daimon_briefing import api
+
+    missing = api.admitted_messages(tmp_path / "nope.jsonl")
+    assert missing == api.Admitted((), ("transcript-unreadable",))
+    binary = tmp_path / "bad.jsonl"
+    binary.write_bytes(b"\xff\xfe\x00 not utf-8")
+    assert api.admitted_messages(binary).notes == ("transcript-unreadable",)
+    assert api.admitted_messages(None).notes == ("transcript-unreadable",)
+    assert api.admitted_messages(tmp_path).notes == ("transcript-unreadable",)

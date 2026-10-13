@@ -3,7 +3,8 @@
 Re-exports, plus the one thing daimon owns about its own output: how to read a
 briefing back. A consumer gets the judged read (`view.lookup`, `view.match`), the item
 receipt (`why`, rendered by `why_lines`), the envelope reader, the cheap
-receipt check, `masked` (a ledger's prose judged for a printer), the proposals queue, the requests listings and the pure slug
+receipt check, `masked` (a ledger's prose judged for a printer), the proposals queue, the requests listings, the transcript exclusion
+contract (`EXCLUDED_ROWS`, `admitted_messages`, #1178) and the pure slug
 transform without reaching into modules whose layout may move, and
 `parse_briefing` for the text `daimon brief` prints. Write verbs are not part
 of this surface; callers that write keep importing the write modules.
@@ -26,11 +27,13 @@ from .pending import queue
 from .requests import inbox, inbox_listing, join, listing
 from .store import project_slug, read_meta
 from .surfaces import Writer
+from .transcript import EXCLUDED_ROWS, Admitted, admitted_messages
 from .view import ledger_health, lookup, masked, match, receipt_state
 
 __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker", "withheld_json", "queue", "listing",
            "inbox_listing", "inbox", "join", "ledger_health", "project_slug",
-           "receipt_state", "Writer", "masked", "Briefing", "parse_briefing")
+           "receipt_state", "Writer", "masked", "EXCLUDED_ROWS", "Admitted",
+           "admitted_messages", "Briefing", "parse_briefing")
 
 
 @dataclass(frozen=True)
