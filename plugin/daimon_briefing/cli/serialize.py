@@ -28,7 +28,7 @@ from .. import (
     store,
     transcript,
 )
-from ..ledger import _append_serialize_log
+from ..ledger import _append_serialize_log, _append_transcript_notes
 from ..surfaces import Writer
 
 
@@ -182,6 +182,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
         detailed = transcript.from_file_detailed(path)
         messages = detailed["messages"]
         coverage = detailed["coverage"]
+        _append_transcript_notes(session_id, detailed["notes"])
     except FileNotFoundError:
         msg = f"error: transcript not found: {path}"
         _print_error(msg)

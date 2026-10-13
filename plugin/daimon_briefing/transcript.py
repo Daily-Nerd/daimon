@@ -650,7 +650,7 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
     delim = (speaker_line if speaker_line is not None
              else config.speaker_line_delimiter())
     for obj in objects:
-        if obj.get("isSidechain") or obj.get("isMeta"):
+        if excluded_reason(obj) is not None:
             continue
 
         role = _role_of(obj)
@@ -709,6 +709,61 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
                     tool_msg["daimon_output"] = True
                 messages.append(tool_msg)
     return messages
+
+
+# #1178: the rows no capture reads, one stable code per rule, in check order.
+EXCLUDED_CODES = ("sidechain", "meta", "attachment", "compact-summary")
+
+SUMMARY_FIRST_NOTE = "compact-summary-only-context"
+
+
+def excluded_reason(obj: dict) -> str | None:
+    """Why a transcript row never reaches a capture, or None when it may.
+
+    THE single place that decides. The message loop and the coverage sidecar
+    both call it: a summary row is `type: user`, so a rule known to only one
+    of the two would leave the sidecar a row longer than the messages and
+    flip every compacted session to `coverage_incomplete`. An attachment is
+    excluded by its ROW TYPE, whatever its inner type and even when it also
+    carries a `message`, because hooks (daimon's own briefing among them)
+    write their output as attachments.
+    """
+    if obj.get("isSidechain"):
+        return "sidechain"
+    if obj.get("isMeta"):
+        return "meta"
+    if obj.get("type") == "attachment":
+        return "attachment"
+    if obj.get("isCompactSummary"):
+        return "compact-summary"
+    return None
+
+
+def _carries_conversation(obj: dict) -> bool:
+    """True when the loader would admit `obj` as a message: a role, and either
+    text or a tool result under a usable uuid (the two shapes `_from_jsonl`
+    keeps)."""
+    if _role_of(obj) is None:
+        return False
+    if _content_of(obj):
+        return True
+    raw_uuid = obj.get("uuid")
+    return (isinstance(raw_uuid, str) and bool(raw_uuid.strip())
+            and _tool_result_of(obj) is not None)
+
+
+def _summary_opens(objects: list[dict]) -> bool:
+    """True when no message precedes the first compaction summary, so the
+    capture starts without the context the summary was made from. Rows the
+    loader drops anyway (sidechain, meta, attachment, empty rows) do not
+    count as earlier context."""
+    for obj in objects:
+        reason = excluded_reason(obj)
+        if reason == "compact-summary":
+            return _role_of(obj) is not None
+        if reason is None and _carries_conversation(obj):
+            return False
+    return False
 
 
 def _role_of(obj: dict) -> str | None:
@@ -891,7 +946,7 @@ def _claude_coverage(text: str, messages: list[dict]) -> dict:
     rows = []
     seen = set()
     for obj in objects:
-        if obj.get("isSidechain") or obj.get("isMeta"):
+        if excluded_reason(obj) is not None:
             continue
         role = obj.get("type")
         if role not in ("user", "assistant"):
@@ -934,6 +989,7 @@ def from_file_detailed(path) -> dict:
         raise FileNotFoundError(p)
     text = p.read_text(encoding="utf-8")
     messages = _from_file_text(p, text)
+    notes: list[str] = []
     if p.suffix != ".jsonl":
         coverage = {"version": 1, "adapter": "generic", "available": False,
                     "reason": "unsupported_adapter", "rows": []}
@@ -952,4 +1008,6 @@ def from_file_detailed(path) -> dict:
                         "reason": "unsupported_adapter", "rows": []}
         else:
             coverage = _claude_coverage(text, messages)
-    return {"messages": messages, "coverage": coverage}
+            if _summary_opens(objects):
+                notes.append(SUMMARY_FIRST_NOTE)
+    return {"messages": messages, "coverage": coverage, "notes": notes}

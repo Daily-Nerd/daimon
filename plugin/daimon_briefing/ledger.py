@@ -36,6 +36,17 @@ def _append_serialize_log(line: str) -> None:
         pass
 
 
+def _append_transcript_notes(session_id: str, notes) -> None:
+    """One `note for <session>: <code>` line per transcript note (#1178).
+    The line matches no spawn or result pattern, so `status` and `heal` read
+    straight past it; it is there so a capture that started without the
+    context a compaction summarised is visible in the log. Every capture is
+    its own run, so a re-serialize or a heal retry of the same file writes the
+    line again."""
+    for note in notes:
+        _append_serialize_log(f"note for {session_id}: {note}")
+
+
 def _append_retry_log(session_id: str, prior: str) -> None:
     """Mark a #26 heal retry in serialize.log BEFORE re-serializing. The line is
     a TIMESTAMPED spawn-style marker (matching the hook spawn-line stamp format)

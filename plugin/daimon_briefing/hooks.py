@@ -119,6 +119,9 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 else:
                     messages = file_messages
                     coverage = detailed["coverage"]
+                if messages is file_messages:
+                    ledger._append_transcript_notes(
+                        session_id, detailed["notes"])
         else:
             messages = session_messages
         if not messages:
