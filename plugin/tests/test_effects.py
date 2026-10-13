@@ -50,6 +50,7 @@ def test_the_record_types_are_frozen_and_named():
     v = effects.Verification("/p", "/p", {"fired": 1}, ())
     assert (v.project, v.route, v.stats, v.rows) == ("/p", "/p",
                                                       {"fired": 1}, ())
+    assert v.skips == ()  # #1181: defaulted, so older call sites keep working
     t = effects.Telemetry([], {"via": "mcp"})
     assert (t.rows, t.kwargs) == ([], {"via": "mcp"})
     for record in (s, v, t):

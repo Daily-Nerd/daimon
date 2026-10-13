@@ -87,6 +87,18 @@ BUDGET_SECONDS = 0.8
 # which is why allocation follows checkpoint order rather than class.
 MAX_PROBES = 5
 
+# #1181: why a claim was skipped. Closed vocabulary; the reason is the tail of
+# the usage-log token `worldcheck:<class>:skipped-<reason>`, so renaming one
+# splits history. `unknown` is a sentinel for a skip no branch explained: a
+# test pins it at zero across every skip fixture.
+SKIP_REASONS = frozenset({
+    "cap", "deadline", "no-gh", "no-remote", "probe-error", "exit-nonzero",
+    "unparseable", "unanswerable", "unknown"})
+
+# `_remote_state` answers that stop the PR/issue class, and the reason each
+# one is reported under. "github" is absent: it lets the probes run.
+_REMOTE_SKIP_REASON = {"no-remote": "no-remote", "git-failed": "probe-error"}
+
 # #833: per-item aggregate rollup precedence — an item is what its strongest
 # outcome says it is, and "skipped" never decides when another outcome
 # exists (a probe-cap- or deadline-starved claim must not swallow a real
@@ -440,18 +452,28 @@ def _gh_path():
     return shutil.which("gh")
 
 
-def _github_repo(project) -> bool:
-    """True only when `project` is inside a git repo with a GitHub remote —
-    the context `gh` resolves "#N" against. Anything else (no git, no
-    remote, git itself missing/slow) -> False, and the caller skips: probing
-    from the wrong repo answers the wrong question."""
+def _remote_state(project) -> str:
+    """What `git remote -v` says about `project`, three ways (#1181):
+    "github" (a GitHub remote), "no-remote" (git ANSWERED and listed none),
+    "git-failed" (git is missing, slow past 2 s, or exited non-zero, which
+    says nothing about remotes). The skip reason depends on the difference."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(project), "remote", "-v"],
             capture_output=True, text=True, timeout=2)
     except Exception:
-        return False
-    return proc.returncode == 0 and "github.com" in proc.stdout
+        return "git-failed"
+    if proc.returncode != 0:
+        return "git-failed"
+    return "github" if "github.com" in proc.stdout else "no-remote"
+
+
+def _github_repo(project) -> bool:
+    """True only when `project` is inside a git repo with a GitHub remote,
+    the context `gh` resolves "#N" against. Anything else (no git, no
+    remote, git itself missing/slow) -> False, and the caller skips: probing
+    from the wrong repo answers the wrong question."""
+    return _remote_state(project) == "github"
 
 
 def _probe_path(project, relpath):
@@ -564,22 +586,28 @@ def _local_probe(cls, project, target):
     return _probe_dep(project, target)
 
 
-def _run_local(plan: dict, project, deadline) -> dict:
+def _run_local(plan: dict, project, deadline, why: dict) -> dict:
     """Answer every on-disk claim in the plan. Runs BEFORE the `gh` fan-out:
     these probes cost microseconds, so letting a hanging network probe starve
     them would trade the reliable classes for the unreliable one. Still bound
-    by the shared deadline — the budget covers all classes, not just `gh`."""
+    by the shared deadline: the budget covers all classes, not just `gh`.
+
+    `why` (#1181) collects {key: skip reason} for every key left unanswered."""
     out: dict = {}
     for key in plan:
         if key[0] not in _LOCAL_CLASSES:
             continue
         if time.monotonic() >= deadline:
-            break
+            why[key] = "deadline"
+            continue
         try:
             value = _local_probe(key[0], project, key[1])
         except Exception:
-            value = None  # any probe failure is a SKIP, never a raise
-        if value is not None:
+            why[key] = "probe-error"
+            continue  # any probe failure is a SKIP, never a raise
+        if value is None:
+            why[key] = "unanswerable"
+        else:
             out[key] = value
     return out
 
@@ -608,7 +636,7 @@ def _parse_vitni_valid(out):
     return _INVALID if valid is False else None
 
 
-def _gh_probes(plan: dict, project) -> dict:
+def _gh_probes(plan: dict, project, why: dict) -> dict:
     """Slice 1's read-only `gh` probes as probe specs. The `gh`/GitHub-remote
     gate is per CLASS: a missing `gh` skips the PR/issue claims ONLY, and a
     checkpoint with no PR/issue claim never shells out at all."""
@@ -616,7 +644,10 @@ def _gh_probes(plan: dict, project) -> dict:
     if not wanted:
         return {}
     gh = _gh_path()
-    if gh is None or not _github_repo(project):
+    reason = ("no-gh" if gh is None
+              else _REMOTE_SKIP_REASON.get(_remote_state(project)))
+    if reason is not None:
+        why.update({key: reason for key in wanted})
         return {}
     probes = {}
     for key, claim in wanted.items():
@@ -662,7 +693,7 @@ def _verify_probe(session):
     return Probe(argv=[cli, "verify"], stdin=payload, parse=_parse_vitni_valid)
 
 
-def _receipt_probes(plan: dict, out: dict) -> dict:
+def _receipt_probes(plan: dict, out: dict, why: dict) -> dict:
     """Phase (a) of the receipt check, plus the phase (b) probe specs (#439).
 
     Phase (a) is FREE — sidecar-exists + outputs_hash byte match, exactly the
@@ -674,7 +705,8 @@ def _receipt_probes(plan: dict, out: dict) -> dict:
     cannot tell a re-signed forgery from the real thing.
 
     Mutates `out` (the results dict) for the phase-(a) answers and returns
-    only what still needs spawning. Never raises: any failure is a skip."""
+    only what still needs spawning. Never raises: any failure is a skip, and
+    `why` (#1181) records which kind."""
     probes = {}
     for key, claim in plan.items():
         if key[0] != RECEIPT_VALIDITY:
@@ -682,19 +714,23 @@ def _receipt_probes(plan: dict, out: dict) -> dict:
         try:
             cp = store.read_checkpoint(claim.session)
             if not isinstance(cp, dict):
+                why[key] = "unanswerable"
                 continue  # vanished between collection and probe -> skip
             if receipts.verbatim_degraded(cp):
                 out[key] = _TAMPERED
                 continue
             probe = _verify_probe(claim.session)
         except Exception:
+            why[key] = "probe-error"
             continue
-        if probe is not None:
+        if probe is None:
+            why[key] = "unanswerable"
+        else:
             probes[key] = probe
     return probes
 
 
-def _run_probes(probes: dict, cwd, deadline) -> dict:
+def _run_probes(probes: dict, cwd, deadline, why: dict) -> dict:
     """Run every probe in parallel under the SHARED aggregate deadline.
     `probes` is {key: Probe}; returns {key: value | None} — None for anything
     killed at the deadline, failed, or unparseable. Never raises: a probe
@@ -702,7 +738,9 @@ def _run_probes(probes: dict, cwd, deadline) -> dict:
 
     ONE fan-out for every subprocess class: separate runners would make the
     aggregate budget a fiction, since the second runner could only start after
-    the first had waited out its whole deadline."""
+    the first had waited out its whole deadline.
+
+    `why` (#1181) collects {key: skip reason} for every probe left unanswered."""
     if not probes:
         return {}
     procs: dict = {}
@@ -714,6 +752,7 @@ def _run_probes(probes: dict, cwd, deadline) -> dict:
                 stdin=subprocess.PIPE if probe.stdin else subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         except Exception:
+            why[key] = "probe-error"
             continue  # spawn failure (gh vanished mid-flight) -> skip
         if probe.stdin and proc.stdin is not None:
             # Written and closed IMMEDIATELY: a stdin-reading child otherwise
@@ -744,17 +783,22 @@ def _run_probes(probes: dict, cwd, deadline) -> dict:
                 p.communicate(timeout=1)
             except Exception:
                 pass
+            why[key] = "deadline"
             continue
         try:
             out, _ = p.communicate(timeout=1)
         except Exception:
+            why[key] = "probe-error"
             continue
         if p.returncode != 0:
+            why[key] = "exit-nonzero"
             continue
         try:
             results[key] = probes[key].parse(out)
         except Exception:
-            continue
+            results[key] = None
+        if results[key] is None:
+            why[key] = "unparseable"
     return results
 
 
@@ -795,7 +839,7 @@ def _flag(cls, claim, value):
     return f"{claim.name} {value} not {claim.version}", "changed"
 
 
-def check(checkpoint, project_dir) -> dict:
+def check(checkpoint, project_dir, *, skip_reasons=None) -> dict:
     """Spot-check the checkpoint's CARRIED claim-bearing items against
     reality, stamping contradicted items with a transient `_worldcheck`
     annotation IN PLACE (the caller owns the in-memory dict; nothing is
@@ -817,7 +861,14 @@ def check(checkpoint, project_dir) -> dict:
     confirmations. The CLI gates confirmations on a matching contradiction
     before writing. Skipped probes emit no evidence. A caller that ignores it loses
     the ledger row and nothing else — the counters and the flags are whole on
-    their own. A caller that iterates the dict blindly must pop it first."""
+    their own. A caller that iterates the dict blindly must pop it first.
+
+    #1181: `skip_reasons`, an optional caller-owned list, receives one
+    "<class>:skipped-<reason>" entry per skipped CLAIM (reasons in
+    `SKIP_REASONS`). It is an out-parameter rather than a key of the returned
+    dict because that dict is asserted by exact equality across the suite, and
+    rather than module state because the hosts call this from worker threads.
+    The entries of a class add up to that class's "<class>:skipped" count."""
     # dict, not dict[str, int]: LEDGER_KEY carries list rows (#439).
     stats: dict = {"confirmed": 0, "contradicted": 0, "skipped": 0}
     # #919: reset the last-run receipt-probe telemetry FIRST, before either
@@ -864,10 +915,12 @@ def check(checkpoint, project_dir) -> dict:
         if key in plan or len(plan) >= MAX_PROBES:
             continue
         plan[key] = claim
-    results = _run_local(plan, project_dir, deadline)
-    probes = _receipt_probes(plan, results)  # phase (a) answers into results
-    probes.update(_gh_probes(plan, project_dir))
-    results.update(_run_probes(probes, cwd=project_dir, deadline=deadline))
+    why: dict = {}  # #1181: {plan key: skip reason}, filled by the runners
+    results = _run_local(plan, project_dir, deadline, why)
+    probes = _receipt_probes(plan, results, why)  # phase (a) answers into results
+    probes.update(_gh_probes(plan, project_dir, why))
+    results.update(
+        _run_probes(probes, cwd=project_dir, deadline=deadline, why=why))
     ledger: list[tuple] = []
     # #830/#833: the aggregate three count once per ITEM (the docstring's
     # promise, and what cli emits usage events under), under the precedence
@@ -880,6 +933,10 @@ def check(checkpoint, project_dir) -> dict:
         value = results.get((cls, _target(cls, claim)))
         if value is None:
             outcome = "skipped"
+            if skip_reasons is not None:
+                key = (cls, _target(cls, claim))
+                reason = "cap" if key not in plan else why.get(key, "unknown")
+                skip_reasons.append(f"{cls}:skipped-{reason}")
         elif _satisfied(cls, claim, value):
             outcome = "confirmed"
             # #525: the quiet inverse of the contradiction stamp — transient,

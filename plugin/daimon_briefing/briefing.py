@@ -707,6 +707,9 @@ class Annotated(NamedTuple):
     quarantined: int = 0
     notes: tuple = ()
     fell_back: bool = False
+    # #1181: "<class>:skipped-<reason>" per claim worldcheck skipped, for the
+    # CALLER to record beside the counters; () when it did not run.
+    worldcheck_skips: tuple = ()
 
 
 def prepare(project, now, *, live: bool = True, worldcheck_project=None,
@@ -740,15 +743,18 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         checkpoint, _candidates, stale_items = stamp(checkpoint, snap, now)
     wc_stats = None
     ledger_rows: list = []
+    skips: list = []
     if (isinstance(checkpoint, dict) and worldcheck_project
             and not opened.fell_back and config.worldcheck_enabled()):
         try:
             from . import worldcheck
-            wc_stats = dict(worldcheck.check(checkpoint, worldcheck_project))
+            wc_stats = dict(worldcheck.check(
+                checkpoint, worldcheck_project, skip_reasons=skips))
             ledger_rows = list(wc_stats.pop(worldcheck.LEDGER_KEY, ()))
         except Exception:
             wc_stats = None
             ledger_rows = []
+            skips = []
     notes = snap.notes()
     # D10.4: sessions of THIS project that were refused for an unproven events
     # ledger and are waiting on a repair. Own bucket only; silent once the
@@ -774,7 +780,7 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
-        notes, opened.fell_back)
+        notes, opened.fell_back, tuple(skips))
 
 
 # ---- #79: token budget — section-preserving truncation ----

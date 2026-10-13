@@ -35,6 +35,8 @@ Slice 3's probes hit the shared fake vitni CLI (tests/conftest.py) — a local
 subprocess, still zero network.
 """
 
+import collections
+import functools
 import json
 import subprocess
 import time
@@ -84,6 +86,46 @@ def _generous_worldcheck_budget(monkeypatch):
     monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 300.0)
 
 
+def _skip_sum_problems(stats, reasons):
+    """#1181: the tagged skip lines of a class must add up to that class's
+    untagged skipped count, and every tag must come from the closed
+    vocabulary with no `unknown` among them. [] when the books balance."""
+    problems = []
+    tagged = collections.Counter(r.split(":skipped-")[0] for r in reasons)
+    untagged = {k[:-len(":skipped")]: v for k, v in stats.items()
+                if isinstance(k, str) and k.endswith(":skipped")}
+    if dict(tagged) != untagged:
+        problems.append(f"tagged {dict(tagged)} != untagged {untagged}")
+    known = worldcheck.SKIP_REASONS - {"unknown"}
+    for r in reasons:
+        if r.split(":skipped-")[1] not in known:
+            problems.append(f"reason outside the vocabulary: {r}")
+    return problems
+
+
+@pytest.fixture(autouse=True)
+def _skip_reasons_sum_on_every_fixture(monkeypatch):
+    """#1181 sum invariant over EVERY skip fixture in this module (and the
+    CLI tests that reach check() through prepare): each check() call is
+    wrapped to collect its skip reasons, and the books are balanced after
+    the test. Recorded, not raised inside the wrapper: prepare swallows a
+    raise from check() by design, which would hide a violation."""
+    real = worldcheck.check
+    violations: list = []
+
+    @functools.wraps(real)
+    def wrapped(checkpoint, project_dir, *, skip_reasons=None):
+        reasons = skip_reasons if skip_reasons is not None else []
+        before = len(reasons)
+        stats = real(checkpoint, project_dir, skip_reasons=reasons)
+        violations.extend(_skip_sum_problems(stats, reasons[before:]))
+        return stats
+
+    monkeypatch.setattr(worldcheck, "check", wrapped)
+    yield
+    assert violations == []
+
+
 @pytest.fixture
 def proj(tmp_path):
     """A real directory to act as the project root — Popen(cwd=...) needs it
@@ -114,7 +156,7 @@ def fake_gh(tmp_path):
 
 def _enable_probes(monkeypatch, gh_path):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh_path)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: True)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "github")
 
 
 def _calls(log):
@@ -227,7 +269,7 @@ def test_check_contradicted_stamps_item(monkeypatch, fake_gh, proj):
 
 def test_check_gh_missing_skips_silently(monkeypatch):
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: True)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "github")
     cp = _cp(["PR #60 awaiting review"])
     stats = worldcheck.check(cp, "/p/A")
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
@@ -238,7 +280,7 @@ def test_check_gh_missing_skips_silently(monkeypatch):
 def test_check_no_github_remote_skips_without_probing(monkeypatch, fake_gh):
     gh, log = fake_gh()
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: False)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "no-remote")
     cp = _cp(["PR #60 awaiting review"])
     stats = worldcheck.check(cp, "/p/A")
     assert stats == {"confirmed": 0, "contradicted": 0, "skipped": 1,
@@ -360,6 +402,47 @@ def test_github_repo_gate_against_real_git(tmp_path):
     assert worldcheck._github_repo(str(plain)) is False
 
 
+def test_remote_state_tri_state(tmp_path):
+    # #1181: git ANSWERED with no GitHub remote ("no-remote") is a different
+    # fact from git failing ("git-failed"), which says nothing about remotes.
+    def git(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    repo = tmp_path / "with-remote"
+    repo.mkdir()
+    git("init", cwd=repo)
+    git("remote", "add", "origin", "https://github.com/example/example.git", cwd=repo)
+    assert worldcheck._remote_state(str(repo)) == "github"
+
+    bare = tmp_path / "no-remote"
+    bare.mkdir()
+    git("init", cwd=bare)
+    assert worldcheck._remote_state(str(bare)) == "no-remote"
+
+    gitlab = tmp_path / "gitlab"
+    gitlab.mkdir()
+    git("init", cwd=gitlab)
+    git("remote", "add", "origin", "https://gitlab.com/example/example.git", cwd=gitlab)
+    assert worldcheck._remote_state(str(gitlab)) == "no-remote"
+
+    # git exits non-zero (not a repository): a failure, not an answer.
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    assert worldcheck._remote_state(str(plain)) == "git-failed"
+
+
+@pytest.mark.parametrize("exc", [
+    FileNotFoundError("git"),
+    subprocess.TimeoutExpired(cmd="git", timeout=2),
+])
+def test_remote_state_git_missing_or_slow_is_git_failed(monkeypatch, exc):
+    def boom(*_a, **_k):
+        raise exc
+    monkeypatch.setattr(worldcheck.subprocess, "run", boom)
+    assert worldcheck._remote_state("/p/A") == "git-failed"
+    assert worldcheck._github_repo("/p/A") is False
+
+
 # ---- #397 slice 2: file-exists claims ---------------------------------------
 
 
@@ -420,7 +503,7 @@ def test_check_file_exists_confirmed(monkeypatch, tmp_path):
     (project / "src" / "fix.py").write_text("x = 1\n")
     # No gh, no GitHub remote: a deterministic disk probe must not need either.
     monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
-    monkeypatch.setattr(worldcheck, "_github_repo", lambda project: False)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "no-remote")
     cp = _cp(["the fix lives in src/fix.py"])
     stats = worldcheck.check(cp, str(project))
     assert stats.pop(worldcheck.LEDGER_KEY)[0][:3] == (
@@ -1089,6 +1172,72 @@ def test_stats_surfaces_worldcheck_counters(monkeypatch, tmp_path, capsys):
     usage = data.get("usage") or {}
     assert usage.get("worldcheck:contradicted") == 1
     assert usage.get("worldcheck:confirmed") == 2
+
+
+def _usage_count(lines, token):
+    """#1181: count usage lines whose COMMAND token is exactly `token`. Anchored
+    at the end of the line with the separating space, because an unanchored
+    count of `worldcheck:pr-state:skipped` also matches every tagged
+    `...:skipped-<reason>` line and reads double."""
+    return sum(1 for ln in lines if ln.endswith(" " + token))
+
+
+def test_cli_brief_no_gh_writes_reason_tagged_skips(
+    monkeypatch, tmp_path, capsys, proj
+):
+    _write_claim_checkpoint(project=proj)  # one PR claim, one issue claim
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", proj)
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    usage = _usage_lines(tmp_path)
+    # The untagged lines keep their meaning...
+    assert _usage_count(usage, "worldcheck:pr-state:skipped") == 2
+    assert _usage_count(usage, "worldcheck:skipped") == 2
+    # ...and each skip also says why.
+    assert _usage_count(usage, "worldcheck:pr-state:skipped-no-gh") == 2
+    # The counting rule: an unanchored match double counts.
+    assert sum(1 for ln in usage if "worldcheck:pr-state:skipped" in ln) == 4
+    # Two whitespace fields on every line, so the stats readers keep them all.
+    assert all(len(ln.split()) == 2 for ln in usage if "worldcheck" in ln)
+
+
+def test_usage_skip_lines_sum_per_class(monkeypatch, tmp_path, capsys):
+    project = tmp_path / "repo"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / "link").symlink_to(outside)
+    cp = _cp(["PR #60 awaiting review", "the fix lives in link/x.py"])
+    store.write_checkpoint("S-now", cp, project_dir=str(project), writer=Writer.HUMAN)
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project))
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    usage = _usage_lines(tmp_path)
+    for cls, reason in (("pr-state", "no-gh"), ("file-exists", "unanswerable")):
+        assert _usage_count(usage, f"worldcheck:{cls}:skipped") == 1
+        assert _usage_count(usage, f"worldcheck:{cls}:skipped-{reason}") == 1
+
+
+def test_stats_counts_tagged_skips_beside_the_untagged_one(
+    monkeypatch, tmp_path, capsys
+):
+    log_dir = tmp_path / ".daimon" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "usage.log").write_text(
+        "2026-07-21T00:00:00Z worldcheck:pr-state:skipped\n"
+        "2026-07-21T00:00:00Z worldcheck:pr-state:skipped-no-gh\n"
+        "2026-07-21T00:00:01Z worldcheck:pr-state:skipped\n"
+        "2026-07-21T00:00:01Z worldcheck:pr-state:skipped-cap\n"
+    )
+    assert cli.main(["stats", "--json"]) == 0
+    usage = json.loads(capsys.readouterr().out).get("usage") or {}
+    assert usage["worldcheck:pr-state:skipped"] == 2
+    assert usage["worldcheck:pr-state:skipped-no-gh"] == 1
+    assert usage["worldcheck:pr-state:skipped-cap"] == 1
 
 
 # ---- #439 slice 3: receipt-validity -----------------------------------------
@@ -1778,3 +1927,316 @@ def test_cli_brief_receipt_confirmed_writes_no_verification_row(
     usage = _usage_lines(tmp_path)
     assert sum(
         1 for ln in usage if ln.endswith(" worldcheck:receipt-validity:confirmed")) == 1
+
+
+# ---- #1181: why a claim was skipped ------------------------------------------
+
+
+def _skips(cp, project):
+    reasons: list = []
+    stats = worldcheck.check(cp, project, skip_reasons=reasons)
+    return stats, reasons
+
+
+def test_skip_reasons_closed_vocabulary():
+    assert worldcheck.SKIP_REASONS == frozenset({
+        "cap", "deadline", "no-gh", "no-remote", "probe-error",
+        "exit-nonzero", "unparseable", "unanswerable", "unknown"})
+
+
+def test_check_return_unchanged_with_skip_reasons(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh("exit 1")
+    _enable_probes(monkeypatch, gh)
+    texts = ["PR #60 awaiting review", "the fix lives in src/fix.py"]
+    plain = worldcheck.check(_cp(texts), proj)
+    stats, reasons = _skips(_cp(texts), proj)
+    assert stats == plain
+    assert "skip_reasons" not in stats
+    assert reasons == ["pr-state:skipped-exit-nonzero"]
+
+
+def test_no_skips_no_reasons(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh()
+    _enable_probes(monkeypatch, gh)
+    stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert stats["confirmed"] == 1
+    assert reasons == []
+
+
+def test_skip_reason_cap(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh()
+    _enable_probes(monkeypatch, gh)
+    texts = [f"PR #{n} awaiting review" for n in range(101, 108)]
+    _stats, reasons = _skips(_cp(texts), proj)
+    assert reasons == ["pr-state:skipped-cap"] * 2
+
+
+def test_skip_reason_is_per_claim_not_per_target(monkeypatch, fake_gh, proj):
+    # Two items naming the same PR share one probe and one reason, but each
+    # claim is its own skipped line (the per-class counter's unit).
+    gh, _log = fake_gh("exit 1")
+    _enable_probes(monkeypatch, gh)
+    cp = _cp(["PR #60 awaiting review", "PR #60 still open"])
+    stats, reasons = _skips(cp, proj)
+    assert stats["pr-state:skipped"] == 2
+    assert reasons == ["pr-state:skipped-exit-nonzero"] * 2
+
+
+def test_skip_reason_deadline_local_probe(monkeypatch, tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", -1.0)
+    _stats, reasons = _skips(_cp(["the fix lives in src/fix.py"]), str(project))
+    assert reasons == ["file-exists:skipped-deadline"]
+
+
+def test_skip_reason_deadline_subprocess_probe(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh("sleep 5\necho '{\"state\":\"OPEN\"}'")
+    _enable_probes(monkeypatch, gh)
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 0.2)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-deadline"]
+
+
+def test_skip_reason_no_gh(monkeypatch):
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "github")
+    stats, reasons = _skips(_cp(["PR #60 awaiting review"]), "/p/A")
+    assert stats["pr-state:skipped"] == 1
+    assert reasons == ["pr-state:skipped-no-gh"]
+
+
+def test_skip_reason_no_remote_from_a_real_git_repo(monkeypatch, fake_gh, tmp_path):
+    gh, log = fake_gh()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), str(repo))
+    assert reasons == ["pr-state:skipped-no-remote"]
+    assert _calls(log) == []
+
+
+def test_skip_reason_git_failure_is_probe_error_not_no_remote(
+    monkeypatch, fake_gh, proj
+):
+    # `proj` is a plain directory: git exits non-zero. That says nothing about
+    # remotes, so it must not be reported as "no-remote".
+    gh, _log = fake_gh()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-probe-error"]
+
+
+def test_skip_reason_git_timeout_is_probe_error(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: gh)
+
+    def slow(*_a, **_k):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=2)
+    monkeypatch.setattr(worldcheck.subprocess, "run", slow)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-probe-error"]
+
+
+def test_skip_reason_spawn_failure_is_probe_error(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh()
+    _enable_probes(monkeypatch, gh)
+
+    def no_spawn(*_a, **_k):
+        raise OSError("gh vanished")
+    monkeypatch.setattr(worldcheck.subprocess, "Popen", no_spawn)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-probe-error"]
+
+
+def test_skip_reason_local_probe_raising_is_probe_error(monkeypatch, tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("probe blew up")
+    monkeypatch.setattr(worldcheck, "_local_probe", boom)
+    _stats, reasons = _skips(_cp(["the fix lives in src/fix.py"]), str(project))
+    assert reasons == ["file-exists:skipped-probe-error"]
+
+
+def test_skip_reason_communicate_failing_after_a_normal_exit_is_probe_error(
+    monkeypatch, fake_gh, proj
+):
+    gh, _log = fake_gh()
+    _enable_probes(monkeypatch, gh)
+
+    class _Exited:
+        returncode = 0
+        stdin = None
+
+        def poll(self):
+            return 0
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd="gh", timeout=1)
+
+    monkeypatch.setattr(worldcheck.subprocess, "Popen",
+                        lambda *_a, **_k: _Exited())
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-probe-error"]
+
+
+def test_skip_reason_exit_nonzero(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh("exit 1")
+    _enable_probes(monkeypatch, gh)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-exit-nonzero"]
+
+
+@pytest.mark.parametrize("body", [
+    "echo 'not json at all'",
+    "echo '{\"state\":\"WEIRD\"}'",
+])
+def test_skip_reason_unparseable(monkeypatch, fake_gh, proj, body):
+    gh, _log = fake_gh(body)
+    _enable_probes(monkeypatch, gh)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-unparseable"]
+
+
+def test_skip_reason_unparseable_when_the_parser_raises(monkeypatch, fake_gh, proj):
+    gh, _log = fake_gh()
+    _enable_probes(monkeypatch, gh)
+    # Patching the module attribute works because `_gh_probes` reads
+    # `_parse_gh_state` when it builds each Probe, inside check(), after this
+    # patch is in place. If probes ever bind the parser earlier (at import),
+    # patch the Probe's `parse` field instead.
+
+    def boom(_out):
+        raise ValueError("parser bug")
+    monkeypatch.setattr(worldcheck, "_parse_gh_state", boom)
+    _stats, reasons = _skips(_cp(["PR #60 awaiting review"]), proj)
+    assert reasons == ["pr-state:skipped-unparseable"]
+
+
+def test_skip_reason_unanswerable_symlink_escape(monkeypatch, tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("x = 1\n")
+    (project / "link").symlink_to(outside)
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _stats, reasons = _skips(_cp(["the fix lives in link/secret.py"]), str(project))
+    assert reasons == ["file-exists:skipped-unanswerable"]
+
+
+def test_skip_reason_unanswerable_branch_outside_git(monkeypatch, tmp_path):
+    project = tmp_path / "plain"
+    project.mkdir()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    cp = _cp(["work continues on branch feat/397-slice-2, unmerged"])
+    _stats, reasons = _skips(cp, str(project))
+    assert reasons == ["branch-state:skipped-unanswerable"]
+
+
+def test_skip_reason_unanswerable_unknown_dependency(monkeypatch, tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "uv.lock").write_text(
+        '[[package]]\nname = "requests"\nversion = "2.31.0"\n')
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    _stats, reasons = _skips(_cp(["nosuchpkg is pinned to 1.0"]), str(project))
+    assert reasons == ["dependency-version:skipped-unanswerable"]
+
+
+def test_skip_reason_unanswerable_receipt_without_sidecar(receipts_on, proj):
+    _signed_origin("S-origin", proj, sidecar=False, receipts_era=False)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-unanswerable"]
+
+
+def test_skip_reason_unanswerable_receipt_without_cli(receipts_on, proj, monkeypatch):
+    monkeypatch.setenv("DAIMON_VITNI_CLI", "vitni-verify-that-does-not-exist")
+    _signed_origin("S-origin", proj)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-unanswerable"]
+
+
+def test_skip_reason_unanswerable_receipt_checkpoint_vanished(
+    receipts_on, proj, monkeypatch
+):
+    _signed_origin("S-origin", proj)
+    real = store.read_checkpoint
+    calls: list = []
+
+    def vanishing(session_id):
+        calls.append(session_id)
+        return real(session_id) if len(calls) == 1 else None
+    monkeypatch.setattr(store, "read_checkpoint", vanishing)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-unanswerable"]
+
+
+def test_skip_reason_receipt_collection_raising_is_probe_error(
+    receipts_on, proj, monkeypatch
+):
+    _signed_origin("S-origin", proj)
+
+    def boom(_checkpoint):
+        raise OSError("store went away mid-read")
+    monkeypatch.setattr(receipts, "verbatim_degraded", boom)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-probe-error"]
+
+
+def test_skip_reason_receipt_garbage_output_is_unparseable(
+    receipts_on, proj, monkeypatch
+):
+    monkeypatch.setenv("FAKE_VITNI_MODE", "garbage")
+    _signed_origin("S-origin", proj)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-unparseable"]
+
+
+def test_skip_reason_receipt_nonzero_exit(receipts_on, proj, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_MODE", "rc1")
+    _signed_origin("S-origin", proj)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-exit-nonzero"]
+
+
+def test_skip_reason_receipt_hanging_cli_is_deadline(receipts_on, proj, monkeypatch):
+    monkeypatch.setenv("FAKE_VITNI_MODE", "hang")
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 0.3)
+    _signed_origin("S-origin", proj)
+    _stats, reasons = _skips(_cp_origins(["S-origin"]), proj)
+    assert reasons == ["receipt-validity:skipped-deadline"]
+
+
+def test_skip_reason_unknown_is_the_sentinel_for_an_unexplained_skip(
+    monkeypatch, tmp_path
+):
+    # Nothing in production should reach this: every branch that leaves a key
+    # unanswered records why. The sentinel exists so a future branch that
+    # forgets shows up as `unknown` (which the autouse sum fixture rejects)
+    # instead of being silently relabelled. Call the unwrapped check().
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setattr(worldcheck, "_run_local", lambda plan, *_a, **_k: {})
+    reasons: list = []
+    worldcheck.check.__wrapped__(
+        _cp(["the fix lives in src/fix.py"]), str(project), skip_reasons=reasons)
+    assert reasons == ["file-exists:skipped-unknown"]
+
+
+def test_skip_reasons_mixed_classes_in_one_check(monkeypatch, fake_gh, tmp_path):
+    project = tmp_path / "repo"
+    project.mkdir()
+    gh, _log = fake_gh("exit 1")
+    _enable_probes(monkeypatch, gh)
+    cp = _cp(["PR #60 awaiting review", "the fix lives in src/fix.py",
+              "PR #61 awaiting review"])
+    stats, reasons = _skips(cp, str(project))
+    assert stats["pr-state:skipped"] == 2
+    assert sorted(reasons) == ["pr-state:skipped-exit-nonzero"] * 2
