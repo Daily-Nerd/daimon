@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 148
 type: fence
 title: "authors" is a reserved segment of a logical team project path, so one walker finds author directories
 severity: medium
 confidence: 0.85
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/teamproject.py
   - pattern: "RESERVED_SEGMENT"
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "the sidecar layout names its author level with something a project path cannot contain"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 The sidecar holds checkpoints and published ledgers at `authors/<a>/` and

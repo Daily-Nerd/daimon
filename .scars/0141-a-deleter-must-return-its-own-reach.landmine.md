@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 141
 type: landmine
 title: A forget step must return its own reach, judged by a read afterwards, never a bare list or count
 severity: high
 confidence: 0.85
 created: 2026-10-10
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/forget.py
   - path: plugin/daimon_briefing/store.py
@@ -14,7 +16,7 @@ evidence:
 expires:
   condition: "every deleter returns a jsonl.Reached and the registry census rejects any other shape"
   review_after: 2027-04-10
-status: candidate
+status: active
 ---
 
 `store.scrub_content_key`, `store.scrub_team_copies` and

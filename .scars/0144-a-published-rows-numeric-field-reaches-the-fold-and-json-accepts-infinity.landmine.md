@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 144
 type: landmine
 title: A numeric field read from a teammate's file reaches int() in the fold, json accepts Infinity and NaN, and a view that fails open un-hides everything
 severity: critical
 confidence: 0.9
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/policy.py
   - pattern: "_published_order"
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "published rows are parsed by a strict decoder that refuses non-finite numbers before any fold sees them"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 Python's `json` reads `Infinity`, `-Infinity`, `NaN` and `1e999` as valid

@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 146
 type: landmine
 title: A torn last line of a teammate's published ledger is their newest claim, so the author is skipped, not read around
 severity: high
 confidence: 0.8
 created: 2026-10-09
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "def foreign_team"
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "published rows are appended atomically and a torn line can only be an old one"
   review_after: 2027-04-09
-status: candidate
+status: active
 ---
 
 An append-only ledger tears at its tail when a pull or a crash cuts the last

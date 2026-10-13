@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 150
 type: fence
 title: A forget's key ref is a random token and is never derived from the content key
 severity: high
 confidence: 0.85
 created: 2026-10-10
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "def new_key_ref"
@@ -14,7 +16,7 @@ evidence:
 expires:
   condition: "the key row moves out of events.jsonl into a store that never prints a ref"
   review_after: 2027-04-10
-status: candidate
+status: active
 ---
 
 The key row of a forget sits on a `forgotten-key:` ref, and the ref is

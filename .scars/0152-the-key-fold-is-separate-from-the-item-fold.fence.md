@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 152
 type: fence
 title: fold_resolutions returns item refs only; key refs are read by standing_tombstones
 severity: medium
 confidence: 0.8
 created: 2026-10-10
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "def fold_resolutions"
@@ -14,7 +16,7 @@ evidence:
 expires:
   condition: "no reader of the item fold counts or prints a ref"
   review_after: 2027-04-10
-status: candidate
+status: active
 ---
 
 `store.fold_resolutions` skips refs in the `forgotten-key:` namespace, and
