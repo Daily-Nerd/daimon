@@ -178,3 +178,44 @@ def test_hook_and_cli_capture_produce_identical_checkpoints(
     hook_rej = _rows_minus_ts(home_hook / "checkpoints" / slug / "verification.jsonl")
     assert cli_rej, "scenario failed to produce a quote-rejection row"
     assert hook_rej == cli_rej
+
+
+def test_both_doors_stamp_the_same_slug_and_leave_no_stamp(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """#1179 D3: the heartbeat lease is part of the shared contract. During
+    the pipeline each door's stamp carries the project slug, and once the door
+    returns neither leaves a stamp behind."""
+    from daimon_briefing import capture
+
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    tpath = _write_transcript(tmp_path)
+    seen = {}
+    real_run = capture.run
+
+    def spy(session_id, *a, **kw):
+        beat = (tmp_path / seen["door"] / "logs" / "heartbeats" / session_id)
+        seen[seen["door"]] = beat.read_text(encoding="utf-8")
+        return real_run(session_id, *a, **kw)
+
+    monkeypatch.setattr(capture, "run", spy)
+
+    _seed_home(monkeypatch, tmp_path / "home-cli")
+    seen["door"] = "home-cli"
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_NEW_CP))
+    assert cli.main(["serialize", str(tpath)]) == 0
+
+    _seed_home(monkeypatch, tmp_path / "home-hook")
+    seen["door"] = "home-hook"
+    monkeypatch.setattr(hooks, "_chat", fake_chat_factory(_NEW_CP))
+    monkeypatch.setattr(transcript, "from_session",
+                        lambda sid: transcript.from_file(tpath))
+    hooks.on_session_end(session_id=SESSION, completed=True, interrupted=False,
+                         model="m", platform="cli", transcript_path=str(tpath))
+
+    slug = store.project_slug(PROJECT)
+    assert slug
+    assert seen["home-cli"] == slug
+    assert seen["home-hook"] == slug
+    for home in ("home-cli", "home-hook"):
+        assert not (tmp_path / home / "logs" / "heartbeats" / SESSION).exists()

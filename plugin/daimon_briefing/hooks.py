@@ -8,6 +8,7 @@ failures log, leave a ledger entry in serialize.log, and give up.
 #                model, platform, **kwargs) -> {"context": str} | str | None
 """
 
+import contextlib
 import logging
 import time
 from datetime import datetime, timezone
@@ -66,8 +67,24 @@ def _ledger_failure(session_id, exc, elapsed, transcript_path=None):
         log.exception("daimon: could not ledger capture failure for session %s", session_id)
 
 
+def _lease_slug():
+    """The project slug the heartbeat lease stamps, or None when no root
+    resolves (the stamp then keeps empty content, which the liveness read
+    reports as `project_slug=None`). Never raises."""
+    try:
+        return store.project_slug(config.resolve_project_root(config.project_dir()))
+    except Exception:
+        return None
+
+
 def on_session_end(session_id, completed=None, interrupted=None, model=None, platform=None, **kwargs):
     """End-of-session: read transcript -> serialize -> validate -> store. Never raises.
+
+    #1179 D3: the capture runs under a heartbeat lease, the same lease the CLI
+    door holds, so a finished capture never reads as running for the rest of
+    the hung ceiling. It outlives the `except` handlers below, so the failure
+    lines `_ledger_failure` writes land while the stamp still exists, and it is
+    released before `recall.warm()` so an index rebuild never extends liveness.
 
     DAIMON_TIMEOUT is the TOTAL budget for the serialize LLM work: the deadline is
     computed here at hook start and forwarded so retries cannot stack past it.
@@ -75,9 +92,11 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
     escape, and any failure lands in serialize.log so status/heal see it (#142).
     """
     start = time.monotonic()
+    lease = contextlib.ExitStack()
     try:
         if config.is_disabled():
             return
+        lease.enter_context(ledger.heartbeat_lease(session_id, _lease_slug()))
         deadline = start + config.timeout_seconds()
         # Identical-bytes guard (#185), same helper cli._run_serialize uses: when
         # the host hands us a real transcript file (optional — this host reads
@@ -196,6 +215,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
             session_id,
             int(time.monotonic() - start),
         )
+        lease.close()
         # #246: the write staled the recall index. This hook runs after the
         # session ends — the one place a full rebuild costs nobody anything —
         # so the NEXT session's first-prompt recall-inject finds it fresh
@@ -212,6 +232,8 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
         log.exception("daimon: on_session_end failed for session %s (giving up)", session_id)
         _ledger_failure(session_id, exc, time.monotonic() - start,
                         kwargs.get("transcript_path"))
+    finally:
+        lease.close()
 
 
 def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
