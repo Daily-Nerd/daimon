@@ -17,6 +17,7 @@ slice): the every-line tally (_stats_capture) and the in-window spawn probe
 
 import re
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -688,6 +689,23 @@ def clear_heartbeat(session_id: str) -> None:
         (_heartbeat_dir() / Path(session_id).name).unlink()
     except OSError:
         pass
+
+
+@contextmanager
+def heartbeat_lease(session_id: str, project_slug: str | None = None):
+    """Hold a session's liveness stamp until the caller's own ledger lines are
+    written (D3). Both capture doors wrap their pipeline AND every result or
+    failure line in one lease: the stamp is gone only after the line a reader
+    would look for exists, so a finished run never reads as "nothing yet".
+    Exiting clears on every path, including a raise. A caller that must not
+    extend liveness with later work (an index rebuild, #564) leaves the
+    `with` block before doing it. `project_slug` is `touch_heartbeat`'s: None
+    keeps empty content."""
+    touch_heartbeat(session_id, project_slug=project_slug)
+    try:
+        yield
+    finally:
+        clear_heartbeat(session_id)
 
 
 def heartbeat_age(session_id: str, now: float | None = None) -> float | None:

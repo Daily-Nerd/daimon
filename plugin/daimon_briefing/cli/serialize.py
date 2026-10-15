@@ -216,67 +216,72 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # flight". Before the pipeline so the stamp exists for the entire run;
     # a too-short skip writes its result line immediately, which ends the
     # session's classification exactly as before.
-    ledger.touch_heartbeat(session_id, project_slug=store.project_slug(project))
-    try:
-        # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
-        # bind_links -> supersede emission -> write -> rejection ledger.
-        # Identical for both capture doors — hooks.on_session_end calls the
-        # same function; tests/test_capture_parity.py guards the parity.
-        # Error POSTURE stays here: capture raises, this door prints/exits.
-        out = capture.run(session_id, messages, project=project, chat=_cli._chat,
-                          deadline=deadline, transcript_path=path,
-                          transcript_sha=transcript_sha, escalate=escalate,
-                          coverage=coverage)
-    except serializer.TooShortError as exc:
-        msg = f"skipped serialize for {session_id}: {exc}"
+    #
+    # #1179 D3: the stamp is a LEASE held through every result line this
+    # function writes, not just the pipeline. The error and skip lines were
+    # already written inside the old try, but the kill-switch skip and the
+    # success line landed after the clear, a window in which a reader saw no
+    # stamp and no result. The lease exits before recall.warm() below, so an
+    # index rebuild never extends liveness (#564).
+    with ledger.heartbeat_lease(session_id,
+                                project_slug=store.project_slug(project)):
+        try:
+            # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
+            # bind_links -> supersede emission -> write -> rejection ledger.
+            # Identical for both capture doors — hooks.on_session_end calls the
+            # same function; tests/test_capture_parity.py guards the parity.
+            # Error POSTURE stays here: capture raises, this door prints/exits.
+            out = capture.run(session_id, messages, project=project,
+                              chat=_cli._chat, deadline=deadline,
+                              transcript_path=path,
+                              transcript_sha=transcript_sha,
+                              escalate=escalate, coverage=coverage)
+        except serializer.TooShortError as exc:
+            msg = f"skipped serialize for {session_id}: {exc}"
+            print(msg)
+            _append_serialize_log(msg)
+            return 0
+        except serializer.SerializeError as exc:
+            elapsed = int(time.monotonic() - start)
+            msg = f"error: {exc} (transcript: {path}) after {elapsed}s"
+            _print_error(msg)
+            _append_serialize_log(msg)
+            return 1
+        except jsonl.Refused as exc:
+            # D10.4: a refused admission is an ORDINARY failed serialize: the
+            # same result line every fold already parses, so `status` counts
+            # it, the briefing names it and `heal` retries it. The session
+            # group sits BEFORE the transcript group (the transcript regex
+            # swallows anything after the path) and is printed only when the
+            # host named the session (`--session`), which keys the line to the
+            # real session rather than to the transcript stem (Kimi, #988).
+            elapsed = int(time.monotonic() - start)
+            named = (session or "").strip()
+            group = f" (session: {named})" if named else ""
+            msg = f"error: {exc}{group} (transcript: {path}) after {elapsed}s"
+            _print_error(msg)
+            _append_serialize_log(msg)
+            return 1
+        if out is None:
+            # #421: the write boundary refused (kill switch). Same "skipped"
+            # shape as the hash-match short-circuit above — matches neither
+            # _RESULT_OK_RE nor _RESULT_ERR_RE, so the ledger never reads it
+            # as a lying success.
+            msg = (f"skipped serialize for {session_id}: daimon disabled "
+                   "(DAIMON_DISABLE) — checkpoint not written")
+            print(msg)
+            _append_serialize_log(msg)
+            return 0
+        elapsed = int(time.monotonic() - start)
+        msg = f"wrote checkpoint: {out} (took {elapsed}s)"
+        if llm.fallback_used():
+            # Trailing marker (#28): the configured backend failed and the
+            # weaker command fallback produced this checkpoint — success, but
+            # downgraded. Suffix-safe: _RESULT_OK_RE/_LEDGER_OK_RE are
+            # prefix-anchored.
+            msg += " [fallback backend]"
         print(msg)
         _append_serialize_log(msg)
-        return 0
-    except serializer.SerializeError as exc:
-        elapsed = int(time.monotonic() - start)
-        msg = f"error: {exc} (transcript: {path}) after {elapsed}s"
-        _print_error(msg)
-        _append_serialize_log(msg)
-        return 1
-    except jsonl.Refused as exc:
-        # D10.4: a refused admission is an ORDINARY failed serialize: the same
-        # result line every fold already parses, so `status` counts it, the
-        # briefing names it and `heal` retries it. The session group sits
-        # BEFORE the transcript group (the transcript regex swallows anything
-        # after the path) and is printed only when the host named the session
-        # (`--session`), which keys the line to the real session rather than
-        # to the transcript stem (Kimi, #988).
-        elapsed = int(time.monotonic() - start)
-        named = (session or "").strip()
-        group = f" (session: {named})" if named else ""
-        msg = f"error: {exc}{group} (transcript: {path}) after {elapsed}s"
-        _print_error(msg)
-        _append_serialize_log(msg)
-        return 1
-    finally:
-        # #564: the pipeline is over on every path out of this try — success
-        # (checkpoint already on disk), skip, error, or an unexpected raise —
-        # so the liveness stamp must go with it. Leaving it made every brief
-        # inside the hung ceiling claim a finished serialize was in flight.
-        ledger.clear_heartbeat(session_id)
-    if out is None:
-        # #421: the write boundary refused (kill switch). Same "skipped" shape
-        # as the hash-match short-circuit above — matches neither _RESULT_OK_RE
-        # nor _RESULT_ERR_RE, so the ledger never reads it as a lying success.
-        msg = (f"skipped serialize for {session_id}: daimon disabled "
-               "(DAIMON_DISABLE) — checkpoint not written")
-        print(msg)
-        _append_serialize_log(msg)
-        return 0
-    elapsed = int(time.monotonic() - start)
-    msg = f"wrote checkpoint: {out} (took {elapsed}s)"
-    if llm.fallback_used():
-        # Trailing marker (#28): the configured backend failed and the weaker
-        # command fallback produced this checkpoint — success, but downgraded.
-        # Suffix-safe: _RESULT_OK_RE/_LEDGER_OK_RE are prefix-anchored.
-        msg += " [fallback backend]"
-    print(msg)
-    _append_serialize_log(msg)
     # #246: the write above staled the recall index; freshen it HERE, where
     # nobody is waiting, instead of on the next session's first-prompt
     # recall-inject. After the print/log so the byte-identical result

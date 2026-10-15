@@ -144,3 +144,25 @@ def test_heartbeat_index_raises_when_the_dir_is_not_a_dir(log_dir):
     (log_dir / "heartbeats").write_text("not a dir")
     with pytest.raises(OSError):
         ledger.heartbeat_index(time.time())
+
+
+# ---- D3: the heartbeat lease ------------------------------------------------
+
+
+def test_lease_stamps_the_slug_and_clears_on_exit(log_dir):
+    with ledger.heartbeat_lease("S-lease", "proj-a"):
+        stamp = log_dir / "heartbeats" / "S-lease"
+        assert stamp.read_text() == "proj-a"
+    assert not stamp.exists()
+
+
+def test_lease_clears_when_the_body_raises(log_dir):
+    with pytest.raises(RuntimeError):
+        with ledger.heartbeat_lease("S-boom", "proj-a"):
+            raise RuntimeError("boom")
+    assert not (log_dir / "heartbeats" / "S-boom").exists()
+
+
+def test_lease_without_a_slug_leaves_empty_content(log_dir):
+    with ledger.heartbeat_lease("S-noroot", None):
+        assert (log_dir / "heartbeats" / "S-noroot").read_text() == ""
