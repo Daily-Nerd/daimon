@@ -11892,3 +11892,44 @@ def test_status_suppressed_prints_the_note_a_resolution_carried(
     out = capsys.readouterr().out
     assert "resolved" in out
     assert "shipped in 0.9" in out
+
+
+# ---- #1179 PR 2: one canonical session key (D6) ----
+
+
+def test_cli_status_codex_rollout_stamp_keeps_a_live_serialize_out_of_the_failures(
+    tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch
+):
+    # Codex stamps its heartbeat `rollout-<stamp>-<id>` but its session-end
+    # spawn line carries the bare id, so the old lookup never found the stamp
+    # and a live serialize past the ceiling read as hung.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_log(
+        tmp_log_dir,
+        ["2026-07-01T12:00:00Z codex-session-end: spawned serialize for abc "
+         "(reason: exit, project: /p/A)"],
+    )
+    cli.main(["status"])
+    assert "failed to serialize" in capsys.readouterr().out
+    beats = tmp_log_dir / "heartbeats"
+    beats.mkdir(parents=True)
+    (beats / "rollout-2026-07-01T11-00-00-abc").write_text("")
+    cli.main(["status"])
+    assert "failed to serialize" not in capsys.readouterr().out
+
+
+def test_cli_status_catch_up_spawn_folds_with_its_result(
+    tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch
+):
+    # The session-start catch-up spawn logs the rollout stem; the result line
+    # is normalised to the bare id. Different keys left a phantom failure.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    stem = "rollout-2026-07-01T11-00-00-abc"
+    _write_log(
+        tmp_log_dir,
+        [f"2026-07-01T12:00:00Z session-start: spawned serialize for {stem} "
+         "(reason: catch-up, project: /p/A)",
+         f"wrote checkpoint: {tmp_checkpoint_dir}/{stem}.json (took 9s)"],
+    )
+    cli.main(["status"])
+    assert "failed to serialize" not in capsys.readouterr().out

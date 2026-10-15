@@ -19,6 +19,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from . import config, display, jsonl, store, transcript
 
@@ -233,7 +234,9 @@ def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
         line = line.strip()
         m = _SPAWN_RE.match(line)
         if m:
-            e = _entry(m.group(2))
+            # D6: the catch-up spawn logs the rollout stem, the session-end
+            # spawn the bare id; one canonical key folds them together.
+            e = _entry(_session_key(m.group(2)))
             e["spawned"] = True
             # #936: a spawn line after a result opens a NEW attempt. The
             # previous result belongs to the previous attempt; keeping it
@@ -265,7 +268,7 @@ def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
             continue
         m = _LEDGER_SKIP_RE.match(line)
         if m:
-            e = _entry(m.group(1))
+            e = _entry(_session_key(m.group(1)))
             e["result_kind"] = "skipped"
             e["result_line"] = line
             continue
@@ -558,8 +561,10 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
         transcript_exists=lambda p: bool(p) and Path(p).exists(),
         force=force,
         # #342: module-level heartbeat_age resolves via the global, not the
-        # classifier's same-named parameter.
-        heartbeat_age=lambda sid: heartbeat_age(sid, now),
+        # classifier's same-named parameter. D6: a stamp counts under its
+        # canonical key too, so a Codex `rollout-...` stamp keeps its bare-id
+        # spawn alive.
+        heartbeat_age=_canonical_heartbeat_age(now),
         checkpoint_covers=checkpoint_covers,
         admission_state=state_of,
     )
@@ -694,6 +699,62 @@ def heartbeat_age(session_id: str, now: float | None = None) -> float | None:
     except OSError:
         return None
     return max(0.0, (now if now is not None else time.time()) - mtime)
+
+
+class Heartbeat(NamedTuple):
+    """One liveness stamp: seconds since its last touch, and the project slug
+    it carries as content ("" when the stamp is unattributed)."""
+
+    age: float
+    project_slug: str
+
+
+def heartbeat_index(now: float | None = None) -> dict[str, Heartbeat]:
+    """Every stamp in the heartbeat dir, keyed by canonical session key (D6).
+
+    The dir is listed once. A Codex child stamps `rollout-<stamp>-<id>` while
+    its spawn line carries the bare id; mapping the file names through
+    `_session_key` is what lets one lookup answer for both. When two files
+    share a key the freshest wins. A missing dir is no activity (empty); any
+    other failure to list it raises OSError, for the caller to report. A
+    single unreadable entry is skipped, as `serialize_in_flight` does."""
+    t = now if now is not None else time.time()
+    try:
+        entries = list(_heartbeat_dir().iterdir())
+    except FileNotFoundError:
+        return {}
+    out: dict[str, Heartbeat] = {}
+    for p in entries:
+        try:
+            age = max(0.0, t - p.stat().st_mtime)
+            content = p.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        key = _session_key(p.name)
+        if key not in out or age < out[key].age:
+            out[key] = Heartbeat(age, content)
+    return out
+
+
+def _canonical_heartbeat_age(now: float):
+    """`sid -> seconds since the freshest stamp for its canonical key`, or
+    None. The module-level `heartbeat_age` answers first (a stamp named like
+    the session), so a caller that replaces it keeps working; the index is
+    listed lazily, once per scan, and only for a session that needs it."""
+    index: dict | None = None
+
+    def age_of(sid):
+        nonlocal index
+        direct = heartbeat_age(sid, now)
+        if index is None:
+            try:
+                index = heartbeat_index(now)
+            except OSError:
+                index = {}
+        hit = index.get(_session_key(sid))
+        ages = [a for a in (direct, hit.age if hit else None) if a is not None]
+        return min(ages) if ages else None
+    return age_of
 
 
 def serialize_in_flight(project_slug: str, now: float | None = None) -> bool:
