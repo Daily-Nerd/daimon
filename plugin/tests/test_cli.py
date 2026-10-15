@@ -11892,3 +11892,103 @@ def test_status_suppressed_prints_the_note_a_resolution_carried(
     out = capsys.readouterr().out
     assert "resolved" in out
     assert "shipped in 0.9" in out
+
+
+# ---- #1179 PR 2: one canonical session key (D6) ----
+
+
+def test_cli_status_codex_rollout_stamp_keeps_a_live_serialize_out_of_the_failures(
+    tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch
+):
+    # Codex stamps its heartbeat `rollout-<stamp>-<id>` but its session-end
+    # spawn line carries the bare id, so the old lookup never found the stamp
+    # and a live serialize past the ceiling read as hung.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    _write_log(
+        tmp_log_dir,
+        ["2026-07-01T12:00:00Z codex-session-end: spawned serialize for abc "
+         "(reason: exit, project: /p/A)"],
+    )
+    cli.main(["status"])
+    assert "failed to serialize" in capsys.readouterr().out
+    beats = tmp_log_dir / "heartbeats"
+    beats.mkdir(parents=True)
+    (beats / "rollout-2026-07-01T11-00-00-abc").write_text("")
+    cli.main(["status"])
+    assert "failed to serialize" not in capsys.readouterr().out
+
+
+def test_cli_status_catch_up_spawn_folds_with_its_result(
+    tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch
+):
+    # The session-start catch-up spawn logs the rollout stem; the result line
+    # is normalised to the bare id. Different keys left a phantom failure.
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    stem = "rollout-2026-07-01T11-00-00-abc"
+    _write_log(
+        tmp_log_dir,
+        [f"2026-07-01T12:00:00Z session-start: spawned serialize for {stem} "
+         "(reason: catch-up, project: /p/A)",
+         f"wrote checkpoint: {tmp_checkpoint_dir}/{stem}.json (took 9s)"],
+    )
+    cli.main(["status"])
+    assert "failed to serialize" not in capsys.readouterr().out
+
+
+# ---- #1179 PR 2: the CLI door holds its lease through every ledger line ----
+
+
+def _stamp_watch(monkeypatch, tmp_log_dir, session):
+    """Record whether the heartbeat stamp exists at each serialize.log append
+    and at recall.warm(); returns the event list."""
+    from daimon_briefing.cli import serialize as cli_serialize
+    stamp = tmp_log_dir / "heartbeats" / session
+    events = []
+    real_append = cli_serialize._append_serialize_log
+
+    def append(line):
+        events.append(("log", line.split(":")[0], stamp.exists()))
+        real_append(line)
+
+    monkeypatch.setattr(cli_serialize, "_append_serialize_log", append)
+    monkeypatch.setattr(cli_serialize.recall, "warm",
+                        lambda: events.append(("warm", "", stamp.exists())))
+    return events
+
+
+def test_run_serialize_success_line_lands_while_the_stamp_exists(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    events = _stamp_watch(monkeypatch, tmp_log_dir, "sample_transcript")
+    assert cli._run_serialize(FIXTURES / "sample_transcript.md", "/p") == 0
+    assert ("log", "wrote checkpoint", True) in events
+    # the stamp is gone before the index rebuild, so a rebuild never extends
+    # liveness (#564)
+    assert ("warm", "", False) in events
+    assert events.index(("log", "wrote checkpoint", True)) < events.index(
+        ("warm", "", False))
+
+
+def test_run_serialize_kill_switch_skip_line_lands_while_the_stamp_exists(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    events = _stamp_watch(monkeypatch, tmp_log_dir, "sample_transcript")
+    assert cli._run_serialize(FIXTURES / "sample_transcript.md", "/p") == 0
+    assert ("log", "skipped serialize for sample_transcript", True) in events
+    assert not (tmp_log_dir / "heartbeats" / "sample_transcript").exists()
+
+
+def test_run_serialize_error_line_lands_while_the_stamp_exists(
+    tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory("prose, not JSON"))
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    events = _stamp_watch(monkeypatch, tmp_log_dir, "sample_transcript")
+    assert cli._run_serialize(FIXTURES / "sample_transcript.md", "/p") == 1
+    assert [e for e in events if e[0] == "log" and e[1] == "error"][0][2] is True
+    assert not (tmp_log_dir / "heartbeats" / "sample_transcript").exists()

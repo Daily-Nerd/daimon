@@ -70,6 +70,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/inspector.py": "read",  # `why`: the evidence receipt for one item
     "daimon_briefing/mcp_tools.py": "read",  # MCP tool handlers: render briefings, recall and status
     "daimon_briefing/pending.py": "read",  # the proposals-awaiting-a-human queue
+    "daimon_briefing/serialize_liveness.py": "read",  # read-only liveness rows over serialize.log, heartbeats and checkpoints (api.serializes)
     "daimon_briefing/receipts.py": "read",  # verifies and reports provenance receipts of checkpoints
     "daimon_briefing/render.py": "read",  # every human and rich renderer
     "daimon_briefing/worldcheck.py": "read",  # spot-checks checkpoint claims against the world

@@ -1,9 +1,17 @@
 import json
 
+import pytest
+
 import daimon_briefing as plugin
 from daimon_briefing import hooks
 from tests.conftest import make_messages
 from daimon_briefing.surfaces import Writer
+
+
+@pytest.fixture
+def tmp_log_dir(tmp_path):
+    # The autouse fixture already points DAIMON_LOG_DIR here; expose the path.
+    return tmp_path / ".daimon" / "logs"
 
 
 def _valid_json(session_id="S1"):
@@ -1129,3 +1137,123 @@ def test_pre_llm_call_unknown_project_still_reads_the_global_pointer(
         model="m", platform="cli",
     )
     assert "PR #6" in (out or {}).get("context", "")
+
+
+# ---- #1179 PR 2: the Hermes door holds a heartbeat lease (D3) ----
+
+
+def _beat_path(tmp_log_dir, sid):
+    return tmp_log_dir / "heartbeats" / sid
+
+
+def test_on_session_end_stamps_during_capture_and_clears_on_success(
+        tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch):
+    from daimon_briefing import capture, transcript
+
+    seen = {}
+    real_run = capture.run
+
+    def run(sid, *a, **kw):
+        seen["during"] = _beat_path(tmp_log_dir, sid).exists()
+        return real_run(sid, *a, **kw)
+
+    monkeypatch.setattr(capture, "run", run)
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", fake_chat_factory(_valid_json("S-hb")))
+    hooks.on_session_end(session_id="S-hb", completed=True, interrupted=False,
+                         model="m", platform="cli")
+    assert seen["during"] is True
+    assert not _beat_path(tmp_log_dir, "S-hb").exists()
+
+
+def test_on_session_end_clears_the_stamp_before_the_index_warm(
+        tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch):
+    from daimon_briefing import transcript
+
+    states = []
+    monkeypatch.setattr(hooks.recall, "warm",
+                        lambda: states.append(_beat_path(tmp_log_dir, "S-w").exists()))
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", fake_chat_factory(_valid_json("S-w")))
+    hooks.on_session_end(session_id="S-w", completed=True, interrupted=False,
+                         model="m", platform="cli")
+    assert states == [False]
+
+
+def test_on_session_end_failure_lines_land_while_the_stamp_exists(
+        tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch):
+    from daimon_briefing import transcript
+
+    seen = []
+    real = hooks._ledger_failure
+
+    def spy(sid, exc, elapsed, transcript_path=None):
+        seen.append(_beat_path(tmp_log_dir, sid).exists())
+        real(sid, exc, elapsed, transcript_path)
+
+    monkeypatch.setattr(hooks, "_ledger_failure", spy)
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", fake_chat_factory(RuntimeError("kaboom")))
+    hooks.on_session_end(session_id="S-f", completed=True, interrupted=False,
+                         model="m", platform="cli")
+    assert seen == [True]
+    assert "error: " in (tmp_log_dir / "serialize.log").read_text()
+    assert not _beat_path(tmp_log_dir, "S-f").exists()
+
+
+def test_on_session_end_refused_admission_line_lands_while_the_stamp_exists(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch):
+    from daimon_briefing import capture, jsonl, transcript
+
+    def refuse(*a, **kw):
+        raise jsonl.Refused("events.jsonl", "unreadable", "", "repair it",
+                            admission=True)
+
+    seen = []
+    real = hooks._ledger_failure
+    monkeypatch.setattr(hooks, "_ledger_failure",
+                        lambda sid, *a, **kw: (
+                            seen.append(_beat_path(tmp_log_dir, sid).exists()),
+                            real(sid, *a, **kw)))
+    monkeypatch.setattr(capture, "run", refuse)
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    hooks.on_session_end(session_id="S-r", completed=True, interrupted=False,
+                         model="m", platform="cli")
+    assert seen == [True]
+    assert "admission refused" in (tmp_log_dir / "serialize.log").read_text()
+    assert not _beat_path(tmp_log_dir, "S-r").exists()
+
+
+def test_on_session_end_stamps_the_project_slug_and_empty_without_a_root(
+        tmp_checkpoint_dir, tmp_log_dir, fake_chat_factory, monkeypatch):
+    from daimon_briefing import capture, config, store, transcript
+
+    contents = []
+    real_run = capture.run
+
+    def run(sid, *a, **kw):
+        contents.append(_beat_path(tmp_log_dir, sid).read_text())
+        return real_run(sid, *a, **kw)
+
+    monkeypatch.setattr(capture, "run", run)
+    monkeypatch.setattr(transcript, "from_session", lambda sid: make_messages(20))
+    monkeypatch.setattr(hooks, "_chat", fake_chat_factory(_valid_json("S-slug")))
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/hermes")
+    hooks.on_session_end(session_id="S-slug", completed=True, interrupted=False,
+                         model="m", platform="cli")
+    assert contents == [store.project_slug(
+        config.resolve_project_root(config.project_dir()))]
+    assert contents[0]
+
+    monkeypatch.setattr(config, "resolve_project_root", lambda d: None)
+    hooks.on_session_end(session_id="S-noroot", completed=True,
+                         interrupted=False, model="m", platform="cli")
+    assert contents[1] == ""
+
+
+def test_on_session_end_disabled_writes_no_stamp(
+        tmp_checkpoint_dir, tmp_log_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_DISABLE", "1")
+    hooks.on_session_end(session_id="S-off", completed=True, interrupted=False,
+                         model="m", platform="cli")
+    assert not (tmp_log_dir / "heartbeats").exists()

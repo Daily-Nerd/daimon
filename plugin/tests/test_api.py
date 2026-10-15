@@ -4,13 +4,16 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import (api, display, inspector, pending, requests, store,
-                             surfaces, transcript, view)
+from daimon_briefing import (api, display, inspector, pending, requests,
+                             serialize_liveness, store, surfaces, transcript,
+                             view)
 
 REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing", "inbox",
              "join", "ledger_health", "project_slug", "receipt_state", "Writer",
-             "masked", "EXCLUDED_ROWS", "Admitted", "admitted_messages")
+             "masked", "EXCLUDED_ROWS", "Admitted", "admitted_messages",
+             "serializes", "serialize_rows", "SerializeRow", "Serializes",
+             "SERIALIZE_STATES", "LIVE_STATES")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -41,6 +44,12 @@ def test_every_name_is_the_source_object():
     assert api.EXCLUDED_ROWS is transcript.EXCLUDED_ROWS
     assert api.Admitted is transcript.Admitted
     assert api.admitted_messages is transcript.admitted_messages
+    assert api.serializes is serialize_liveness.serializes
+    assert api.serialize_rows is serialize_liveness.serialize_rows
+    assert api.SerializeRow is serialize_liveness.SerializeRow
+    assert api.Serializes is serialize_liveness.Serializes
+    assert api.SERIALIZE_STATES is serialize_liveness.SERIALIZE_STATES
+    assert api.LIVE_STATES is serialize_liveness.LIVE_STATES
     assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
 

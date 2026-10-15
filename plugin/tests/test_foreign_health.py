@@ -138,6 +138,21 @@ def test_the_api_exports_the_transcript_exclusion_contract():
             "compact-summary"} <= set(api.EXCLUDED_ROWS)
 
 
+def test_the_api_exports_the_serialize_liveness_contract():
+    for name in ("serializes", "serialize_rows", "SerializeRow", "Serializes",
+                 "SERIALIZE_STATES", "LIVE_STATES"):
+        assert name in api.__all__
+    assert api.SerializeRow._fields == (
+        "session_id", "project_slug", "state", "reason", "heartbeat_age",
+        "spawn_age", "retried")
+    assert api.Serializes._fields == ("rows", "notes")
+    # Pin by inclusion for a host: a state may be added, never removed.
+    assert {"starting", "running", "repairing", "succeeded", "skipped",
+            "failed", "held", "hung", "unknown"} <= set(api.SERIALIZE_STATES)
+    assert api.LIVE_STATES == {"starting", "running", "repairing"}
+    assert api.LIVE_STATES <= set(api.SERIALIZE_STATES)
+
+
 def test_ledger_health_maps_each_ledger_file_to_its_state(tmp_checkpoint_dir):
     _open()
     with open(_ledger(), "ab") as handle:

@@ -293,6 +293,27 @@ def admission_refused_note(count: int, state: str, hint: str) -> str:
         f"{state}; {hint}, then daimon heal")
 
 
+def serialize_log_unreadable_note() -> str:
+    """`log-unreadable`: serialize.log exists but could not be read, so no
+    session's state was folded from it. Names no path."""
+    return marks.warning("serialize.log could not be read; sessions that "
+                         "depend on it are reported unknown")
+
+
+def heartbeats_unreadable_note() -> str:
+    """`heartbeats-unreadable`: the heartbeat directory could not be listed,
+    so no session was seen as running from its stamp."""
+    return marks.warning("the serialize heartbeat directory could not be "
+                         "read; a running serialize may be reported unknown")
+
+
+def serialize_outside_window_note() -> str:
+    """`outside-window`: a requested session is older than the tail of
+    serialize.log the read covers, so its state is unknown, not finished."""
+    return marks.warning("some requested sessions are older than the window of "
+                         "serialize.log that was read; their state is unknown")
+
+
 class Capped(tuple):
     """A tuple of note lines that has been capped, remembering every line it
     was capped from (`all`), so a later composition point can add its own
