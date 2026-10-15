@@ -60,6 +60,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/ledger.py", "heartbeat_index", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp",
+    ("daimon_briefing/ledger.py", "serializes", "time.time"):
+        "the default `now` of a pure scan; a caller that needs a fixed clock passes one",
     ("daimon_briefing/ledger.py", "heartbeat_age", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp",
