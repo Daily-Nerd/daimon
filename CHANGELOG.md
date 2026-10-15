@@ -5,6 +5,35 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.0](https://github.com/Daily-Nerd/daimon/compare/v0.55.0...v0.56.0) (2026-10-15)
+
+
+### Features
+
+* **api:** export serialize liveness to hosts ([d78170a](https://github.com/Daily-Nerd/daimon/commit/d78170aa30839855a8e0f4ef42b3ec0845fe19d0))
+* **api:** export the transcript exclusion codes and the messages a capture reads ([877dfed](https://github.com/Daily-Nerd/daimon/commit/877dfedf00445e59e96432a565745624640ffd06))
+* **api:** serialize liveness for hosts, one canonical session key, and a heartbeat lease ([#1191](https://github.com/Daily-Nerd/daimon/issues/1191)) ([fec872d](https://github.com/Daily-Nerd/daimon/commit/fec872d158b9abd23dac3c9c1720766b3081eb4f))
+* **ledger:** derive a serialize liveness row for each session ([c12c35d](https://github.com/Daily-Nerd/daimon/commit/c12c35d0eff1e51c74914aa50370b88420fc6296))
+* **ledger:** hold the serialize heartbeat until the result line is written ([70eedbd](https://github.com/Daily-Nerd/daimon/commit/70eedbd75584d9e5af58d58d6b37c2570d5180c8))
+* **transcript:** name the rows a capture never reads, and export what it does read ([#1185](https://github.com/Daily-Nerd/daimon/issues/1185)) ([f40682a](https://github.com/Daily-Nerd/daimon/commit/f40682a265dc69dacd04414cbf7c7441aee3f75d))
+* **transcript:** one predicate names the rows a capture never reads and drops attachments and compaction summaries ([1373190](https://github.com/Daily-Nerd/daimon/commit/1373190bba330fbf8777c84508654b3344c84061))
+* **worldcheck:** check() reports why each claim was skipped through an optional list ([f0d6597](https://github.com/Daily-Nerd/daimon/commit/f0d6597b9907bc52845c218dff234d009cd22e98))
+* **worldcheck:** every skipped claim also writes worldcheck:&lt;class&gt;:skipped-&lt;reason&gt; to usage.log ([0128f8a](https://github.com/Daily-Nerd/daimon/commit/0128f8a3615a198e1e64cec5fb5151a89a1e5954))
+* **worldcheck:** record why a claim was skipped ([#1186](https://github.com/Daily-Nerd/daimon/issues/1186)) ([03de6d5](https://github.com/Daily-Nerd/daimon/commit/03de6d5313ca8044d3a41d20b78e7d020df5641c))
+
+
+### Bug Fixes
+
+* **hooks:** clear the in-process capture heartbeat when the run ends ([1f06bad](https://github.com/Daily-Nerd/daimon/commit/1f06bad87967d405ca8951c32ba67a1e386c16e4))
+* **ledger:** fold Codex session names to one canonical key ([9845f98](https://github.com/Daily-Nerd/daimon/commit/9845f98f7cdbcdca918e0af7c7e19034dd853035))
+
+
+### Documentation
+
+* **hosts:** name the transcript rows a capture never reads, in English and Spanish ([f78c346](https://github.com/Daily-Nerd/daimon/commit/f78c346238da69b2775cd03a2492a8bc006f0ade))
+* **scars:** candidates for the shared exclusion predicate and the attachment row-type rule ([3093a66](https://github.com/Daily-Nerd/daimon/commit/3093a66631771a6737a8a6578972d5593a3f01ad))
+* **scars:** usage.log readers keep two-field lines only ([14db46a](https://github.com/Daily-Nerd/daimon/commit/14db46a93c684c1d0473e6dcb4b93e2b47427a2e))
+
 ## [0.55.0](https://github.com/Daily-Nerd/daimon/compare/v0.54.0...v0.55.0) (2026-10-12)
 
 
