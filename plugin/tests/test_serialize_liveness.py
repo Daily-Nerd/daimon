@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from daimon_briefing import ledger
+from daimon_briefing import ledger, serialize_liveness as liveness
 
 CEILING = 1800
 ROLLOUT = "rollout-2026-10-12T10-11-12-abc"
@@ -179,17 +179,17 @@ def _log(log_dir, text):
 
 
 def test_read_log_tail_of_a_missing_log_is_empty_and_whole(log_dir):
-    assert ledger.read_log_tail() == ("", False)
+    assert liveness.read_log_tail() == ("", False)
 
 
 def test_read_log_tail_returns_a_small_log_whole(log_dir):
     _log(log_dir, "one\ntwo\n")
-    assert ledger.read_log_tail() == ("one\ntwo\n", False)
+    assert liveness.read_log_tail() == ("one\ntwo\n", False)
 
 
 def test_read_log_tail_starts_at_the_next_line_and_says_it_cut(log_dir):
     _log(log_dir, "aaaa\nbbbb\ncccc\ndddd\n")
-    text, cut = ledger.read_log_tail(12)
+    text, cut = liveness.read_log_tail(12)
     assert cut is True
     assert text == "cccc\ndddd\n"
 
@@ -197,7 +197,7 @@ def test_read_log_tail_starts_at_the_next_line_and_says_it_cut(log_dir):
 def test_read_log_tail_keeps_a_line_that_starts_exactly_at_the_window_edge(
         log_dir):
     _log(log_dir, "aaaa\nbbbb\ncccc\n")
-    text, cut = ledger.read_log_tail(10)
+    text, cut = liveness.read_log_tail(10)
     assert cut is True
     assert text == "bbbb\ncccc\n"
 
@@ -209,26 +209,26 @@ def test_read_log_tail_seeks_instead_of_reading_the_whole_file(
                         lambda *a, **k: pytest.fail("read the whole log"))
     monkeypatch.setattr(Path, "read_bytes",
                         lambda *a, **k: pytest.fail("read the whole log"))
-    text, cut = ledger.read_log_tail(16)
+    text, cut = liveness.read_log_tail(16)
     assert (text, cut) == ("tail line\n", True)
 
 
 def test_read_log_tail_is_tolerant_of_a_cut_inside_a_multibyte_char(log_dir):
     _log(log_dir, "café\nnext line\n")
-    text, cut = ledger.read_log_tail(12)
+    text, cut = liveness.read_log_tail(12)
     assert cut is True
     assert text == "next line\n"
 
 
 def test_read_log_tail_of_one_giant_line_is_empty_not_a_fragment(log_dir):
     _log(log_dir, "y" * 100 + "\n")
-    assert ledger.read_log_tail(20) == ("", True)
+    assert liveness.read_log_tail(20) == ("", True)
 
 
 def test_read_log_tail_raises_oserror_when_the_log_is_not_a_file(log_dir):
     (log_dir / "serialize.log").mkdir(parents=True)
     with pytest.raises(OSError):
-        ledger.read_log_tail()
+        liveness.read_log_tail()
 
 
 # ---- 3.1: the state table, one case per row ---------------------------------
@@ -240,7 +240,7 @@ def _core(text="", *, sessions=None, since=None, slug="proj-a", beats=None,
           cut=False, log_unreadable=False, hb_unreadable=False,
           admission=None, transcripts=(), checkpoint=None):
     """serialize_rows_core with every reader injected."""
-    return ledger.serialize_rows_core(
+    return liveness.serialize_rows_core(
         text, NOW, slug=slug, sessions=sessions, since=since,
         heartbeats=beats or {}, cut=cut, log_unreadable=log_unreadable,
         heartbeats_unreadable=hb_unreadable, ceiling=CEILING,
@@ -426,11 +426,12 @@ def test_a_checkpoint_beats_an_unreadable_log():
 # ---- which sessions come back -----------------------------------------------
 
 
-def test_requested_ids_come_back_once_each_in_the_order_given():
+def test_every_requested_id_comes_back_in_the_order_given_duplicates_included():
     text = "\n".join([_sp("b", 60), _sp("a", 120)])
     result = _core(text, sessions=["b", "zzz", "a", "b"])
-    assert [r.session_id for r in result.rows] == ["b", "zzz", "a"]
-    assert [r.state for r in result.rows] == ["starting", "unknown", "starting"]
+    assert [r.session_id for r in result.rows] == ["b", "zzz", "a", "b"]
+    assert [r.state for r in result.rows] == [
+        "starting", "unknown", "starting", "starting"]
 
 
 def test_a_codex_session_asked_by_bare_id_or_rollout_stem_is_the_same_row():
@@ -440,7 +441,8 @@ def test_a_codex_session_asked_by_bare_id_or_rollout_stem_is_the_same_row():
         r = _row(_core(text, sessions=[ask], beats=beats))
         assert (r.session_id, r.state) == ("abc", "running")
     both = _core(text, sessions=[ROLLOUT, "abc"], beats=beats)
-    assert [r.session_id for r in both.rows] == ["abc"]
+    assert [r.session_id for r in both.rows] == ["abc", "abc"]
+    assert both.rows[0] == both.rows[1]
 
 
 def test_requested_sessions_are_returned_regardless_of_project():
@@ -555,16 +557,16 @@ def test_serializes_reads_the_log_the_stamps_and_the_clock_once(
     _log(log_dir, _spawn("S-1", 60, host="session-end", project=str(project),
                          now=now) + "\n")
     _beat(log_dir, "S-1", age=5, content=_slug(project))
-    got = ledger.serializes(str(project), now=now)
+    got = liveness.serializes(str(project), now=now)
     assert [(r.session_id, r.state, r.reason) for r in got.rows] == [
         ("S-1", "running", "heartbeat")]
     assert got.notes == ()
-    assert ledger.serialize_rows(str(project), now=now) == got.rows
+    assert liveness.serialize_rows(str(project), now=now) == got.rows
 
 
 def test_serializes_for_a_stamp_with_no_log_at_all(project, log_dir):
     _beat(log_dir, "S-2", age=3, content=_slug(project))
-    got = ledger.serializes(sessions=["S-2", "S-3"], now=time.time())
+    got = liveness.serializes(sessions=["S-2", "S-3"], now=time.time())
     assert [(r.session_id, r.state) for r in got.rows] == [
         ("S-2", "running"), ("S-3", "unknown")]
 
@@ -575,12 +577,12 @@ def test_serializes_row9_reads_a_real_checkpoint_against_since(
     cp_dir.mkdir(parents=True)
     (cp_dir / "S-9.json").write_text(json.dumps(
         {"session_id": "S-9", "created": _stamp(0, now)}))
-    ok = ledger.serializes(sessions=["S-9"], since=now - 60, now=now)
+    ok = liveness.serializes(sessions=["S-9"], since=now - 60, now=now)
     assert (ok.rows[0].state, ok.rows[0].reason) == ("succeeded", "checkpoint")
-    late = ledger.serializes(sessions=["S-9"], since=now + 600, now=now)
+    late = liveness.serializes(sessions=["S-9"], since=now + 600, now=now)
     assert (late.rows[0].state, late.rows[0].reason) == (
         "unknown", "checkpoint-without-run")
-    none = ledger.serializes(sessions=["S-9"], now=now)
+    none = liveness.serializes(sessions=["S-9"], now=now)
     assert none.rows[0].reason == "checkpoint-without-run"
 
 
@@ -591,7 +593,7 @@ def test_serializes_row9_finds_a_codex_rollout_checkpoint_by_either_name(
     (cp_dir / f"{ROLLOUT}.json").write_text(json.dumps(
         {"session_id": "abc", "created": _stamp(0, now)}))
     for ask in ("abc", ROLLOUT):
-        got = ledger.serializes(sessions=[ask], since=now - 60, now=now)
+        got = liveness.serializes(sessions=[ask], since=now - 60, now=now)
         assert (got.rows[0].session_id, got.rows[0].state) == (
             "abc", "succeeded")
 
@@ -603,7 +605,7 @@ def test_serializes_codex_fixture_with_a_rollout_stamp_reads_running_both_ways(
                          now=now) + "\n")
     _beat(log_dir, ROLLOUT, age=12, content=_slug(project))
     for ask in ("abc", ROLLOUT):
-        got = ledger.serializes(sessions=[ask], now=now)
+        got = liveness.serializes(sessions=[ask], now=now)
         assert [(r.session_id, r.state) for r in got.rows] == [
             ("abc", "running")]
     assert ledger._compute_outstanding(
@@ -628,7 +630,7 @@ def test_serializes_a_log_over_the_window_reads_by_seek_and_flags_old_ids(
         return real_read_text(self, *a, **k)
 
     monkeypatch.setattr(Path, "read_text", guarded)
-    got = ledger.serializes(sessions=["S-old", "S-new"], now=now)
+    got = liveness.serializes(sessions=["S-old", "S-new"], now=now)
     assert [(r.session_id, r.state, r.reason) for r in got.rows] == [
         ("S-old", "unknown", "outside-window"),
         ("S-new", "starting", "spawned")]
@@ -637,7 +639,7 @@ def test_serializes_a_log_over_the_window_reads_by_seek_and_flags_old_ids(
 
 def test_serializes_an_unreadable_log_becomes_a_note(project, log_dir):
     (log_dir / "serialize.log").mkdir(parents=True)
-    got = ledger.serializes(sessions=["S-1"], now=time.time())
+    got = liveness.serializes(sessions=["S-1"], now=time.time())
     assert got.rows[0].reason == "log-unreadable"
     assert len(got.notes) == 1
 
@@ -645,7 +647,7 @@ def test_serializes_an_unreadable_log_becomes_a_note(project, log_dir):
 def test_serializes_an_unreadable_heartbeat_dir_becomes_a_note(project, log_dir):
     log_dir.mkdir(parents=True)
     (log_dir / "heartbeats").write_text("not a dir")
-    got = ledger.serializes(sessions=["S-1"], now=time.time())
+    got = liveness.serializes(sessions=["S-1"], now=time.time())
     assert got.rows[0].state == "unknown"
     assert len(got.notes) == 1
     assert "heartbeat" in got.notes[0]
@@ -657,8 +659,8 @@ def test_serializes_a_read_leaves_the_heartbeat_dir_byte_identical(
     _beat(log_dir, "S-ancient", age=9 * 86400, content="")
     before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
               for p in (log_dir / "heartbeats").iterdir()}
-    ledger.serializes(str(project), now=time.time())
-    ledger.serializes(sessions=["S-1", "S-ancient"], now=time.time())
+    liveness.serializes(str(project), now=time.time())
+    liveness.serializes(sessions=["S-1", "S-ancient"], now=time.time())
     after = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
              for p in (log_dir / "heartbeats").iterdir()}
     assert after == before
@@ -668,8 +670,8 @@ def test_serializes_without_now_reads_the_clock_once(project, log_dir,
                                                      monkeypatch):
     calls = []
     real = time.time
-    monkeypatch.setattr(ledger.time, "time", lambda: (calls.append(1), real())[1])
-    ledger.serializes(sessions=["S-1"])
+    monkeypatch.setattr(liveness.time, "time", lambda: (calls.append(1), real())[1])
+    liveness.serializes(sessions=["S-1"])
     assert len(calls) == 1
 
 
@@ -677,6 +679,6 @@ def test_serializes_with_no_project_and_no_sessions_is_empty(log_dir):
     # Like `requests.join`: project_dir=None names no project, so only an
     # explicit `sessions` list can be answered.
     _beat(log_dir, "S-1", age=1, content="some-slug")
-    assert ledger.serializes(now=time.time()).rows == ()
-    assert ledger.serializes(sessions=["S-1"], now=time.time()).rows[0].state \
+    assert liveness.serializes(now=time.time()).rows == ()
+    assert liveness.serializes(sessions=["S-1"], now=time.time()).rows[0].state \
         == "running"
