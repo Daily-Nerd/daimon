@@ -51,6 +51,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/amendments.py": "ledger",  # owns amendments.jsonl and its fold
     "daimon_briefing/buckets.py": "ledger",  # bucket migration and its receipt ledger (migrations.jsonl)
     "daimon_briefing/checks.py": "ledger",  # folds logs/checks.jsonl, the firing log of armed checks
+    "daimon_briefing/heal.py": "ledger",  # plans serialize repairs from the capture ledger and holds the heal lock
     "daimon_briefing/jsonl.py": "ledger",  # the JSONL substrate: append, read health, rewrite
     "daimon_briefing/ledger.py": "ledger",  # owns logs/serialize.log, the capture ledger heal parses
     "daimon_briefing/ledger_census.py": "ledger",  # per-ledger health census of a bucket

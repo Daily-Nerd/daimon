@@ -67,6 +67,9 @@ from ..ledger import (
     _spawns_in_window_count,  # noqa: F401 — re-exported for compat
     _stats_capture,  # noqa: F401 — re-exported for compat
 )
+# #1179: the heal plan core the `heal --all` runner re-plans through after each
+# step; reached as `_cli._heal_plan_all` so a test can fake each step.
+from ..heal import plan_all as _heal_plan_all  # noqa: F401 — the seam the runner calls
 
 # Module-level seam so tests can inject a fake LLM client.
 _chat = llm.chat

@@ -329,6 +329,10 @@ def _repair_in_flight(age, ceiling, heartbeat_age, sid) -> bool:
     return age is not None and age <= ceiling
 
 
+def _presumed_dead(predicate, sid, entry) -> bool:
+    return bool(predicate is not None and predicate(sid, entry))
+
+
 def admission_state(project) -> tuple[str, str] | None:
     """(state, hint) when `project`'s events ledger is NOT proven, else None.
 
@@ -350,7 +354,8 @@ def _is_admission_refusal(e) -> bool:
 
 def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists,
                           force=False, heartbeat_age=None,
-                          checkpoint_covers=None, admission_state=None) -> list:
+                          checkpoint_covers=None, admission_state=None,
+                          presumed_dead=None) -> list:
     """Sessions still LOST — no checkpoint AND latest state != success.
     `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
     stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
@@ -363,7 +368,15 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
     retried-hung) session reclassifies as `healable` again PROVIDED its
     transcript still exists — force can't repair what's genuinely gone, so
     those stay `unrecoverable`/`hung`. Callers that don't pass `force` (e.g.
-    `status`, and default `heal`) see classification exactly as before."""
+    `status`, and default `heal`) see classification exactly as before.
+
+    `presumed_dead(sid, entry) -> bool` (#1179, D11) is a host's assertion that
+    a spawn with no result will never report: it relaxes BOTH time gates, the
+    `repairing` fallback to spawn age and the hung ceiling, so a killed first
+    attempt becomes healable and a killed retry stops reading `repairing`. The
+    predicate owns scope and proof of life (a stamp touched after the host's
+    epoch still wins), so a true answer skips the heartbeat check below too.
+    None is the unchanged reading."""
     out = []
     for sid, e in ledger.items():
         if e["result_kind"] in ("success", "skipped"):
@@ -399,11 +412,13 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             item = {"sid": sid, "kind": "error", "class": cls, "age": age,
                     "age_str": _format_age(age) if age is not None else "unknown",
                     "transcript": e["transcript"], "project": e["project"],
-                    "spawned": e["spawned"], "line": e["result_line"]}
+                    "spawned": e["spawned"], "line": e["result_line"],
+                    "retried": e["retried"]}
             if held:
                 item["state"], item["hint"] = held
             out.append(item)
         elif (e["result_kind"] is None and e["spawned"] and e["retried"]
+              and not _presumed_dead(presumed_dead, sid, e)
               and _repair_in_flight(age, ceiling, heartbeat_age, sid)):
             # #936: a heal retry that is still running. Visible, not
             # outstanding-as-failure: status renders it, heal refuses to
@@ -413,14 +428,16 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                         "age": age, "age_str": _format_age(age) if age is not None else "unknown",
                         "heartbeat_age": hb, "transcript": e["transcript"],
                         "project": e["project"], "spawned": True, "line": None})
-        elif e["result_kind"] is None and e["spawned"] and age is not None and age > ceiling:
+        elif (e["result_kind"] is None and e["spawned"] and age is not None
+              and (age > ceiling or _presumed_dead(presumed_dead, sid, e))):
             # #342: liveness beats wall-clock. A heartbeat fresher than the
             # ceiling means the serialize is ALIVE — not outstanding, so
             # status stays quiet and heal cannot fork a retry against a
             # still-running child. Absent heartbeat (pre-#342 host hook, or
             # a child dead before its first touch) falls through to the
             # wall-clock rule unchanged.
-            if heartbeat_age is not None:
+            if (heartbeat_age is not None
+                    and not _presumed_dead(presumed_dead, sid, e)):
                 hb = heartbeat_age(sid)
                 if hb is not None and hb <= ceiling:
                     continue
@@ -435,7 +452,8 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                    else "hung")
             out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
                         "age_str": _format_age(age), "transcript": t,
-                        "project": e["project"], "spawned": True, "line": None})
+                        "project": e["project"], "spawned": True, "line": None,
+                        "retried": e["retried"]})
     out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
     return out
 
@@ -565,6 +583,14 @@ def _admission_ledger(text: str, now: float) -> dict:
 
 
 def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
+    """The outstanding failures of `text` at `now`; the signature `status` and
+    the classifier fakes pin. A host's `presumed_dead` assertion (#1179, D11)
+    enters through `_scan_outstanding`, so this stays three arguments."""
+    return _scan_outstanding(text, now, force)
+
+
+def _scan_outstanding(text: str, now: float, force: bool = False,
+                      presumed_dead=None) -> list:
     """Wire the pure ledger/classifier to the live store + filesystem. Single
     source for both `status` (display) and `heal` (repair) so their notion of
     'outstanding' can never drift. `force` (#15) is forwarded to
@@ -588,6 +614,7 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
         heartbeat_age=_canonical_heartbeat_age(now),
         checkpoint_covers=checkpoint_covers,
         admission_state=state_of,
+        presumed_dead=presumed_dead,
     )
     out = _outstanding_failures(_session_ledger(text, now), now, **common)
     long_fold = _admission_ledger(text, now)
@@ -607,40 +634,39 @@ _HEAL_SKIP_REASON = {
 
 def _heal_plan(text, now, force=False) -> dict:
     """Decide what `heal` will repair and why. Pure — `now` injected. Reuses the
-    SAME _compute_outstanding source as status, so their notion of healable agrees.
+    SAME _compute_outstanding source as status, through `heal.plan_all`, so
+    status, the single heal and `heal --all` agree on what is healable.
     target = the newest `healable` (already gauntlet-vetted); every other outstanding
     failure lands in `skipped` with a reason; `note` is the headline when there is no
     target. `force` (#15) is forwarded to _compute_outstanding — the classifier does
     the actual retry-exhausted-to-healable promotion, so this layer needs no
     special-casing beyond passing the flag through."""
-    outstanding = _compute_outstanding(text, now, force=force)
-    healable = [f for f in outstanding if f["class"] == "healable"]
+    from . import heal  # function-level: heal imports this module
+    plan = heal.plan_all(text, now, force=force)
     target = None
-    if healable:
-        t = healable[0]  # newest-first
-        target = {"sid": t["sid"], "transcript": t["transcript"],
-                  "project": t["project"], "age_str": t["age_str"], "line": t["line"]}
+    first = None
+    if plan.targets:
+        t = plan.targets[0]  # newest-first
+        first = t.session_id
+        target = {"sid": t.session_id, "transcript": t.transcript,
+                  "project": t.project, "age_str": t.age_str, "line": t.line}
 
+    queued = {t.session_id: t for t in plan.targets[1:]}
+    refused = {s.session_id: s for s in plan.skipped}
     skipped = []
-    for f in outstanding:
-        if target and f["sid"] == target["sid"]:
+    for sid in plan.order:  # the classifier's order, as before
+        if sid == first:
             continue
-        if f["class"] == "healable":
-            reason = "newer failure took this run — re-run 'daimon heal' to reach it"
-        elif f["class"] == "admission-refused":
-            reason = (f"admission refused: events.jsonl is {f['state']}; "
-                      f"{f['hint']}")
-        elif f["class"] == "repairing":
-            hb = f.get("heartbeat_age")
-            reason = ("repair already running "
-                      + (f"(heartbeat {int(hb)}s ago)" if hb is not None else "(starting)"))
+        if sid in queued:
+            skipped.append({"sid": sid, "age_str": queued[sid].age_str,
+                            "reason": heal._NEWER_TOOK_THE_RUN})
         else:
-            reason = _HEAL_SKIP_REASON.get(f["class"], "not auto-repairable")
-        skipped.append({"sid": f["sid"], "age_str": f["age_str"], "reason": reason})
+            skipped.append({"sid": sid, "age_str": refused[sid].age_str,
+                            "reason": refused[sid].detail})
 
     if target is not None:
         note = ""
-    elif not outstanding:
+    elif not plan.order:
         note = ("nothing to heal — no serialize activity logged"
                 if not text.strip() else "nothing to heal — no outstanding failures")
     else:
