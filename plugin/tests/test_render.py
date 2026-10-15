@@ -1227,6 +1227,59 @@ def test_render_heal_force_target_real(capsys):
     assert "force-healing S-A" in out
 
 
+def _heal_plan_all(n=2, skipped=()):
+    from daimon_briefing import heal
+    targets = tuple(
+        heal.HealTarget(f"S-{i}", "slug", f"/t/{i}.jsonl", "error", 60 * i, False,
+                        "/p", "x", f"{i}m")
+        for i in range(1, n + 1))
+    return heal.HealPlan(targets, tuple(skipped), ())
+
+
+def test_render_heal_all_dry_run_lists_every_target(capsys):
+    from daimon_briefing import render
+    render.render_heal_all(_heal_plan_all(2), dry_run=True)
+    out = capsys.readouterr().out
+    assert "would heal 2 sessions, one at a time:" in out
+    assert "would heal S-1 (failed 1m ago, transcript /t/1.jsonl)" in out
+    assert "would heal S-2 (failed 2m ago, transcript /t/2.jsonl)" in out
+
+
+def test_render_heal_all_real_announces_the_count(capsys):
+    from daimon_briefing import render
+    render.render_heal_all(_heal_plan_all(2), dry_run=False)
+    assert "healing 2 sessions, one at a time:" in capsys.readouterr().out
+
+
+def test_render_heal_all_one_target_is_singular(capsys):
+    from daimon_briefing import render
+    render.render_heal_all(_heal_plan_all(1), dry_run=False, force=True)
+    assert "force-healing 1 session, one at a time:" in capsys.readouterr().out
+
+
+def test_render_heal_all_lists_skips_and_the_nothing_headline(capsys):
+    from daimon_briefing import heal, render
+    skip = heal.HealSkip("H1", "hung", "spawned, no result (hung/killed)", "40m")
+    render.render_heal_all(_heal_plan_all(0, [skip]), dry_run=False)
+    out = capsys.readouterr().out
+    assert "nothing to heal — 1 failure can't be auto-repaired:" in out
+    assert "  - H1  (40m ago) — spawned, no result (hung/killed)" in out
+    render.render_heal_all(_heal_plan_all(0), dry_run=False)
+    assert "nothing to heal — no outstanding failures" in capsys.readouterr().out
+
+
+def test_render_heal_summary_counts(capsys):
+    from daimon_briefing import render
+    render.render_heal_summary(3, 1)
+    assert capsys.readouterr().out == "heal --all: 3 attempted, 1 failed\n"
+
+
+def test_render_heal_busy_line(capsys):
+    from daimon_briefing import render
+    render.render_heal_busy()
+    assert capsys.readouterr().out == "another heal is running\n"
+
+
 def test_render_heal_not_forced_omits_force_wording(capsys):
     # force=False (the default) must not accidentally regress ordinary heal
     # output to the forced wording.

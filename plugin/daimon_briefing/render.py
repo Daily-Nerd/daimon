@@ -868,6 +868,40 @@ def render_heal(plan: dict, *, dry_run: bool, force: bool = False) -> None:
         print(f"  - {s['sid']}  ({s['age_str']} ago) — {s['reason']}")
 
 
+def render_heal_all(plan, *, dry_run: bool, force: bool = False) -> None:
+    """What `daimon heal --all` is about to do: the targets the serial runner
+    will take, then the failures it cannot repair. A dry run lists each target
+    (the real run announces each as it starts, through `render_heal`). Plain,
+    like `render_heal`. `plan` is a `heal.HealPlan`."""
+    verb = "force-heal" if force else "heal"
+    n = len(plan.targets)
+    if n:
+        noun = f"{n} session{'s' if n != 1 else ''}, one at a time:"
+        print(f"would {verb} {noun}" if dry_run else f"{verb}ing {noun}")
+        if dry_run:
+            for t in plan.targets:
+                print(f"would {verb} {t.session_id} (failed {t.age_str} ago, "
+                      f"transcript {t.transcript})")
+    elif plan.skipped:
+        k = len(plan.skipped)
+        print(f"nothing to heal — {k} failure{'s' if k != 1 else ''} "
+              "can't be auto-repaired:")
+    else:
+        print("nothing to heal — no outstanding failures")
+    for s in plan.skipped:
+        print(f"  - {s.session_id}  ({s.age_str} ago) — {s.detail}")
+
+
+def render_heal_summary(attempted: int, failed: int) -> None:
+    """The closing line of a `daimon heal --all` run."""
+    print(f"heal --all: {attempted} attempted, {failed} failed")
+
+
+def render_heal_busy() -> None:
+    """Another heal holds the machine-wide lock; this one is a no-op."""
+    print("another heal is running")
+
+
 def _print_skips_plain(n) -> None:
     """Informational, not a warning (#28): a skip is by-design (too-short
     session), but an invisible skip reads as a captured session."""
