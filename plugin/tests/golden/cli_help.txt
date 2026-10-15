@@ -825,9 +825,15 @@ usage: daimon audit-quotes [-h] [--project PROJECT] [--all] [--top TOP] options:
 this help message and exit --project PROJECT --all --top TOP
 
 === heal ===
-usage: daimon heal [-h] [--dry-run] [--force] options: -h, --help show this help message and exit
---dry-run explain what heal would repair (and why not) without serializing --force ignore a prior
-retry marker and re-heal a retry-exhausted session (#15)
+usage: daimon heal [-h] [--dry-run] [--force] [--all] [--project PROJECT] [--session SESSION]
+[--presumed-dead-before EPOCH] options: -h, --help show this help message and exit --dry-run explain
+what heal would repair (and why not) without serializing --force ignore a prior retry marker and
+re-heal a retry-exhausted session (#15) --all heal every healable session, one at a time,
+re-planning after each (default: only the most recent failure) --project PROJECT heal only the
+failures of this project directory (runs every one of them, like --all) --session SESSION heal only
+this session id (repeatable); a Codex rollout stem names its session --presumed-dead-before EPOCH
+assert that no serialize of --project started before EPOCH is still alive, unless a stamp was
+touched after it (a host whose children die with it, such as a container; never on a laptop)
 
 === team ===
 usage: daimon team [-h] {init,sync,status} ... positional arguments: {init,sync,status} init clone

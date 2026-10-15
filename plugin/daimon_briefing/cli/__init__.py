@@ -11,6 +11,9 @@
                                          FAILED session if safe (#26);
                                          --force ignores a prior retry
                                          marker (#15)
+    daimon heal --all [--project P] [--session S ...] [--presumed-dead-before E]
+                                         heal every healable session, one at
+                                         a time, re-planned after each (#1179)
     daimon configure [--backend ...]     detect the resolved LLM backend
                                          and fill gaps in ~/.daimon/env
     daimon write-checkpoint [--project DIR] [--source S]
