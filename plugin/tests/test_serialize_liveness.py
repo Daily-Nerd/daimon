@@ -682,3 +682,11 @@ def test_serializes_with_no_project_and_no_sessions_is_empty(log_dir):
     assert liveness.serializes(now=time.time()).rows == ()
     assert liveness.serializes(sessions=["S-1"], now=time.time()).rows[0].state \
         == "running"
+
+
+def test_classifier_survives_an_unlistable_heartbeat_dir(log_dir):
+    now = time.time()
+    log_dir.mkdir(parents=True)
+    (log_dir / "heartbeats").write_text("not a dir")
+    text = _spawn("abc", CEILING + 600, now=now)
+    assert len(ledger._compute_outstanding(text, now)) == 1
