@@ -46,11 +46,12 @@ lock, each session retried once (`force=True` ignores that). Its `status`:
 `outcomes`), `nothing-to-heal`, `already-running` (another heal holds the lock)
 or `launch-failed`; it never raises. Watch a started run with
 `serializes(sessions=[the target ids])`, and read `unknown` there as "not
-started yet" until your own deadline, never as "gone". The child sees the same
-store the caller does: it gets the caller's effective checkpoint and log
-directories and none of the other DAIMON_* names in the environment, so name a
-backend in the env file (or, in a sandbox, in its settings), not in the process
-env.
+started yet" until your own deadline, never as "gone". The child runs with the
+configuration the caller uses. Outside a sandbox that is a copy of the
+caller's environment (every DAIMON_* name included) with the effective
+checkpoint and log directories on top. Inside a sandbox its DAIMON_* names come
+from the sandbox settings alone: the process env's DAIMON_* names do not reach
+it and it reads no env file.
 
 `presumed_dead_before` (epoch) is a host assertion that no serialize of
 `project_dir` started before that time can still be alive, so a killed run
