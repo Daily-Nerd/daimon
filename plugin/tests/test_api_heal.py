@@ -149,6 +149,32 @@ def test_heal_plan_sessions_narrow_the_scope(tmp_path):
     assert api.heal_plan(proj, sessions=[], now=NOW).targets == ()
 
 
+def test_heal_plan_naming_nothing_plans_nothing_instead_of_the_whole_machine(
+        tmp_path, spy):
+    # An empty slug must not widen the scope: `resolve_project_dir(None)` is
+    # None, as for `serializes`, and plan_all treats no slug as machine-wide.
+    _fail(tmp_path, "S-a", 100, _project(tmp_path, "a"), now=NOW)
+    plan = api.heal_plan(now=NOW)
+    assert plan.targets == () and plan.skipped == ()
+    assert len(plan.notes) == 1 and "no project" in plan.notes[0]
+    assert api.heal_all().status == "nothing-to-heal"
+    assert spy.calls == []
+
+
+def test_heal_plan_sessions_alone_name_their_own_scope(tmp_path, spy):
+    _fail(tmp_path, "S-a", 100, _project(tmp_path, "a"), now=NOW)
+    _fail(tmp_path, "S-b", 200, _project(tmp_path, "b"), now=NOW)
+    plan = api.heal_plan(sessions=["S-b"], now=NOW)
+    assert [t.session_id for t in plan.targets] == ["S-b"]
+    assert plan.notes == ()
+    report = api.heal_all(sessions=["S-b"], presumed_dead_before=NOW)
+    assert report.status == "started"
+    argv = spy.calls[0][0]
+    assert "--project" not in argv and "--presumed-dead-before" not in argv
+    assert argv[argv.index("--session") + 1] == "S-b"
+    assert any("presumed_dead_before" in n for n in report.notes)
+
+
 def test_heal_plan_force_replans_a_retry_exhausted_session(tmp_path):
     proj = _project(tmp_path)
     t = _fail(tmp_path, "S-ex", 500, proj, now=NOW)
