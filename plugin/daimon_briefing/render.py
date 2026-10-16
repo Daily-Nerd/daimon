@@ -542,7 +542,8 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 # named in the suffix instead).
                 body.append(f"• [? unverified] {text}"
                             f"{briefing.corroboration_badge(i)}"
-                            f" (was {trust}, carried {stale_days:.0f}d)",
+                            f" (was {trust}, carried {stale_days:.0f}d)"
+                            f"{briefing.noted_suffix(i)}",
                             style="yellow")
                 item_style = "yellow"
             else:
@@ -554,8 +555,12 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 # position it holds on the plain path (after the annotations,
                 # before the quote): one shared literal, so the two renders state
                 # the witness count in identical bytes.
-                body.append(f"• {text}"
-                            f"{briefing.corroboration_badge(i)}", style=item_style)
+                # #1182: parity with briefing._line: the carried marker and
+                # the noted line (plain prints both, rich printed neither).
+                carried = " [carried]" if i.get("carried_from") else ""
+                body.append(f"• {text}{carried}"
+                            f"{briefing.corroboration_badge(i)}"
+                            f"{briefing.noted_suffix(i)}", style=item_style)
             # #480 slice 1: the id handle, dim like the quote below — it is
             # a supplementary resolve target, not part of the claim itself.
             handle = briefing._handle_suffix(i, briefable)

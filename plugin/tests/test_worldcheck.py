@@ -18,7 +18,8 @@ Contract pinned here:
   confirm/reject command surface (`daimon resolve` / `daimon reverify`) —
   existing pinned literals never change, and every class stamps the same
   {note, status} shape so the render path stays class-agnostic.
-- CLI wiring: DAIMON_WORLDCHECK opt-in (default OFF, byte-identical off-path),
+- CLI wiring: DAIMON_WORLDCHECK opt-in (default OFF: no probe runs, though the
+  render still calls the pure claim_for to mark carried notes, #1182),
   cross-project (--slug) and global-fallback briefs never probe, and outcomes
   land in usage.log as worldcheck:<outcome> AND worldcheck:<class>:<outcome>.
 

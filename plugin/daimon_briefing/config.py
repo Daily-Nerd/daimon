@@ -1246,8 +1246,9 @@ def worldcheck_enabled() -> bool:
     precedent): `daimon brief` runs on the SessionStart hook's latency-
     critical injection path (8s subprocess budget inside a 10s hook budget),
     and even budget-bounded network probes there must be deliberately chosen.
-    Flag off, the render path never touches the worldcheck module — output
-    stays byte-identical (test-pinned)."""
+    Flag off, no probe runs; the render still calls the pure
+    `worldcheck.claim_for` to mark carried notes that name a PR, branch, file
+    or dependency (#1182)."""
     return _flag("DAIMON_WORLDCHECK")
 
 

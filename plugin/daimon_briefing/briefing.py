@@ -228,6 +228,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
     base += _handle_suffix(item, briefable)
     if was_label is not None:
         base += f" (was {was_label}, carried {stale_days:.0f}d)"
+    base += noted_suffix(item)
     candidate = item.get("_supersede_candidate")
     if candidate:
         # #14: a machine-suggested (unconfirmed) supersession — never
@@ -519,8 +520,9 @@ def _machine_stamps(checkpoint: dict, snap) -> tuple:
 def stamp(checkpoint, snap, now, *, with_stale: bool = True) -> tuple:
     """#1132 PR 7a: every transient annotation the renderers read, pure over a
     `view.Snapshot`: the machine claims (`_supersede_candidate`,
-    `_agent_claim`, `_amend`), the #268 witness count (`_corroborated`) and
-    the #977 stale mark (`_stale_carried_days`). Returns `(checkpoint,
+    `_agent_claim`, `_amend`), the #268 witness count (`_corroborated`), the
+    #977 stale mark (`_stale_carried_days`) and the #1182 capture time
+    (`_noted`). Returns `(checkpoint,
     candidates, stale_items)`; `checkpoint` is a copy when anything is
     stamped, the input otherwise. It reads no ledger and drops nothing: the
     checkpoint a caller hands in has already been through `view`."""
@@ -531,6 +533,7 @@ def stamp(checkpoint, snap, now, *, with_stale: bool = True) -> tuple:
     stale: list = []
     if with_stale:
         out, stale = stamp_stale_carried(out, snap.resolutions, now)
+        out = stamp_noted(out, now)
     return out, candidates, stale
 
 
@@ -678,6 +681,61 @@ def stamp_stale_carried(checkpoint, resolutions: Mapping, now,
         item["_stale_carried_days"] = age_days
         stale.append(item)
     return out, stale
+
+
+# ---- #1182: when a carried note that names something in the world was noted ----
+
+
+def stamp_noted(checkpoint, now):
+    """#1182: stamp a transient `_noted` epoch, the item's `first_seen`, on
+    every CARRIED item whose text gives a checkable claim (a PR or issue, a
+    branch, a file or a dependency version: `worldcheck.claim_for`, a pure
+    regex function, so no probe runs and `DAIMON_WORLDCHECK` plays no part).
+
+    `first_seen` is the one stamp that means one thing: when the note was
+    first captured. A missing, unparseable or future one stamps nothing and
+    is not clamped to `now`, since "noted <now>" would state a capture time
+    nobody recorded. Copy-on-write like `stamp_stale_carried`: the input is
+    returned UNCHANGED when nothing is stamped."""
+    if not isinstance(checkpoint, dict):
+        return checkpoint
+    from . import worldcheck
+    to_stamp = []  # [(section, key, index, epoch)]
+    for section, key in schema.ITEM_LISTS:
+        items = (checkpoint.get(section) or {}).get(key)
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict) or not item.get("carried_from"):
+                continue
+            born = store._created_epoch(item.get("first_seen"))
+            if born is None or born > now:
+                continue
+            if worldcheck.claim_for(item.get("text")) is None:
+                continue
+            to_stamp.append((section, key, idx, born))
+    if not to_stamp:
+        return checkpoint
+    out = copy.deepcopy(checkpoint)
+    for section, key, idx, born in to_stamp:
+        out[section][key][idx]["_noted"] = born
+    return out
+
+
+def noted_suffix(item) -> str:
+    """#1182: the one literal both renderers append after a carried item's
+    other suffixes, in UTC. Empty without a `_noted` stamp, and when worldcheck
+    answered the item's TEXT claim in this brief (`_worldcheck_text` confirmed
+    or contradicted): the brief already shows the answer. It stays when only
+    the receipt was confirmed or the text claim was skipped, since nothing then
+    checked what the note says. The time is capture, not state."""
+    born = item.get("_noted")
+    if not isinstance(born, (int, float)) or isinstance(born, bool):
+        return ""
+    if item.get("_worldcheck_text") in ("confirmed", "contradicted"):
+        return ""
+    when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(born))
+    return f" (noted {when}Z, re-check before acting)"
 
 
 # ---- #1128: the one annotation step every host shares ----

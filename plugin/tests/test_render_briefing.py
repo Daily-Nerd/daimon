@@ -251,3 +251,19 @@ def test_the_marks_changed_only_with_a_format_bump():
 def test_the_version_is_not_printed_in_a_briefing(project):
     _seed(project, KEPT)
     assert "FORMAT" not in api.render_briefing(project).text
+
+
+# ---- #1182: the noted line rides the machine briefing ----
+
+
+def test_a_carried_pr_note_carries_the_noted_line(project):
+    checkpoint = testing.sample_checkpoint(KEPT)
+    checkpoint["working_context"]["open_questions"] = [{
+        "text": "PR #60 awaiting review", "trust": "inferred",
+        "carried_from": "S-prev", "first_seen": "2026-08-01T09:30:00Z"}]
+    testing.seed_checkpoint(project, checkpoint)
+    now = 1_785_600_000.0  # 2026-08-01T16:00:00Z, inside the stale budget
+    got = api.render_briefing(project, now=now)
+    assert got.state == "briefing"
+    assert ("PR #60 awaiting review [carried]" in got.text
+            and "(noted 2026-08-01 09:30Z, re-check before acting)" in got.text)

@@ -592,3 +592,94 @@ def test_the_rich_brief_prints_the_notes(tmp_checkpoint_dir, monkeypatch,
     assert "⚠ events.jsonl is degraded (torn)" in out
     render.render_brief(None, notes=("⚠ events.jsonl is degraded (torn)",))
     assert "⚠ events.jsonl is degraded (torn)" in capsys.readouterr().out
+
+
+# ---- #1182: the noted line reaches every surface ---------------------------
+
+_NOTE_PR = "PR #60 awaiting review"
+_NOTE_FILE = "the fix lives in src/fix.py"
+
+
+def _shows(out, text, line):
+    """One output line names `text` as carried and ends with the noted line
+    (the id handle may sit between: plain prints it, rich prints it later)."""
+    return any(text in ln and "[carried]" in ln and line in ln
+               for ln in out.splitlines())
+
+
+def _noted_cp(text, *, project=PROJECT, days=2):
+    born = time.time() - days * 86400
+    item = {"text": text, "trust": "inferred", "carried_from": "S-prev",
+            "first_seen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(born))}
+    cp = _cp()
+    cp["working_context"]["open_questions"] = [item]
+    store.write_checkpoint("S-1", cp, project_dir=project, writer=Writer.HUMAN)
+    when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(
+        store._created_epoch(item["first_seen"])))
+    return f"(noted {when}Z, re-check before acting)"
+
+
+def test_the_plain_cli_brief_shows_the_noted_line(tmp_checkpoint_dir,
+                                                  monkeypatch, capsys):
+    line = _noted_cp(_NOTE_PR)
+    _rc, out = _brief(capsys, monkeypatch)
+    assert _shows(out, _NOTE_PR, line)
+
+
+def test_the_rich_cli_brief_shows_the_noted_line(tmp_checkpoint_dir,
+                                                 monkeypatch, capsys):
+    from daimon_briefing import render
+    line = _noted_cp(_NOTE_PR)
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "300")
+    _rc, out = _brief(capsys, monkeypatch)
+    assert _shows(out, _NOTE_PR, line)
+
+
+def test_the_mcp_tool_shows_the_noted_line(tmp_checkpoint_dir):
+    line = _noted_cp(_NOTE_PR)
+    out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT}).text
+    assert _shows(out, _NOTE_PR, line)
+
+
+def test_the_hook_context_shows_the_noted_line(tmp_checkpoint_dir, monkeypatch):
+    line = _noted_cp(_NOTE_PR)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    out = hooks.pre_llm_call(session_id="S-n", user_message="hi",
+                             conversation_history=[], is_first_turn=True,
+                             model="m", platform="cli")
+    assert _shows(out["context"], _NOTE_PR, line)
+
+
+def test_the_noted_line_stays_with_the_worldcheck_flag_off(
+        tmp_checkpoint_dir, monkeypatch, capsys, tmp_path):
+    monkeypatch.delenv("DAIMON_WORLDCHECK", raising=False)
+    project = str(tmp_path)
+    line = _noted_cp(_NOTE_FILE, project=project)
+    _rc, out = _brief(capsys, monkeypatch, project=project)
+    assert _shows(out, _NOTE_FILE, line)
+
+
+@pytest.mark.parametrize("present, marker", [
+    (True, "[✓ world-checked]"), (False, "state changed since capture")])
+def test_the_noted_line_is_left_off_when_worldcheck_answered_the_claim(
+        tmp_checkpoint_dir, monkeypatch, capsys, tmp_path, present, marker):
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    if present:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "fix.py").write_text("x = 1\n")
+    project = str(tmp_path)
+    _noted_cp(_NOTE_FILE, project=project)
+    _rc, out = _brief(capsys, monkeypatch, project=project)
+    assert marker in out and "(noted" not in out
+
+
+def test_teammate_items_never_carry_the_noted_stamp(tmp_checkpoint_dir,
+                                                    monkeypatch):
+    from daimon_briefing.cli.brief import _team_briefings
+    _team_world(monkeypatch)
+    cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
+                                admit=store.Admit.ANY)
+    assert cp is not None
+    mate = _team_briefings(PROJECT)[0][1]
+    assert all("_noted" not in d for d in mate["decisions"])

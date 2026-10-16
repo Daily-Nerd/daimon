@@ -494,3 +494,36 @@ def test_build_keeps_every_decision_and_stays_pure(monkeypatch):
     b = briefing.build(cp, now=NOW)
     assert len(b["decisions"]) == 43 and "decisions_overflow" not in b
     assert briefing.build(cp, now=NOW) == b
+
+
+# ---- #1182: the noted line is charged inside the one allocator ----
+
+
+def _claim_checkpoint(first_seen):
+    """Carried PR notes whose text is the same with and without the line:
+    only `first_seen` decides whether the 50-byte suffix prints."""
+    cp = _fixture_checkpoint()
+    cp["working_context"]["open_questions"] = [
+        {"id": f"o-{i:06x}", "trust": "inferred", "carried_from": "S-prev",
+         "importance": 6, "first_seen": first_seen(i),
+         "text": f"PR #{60 + i} awaiting review " + "of the rollout " * 6}
+        for i in range(8)]
+    return cp
+
+
+def test_the_noted_line_costs_exactly_fifty_bytes_per_item():
+    plain = _annotated_b(_claim_checkpoint(lambda i: None))
+    noted = _annotated_b(_claim_checkpoint(lambda i: _iso(2)))
+    gain = _bytes(_sel(noted, None)) - _bytes(_sel(plain, None))
+    assert gain == 8 * 50
+
+
+def test_the_noted_line_displaces_candidates_and_never_grows_the_brief():
+    plain = _annotated_b(_claim_checkpoint(lambda i: None))
+    noted = _annotated_b(_claim_checkpoint(lambda i: _iso(2)))
+    ceiling = _bytes(_sel(plain, None))
+    kept_plain = _sel(plain, ceiling)
+    kept_noted = _sel(noted, ceiling)
+    assert _bytes(kept_noted) <= ceiling
+    assert (sum(map(len, kept_noted.kept.values()))
+            < sum(map(len, kept_plain.kept.values())))
