@@ -26,6 +26,34 @@ escepticismo hay que leerlo. El arrastre deliberadamente nunca reformula
 ítems — una cita verbatim arrastrada tiene los mismos bytes que el primer día
 (mira [clases de confianza](./trust-classes.md)).
 
+## Cuándo se anotó una nota
+
+Un ítem arrastrado cuyo texto nombra un PR o issue, una rama, un archivo o la
+versión de una dependencia muestra además cuándo se capturó por primera vez:
+
+```
+- [~ inferred] PR #60 awaiting review [carried] (noted 2026-10-09 14:02Z, re-check before acting)
+```
+
+La hora es UTC, al minuto, y es el momento en que la nota se capturó por
+primera vez. No dice nada del estado desde entonces: el PR puede haberse
+mergeado y la rama puede no existir más. Léela como la edad de la afirmación y
+luego ve a comprobarlo.
+
+La línea se omite cuando el [chequeo del mundo](./trust-classes.md) ya
+respondió esa afirmación en el mismo briefing, porque la respuesta se ve ahí
+mismo. Se mantiene cuando el chequeo no corrió o saltó esa afirmación. Una nota
+con hora de captura ausente o futura no imprime nada. Encontrar estas notas no
+necesita ninguna sonda, así que la línea aparece también con
+`DAIMON_WORLDCHECK` apagado.
+
+En un ítem vencido la línea va después del sufijo de edad, y los dos números
+miden cosas distintas: `noted` es cuándo se capturó la nota por primera vez,
+`carried 12d` es hace cuánto nadie la verificó. Cada línea cuesta 50 bytes
+dentro del mismo presupuesto, así que un briefing nunca crece más allá de su
+techo; en el peor caso un ítem de menor rango le cede lugar. Solo la sección de
+tu propio proyecto la muestra. Las secciones de compañeros no cambian.
+
 ## El arrastre es acotado, no infinito
 
 Los ítems sin cerrar no se acumulan para siempre:
