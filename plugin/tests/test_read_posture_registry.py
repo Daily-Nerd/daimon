@@ -23,6 +23,7 @@ EXPECTED = {
     "relations.jsonl": (OPEN, NOTE, NOTE, NOTE),
     "request_policy_tombstones.jsonl": (OPEN, NOTE, NOTE, NOTE),
     "verification.jsonl": (OPEN, OPEN, OPEN, NOTE),
+    "worldcheck-outcomes.jsonl": (OPEN, OPEN, OPEN, NOTE),
     "forget-hits.jsonl": (OPEN, OPEN, OPEN, NOTE),
 }
 

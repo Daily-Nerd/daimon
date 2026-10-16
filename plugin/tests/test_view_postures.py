@@ -119,6 +119,16 @@ def test_verification_and_forget_hits_are_open_until_unreadable(
     assert note.startswith("⚠ verification.jsonl is unreadable (garbage)")
 
 
+def test_worldcheck_outcomes_is_open_until_unreadable(tmp_checkpoint_dir):
+    _plant("worldcheck-outcomes.jsonl", b'{"ts": "x", "item_ref": "o-a')
+    snap = view.snapshot(PROJECT)
+    assert snap.health["worldcheck-outcomes.jsonl"] is Health.DEGRADED
+    assert snap.notes() == ()
+    _plant("worldcheck-outcomes.jsonl", b"\nnot json at all\n")
+    (note,) = view.snapshot(PROJECT).notes()
+    assert note.startswith("⚠ worldcheck-outcomes.jsonl is unreadable (garbage)")
+
+
 def test_a_ledger_outside_the_old_five_is_now_noted(tmp_checkpoint_dir):
     _plant("relations.jsonl", b"<<<<<<< HEAD\n")
     _plant("request_policy_tombstones.jsonl", b'{"torn')

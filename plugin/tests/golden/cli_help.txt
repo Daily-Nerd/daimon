@@ -620,10 +620,10 @@ repair events
 
 === ledger repair ===
 usage: daimon ledger repair [-h] [--project PROJECT] [--dry-run] name positional arguments: name a
-bucket ledger: events, refutations, amendments, requests, verification, forget-hits, relations,
-trust, request_policy_tombstones options: -h, --help show this help message and exit --project
-PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run report what would change
-and write nothing
+bucket ledger: events, refutations, amendments, requests, verification, worldcheck-outcomes,
+forget-hits, relations, trust, request_policy_tombstones options: -h, --help show this help message
+and exit --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run
+report what would change and write nothing
 
 === request ===
 usage: daimon request [-h] {open,revise,accept,reject,needs-info,suppress,done,reply,list,inbox} ...

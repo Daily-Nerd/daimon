@@ -771,6 +771,8 @@ def test_known_sidecar_files_are_not_unscannable(tmp_checkpoint_dir):
         (d / "verification.jsonl").write_text('{"item_ref": "i-1"}\n',
                                               encoding="utf-8")
         (d / "forget-hits.jsonl").write_text('{"key": "h"}\n', encoding="utf-8")
+        (d / "worldcheck-outcomes.jsonl").write_text('{"item_ref": "i-1"}\n',
+                                                     encoding="utf-8")
         (d / ".DS_Store").write_bytes(b"\x00\x01")
         (d / store._LOCK_NAME).write_text("", encoding="utf-8")
     result = privacy.audit_project(project_dir=PROJECT)

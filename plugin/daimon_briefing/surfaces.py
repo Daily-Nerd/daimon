@@ -408,6 +408,14 @@ SURFACES: tuple[Surface, ...] = (
             "store.append_verification", False, "exempt-no-plaintext",
             "none", audit_exempt=True, index_content=True, mergeable=True,
             read=_READ_COUNTERS, write=_W_EMITTER),
+    # store.append_world_outcomes (#1184, D10): {ts, item_ref, check, outcome,
+    # claim_key}, the FIRST confirmed and the FIRST contradicted outcome per
+    # note. A pointer and a hash, never text. Not index_content: recall folds
+    # events, verification and trust, and nothing in it reads this file.
+    Surface("checkpoints/{slug}/worldcheck-outcomes.jsonl",
+            "store.append_world_outcomes", False, "exempt-no-plaintext",
+            "none", audit_exempt=True, index_content=False, mergeable=True,
+            read=_READ_COUNTERS, write=_W_EMITTER),
     # store.record_forget_hits: {ts, key, reason?} — "NEVER the text or any
     # prefix"; reason (#693) is a closed-vocabulary code ("ruling-echo").
     Surface("checkpoints/{slug}/forget-hits.jsonl",

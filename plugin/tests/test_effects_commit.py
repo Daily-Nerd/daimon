@@ -103,6 +103,37 @@ def test_commit_writes_skip_reason_lines_after_the_counters(events, monkeypatch)
                      "worldcheck:pr-state:skipped-cap"]
 
 
+def test_commit_records_the_first_outcome_of_each_world_row(
+        tmp_checkpoint_dir, events):
+    row = ("o-111aaa", "file-exists-ok", "claim-confirmed", "a" * 64)
+    effects_commit.commit(effects_commit.worldcheck_effects(
+        "/p/ec-out", "/p/ec-out", {}, (row,)))
+    got = store.first_world_outcomes(project_dir="/p/ec-out")
+    assert list(got) == [("o-111aaa", "file-exists", "a" * 64, "confirmed")]
+
+
+def test_a_failing_outcome_write_costs_the_ledger_nothing_and_vice_versa(
+        events, monkeypatch):
+    events.tap(monkeypatch)
+    calls = []
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "_write_worldcheck_outcomes", boom)
+    monkeypatch.setattr(cli, "_write_worldcheck_ledger",
+                        lambda rows, route: calls.append("ledger"))
+    effects_commit.commit(effects_commit.worldcheck_effects(
+        "/p", "/p", {"fired": 1}, ()))
+    assert calls == ["ledger"]
+    monkeypatch.setattr(cli, "_write_worldcheck_ledger", boom)
+    monkeypatch.setattr(cli, "_write_worldcheck_outcomes",
+                        lambda rows, route: calls.append("outcomes"))
+    effects_commit.commit(effects_commit.worldcheck_effects(
+        "/p", "/p", {"fired": 1}, ()))
+    assert calls == ["ledger", "outcomes"]
+
+
 def test_worldcheck_effects_skips_default_to_none(events, monkeypatch):
     events.tap(monkeypatch)
     monkeypatch.setattr(cli, "_write_worldcheck_ledger", lambda rows, route: None)

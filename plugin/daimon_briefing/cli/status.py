@@ -108,6 +108,29 @@ def _write_worldcheck_ledger(rows, route) -> None:
                                       project_dir=route)
 
 
+def _write_worldcheck_outcomes(rows, route) -> None:
+    """Record the FIRST confirmed and the FIRST contradicted outcome of each
+    world note (#1184, D10). `rows` are the ledger rows `worldcheck.check`
+    returned; the confirmations among them are the ones `_write_worldcheck_ledger`
+    drops unless they cure, and they are what a per-note rate needs.
+
+    Only the four-field world rows count: receipt rows are triples, and an
+    id-less item never produced a row. Pointer and hash, never text. First-only
+    is the writer's job (`store.append_world_outcomes`)."""
+    outcomes = []
+    for row in rows:
+        if len(row) != 4:
+            continue
+        item_ref, check_name, _reason, claim_key = row
+        if check_name in store.WORLD_CHECKS:
+            outcomes.append((item_ref, check_name, "contradicted", claim_key))
+        elif check_name in store.WORLD_CURE_CHECKS:
+            outcomes.append((item_ref, check_name.removesuffix("-ok"),
+                             "confirmed", claim_key))
+    if outcomes:
+        store.append_world_outcomes(outcomes, project_dir=route)
+
+
 def _status_health(proj, glob, outstanding, siblings, *, now,
                    disabled: bool = False,
                    global_fallback: bool = False,

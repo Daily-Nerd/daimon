@@ -2849,6 +2849,106 @@ def verification_rows(project_dir=None, *, bucket=None) -> list:
     return list(jsonl.read(path).rows)
 
 
+# ---- #1184: the first confirmed and the first contradicted outcome per note --
+
+# A SECOND stream beside verification.jsonl, on purpose. That ledger records
+# problems found and its readers (`_latest_verification_verdicts`,
+# `verification_counts`) would read a first confirmation as a cure or as a
+# catch. This one holds at most two rows per note for the note's life.
+#
+# The key is `(item_ref, check, claim_key)` inside a bucket: the same note
+# identity the verification fold uses. The WRITER owns first-only (it skips a
+# key already on disk); the READER owns the fold (duplicates from two briefs
+# that raced collapse to the earliest ts). Both fail open, as the sibling
+# `verification.jsonl` does: a measurement ledger must never fail a brief.
+WORLD_OUTCOMES = "worldcheck-outcomes.jsonl"
+WORLD_OUTCOME_VERDICTS = frozenset({"confirmed", "contradicted"})
+
+
+def _outcomes_path(project_dir=None):
+    slug = project_slug(project_dir)
+    if not slug:
+        return None
+    return config.checkpoint_dir() / slug / WORLD_OUTCOMES
+
+
+def first_world_outcomes(*, bucket=None, project_dir=None) -> dict:
+    """{(item_ref, check, claim_key, outcome): row}, the EARLIEST row per key.
+
+    Two briefs can both append a "first" row; the file keeps both and this
+    fold keeps the earlier by ts, never by line order (equal stamps fall to
+    canonical-JSON order, so any line order folds the same). A row this module
+    could not have written (bad class, outcome, claim key or stamp) decides
+    nothing. `bucket` is a bucket DIRECTORY, as in `verification_rows`. Fails
+    open to {} (missing, corrupt or non-UTF-8 file, unknown project)."""
+    if bucket is not None:
+        path = Path(bucket) / WORLD_OUTCOMES
+    else:
+        path = _outcomes_path(_resolved(project_dir))
+        if path is None:
+            return {}
+    first: dict = {}
+    order: dict = {}  # key -> (epoch, canonical JSON) of the row kept
+    for row in jsonl.read(path).rows:
+        ref, check, outcome = (row.get("item_ref"), row.get("check"),
+                               row.get("outcome"))
+        if not (isinstance(ref, str) and ref and check in WORLD_CHECKS
+                and outcome in WORLD_OUTCOME_VERDICTS
+                and _valid_claim_key(row.get("claim_key"))):
+            continue
+        epoch = _verification_epoch(row.get("ts"))
+        if epoch is None:
+            continue
+        key = (ref, check, row["claim_key"], outcome)
+        rank = (epoch, json.dumps(row, sort_keys=True, ensure_ascii=False))
+        if key not in order or rank < order[key]:
+            order[key] = rank
+            first[key] = row
+    return first
+
+
+def append_world_outcomes(rows, project_dir=None) -> bool:
+    """Append the outcomes of `rows` that are the FIRST of their kind for
+    their note, in ONE write. A row is `(item_ref, check, outcome, claim_key)`
+    with `check` a world class and `outcome` "confirmed" or "contradicted".
+    Returns whether anything landed.
+
+    The bucket's file is read once, here, to learn which keys exist; a brief
+    that races another can still write a key the other just wrote, which the
+    reader's fold absorbs (one duplicate row, never a repeat per brief).
+    Pointer and hash only: nothing here can carry the note's text. Same
+    never-fatal contract as `append_verification`: a no-op under the kill
+    switch or an unknown project, False on OSError or a skipped ledger."""
+    if config.is_disabled():
+        return False
+    project_dir = _resolved(project_dir)
+    path = _outcomes_path(project_dir)
+    if path is None:
+        return False
+    try:
+        held = first_world_outcomes(project_dir=project_dir)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        fresh: list = []
+        seen = set(held)
+        for item_ref, check, outcome, claim_key in rows:
+            key = (item_ref, check, claim_key, outcome)
+            if (key in seen or not isinstance(item_ref, str) or not item_ref
+                    or check not in WORLD_CHECKS
+                    or outcome not in WORLD_OUTCOME_VERDICTS
+                    or not _valid_claim_key(claim_key)):
+                continue
+            seen.add(key)
+            fresh.append({"ts": stamp, "item_ref": item_ref, "check": check,
+                          "outcome": outcome, "claim_key": claim_key})
+        if not fresh:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        return jsonl.append_rows_as(path, fresh, Writer.EMITTER)
+    except OSError:
+        return False
+
+
 # #835/#839: the receipt-validity ledger vocabulary. Two check names rather
 # than one row type with an outcome field, because verification_counts is a
 # shipped surface documented as "how often the checkers actually CAUGHT

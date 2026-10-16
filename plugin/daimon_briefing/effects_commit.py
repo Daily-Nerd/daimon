@@ -176,3 +176,5 @@ def _commit_worldcheck(cli, record: Verification) -> None:
     _attempt(cli._note_receipt_probe_usage, project, stats)
     # A POINTER and a REASON CODE, never the item's text (#376).
     _attempt(cli._write_worldcheck_ledger, rows, route)
+    # #1184: its own attempt, so neither write can cost the other.
+    _attempt(cli._write_worldcheck_outcomes, rows, route)

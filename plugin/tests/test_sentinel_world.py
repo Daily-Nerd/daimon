@@ -40,3 +40,12 @@ def test_the_world_holds_what_it_claims(tmp_path, monkeypatch):
         "refutations.jsonl", "requests.jsonl"}
     assert all(world.quarantine_ids[k] for k in sw.QUARANTINED)
     assert world.ruling_id and world.relation_id and world.request_id
+
+
+def test_a_world_outcome_row_holds_a_pointer_and_never_a_value(
+        tmp_path, monkeypatch):
+    world = sw.build_world(tmp_path, monkeypatch)
+    path = world.bucket / "worldcheck-outcomes.jsonl"
+    assert path.is_file()
+    assert sw.leaked_kinds(path.read_bytes()) == set()
+    assert world.ids["question"] in path.read_text(encoding="utf-8")

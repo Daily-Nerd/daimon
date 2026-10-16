@@ -450,6 +450,7 @@ from .status import (  # noqa: E402
     _status_world,  # noqa: F401 — re-exported for compat
     _tail_log_info,  # noqa: F401 — re-exported for compat
     _write_worldcheck_ledger,  # noqa: F401 — re-exported for compat
+    _write_worldcheck_outcomes,  # noqa: F401 — re-exported for compat
     status_payload,  # noqa: F401 — re-exported for compat
 )
 from .inject import (  # noqa: E402

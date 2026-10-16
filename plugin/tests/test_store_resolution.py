@@ -335,6 +335,11 @@ def _public_entry_points(sub: str):
          lambda: store.append_verification("i-1", "verbatim", "no match",
                                            project_dir=sub)),
         ("verification_rows", lambda: store.verification_rows(project_dir=sub)),
+        ("append_world_outcomes",
+         lambda: store.append_world_outcomes(
+             [("i-1", "pr-state", "confirmed", "a" * 64)], project_dir=sub)),
+        ("first_world_outcomes",
+         lambda: store.first_world_outcomes(project_dir=sub)),
         ("latest_receipt_verdicts",
          lambda: store.latest_receipt_verdicts(project_dir=sub)),
         ("latest_world_verdicts",
