@@ -4,16 +4,17 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import (api, display, inspector, pending, requests,
-                             serialize_liveness, store, surfaces, transcript,
-                             view)
+from daimon_briefing import (api, display, heal, heal_host, inspector, pending,
+                             requests, serialize_liveness, store, surfaces,
+                             transcript, view)
 
 REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker",
              "withheld_json", "queue", "listing", "inbox_listing", "inbox",
              "join", "ledger_health", "project_slug", "receipt_state", "Writer",
              "masked", "EXCLUDED_ROWS", "Admitted", "admitted_messages",
              "serializes", "serialize_rows", "SerializeRow", "Serializes",
-             "SERIALIZE_STATES", "LIVE_STATES")
+             "SERIALIZE_STATES", "LIVE_STATES", "HealPlan", "HealReport",
+             "HealTarget", "HealSkip", "heal_plan", "heal_all")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -50,6 +51,12 @@ def test_every_name_is_the_source_object():
     assert api.Serializes is serialize_liveness.Serializes
     assert api.SERIALIZE_STATES is serialize_liveness.SERIALIZE_STATES
     assert api.LIVE_STATES is serialize_liveness.LIVE_STATES
+    assert api.HealPlan is heal.HealPlan
+    assert api.HealReport is heal.HealReport
+    assert api.HealTarget is heal.HealTarget
+    assert api.HealSkip is heal.HealSkip
+    assert api.heal_plan is heal_host.heal_plan
+    assert api.heal_all is heal_host.heal_all
     assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
 

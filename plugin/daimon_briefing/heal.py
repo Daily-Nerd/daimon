@@ -66,6 +66,20 @@ class HealPlan(NamedTuple):
     order: tuple = ()  # every in-scope session id in classifier order (the legacy dict's skip order)
 
 
+class HealReport(NamedTuple):
+    """What `api.heal_all` did. `status` is one of "started" (a detached child
+    was launched), "completed" (`wait=True` and the child ended), "nothing-to-heal",
+    "already-running" (another heal holds the lock) or "launch-failed".
+    `outcomes` holds one `SerializeRow` per target and only after a
+    `wait=True` run."""
+
+    status: str
+    targets: tuple
+    skipped: tuple
+    outcomes: tuple
+    notes: tuple
+
+
 def _skip_detail(f: dict) -> str:
     if f["class"] == "admission-refused":
         return f"admission refused: events.jsonl is {f['state']}; {f['hint']}"
