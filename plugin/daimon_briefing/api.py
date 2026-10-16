@@ -31,6 +31,39 @@ child stamps only after its preflight. State and reason codes are the contract;
 the notes are prose. A successful Hermes capture writes no log line, so pass
 `since` to read it as `succeeded`.
 
+Heal (`heal_plan`, `heal_all`, #1179). `heal_plan` is a pure read: the sessions
+a heal would repair and the ones it cannot, each skip with a stable `reason`
+(`retry-exhausted`, `unrecoverable`, `hung`, `admission-refused`, `repairing`),
+the same codes `daimon status` reports. It never writes and never reaps. The
+scope is the project of `project_dir`; `sessions=[...]` narrows it (any name a
+session goes by works, as for `serializes`); `everywhere=True` is machine-wide.
+A call that names none of the three plans nothing and says so.
+
+`heal_all` plans, then starts `daimon heal --all` DETACHED with the host's own
+interpreter and returns at once: one serialize at a time, under one machine-wide
+lock, each session retried once (`force=True` ignores that). Its `status`:
+`started`, `completed` (`wait=True`, with one `SerializeRow` per target in
+`outcomes`), `nothing-to-heal`, `already-running` (another heal holds the lock)
+or `launch-failed`; it never raises. Watch a started run with
+`serializes(sessions=[the target ids])`, and read `unknown` there as "not
+started yet" until your own deadline, never as "gone". The child sees the same
+store the caller does: it gets the caller's effective checkpoint and log
+directories and none of the other DAIMON_* names in the environment, so name a
+backend in the env file (or, in a sandbox, in its settings), not in the process
+env.
+
+`presumed_dead_before` (epoch) is a host assertion that no serialize of
+`project_dir` started before that time can still be alive, so a killed run
+stops reading as live. Pass it only where a restart kills the children (a
+container or pod). NEVER on a laptop: there the detached children outlive the
+host, and the assertion would heal a serialize that is still running. Without
+it, a killed run frees itself after `hung_after_seconds`. It is ignored with a
+note under `everywhere=True`.
+
+`api` is read-side with one named exception (design D23): `heal_all` is a
+launcher. It starts daimon's own serialize repair and writes no cognitive
+content; nothing else here starts a process.
+
 `parse_briefing` is stdlib only and is built from `marks`, the constants the
 renderers write with, so the format and its reader cannot drift apart.
 """
@@ -38,6 +71,8 @@ renderers write with, so the format and its reader cannot drift apart.
 from dataclasses import dataclass
 
 from .display import withheld_json, withheld_marker
+from .heal import HealPlan, HealReport, HealSkip, HealTarget
+from .heal_host import heal_all, heal_plan
 from .inspector import human_lines as why_lines
 from .inspector import inspect_item as why
 from .serialize_liveness import (LIVE_STATES, SERIALIZE_STATES, SerializeRow,
@@ -54,8 +89,9 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "inbox_listing", "inbox", "join", "ledger_health", "project_slug",
            "receipt_state", "Writer", "masked", "EXCLUDED_ROWS", "Admitted",
            "admitted_messages", "serializes", "serialize_rows", "SerializeRow",
-           "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "Briefing",
-           "parse_briefing")
+           "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "HealPlan",
+           "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
+           "Briefing", "parse_briefing")
 
 
 @dataclass(frozen=True)

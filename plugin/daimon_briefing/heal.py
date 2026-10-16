@@ -6,13 +6,17 @@ One notion of "healable" for `status`, the single `daimon heal` and the serial
 newest first, plus the failures it cannot repair, each with a stable code.
 `ledger._heal_plan` keeps its dict and is written over this plan.
 
-This module is pure planning plus one lock. It never runs a serialize: the
-loop that does lives in `cli/serialize.py`, because it reaches the serialize
-runner and the retry marker through the cli namespace (tests replace both there)
-and a ledger-layer module may not import an entry module.
+This module is pure planning, one lock and the launcher (#1179 PR 4, D8). It
+never runs a serialize itself: the loop that does lives in `cli/serialize.py`,
+because it reaches the serialize runner and the retry marker through the cli
+namespace (tests replace both there) and a ledger-layer module may not import
+an entry module. `launch` starts that loop as a detached child process, and
+`child_env` is what the child is allowed to see.
 """
 
-from collections.abc import Iterable, Iterator
+import os
+import subprocess
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType
 from typing import NamedTuple
@@ -60,6 +64,20 @@ class HealPlan(NamedTuple):
     skipped: tuple   # tuple[HealSkip, ...]
     notes: tuple
     order: tuple = ()  # every in-scope session id in classifier order (the legacy dict's skip order)
+
+
+class HealReport(NamedTuple):
+    """What `api.heal_all` did. `status` is one of "started" (a detached child
+    was launched), "completed" (`wait=True` and the child ended), "nothing-to-heal",
+    "already-running" (another heal holds the lock) or "launch-failed".
+    `outcomes` holds one `SerializeRow` per target and only after a
+    `wait=True` run."""
+
+    status: str
+    targets: tuple
+    skipped: tuple
+    outcomes: tuple
+    notes: tuple
 
 
 def _skip_detail(f: dict) -> str:
@@ -184,3 +202,42 @@ def try_lock() -> Iterator[bool]:
                 fh.close()
             except OSError:
                 pass
+
+
+def child_env(base: Mapping[str, str] | None = None, *,
+              settings: Mapping[str, str] | None = None) -> dict:
+    """The environment of a launched `daimon heal --all` child (D8).
+
+    The invariant: the child runs with exactly the configuration its parent
+    uses. So the env is a COPY of `base` (default the process env) that no name
+    is ever dropped from: the kill switch, the LLM backend and key, the recall
+    and team paths all reach the child, as they do the session-start heal
+    (`_daimon_hook_lib.project_env` copies and overwrites the same way).
+
+    Then two things are written over the copy. `settings`, the mapping of a
+    settings override (D22, the sandbox of PR 5), replaces any name it holds.
+    And `DAIMON_CHECKPOINT_DIR` and `DAIMON_LOG_DIR` are set to the EFFECTIVE
+    dirs, which win over both: a ContextVar override
+    (`config.checkpoint_dir_override`) does not cross a process boundary, so
+    the child would otherwise read whichever store the env names, not the one
+    the caller is looking at. Outside an override those two equal what the
+    child would have resolved on its own."""
+    env = dict(os.environ if base is None else base)
+    if settings:
+        env.update(settings)
+    env["DAIMON_CHECKPOINT_DIR"] = str(config.checkpoint_dir())
+    env["DAIMON_LOG_DIR"] = str(config.log_dir())
+    return env
+
+
+def launch(argv: list, env: Mapping[str, str], *, wait: bool = False) -> int | None:
+    """Start `argv` as the heal child, detached like the hook lib's
+    `spawn_heal` (`start_new_session=True`: it survives its parent, and a
+    signal to the parent's group does not reach it), with stdio on /dev/null.
+    `wait=False` returns None at once; `wait=True` blocks until the child ends
+    and returns its exit code. Raises OSError when the process cannot start,
+    for the caller (`api.heal_all`) to turn into a `launch-failed` report."""
+    proc = subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True, env=dict(env))
+    return proc.wait() if wait else None

@@ -314,6 +314,41 @@ def serialize_outside_window_note() -> str:
                          "serialize.log that was read; their state is unknown")
 
 
+def heal_epoch_ignored_note() -> str:
+    """`presumed_dead_before` was passed with a heal that names no single
+    project (`everywhere=True`, or only `sessions`): the assertion is scoped to
+    one project (D11), so it relaxed nothing."""
+    return marks.warning("presumed_dead_before was ignored: it applies to one "
+                         "named project, not to a machine-wide heal")
+
+
+def heal_no_project_note() -> str:
+    """A heal read named no project, no sessions and not `everywhere`: it
+    plans nothing rather than widening itself to the whole machine."""
+    return marks.warning("no project to heal: pass project_dir, sessions, or "
+                         "everywhere=True; nothing was planned")
+
+
+def heal_window_note() -> str:
+    """The heal plan read only the tail of serialize.log (D5); a failure older
+    than that window is not in it."""
+    return marks.warning("the heal plan covers only the recent window of "
+                         "serialize.log; older failures are not listed")
+
+
+def heal_child_exit_note(code: int) -> str:
+    """The waited-on `daimon heal --all` child exited non-zero; the outcomes
+    beside it say which sessions did not heal."""
+    return marks.warning(f"the heal child exited with status {code}; check "
+                         "the outcomes for the sessions that did not heal")
+
+
+def heal_launch_failed_note(error: str) -> str:
+    """The heal child could not be started. `error` is the exception TYPE
+    only; a message can carry a path."""
+    return marks.warning(f"the heal child could not be started ({error})")
+
+
 class Capped(tuple):
     """A tuple of note lines that has been capped, remembering every line it
     was capped from (`all`), so a later composition point can add its own

@@ -18,7 +18,15 @@ MODULES = ["view.py", "api.py"]
 
 WRITER_MODULES = {"capture", "serializer", "harvest", "ledger_repair",
                   "teamsync", "buckets", "receipts", "configure", "llm",
-                  "skill_install", "codex_hooks", "kimi_hooks", "ledger"}
+                  "skill_install", "codex_hooks", "kimi_hooks", "ledger",
+                  "heal", "heal_host"}
+# The one named exception (D23, #1179): `api.heal_all` is the contract's first
+# launcher, so api.py alone may import `heal` (the lock and the detached
+# `daimon heal --all` child) and `heal_host` (the verbs that call them). They
+# write no cognitive content, and api.py itself still contains no writer call
+# (`_violations` below). view.py gets no allowance, so the read view can never
+# reach a launcher.
+LAUNCHERS = {"api.py": {"heal", "heal_host"}}
 JSONL_WRITERS = ("append", "append_lines", "replace", "rewrite")
 WRITER_CALLS = {"write_checkpoint", "append_event", "append_verification",
                 "record_forget_hits", "record_bucket_root", "mkdir",
@@ -45,9 +53,25 @@ def _imported_modules(tree):
                 yield alias.name.split(".")[0]
 
 
+def _forbidden_imports(name, tree):
+    return (set(_imported_modules(tree)) & WRITER_MODULES) - LAUNCHERS.get(
+        name, set())
+
+
 @pytest.mark.parametrize("name", MODULES)
 def test_no_writer_module_is_imported(name):
-    assert not (set(_imported_modules(_tree(name))) & WRITER_MODULES)
+    assert not _forbidden_imports(name, _tree(name))
+
+
+def test_only_api_may_import_the_heal_launcher():
+    assert LAUNCHERS == {"api.py": {"heal", "heal_host"}}
+    src = ("from .heal import plan_all\nfrom . import heal\n"
+           "from .heal_host import heal_all\n")
+    assert _forbidden_imports("view.py", ast.parse(src)) == {"heal", "heal_host"}
+    assert _forbidden_imports("api.py", ast.parse(src)) == set()
+    # the allowance is for the launchers alone: every other writer stays forbidden
+    other = ast.parse("from . import heal, capture\n")
+    assert _forbidden_imports("api.py", other) == {"capture"}
 
 
 def _violations(tree):
