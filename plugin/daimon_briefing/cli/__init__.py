@@ -126,10 +126,10 @@ def _resolve_project(arg, *, for_write: bool = False) -> str:
     `config.resolve_project_dir_for_write`'s docstring for why this cannot be
     the default for every call site: it must never touch a read.
     """
-    project = arg or config.project_dir() or os.getcwd()
     if for_write:
-        return config.resolve_project_dir_for_write(project, allow_slug=False)
-    return config.resolve_project_dir(project, allow_slug=False)
+        return config.resolve_project_dir_for_write(
+            arg or config.project_dir() or os.getcwd(), allow_slug=False)
+    return config.resolve_read_project(arg)
 
 
 def require_ledger(project, name: str) -> None:

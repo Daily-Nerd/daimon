@@ -1029,3 +1029,21 @@ def test_brief_max_bytes_garbage_falls_back_to_default(monkeypatch):
 def test_brief_max_bytes_negative_clamps_to_zero(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "-5")
     assert config.brief_max_bytes() == 0
+
+
+def test_resolve_read_project_prefers_the_argument_then_env_then_cwd(
+        tmp_path, monkeypatch):
+    arg, env, cwd = (tmp_path / n for n in ("arg", "env", "cwd"))
+    for d in (arg, env, cwd):
+        d.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(env))
+    assert config.resolve_read_project(str(arg)) == str(arg.resolve())
+    assert config.resolve_read_project(None) == str(env.resolve())
+    monkeypatch.delenv("DAIMON_PROJECT_DIR")
+    assert config.resolve_read_project(None) == str(cwd.resolve())
+
+
+def test_resolve_read_project_never_reads_an_argument_as_a_slug(tmp_path):
+    assert config.resolve_read_project("some-slug") == config.resolve_project_dir(
+        "some-slug", allow_slug=False)
