@@ -456,3 +456,65 @@ def test_a_real_child_process_sees_the_callers_store(tmp_path):
     assert "no LLM API key" in log       # the child's own preflight line
     assert [(o.state, o.retried) for o in report.outcomes] == [("failed", True)]
     assert api.heal_all(proj).status == "nothing-to-heal"
+
+
+# ---- under a settings override (#1179 PR 5, R2 and R11) -------------------------
+
+
+def test_heal_all_hands_the_active_settings_to_the_child_env(
+        tmp_path, spy, monkeypatch):
+    """The child runs with exactly the configuration its parent uses. Under a
+    settings override that is the mapping alone: a process-env DAIMON_* name the
+    override hides must not reach the child, and the child must not read the
+    real env file."""
+    proj = _project(tmp_path)
+    _fail(tmp_path, "S-1", 100, proj)
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "5")
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "real-key")
+    monkeypatch.setenv("KEEP_ME", "yes")
+    logs = str(config.log_dir())
+    with config.settings_override({"DAIMON_LLM_MODEL": "mapped",
+                                   "DAIMON_LOG_DIR": logs}):
+        api.heal_all(proj)
+    env = spy.calls[0][1]
+    assert env["DAIMON_LLM_MODEL"] == "mapped"
+    assert "DAIMON_BRIEF_MAX_BYTES" not in env
+    assert "DAIMON_LLM_API_KEY" not in env
+    assert env["KEEP_ME"] == "yes"
+    assert env["DAIMON_ENV_FILE"] == os.devnull
+
+
+def test_heal_all_outside_an_override_still_copies_the_process_env(
+        tmp_path, spy, monkeypatch):
+    proj = _project(tmp_path)
+    _fail(tmp_path, "S-1", 100, proj)
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "real-key")
+    api.heal_all(proj)
+    assert spy.calls[0][1]["DAIMON_LLM_API_KEY"] == "real-key"
+
+
+def test_a_real_child_under_an_override_resolves_the_overridden_config(
+        tmp_path, monkeypatch):
+    """Real process: the env `heal_all` builds, handed to a probe in place of
+    the heal CLI, resolves the override's dirs and setting, not the env's."""
+    proj = _project(tmp_path)
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "real-key")
+    cp, lg = tmp_path / "sb-cp", tmp_path / "sb-lg"
+    probe = ("import sys; from daimon_briefing import config as c; "
+             f"ok = (str(c.checkpoint_dir()) == {str(cp)!r} "
+             f"and str(c.log_dir()) == {str(lg)!r} "
+             "and c.llm_model() == 'mapped' and c.llm_api_key() is None); "
+             "sys.exit(0 if ok else 3)")
+    seen = []
+    real = heal.launch
+
+    def run_probe(argv, env, *, wait=False):
+        seen.append(real([sys.executable, "-c", probe], env, wait=True))
+        return 0
+
+    monkeypatch.setattr(heal, "launch", run_probe)
+    with config.checkpoint_dir_override(cp), config.log_dir_override(lg), \
+            config.settings_override({"DAIMON_LLM_MODEL": "mapped"}):
+        _fail(tmp_path, "S-1", 100, proj)  # into the override's log dir
+        api.heal_all(proj)
+    assert seen == [0]

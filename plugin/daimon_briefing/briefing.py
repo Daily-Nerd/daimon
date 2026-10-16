@@ -1273,7 +1273,11 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
         profile = checks_host.PROFILES.get(config.capture_host() or "")
         if checks_host.mode_for(profile, "enforce") != "enforce":
             return []
-        manifest = checks_runtime.load_manifest()
+        # The path resolved through config, not left to checks_runtime: the
+        # runtime has its own env reader (a hook mirror) that knows nothing of
+        # a settings override, so under a sandbox it would read the real dir.
+        manifest = checks_runtime.load_manifest(
+            config.checks_dir() / checks_runtime.MANIFEST_NAME)
         entries = checks_runtime.armed_for(project_dir, manifest)
     except Exception:
         return []

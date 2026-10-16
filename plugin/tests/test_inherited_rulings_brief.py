@@ -558,7 +558,7 @@ def test_manifest_enforce_lines_fails_open_when_load_manifest_raises(
         monkeypatch, tmp_path):
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
 
-    def boom():
+    def boom(path=None):
         raise RuntimeError("manifest unreadable")
 
     monkeypatch.setattr(briefing.checks_runtime, "load_manifest", boom)
@@ -569,7 +569,7 @@ def test_manifest_enforce_lines_skips_bad_entries_and_renders_the_good_one(
         monkeypatch, tmp_path):
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
     monkeypatch.setattr(briefing.checks_runtime, "load_manifest",
-                        lambda: object())
+                        lambda path=None: object())
     entries = [
         "not-a-dict",                                              # isinstance
         {"intent": "warn", "ruling_id": "r-warn", "match": "x",
@@ -596,3 +596,23 @@ def test_manifest_enforce_lines_skips_bad_entries_and_renders_the_good_one(
     tag = config.home_relative(str(tmp_path))
     assert lines == [f"§ enforced from {tag}: gh pr create  [r-good]"]
     assert rendered_ids == {"r-already", "r-good"}
+
+
+def test_manifest_enforce_lines_read_the_manifest_of_the_resolved_checks_dir(
+        monkeypatch, tmp_path):
+    """#1179 PR 5 (D18): `checks_runtime` has its own env reader that knows no
+    settings override, so the briefing passes the manifest path it resolved
+    through `config.checks_dir()` instead of letting the runtime resolve it."""
+    import json
+    sandbox_checks = tmp_path / "sandbox-checks"
+    sandbox_checks.mkdir()
+    project = tmp_path / "proj"
+    project.mkdir()
+    (sandbox_checks / "manifest.json").write_text(json.dumps([
+        {"intent": "enforce", "ruling_id": "r-sandboxed", "match": "gh pr x",
+         "project_dir": str(project)}]), encoding="utf-8")
+    # the process env (conftest) names a different, empty checks dir
+    with config.settings_override({"DAIMON_CAPTURE_HOST": "claude-code",
+                                   "DAIMON_CHECKS_DIR": str(sandbox_checks)}):
+        lines = briefing._manifest_enforce_lines(str(project), set())
+    assert [ln for ln in lines if "r-sandboxed" in ln]

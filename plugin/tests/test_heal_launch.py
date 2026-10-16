@@ -89,3 +89,44 @@ def test_launch_wait_returns_the_exit_code():
     rc = heal.launch([sys.executable, "-c", "raise SystemExit(3)"],
                      dict(os.environ), wait=True)
     assert rc == 3
+
+
+# ---- under a settings override (#1179 PR 5, R11) ------------------------------
+
+
+def test_child_env_under_settings_takes_every_daimon_name_from_the_mapping():
+    base = {"PATH": "/bin", "DAIMON_LLM_API_KEY": "real-key",
+            "DAIMON_BRIEF_MAX_BYTES": "5", "DAIMON_LLM_MODEL": "from-env"}
+    env = heal.child_env(base, settings={"DAIMON_LLM_MODEL": "mapped"})
+    assert env["DAIMON_LLM_MODEL"] == "mapped"
+    assert "DAIMON_LLM_API_KEY" not in env
+    assert "DAIMON_BRIEF_MAX_BYTES" not in env
+    assert env["PATH"] == "/bin"
+
+
+def test_child_env_under_an_empty_mapping_still_hides_the_process_daimon_names():
+    env = heal.child_env({"DAIMON_DISABLE": "1", "HOME": "/h"}, settings={})
+    assert "DAIMON_DISABLE" not in env
+    assert env["HOME"] == "/h"
+
+
+def test_child_env_under_settings_does_not_read_the_real_env_file():
+    env = heal.child_env({"DAIMON_ENV_FILE": "/home/u/.daimon/env"},
+                         settings={"DAIMON_LLM_MODEL": "m"})
+    assert env["DAIMON_ENV_FILE"] == os.devnull
+
+
+def test_child_env_under_settings_never_reads_an_env_file_even_a_named_one():
+    """The parent reads no env file under an override, whatever the mapping
+    says, so the child gets the null device too."""
+    env = heal.child_env({}, settings={"DAIMON_ENV_FILE": "/sb/real-env"})
+    assert env["DAIMON_ENV_FILE"] == os.devnull
+
+
+def test_child_env_effective_dirs_still_win_under_settings(tmp_path):
+    with config.checkpoint_dir_override(tmp_path / "cp"), \
+            config.log_dir_override(tmp_path / "lg"):
+        env = heal.child_env(
+            {}, settings={"DAIMON_CHECKPOINT_DIR": "/x", "DAIMON_LOG_DIR": "/y"})
+    assert env["DAIMON_CHECKPOINT_DIR"] == str(tmp_path / "cp")
+    assert env["DAIMON_LOG_DIR"] == str(tmp_path / "lg")

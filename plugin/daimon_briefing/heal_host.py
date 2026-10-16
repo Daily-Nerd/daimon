@@ -92,7 +92,8 @@ def heal_all(project_dir=None, *, sessions=None, force=False, everywhere=False,
     if presumed_dead_before is not None and slug is not None:
         argv += ["--presumed-dead-before", repr(float(presumed_dead_before))]
     try:
-        code = heal.launch(argv, heal.child_env(), wait=wait)
+        env = heal.child_env(settings=config.active_settings())
+        code = heal.launch(argv, env, wait=wait)
     except Exception as exc:    # the contract: a spawn failure is a report
         notes.append(display.heal_launch_failed_note(type(exc).__name__))
         return HealReport("launch-failed", plan.targets, plan.skipped, (),

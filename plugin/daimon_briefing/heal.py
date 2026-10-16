@@ -221,10 +221,20 @@ def child_env(base: Mapping[str, str] | None = None, *,
     (`config.checkpoint_dir_override`) does not cross a process boundary, so
     the child would otherwise read whichever store the env names, not the one
     the caller is looking at. Outside an override those two equal what the
-    child would have resolved on its own."""
+    child would have resolved on its own.
+
+    `settings` given (even empty) means the parent runs under a settings
+    override, where its effective DAIMON_* configuration is the mapping ALONE.
+    The invariant is about the effective configuration, so the copy then drops
+    every DAIMON_* name of `base` the mapping does not hold, and the child's
+    env file is pointed at the null device, even when the mapping names one:
+    the parent reads no env file under an override, so the child must not
+    either."""
     env = dict(os.environ if base is None else base)
-    if settings:
+    if settings is not None:
+        env = {k: v for k, v in env.items() if not k.startswith("DAIMON_")}
         env.update(settings)
+        env["DAIMON_ENV_FILE"] = os.devnull
     env["DAIMON_CHECKPOINT_DIR"] = str(config.checkpoint_dir())
     env["DAIMON_LOG_DIR"] = str(config.log_dir())
     return env
