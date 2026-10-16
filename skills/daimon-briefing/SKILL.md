@@ -35,6 +35,10 @@ A carried item that has gone unchecked for more than a week renders as
 corroborated just because it agrees with itself, so world-check it (code, git,
 issue tracker) before treating it as current fact.
 
+A carried note that names a PR, branch, file or dependency ends with `(noted
+<UTC time>, re-check before acting)`: when it was first captured, not its state
+now. It is left off once worldcheck has answered that claim in the same brief.
+
 ## Closing loops
 
 Briefed open loops (open questions, uncertainties) carry an inline ` [id]`

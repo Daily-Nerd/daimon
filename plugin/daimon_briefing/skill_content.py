@@ -144,6 +144,8 @@ or suggest installing it.
   sources is not corroboration — for that mark (or any `[carried]` item that
   looks old), world-check it (code, git, issue tracker) before repeating the
   claim as true.
+- `(noted <UTC time>, re-check before acting)`: when a carried PR, branch, file
+  or dependency note was first captured, not its state now.
 - A note like "(4 of 13 shown; ...)" means items were cut for room; they stay
   in the checkpoint, and `daimon loops` lists them.
 - Items under "VERIFY BEFORE TRUSTING" describe state that may have changed
