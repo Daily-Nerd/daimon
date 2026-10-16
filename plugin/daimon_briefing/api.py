@@ -64,12 +64,43 @@ note under `everywhere=True`.
 launcher. It starts daimon's own serialize repair and writes no cognitive
 content; nothing else here starts a process.
 
+Render (`render_briefing`, `briefing_text`, #1180). The MACHINE briefing, the
+same bytes the MCP `daimon_brief` tool returns: always the deterministic render,
+never the LLM one, never changed by a terminal or `DAIMON_PLAIN`. It returns
+`RenderedBriefing(text, state, notes)`; `state` is `briefing`, `closed`,
+`no-checkpoint`, `empty` or `unavailable`, and `notes` are the ledger-health
+lines the text already carries. It never raises: a failure is `unavailable`
+with a note naming the exception type and an empty text. `project_dir=None`
+means DAIMON_PROJECT_DIR, else the working directory (a read of one project is
+harmless; `heal_all` plans nothing without a scope, because a machine-wide
+repair is not). `loops_pointer` defaults off: the MCP tool turns it on when
+the project is the caller's own, so pass `True` to match it byte for byte.
+
+The bytes are stable only under these conditions, which `testing.sandbox`
+enforces for a host test:
+  - pass `project_dir` (None reads the environment and the cwd);
+  - pass `now` (the stale marks and ages read the clock);
+  - the project is not inside a git working tree (the resolver walks up to the
+    repo top) and not at or below the home directory (ruling layers and `~`
+    paths would change the text);
+  - the settings (budgets, caps, tenant flags, capture host, the check dir)
+    come from the sandbox mapping, not the process environment.
+
+Round trip: for `briefing` and `closed`, `parse_briefing(text).header` is
+`marks.GREETING`, every `standing_rulings` entry starts with `marks.RULING_MARK`,
+every `items` entry starts with a mark in `marks.ITEM_MARKS`, and every note is
+in `warnings`. For `no-checkpoint` and `empty` the header is the orientation
+line and the notes are still `warnings`. The withheld trailer is dropped by the
+parser. `BRIEFING_FORMAT` is an integer that changes only when what
+`parse_briefing` extracts changes; it is never printed into a briefing.
+
 `parse_briefing` is stdlib only and is built from `marks`, the constants the
 renderers write with, so the format and its reader cannot drift apart.
 """
 
 from dataclasses import dataclass
 
+from .briefing import RenderedBriefing, briefing_text, render_briefing
 from .display import withheld_json, withheld_marker
 from .heal import HealPlan, HealReport, HealSkip, HealTarget
 from .heal_host import heal_all, heal_plan
@@ -77,6 +108,7 @@ from .inspector import human_lines as why_lines
 from .inspector import inspect_item as why
 from .serialize_liveness import (LIVE_STATES, SERIALIZE_STATES, SerializeRow,
                                  Serializes, serialize_rows, serializes)
+from .marks import FORMAT_VERSION as BRIEFING_FORMAT
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
 from .requests import inbox, inbox_listing, join, listing
@@ -91,7 +123,8 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "admitted_messages", "serializes", "serialize_rows", "SerializeRow",
            "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "HealPlan",
            "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
-           "Briefing", "parse_briefing")
+           "RenderedBriefing", "render_briefing", "briefing_text",
+           "BRIEFING_FORMAT", "Briefing", "parse_briefing")
 
 
 @dataclass(frozen=True)

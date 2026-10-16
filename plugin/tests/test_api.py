@@ -4,8 +4,8 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import (api, display, heal, heal_host, inspector, pending,
-                             requests, serialize_liveness, store, surfaces,
+from daimon_briefing import (api, briefing, display, heal, heal_host, inspector, marks,
+                             pending, requests, serialize_liveness, store, surfaces,
                              transcript, view)
 
 REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker",
@@ -14,7 +14,9 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "masked", "EXCLUDED_ROWS", "Admitted", "admitted_messages",
              "serializes", "serialize_rows", "SerializeRow", "Serializes",
              "SERIALIZE_STATES", "LIVE_STATES", "HealPlan", "HealReport",
-             "HealTarget", "HealSkip", "heal_plan", "heal_all")
+             "HealTarget", "HealSkip", "heal_plan", "heal_all",
+             "RenderedBriefing", "render_briefing", "briefing_text",
+             "BRIEFING_FORMAT")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -57,6 +59,10 @@ def test_every_name_is_the_source_object():
     assert api.HealSkip is heal.HealSkip
     assert api.heal_plan is heal_host.heal_plan
     assert api.heal_all is heal_host.heal_all
+    assert api.RenderedBriefing is briefing.RenderedBriefing
+    assert api.render_briefing is briefing.render_briefing
+    assert api.briefing_text is briefing.briefing_text
+    assert api.BRIEFING_FORMAT is marks.FORMAT_VERSION
     assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
 

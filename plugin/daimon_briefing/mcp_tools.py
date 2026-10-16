@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 
 from . import (briefing, config, display, effects_commit, recall,
-               recall_telemetry, requests, store, view)
+               recall_telemetry, requests, view)
 from .effects import Effects, Telemetry
 from .terms import salient_terms
 
@@ -128,57 +128,17 @@ def _brief(arguments: dict, fx) -> str:
     # Strictly scoped read (#94): never the global pointer. A named slug is
     # passed straight through; otherwise the resolved project's own bucket.
     target = slug if slug else cli._resolve_project(project_arg)
-    # Route.OWN is a DECISION here, not a leftover: an agent tool result
-    # carrying another project's briefing is contamination, and a pre-routing
-    # store stays read-only for project-scoped surfaces — an un-routed body
-    # would hand the agent handles no scoped write could act on.
-    # #1132 PR 7a: the same preparation the CLI and Hermes run (the view, the
-    # #268 witness count on the same strictly-scoped target, stale marks), so
-    # an agent consumer reads the world the human brief states. No
-    # worldcheck here: only the CLI same-project path sets that gate. A view
-    # that cannot be built is a tool error, never an unfiltered briefing.
-    now = time.time()
-    try:
-        annotated = briefing.prepare(target, now, route=store.Route.OWN)
-    except Exception as exc:
-        raise ToolError("the briefing could not be prepared "
-                        f"({type(exc).__name__})") from exc
-    notes = annotated.notes
-    snap = annotated.snapshot
-    # #693: one strictly-scoped ledger read serves every return below —
-    # standing rulings exist before the first checkpoint does, so both
-    # no-content returns carry them too.
-    rulings = briefing.ruling_lines(target, snap=snap)
-    ruling_text = "\n".join([*notes, *rulings])
-    ruling_text = ruling_text + "\n\n" if ruling_text else ""
-    filtered = annotated.checkpoint
-    if filtered is None:
-        # Orientation without content: name the explicit path, leak nothing
-        # (#96, machine edition — an agent tool result carrying another
-        # project's briefing is contamination, not convenience).
-        # #899: on a tenant-scoped home even the count is enumeration, and
-        # the remedy the hint names is the refused argument.
-        others = 0 if config.tenant_scoped() else len(store.list_buckets())
-        hint = (f"daimon knows {others} project(s) — call daimon_projects "
-                "and pass a slug to read one explicitly."
-                if others else
-                "no projects have checkpoints yet — the first serialized "
-                "session creates one.")
-        return f"{ruling_text}no checkpoint for this project. {hint}"
-    b = briefing.build(filtered)
-    if b is None:
-        if snap.closed:
-            return (f"{briefing.GREETING}\n\n{ruling_text}"
-                    f"{briefing.CLOSED_LINE}")
-        return f"{ruling_text}checkpoint exists but has nothing worth surfacing."
-    # Deterministic render only over MCP — the opt-in LLM re-render is a
-    # human-display affordance, and a machine consumer wants stable bytes.
-    # The note's `daimon loops` pointer only when that command would list
-    # this same project: never for a named slug or a foreign --project.
-    return briefing.render_plain(
-        b, briefing.receipt_degraded(filtered), rulings,
-        loops_pointer=not slug and cli.loops_lists_project(target),
-        notes=notes)
+    # The body (Route.OWN, the same preparation the CLI and Hermes run, the
+    # deterministic render) is `briefing.machine_brief`, shared with
+    # `api.render_briefing`. A view that cannot be built is a tool error.
+    # The `daimon loops` pointer only when that command would list this same
+    # project: never for a named slug or a foreign --project.
+    got = briefing.machine_brief(
+        target, time.time(),
+        loops_pointer=not slug and cli.loops_lists_project(target))
+    if got.state == "unavailable":
+        raise ToolError(got.notes[0])
+    return got.text
 
 
 @_tool("projects")
