@@ -8,6 +8,12 @@ only and nothing else here: both the renderers and the read-side API import
 it, and neither may drift from the other.
 """
 
+# The version of what `api.parse_briefing` extracts from a briefing, exported
+# as `api.BRIEFING_FORMAT` and never printed into one. Bump it with ANY change
+# to the constants below or to the parser's rules; `test_render_briefing`
+# hashes the constants and fails on a change that did not bump it.
+FORMAT_VERSION = 1
+
 # The first line of every briefing, and what a parser takes as its header
 # once the warnings above it are set aside.
 GREETING = "While you were away — here's where we left off."

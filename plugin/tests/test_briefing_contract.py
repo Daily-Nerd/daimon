@@ -10,53 +10,55 @@ each over a store written by the real writers."""
 
 import ast
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
 import daimon_briefing
 from daimon_briefing import (api, briefing, cli, hooks, ledger, marks,
-                             mcp_tools, refutations, store, trust)
-from daimon_briefing.surfaces import Writer
+                             mcp_tools, store, testing, trust)
 
-PROJECT = "/p/contract"
-OTHER = "/p/contract-other"
 KEPT = "an unrelated decision that stays visible"
 Q = "SENTINEL-quarantined ship the migration on Friday"
 RULING = "never ship a Friday deploy"
 
 
-def _cp(*decisions):
-    return {"session_id": "S-1", "created": "2026-08-01T00:00:00Z",
-            "working_context": {
-                "active_topic": {"text": "the contract topic",
-                                 "trust": "inferred"},
-                "recent_decisions": [{"text": t, "trust": "inferred"}
-                                     for t in decisions],
-                "open_questions": [{"text": "who owns the rollout of it",
-                                    "trust": "inferred"}]},
-            "epistemic_snapshot": {}}
+class Box(NamedTuple):
+    project: str
+    other: str
 
 
-def _seed(*decisions, project=PROJECT):
-    store.write_checkpoint("S-1", _cp(*(decisions or (KEPT,))),
-                           project_dir=project, writer=Writer.HUMAN)
+@pytest.fixture
+def box(tmp_path):
+    """The store every real-output case reads: a sandbox whose settings name
+    `project` as the caller's own, and a second project beside it."""
+    root = tmp_path.resolve() / "sbx"
+    project, other = root / "p" / "contract", root / "p" / "contract-other"
+    with testing.sandbox(root, settings={"DAIMON_PROJECT_DIR": str(project)}):
+        yield Box(str(project), str(other))
 
 
-def _ruling(verdict=RULING):
-    return refutations.assert_ruling(
-        subject="subject of the ruling", verdict=verdict,
-        scope="this project", evidence=["issue:693"], channel="cli-tty",
-        ratified=True, project_dir=PROJECT)
+def _seed(box, *decisions, project=None):
+    testing.seed_checkpoint(
+        project or box.project,
+        testing.sample_checkpoint(*(decisions or (KEPT,)),
+                                  topic="the contract topic",
+                                  questions=("who owns the rollout of it",)))
 
 
-def _plant(name, data, project=PROJECT):
-    bucket = store.config.checkpoint_dir() / store.project_slug(project)
+def _ruling(box, verdict=RULING):
+    return testing.seed_ruling(box.project, subject="subject of the ruling",
+                               verdict=verdict, evidence=("issue:693",))
+
+
+def _plant(box, name, data, project=None):
+    bucket = (store.config.checkpoint_dir()
+              / store.project_slug(project or box.project))
     bucket.mkdir(parents=True, exist_ok=True)
     (bucket / name).write_bytes(data)
 
 
-def _brief(capsys, monkeypatch, *argv):
-    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+def _brief(capsys, *argv):
     rc = cli.main(["brief", *argv])
     return rc, capsys.readouterr().out
 
@@ -104,10 +106,10 @@ def test_the_parser_is_built_from_the_shared_marks():
 
 
 def test_a_plain_brief_has_the_greeting_rulings_and_items(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed()
-    _ruling()
-    rc, out = _brief(capsys, monkeypatch)
+        box, capsys):
+    _seed(box)
+    _ruling(box)
+    rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING == marks.GREETING
@@ -120,11 +122,11 @@ def test_a_plain_brief_has_the_greeting_rulings_and_items(
 
 
 def test_a_cross_project_brief_keeps_the_greeting_as_header(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed(project=OTHER)
-    _seed()
-    slug = store.project_slug(OTHER)
-    rc, out = _brief(capsys, monkeypatch, "--slug", slug)
+        box, capsys):
+    _seed(box, project=box.other)
+    _seed(box)
+    slug = store.project_slug(box.other)
+    rc, out = _brief(capsys, "--slug", slug)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
@@ -134,10 +136,10 @@ def test_a_cross_project_brief_keeps_the_greeting_as_header(
 
 
 def test_a_serialize_in_flight_note_is_a_warning(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed()
+        box, monkeypatch, capsys):
+    _seed(box)
     monkeypatch.setattr(ledger, "serialize_in_flight", lambda slug: True)
-    rc, out = _brief(capsys, monkeypatch)
+    rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
@@ -147,10 +149,10 @@ def test_a_serialize_in_flight_note_is_a_warning(
 
 
 def test_an_unreadable_ledger_note_is_a_warning(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed()
-    _plant("events.jsonl", b"\xff\xfe not utf-8\n")
-    rc, out = _brief(capsys, monkeypatch)
+        box, capsys):
+    _seed(box)
+    _plant(box, "events.jsonl", b"\xff\xfe not utf-8\n")
+    rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
@@ -160,10 +162,10 @@ def test_an_unreadable_ledger_note_is_a_warning(
 
 
 def test_a_closed_view_keeps_the_greeting_and_lists_no_items(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed()
-    _plant("trust.jsonl", b"<<<<<<< HEAD\n")
-    rc, out = _brief(capsys, monkeypatch)
+        box, capsys):
+    _seed(box)
+    _plant(box, "trust.jsonl", b"<<<<<<< HEAD\n")
+    rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
@@ -173,12 +175,12 @@ def test_a_closed_view_keeps_the_greeting_and_lists_no_items(
 
 
 def test_the_withheld_trailer_is_neither_header_item_nor_warning(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed(KEPT, Q)
+        box, capsys):
+    _seed(box, KEPT, Q)
     trust.propose(text=Q, kind="decision", reason="made up",
                   evidence=["issue:1"], channel="cli-tty",
-                  project_dir=PROJECT)
-    rc, out = _brief(capsys, monkeypatch)
+                  project_dir=box.project)
+    rc, out = _brief(capsys)
     assert rc == 0
     assert "withheld" in out
     got = api.parse_briefing(out)
@@ -189,12 +191,12 @@ def test_the_withheld_trailer_is_neither_header_item_nor_warning(
 
 
 def test_the_no_briefing_line_is_plain_and_not_a_warning(
-        tmp_checkpoint_dir, monkeypatch, capsys):
+        box, capsys):
     """Without a checkpoint of its own the project gets only orientation, and
     that line is the first non-warning line, so it IS the header. It must not
     pose as a warning."""
-    _seed(project=OTHER)
-    rc, out = _brief(capsys, monkeypatch)
+    _seed(box, project=box.other)
+    rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header.startswith("No briefing for this project yet")
@@ -202,7 +204,7 @@ def test_the_no_briefing_line_is_plain_and_not_a_warning(
 
 
 def test_the_teammate_counts_on_the_header_only_path_are_plain(
-        tmp_checkpoint_dir, monkeypatch, capsys):
+        box, monkeypatch, capsys):
     from daimon_briefing.cli import brief as brief_mod
 
     def fake(project, counts):
@@ -210,8 +212,8 @@ def test_the_teammate_counts_on_the_header_only_path_are_plain(
         return []
 
     monkeypatch.setattr(brief_mod, "_team_briefings", fake)
-    _seed(project=OTHER)
-    rc, out = _brief(capsys, monkeypatch, "--team")
+    _seed(box, project=box.other)
+    rc, out = _brief(capsys, "--team")
     assert rc == 0
     assert "2 resolved item(s) withheld (a teammate's)" in out
     assert "3 quarantined item(s) withheld (a teammate's)" in out
@@ -219,35 +221,34 @@ def test_the_teammate_counts_on_the_header_only_path_are_plain(
 
 
 def test_a_missing_bucket_line_is_plain(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    rc, out = _brief(capsys, monkeypatch, "--slug", "-no-such-bucket")
+        box, capsys):
+    rc, out = _brief(capsys, "--slug", "-no-such-bucket")
     assert rc == 1
     assert api.parse_briefing(out).warnings == ()
 
 
-def test_the_mcp_tool_output_parses(tmp_checkpoint_dir):
-    _seed()
-    _ruling()
+def test_the_mcp_tool_output_parses(box):
+    _seed(box)
+    _ruling(box)
     out = mcp_tools.HANDLERS["daimon_brief"](
-        {"slug": store.project_slug(PROJECT)}).text
+        {"slug": store.project_slug(box.project)}).text
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING
     assert got.standing_rulings and got.items
 
 
-def test_the_mcp_closed_view_parses(tmp_checkpoint_dir):
-    _seed()
-    _plant("trust.jsonl", b"<<<<<<< HEAD\n")
+def test_the_mcp_closed_view_parses(box):
+    _seed(box)
+    _plant(box, "trust.jsonl", b"<<<<<<< HEAD\n")
     out = mcp_tools.HANDLERS["daimon_brief"](
-        {"slug": store.project_slug(PROJECT)}).text
+        {"slug": store.project_slug(box.project)}).text
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING and got.items == ()
 
 
-def test_the_hermes_hook_output_parses(tmp_checkpoint_dir, monkeypatch):
-    _seed()
-    _ruling()
-    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+def test_the_hermes_hook_output_parses(box):
+    _seed(box)
+    _ruling(box)
     out = hooks.pre_llm_call(session_id="S-new", user_message="hi",
                              conversation_history=[], is_first_turn=True,
                              model="m", platform="cli")
@@ -327,22 +328,22 @@ def test_the_format_is_defined_in_one_place():
 
 
 def test_a_ruling_line_starts_with_the_ruling_mark(
-        tmp_checkpoint_dir, monkeypatch, capsys):
-    _seed()
-    _ruling()
-    _, out = _brief(capsys, monkeypatch)
+        box, capsys):
+    _seed(box)
+    _ruling(box)
+    _, out = _brief(capsys)
     assert f"{marks.RULING_MARK} {RULING}" in out
 
 
 def test_an_admission_refused_note_is_a_warning_and_never_the_header(
-        tmp_checkpoint_dir, monkeypatch, capsys):
+        box, monkeypatch, capsys):
     # #1132 PR 10b: the note a project's briefing carries for sessions its
     # events ledger refused. A consumer (anamnesis) reads it as a warning.
-    _seed()
+    _seed(box)
     note = ("⚠ 2 session(s) of this project not serialized: events.jsonl is "
             "unreadable; run: daimon ledger repair events, then daimon heal")
     monkeypatch.setattr(ledger, "admission_notes", lambda slug: (note,))
-    rc, out = _brief(capsys, monkeypatch)
+    rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
     assert got.header == briefing.GREETING

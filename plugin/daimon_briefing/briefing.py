@@ -1765,6 +1765,102 @@ CLOSED_LINE = ("(daimon: this project's items are withheld while a ledger "
                "above cannot be read.)")
 
 
+class RenderedBriefing(NamedTuple):
+    """The machine briefing and what a host needs to act on it. `state` is
+    `briefing` (items rendered), `closed` (the view is closed: greeting,
+    notes and rulings, no items), `no-checkpoint` (orientation only), `empty`
+    (a checkpoint with nothing worth surfacing) or `unavailable` (the text is
+    empty and `notes` names the exception type). `notes` are the ledger-health
+    lines the text already carries, each starting with the warning mark."""
+    text: str
+    state: str
+    notes: tuple
+
+
+def _unavailable(exc: BaseException) -> RenderedBriefing:
+    return RenderedBriefing(
+        "", "unavailable",
+        (f"the briefing could not be prepared ({type(exc).__name__})",))
+
+
+def machine_brief(target, now, *, loops_pointer: bool) -> RenderedBriefing:
+    """The briefing a machine consumer reads (the MCP tool, `render_briefing`):
+    the strictly scoped read of `target`, always the deterministic render,
+    never the LLM one and never anything a terminal changes.
+
+    Route.OWN is a DECISION here, not a leftover: an agent tool result
+    carrying another project's briefing is contamination, and a pre-routing
+    store stays read-only for project-scoped surfaces. #1132 PR 7a: the same
+    preparation the CLI and Hermes run, so an agent consumer reads the world
+    the human brief states. No worldcheck: only the CLI same-project path sets
+    that gate. A view that cannot be built is `unavailable`, never an
+    unfiltered briefing; any later failure propagates to the caller.
+
+    `loops_pointer` adds the note's `daimon loops` pointer, honest only when
+    that command would list this same project: never for a named slug or a
+    foreign project."""
+    try:
+        annotated = prepare(target, now, route=store.Route.OWN)
+    except Exception as exc:
+        return _unavailable(exc)
+    notes = annotated.notes
+    snap = annotated.snapshot
+    # #693: one strictly-scoped ledger read serves every return below, since
+    # standing rulings exist before the first checkpoint does.
+    rulings = ruling_lines(target, snap=snap)
+    ruling_text = "\n".join([*notes, *rulings])
+    ruling_text = ruling_text + "\n\n" if ruling_text else ""
+    filtered = annotated.checkpoint
+    if filtered is None:
+        # Orientation without content: name the explicit path, leak nothing
+        # (#96, machine edition). #899: on a tenant-scoped home even the count
+        # is enumeration, and the remedy the hint names is the refused
+        # argument.
+        others = 0 if config.tenant_scoped() else len(store.list_buckets())
+        hint = (f"daimon knows {others} project(s) — call daimon_projects "
+                "and pass a slug to read one explicitly."
+                if others else
+                "no projects have checkpoints yet — the first serialized "
+                "session creates one.")
+        return RenderedBriefing(
+            f"{ruling_text}no checkpoint for this project. {hint}",
+            "no-checkpoint", notes)
+    b = build(filtered)
+    if b is None:
+        if snap.closed:
+            return RenderedBriefing(
+                f"{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed", notes)
+        return RenderedBriefing(
+            f"{ruling_text}checkpoint exists but has nothing worth surfacing.",
+            "empty", notes)
+    return RenderedBriefing(
+        render_plain(b, receipt_degraded(filtered), rulings,
+                     loops_pointer=loops_pointer, notes=notes),
+        "briefing", notes)
+
+
+def render_briefing(project_dir=None, *, now=None,
+                    loops_pointer: bool = False) -> RenderedBriefing:
+    """`machine_brief` for a host: resolves `project_dir`, runs the same
+    preparation and never raises. A host-facing read answers with a state, so
+    every failure becomes `unavailable` with a note naming the exception type.
+    `project_dir=None` means DAIMON_PROJECT_DIR, else the working directory.
+
+    The bytes are stable under the conditions `api.render_briefing` lists."""
+    try:
+        target = config.resolve_read_project(
+            None if project_dir is None else str(project_dir))
+        return machine_brief(target, time.time() if now is None else now,
+                             loops_pointer=loops_pointer)
+    except Exception as exc:  # noqa: BLE001 — host reads never raise: the failure is the `unavailable` state
+        return _unavailable(exc)
+
+
+def briefing_text(project_dir=None, *, now=None) -> str:
+    """The text of `render_briefing(project_dir, now=now)`."""
+    return render_briefing(project_dir, now=now).text
+
+
 def _head_lines(degraded: bool, rulings, notes=()) -> list[str]:
     """The greeting, the #204 degrade note, the ledger-health notes (#1132
     PR 7a: each already starts with a warning sign) and the standing rulings

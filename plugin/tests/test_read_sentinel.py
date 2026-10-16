@@ -1054,7 +1054,8 @@ CONVERTED = {
     "cli:loops": ("cli/lifecycle.py", PREPARE),
     "cli:projects": ("cli/projects.py", PEEK),
     "cli:status": ("cli/status.py", frozenset({"suppressed"})),
-    "mcp:daimon_brief": ("mcp_tools.py", PREPARE),
+    # the MCP handler delegates to briefing.machine_brief, which owns the call
+    "mcp:daimon_brief": ("briefing.py", PREPARE),
     "mcp:daimon_projects": ("cli/projects.py", PEEK),
     "hook:pre_llm_call": ("hooks.py", PREPARE),
     "http:/api/projects": (VIEWER, frozenset({"projects"})),

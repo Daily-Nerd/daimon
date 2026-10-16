@@ -895,6 +895,16 @@ class ProjectWriteRefused(Exception):
     git working tree."""
 
 
+def resolve_read_project(arg: str | None = None) -> str:
+    """The project directory a READ of one project means: `arg`, else
+    DAIMON_PROJECT_DIR, else the working directory, resolved by
+    `resolve_project_dir` with `allow_slug=False` (a path is never a bucket
+    slug here). The precedence lives here once so the CLI and the library
+    readers cannot resolve the same call to two buckets (#948)."""
+    return resolve_project_dir(arg or project_dir() or os.getcwd(),
+                               allow_slug=False)
+
+
 @overload
 def resolve_project_dir_for_write(raw: str, *, allow_slug: bool = True) -> str: ...
 @overload

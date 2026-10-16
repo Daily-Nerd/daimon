@@ -141,7 +141,7 @@ PREPARE_MANIFEST = {
     ("cli/lifecycle.py", "_cmd_loops", "prepare", "store.Route.OWN"),
     ("hooks.py", "pre_llm_call", "prepare",
      "briefing.injection_read_route(project)"),
-    ("mcp_tools.py", "_brief", "prepare", "store.Route.OWN"),
+    ("briefing.py", "machine_brief", "prepare", "store.Route.OWN"),
 }
 
 
