@@ -277,6 +277,7 @@ El briefing marca cada línea; la historia completa de confianza vive en
 
 - `[✓ verbatim]` / `[~ inferred]` / `[? untagged]` — cómo se capturó el ítem.
 - `[carried]` — heredado de una sesión anterior, no contexto fresco.
+- `(noted <hora UTC>, re-check before acting)`: en un ítem arrastrado que nombra un PR, rama, archivo o dependencia: cuándo se capturó la nota por primera vez. No dice nada del estado desde entonces; mira [arrastre](../concepts/carry.md).
 - `[≈ corroborated ×N]` — N sesiones independientes atestiguaron la afirmación.
 - `[✓ world-checked]` — una sonda en vivo coincidió con esta afirmación durante este brief.
 - `HANDOFF (…)` — un batón autoral de la sesión anterior; va arriba de todo.

@@ -1,5 +1,7 @@
 import time as _time
 
+import pytest
+
 from daimon_briefing import briefing, view
 
 from ._prepared import qkeys, shown, synthetic
@@ -1647,3 +1649,145 @@ def test_truncate_agent_claim_caps_a_long_claim_with_an_ellipsis():
     out = briefing._truncate_agent_claim(long_claim)
     assert len(out) == briefing._AGENT_CLAIM_EVIDENCE_CHARS + 1
     assert out.endswith("…")
+
+
+# ---- #1182: a carried note that names a PR, branch, file or dependency says
+# when it was noted ----
+#
+# `stamp_noted` is the render-time half: a transient `_noted` epoch from
+# `first_seen`, only on carried items whose text gives a worldcheck claim.
+# `noted_suffix` turns it into the one literal both renderers append. The time
+# is capture, never state: nothing here probes anything.
+
+_PR_TEXT = "PR #60 awaiting review"
+
+
+def _noted_utc(seconds_before_now):
+    stamp = _time.strftime("%Y-%m-%d %H:%M", _time.gmtime(
+        _NOW215 - seconds_before_now))
+    return f" (noted {stamp}Z, re-check before acting)"
+
+
+def _noted_item(text=_PR_TEXT, *, snap=None, **over):
+    item = {"text": text, "id": "o-n00001", "trust": "inferred",
+            "carried_from": "S-prev", "first_seen": _ts215(2), **over}
+    cp = _cp215([item])
+    out = briefing.stamp(cp, snap or view.Snapshot.empty(), _NOW215)[0]
+    return out["working_context"]["open_questions"][0]
+
+
+def test_noted_line_on_a_carried_item_that_names_a_pr():
+    item = _noted_item()
+    suffix = _noted_utc(2 * 86400)
+    assert briefing.noted_suffix(item) == suffix
+    assert briefing._line(item).endswith("[carried]" + suffix)
+
+
+@pytest.mark.parametrize("text", [
+    "the fix lives in src/fix.py",
+    "branch feat/live is still current",
+    "requests is pinned to 2.31.0",
+])
+def test_noted_line_covers_every_text_claim_class(text):
+    assert briefing.noted_suffix(_noted_item(text)) == _noted_utc(2 * 86400)
+
+
+def test_noted_suffix_is_the_only_difference_the_line_gains():
+    item = _noted_item()
+    bare = {k: v for k, v in item.items() if k != "_noted"}
+    assert briefing._line(item) == briefing._line(bare) + briefing.noted_suffix(item)
+
+
+def test_noted_line_is_exactly_fifty_bytes():
+    assert len(briefing.noted_suffix(_noted_item()).encode("utf-8")) == 50
+
+
+def test_no_noted_line_on_a_native_item():
+    item = _noted_item(carried_from=None)
+    assert "_noted" not in item and "(noted" not in briefing._line(item)
+
+
+def test_no_noted_line_on_a_carried_item_without_a_claim():
+    item = _noted_item("we talked about the retry semantics")
+    assert "_noted" not in item
+    assert briefing._line(item).endswith("[carried]")
+
+
+def test_noted_line_prints_first_seen_and_ignores_last_verified_and_events():
+    snap = synthetic({"o-n00001": {"ts": _ts215(0.5)}})
+    item = _noted_item(snap=snap, first_seen=_ts215(3),
+                       last_verified=_ts215(1))
+    assert briefing.noted_suffix(item) == _noted_utc(3 * 86400)
+
+
+@pytest.mark.parametrize("stamp", [
+    None, "", "not a time", _ts215(-1), 12345, {"x": 1}])
+def test_a_missing_unparseable_or_future_first_seen_prints_nothing(stamp):
+    item = _noted_item(first_seen=stamp)
+    assert "_noted" not in item
+    assert briefing.noted_suffix(item) == ""
+    assert "(noted" not in briefing._line(item)
+
+
+def test_a_first_seen_equal_to_now_is_not_future():
+    item = _noted_item(first_seen=_ts215(0))
+    assert briefing.noted_suffix(item) == _noted_utc(0)
+
+
+def test_noted_line_is_left_off_when_the_text_claim_was_answered():
+    for answered in ("confirmed", "contradicted"):
+        item = _noted_item()
+        item["_worldcheck_text"] = answered
+        assert briefing.noted_suffix(item) == ""
+        assert "(noted" not in briefing._line(item)
+
+
+def test_noted_line_is_kept_when_the_text_claim_was_skipped():
+    item = _noted_item()
+    item["_worldcheck_text"] = "skipped"
+    assert briefing.noted_suffix(item) == _noted_utc(2 * 86400)
+
+
+def test_noted_line_is_kept_when_only_receipt_validity_confirmed():
+    item = _noted_item()
+    item["_worldcheck_confirmed"] = True
+    line = briefing._line(item)
+    assert "[✓ world-checked]" in line
+    assert line.endswith(_noted_utc(2 * 86400))
+
+
+def test_a_stale_item_keeps_its_suffix_byte_identical():
+    item = _noted_item(trust="verbatim", first_seen=_ts215(10))
+    line = briefing._line(item)
+    assert line.startswith("- [? unverified] " + _PR_TEXT)
+    assert "(was verbatim, carried 10d)" in line
+    assert line.endswith("(was verbatim, carried 10d)" + _noted_utc(10 * 86400))
+
+
+def test_noted_line_does_not_depend_on_the_worldcheck_flag(monkeypatch):
+    from daimon_briefing import worldcheck
+    monkeypatch.delenv("DAIMON_WORLDCHECK", raising=False)
+
+    def boom(*_a, **_k):
+        raise AssertionError("a probe ran")
+    monkeypatch.setattr(worldcheck, "check", boom)
+    assert briefing.noted_suffix(_noted_item()) == _noted_utc(2 * 86400)
+
+
+def test_stamp_noted_is_copy_on_write():
+    cp = _cp215([{"text": _PR_TEXT, "id": "o-n00001",
+                  "carried_from": "S-prev", "first_seen": _ts215(2)}])
+    out = briefing.stamp_noted(cp, _NOW215)
+    assert out is not cp
+    assert "_noted" not in cp["working_context"]["open_questions"][0]
+    nothing = _cp215([{"text": "plain note", "carried_from": "S-prev",
+                       "first_seen": _ts215(2)}])
+    assert briefing.stamp_noted(nothing, _NOW215) is nothing
+    assert briefing.stamp_noted("not a checkpoint", _NOW215) == "not a checkpoint"
+
+
+def test_stamp_skips_the_noted_stamp_with_the_stale_switch_off():
+    cp = _cp215([{"text": _PR_TEXT, "id": "o-n00001",
+                  "carried_from": "S-prev", "first_seen": _ts215(2)}])
+    out = briefing.stamp(cp, view.Snapshot.empty(), _NOW215, with_stale=False)[0]
+    assert out is cp

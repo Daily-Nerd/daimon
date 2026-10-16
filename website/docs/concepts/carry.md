@@ -24,6 +24,32 @@ stale.* The older a carried item gets, the more skeptically it should be read.
 Carry deliberately never rewords items — a carried verbatim quote is the same
 bytes it was on day one (see [trust classes](./trust-classes.md)).
 
+## When a note was noted
+
+A carried item whose text names a PR or issue, a branch, a file or a
+dependency version also shows when it was first captured:
+
+```
+- [~ inferred] PR #60 awaiting review [carried] (noted 2026-10-09 14:02Z, re-check before acting)
+```
+
+The time is UTC, to the minute, and it is the moment the note was first
+captured. It says nothing about the state since then: the PR may have merged
+and the branch may be gone. Read it as the age of the claim, then go look.
+
+The line is left off when the [world check](./trust-classes.md) already
+answered that claim in the same brief, because the answer is shown right there.
+It stays when the check did not run or skipped that claim. A note with a
+missing or future capture time prints nothing. Finding these notes needs no
+probe, so the line shows up with `DAIMON_WORLDCHECK` off too.
+
+On a stale item the line follows the age suffix, and the two numbers measure
+different things: `noted` is when the note was first captured, `carried 12d`
+is how long since anyone last verified it. Each line costs 50 bytes inside the
+same byte budget, so a brief never grows past its ceiling; at worst a
+lower-ranked item makes room. Only your own project's section shows it.
+Teammate sections are unchanged.
+
 ## Carry is bounded, not infinite
 
 Unclosed items do not accumulate forever:

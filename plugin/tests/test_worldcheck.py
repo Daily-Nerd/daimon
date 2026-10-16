@@ -18,7 +18,8 @@ Contract pinned here:
   confirm/reject command surface (`daimon resolve` / `daimon reverify`) —
   existing pinned literals never change, and every class stamps the same
   {note, status} shape so the render path stays class-agnostic.
-- CLI wiring: DAIMON_WORLDCHECK opt-in (default OFF, byte-identical off-path),
+- CLI wiring: DAIMON_WORLDCHECK opt-in (default OFF: no probe runs, though the
+  render still calls the pure claim_for to mark carried notes, #1182),
   cross-project (--slug) and global-fallback briefs never probe, and outcomes
   land in usage.log as worldcheck:<outcome> AND worldcheck:<class>:<outcome>.
 
@@ -2240,3 +2241,39 @@ def test_skip_reasons_mixed_classes_in_one_check(monkeypatch, fake_gh, tmp_path)
     stats, reasons = _skips(cp, str(project))
     assert stats["pr-state:skipped"] == 2
     assert sorted(reasons) == ["pr-state:skipped-exit-nonzero"] * 2
+
+
+# ---- #1182: the text claim's own outcome, for the noted line ----------------
+
+
+def test_text_outcome_is_stamped_per_text_class(monkeypatch, tmp_path):
+    project = tmp_path / "repo"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "fix.py").write_text("x = 1\n")
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setattr(worldcheck, "_remote_state", lambda project: "no-remote")
+    cp = _cp(["the fix lives in src/fix.py", "the fix lives in src/other.py",
+              "PR #60 awaiting review"])
+    worldcheck.check(cp, str(project))
+    got = [i["_worldcheck_text"] for i in cp["working_context"]["open_questions"]]
+    assert got == ["confirmed", "contradicted", "skipped"]
+
+
+def test_text_outcome_is_never_stamped_for_receipt_validity(
+        receipts_on, proj):
+    _signed_origin("S-origin", proj)
+    cp = _cp_origins(["S-origin"])
+    worldcheck.check(cp, proj)
+    item = cp["working_context"]["open_questions"][0]
+    assert item["_worldcheck_confirmed"] is True
+    assert "_worldcheck_text" not in item
+
+
+def test_text_outcome_stays_skipped_when_only_the_receipt_confirmed(
+        receipts_on, proj, monkeypatch, fake_gh):
+    _stats, cp = _two_axis_check(proj, monkeypatch, fake_gh, gh_state="OPEN",
+                                 n=6)
+    items = cp["working_context"]["open_questions"]
+    assert [i["_worldcheck_text"] for i in items] == (
+        ["confirmed"] * 4 + ["skipped"] * 2)
+    assert all(i["_worldcheck_confirmed"] is True for i in items)

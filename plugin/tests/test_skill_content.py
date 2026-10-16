@@ -129,8 +129,17 @@ def test_full_fits_size_budget():
     # size is 13,873 (2026-09-24). Nothing was added to the compact body.
     # RAISED 13,900 -> 14,200 (#1117): a new agent-facing verb, and the skill
     # content IS the subject. One 257-char paragraph, new size 14,130.
+    #
+    # RAISED 14,200 -> 14,900 on 2026-10-16 (#1182). The skill content is the
+    # subject: the brief gained a `(noted <UTC time>, re-check before acting)`
+    # suffix, and an agent that reads a capture time as a state check trusts a
+    # claim nobody looked at. The addition is one 140-char bullet in "Reading a
+    # briefing", new size 14,327. It was trimmed before raising: the first
+    # draft was 204 chars (14,391), and the left-off rule moved to the plugin
+    # SKILL.md. 14,900 is the new size plus about 4% slack. Nothing was added
+    # to the compact body.
     full = skill_content.render_full()
-    assert len(full) <= 14200, f"full body is {len(full)} chars (cap 14200)"
+    assert len(full) <= 14900, f"full body is {len(full)} chars (cap 14900)"
 
 
 def test_full_has_trigger_only_frontmatter():
@@ -583,3 +592,22 @@ def test_reply_is_taught_in_the_skill_and_documented_in_both_languages():
                 es + "concepts/requests-and-decisions.md"):
         text = (repo / rel).read_text(encoding="utf-8")
         assert "request reply" in text or "**`reply`**" in text, rel
+
+
+def test_full_body_teaches_the_noted_line_is_capture_not_state():
+    # #1182: `(noted <UTC time>, re-check before acting)` is the capture time
+    # of a carried note that names a PR, branch, file or dependency. A reader
+    # who takes it for a state check trusts a claim nobody looked at. The
+    # compact body does not teach it: the line carries its own instruction.
+    full = skill_content.render_full()
+    reading = " ".join(full.split("## Reading a briefing")[1].split("\n## ")[0].split())
+    assert "(noted <UTC time>, re-check before acting)" in reading
+    assert "first captured, not its state now" in reading
+
+
+def test_the_plugin_skill_teaches_the_noted_line():
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[2]
+    text = (repo / "skills/daimon-briefing/SKILL.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    assert "(noted" in flat and "first captured, not its state now" in flat

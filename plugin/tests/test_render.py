@@ -2367,3 +2367,91 @@ def test_stats_plain_recall_block_fresh_install_has_no_rows(capsys):
     assert "surfaces (rows): none" in out
     assert "calls: none" in out
     assert "follow-through: no hinted sessions yet" in out
+
+
+# ---- #1182: the rich brief shows [carried] and the noted line like plain ----
+
+
+def _rich_out(monkeypatch, capsys, item, now=1_900_000_000):
+    from daimon_briefing import briefing, view
+
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "300")
+    cp = {
+        "session_id": "S-cur",
+        "working_context": {
+            "active_topic": {"text": "wiring", "trust": "inferred"},
+            "open_questions": [item],
+            "recent_decisions": [],
+        },
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+    stamped = briefing.stamp(cp, view.Snapshot.empty(), now)[0]
+    render.render_brief(stamped)
+    return capsys.readouterr().out
+
+
+def _iso_before(days, now=1_900_000_000):
+    import time as _time
+    return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(now - days * 86400))
+
+
+def test_rich_fresh_carried_claim_item_shows_carried_and_the_noted_line(
+        monkeypatch, capsys):
+    from daimon_briefing import briefing
+    item = {"text": "PR #60 awaiting review", "trust": "inferred", "id": "o-n00001",
+            "carried_from": "S-prev", "first_seen": _iso_before(2)}
+    out = _rich_out(monkeypatch, capsys, item)
+    stamped = dict(item, _noted=1_900_000_000 - 2 * 86400)
+    assert ("PR #60 awaiting review [carried]"
+            + briefing.noted_suffix(stamped)) in out
+
+
+def test_rich_stale_carried_claim_item_puts_the_noted_line_after_the_age(
+        monkeypatch, capsys):
+    from daimon_briefing import briefing
+    item = {"text": "PR #60 awaiting review", "trust": "verbatim",
+            "id": "o-n00001", "carried_from": "S-prev",
+            "first_seen": _iso_before(10)}
+    out = _rich_out(monkeypatch, capsys, item)
+    stamped = dict(item, _noted=1_900_000_000 - 10 * 86400)
+    assert ("(was verbatim, carried 10d)"
+            + briefing.noted_suffix(stamped)) in out
+
+
+def test_rich_carried_item_without_a_claim_gains_carried_and_no_noted_line(
+        monkeypatch, capsys):
+    item = {"text": "we talked about the retry semantics", "trust": "inferred",
+            "carried_from": "S-prev", "first_seen": _iso_before(2)}
+    out = _rich_out(monkeypatch, capsys, item)
+    assert "we talked about the retry semantics [carried]" in out
+    assert "(noted" not in out
+
+
+def test_rich_native_item_is_unchanged(monkeypatch, capsys):
+    item = {"text": "PR #60 awaiting review", "trust": "inferred",
+            "first_seen": _iso_before(2)}
+    out = _rich_out(monkeypatch, capsys, item)
+    assert "PR #60 awaiting review" in out
+    assert "[carried]" not in out and "(noted" not in out
+
+
+def test_rich_leaves_the_noted_line_off_when_the_text_claim_was_answered(
+        monkeypatch, capsys):
+    from daimon_briefing import briefing, view
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    monkeypatch.setenv("COLUMNS", "300")
+    item = {"text": "PR #60 awaiting review", "trust": "inferred",
+            "id": "o-n00001", "carried_from": "S-prev",
+            "first_seen": _iso_before(2)}
+    cp = {"session_id": "S-cur",
+          "working_context": {"active_topic": {"text": "wiring", "trust": "inferred"},
+                              "open_questions": [item], "recent_decisions": []},
+          "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                                 "contradictions_flagged": []}}
+    stamped = briefing.stamp(cp, view.Snapshot.empty(), 1_900_000_000)[0]
+    stamped["working_context"]["open_questions"][0]["_worldcheck_text"] = "confirmed"
+    render.render_brief(stamped)
+    out = capsys.readouterr().out
+    assert "PR #60 awaiting review [carried]" in out and "(noted" not in out
