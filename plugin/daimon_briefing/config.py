@@ -13,7 +13,7 @@ import hashlib
 import logging
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -55,8 +55,45 @@ def _file_values() -> dict:
     return values
 
 
+# A scoped replacement for the whole settings source, set only by
+# `settings_override`. Same shape and same reason as the checkpoint dir
+# override below: a ContextVar, never an env edit, so one test's sandbox cannot
+# reconfigure the concurrent readers of an async host.
+_SETTINGS_OVERRIDE: ContextVar[Mapping[str, str] | None] = ContextVar(
+    "daimon_settings_override", default=None)
+
+
+@contextmanager
+def settings_override(mapping: Mapping[str, str]) -> Iterator[None]:
+    """Make `_get` answer from `mapping` in the calling context only.
+
+    A DAIMON_* name is answered by the mapping ALONE: the process env and the
+    user's env file are not consulted, so a value the mapping does not name is
+    unset. Any other name (LITELLM_* and the like) is the mapping first, then
+    the process env; the env file is never read under an override. The mapping
+    is copied on entry."""
+    token = _SETTINGS_OVERRIDE.set(dict(mapping))
+    try:
+        yield
+    finally:
+        _SETTINGS_OVERRIDE.reset(token)
+
+
+def active_settings() -> Mapping[str, str] | None:
+    """The mapping of the `settings_override` in force, or None outside one.
+    The one source of truth for a caller that must carry the override across a
+    process boundary (`heal_host.heal_all` hands it to the child's env)."""
+    return _SETTINGS_OVERRIDE.get()
+
+
 def _get(name: str) -> str | None:
-    """One variable: process env wins; env file is the fallback."""
+    """One variable: process env wins; env file is the fallback. Under a
+    `settings_override` the mapping answers instead (see there)."""
+    override = _SETTINGS_OVERRIDE.get()
+    if override is not None:
+        if name in override:
+            return override[name]
+        return None if name.startswith("DAIMON_") else os.environ.get(name)
     val = os.environ.get(name)
     if val is not None:
         return val
@@ -648,10 +685,29 @@ def check_timeout() -> float:
         return 5.0
 
 
+# Same shape and reason as `_CHECKPOINT_DIR_OVERRIDE`: the sandbox points the
+# logs (serialize.log, heartbeats, `.heal.lock`) at its own root per context.
+_LOG_DIR_OVERRIDE: ContextVar[Path | None] = ContextVar(
+    "daimon_log_dir_override", default=None)
+
+
+@contextmanager
+def log_dir_override(path: Path) -> Iterator[None]:
+    """Make `log_dir()` answer `path` in the calling context only."""
+    token = _LOG_DIR_OVERRIDE.set(path)
+    try:
+        yield
+    finally:
+        _LOG_DIR_OVERRIDE.reset(token)
+
+
 def log_dir() -> Path:
     """Where the session-end hook writes serialize.log. The hook hardcodes
     ~/.daimon/logs; this override exists so the CLI (and tests) can point
     `status` somewhere else."""
+    override = _LOG_DIR_OVERRIDE.get()
+    if override is not None:
+        return override
     raw = _get("DAIMON_LOG_DIR")
     if raw:
         return Path(raw).expanduser()
