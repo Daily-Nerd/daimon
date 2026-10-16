@@ -248,9 +248,13 @@ def _request_rows(project_dir, slug, joined=None, *, masked=True,
 def _ledger_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     """Agent-proposed rulings and refutations awaiting ratification.
 
-    Polarity decides the verb family AND the header field: a ruling is read by
-    its rule text, a refutation by what it refutes. `cli/_ledger.py` makes the
-    same split for the same reason.
+    Polarity decides the verb family. `cli/_ledger.py` makes a different
+    header split (a ruling by its rule text) because it prints the whole
+    record; this queue row is a title plus a line.
+
+    #1129: both are TITLED by their short human-written `subject`, bounded
+    like every other lane. A ruling's verdict (its rule text, up to 280
+    characters) is the line under the title, always shown, never a header.
     """
     records = refutations.records(project_dir=project_dir)
     seen = [row.get("refutation_id") for row in refutations.events(
@@ -264,11 +268,16 @@ def _ledger_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     for (rid, _original), record in zip(candidates, visible):
         ruling = record.get("polarity") == "ruling"
         family = "ruling" if ruling else "refute"
+        subject = record.get("subject") or ""
+        shown = display.shorten(subject, HEADLINE_CHARS)
+        lines = [_detail(("Subject", subject, shown))]
+        if ruling and display.one_line(record.get("verdict")):
+            lines.append(f"Verdict: {display.one_line(record.get('verdict'))}")
         rows.append((_row(
             kind="ruling" if ruling else "refutation",
             record_id=rid, slug=slug,
-            headline=(record.get("verdict") if ruling
-                      else record.get("subject")) or "",
+            headline=shown,
+            detail="\n".join(line for line in lines if line) or None,
             waiting_since=record.get("created_at") or "",
             commands=[
                 ("ratify", f"daimon {family} ratify {rid}"),
