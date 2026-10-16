@@ -469,6 +469,10 @@ DESTS = {
     "heal": {
         "dry_run": ("OUT", "R3"),
         "force": ("INE", "R6"),
+        "all": ("OUT", "R4"),
+        "project": ("OUT", "R1"),
+        "session": ("OUT", "R2"),
+        "presumed_dead_before": ("OUT", "R4"),
     },
     "team init": {
         "remote_url": ("INE", "R6"),

@@ -3560,11 +3560,11 @@ def test_cmd_status_json_has_health_and_siblings(tmp_checkpoint_dir, capsys, mon
 def test_heal_plan_targets_newest_healable(monkeypatch):
     from daimon_briefing import cli, ledger
     # Build outstanding via a stubbed _compute_outstanding so the plan logic is unit-tested in isolation.
+    from tests._heal_items import item
     items = [
-        {"sid": "S-new", "class": "healable", "transcript": "/t/new.jsonl", "project": "/p",
-         "age_str": "1m", "line": "error: boom (transcript: /t/new.jsonl) after 3s"},
-        {"sid": "S-old", "class": "retry-exhausted", "transcript": "/t/old.jsonl", "project": "/p",
-         "age_str": "9m", "line": "error: boom (transcript: /t/old.jsonl) after 3s"},
+        item("S-new", "healable", age=60, transcript="/t/new.jsonl"),
+        item("S-old", "retry-exhausted", age=540, transcript="/t/old.jsonl",
+             retried=True),
     ]
     monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: items)
     plan = cli._heal_plan("logtext", 1000.0)
@@ -3578,11 +3578,10 @@ def test_heal_plan_targets_newest_healable(monkeypatch):
 
 def test_heal_plan_second_healable_says_rerun(monkeypatch):
     from daimon_briefing import cli, ledger
+    from tests._heal_items import item
     items = [
-        {"sid": "S1", "class": "healable", "transcript": "/t/1", "project": "/p", "age_str": "1m",
-         "line": "error: x (transcript: /t/1) after 1s"},
-        {"sid": "S2", "class": "healable", "transcript": "/t/2", "project": "/p", "age_str": "2m",
-         "line": "error: x (transcript: /t/2) after 1s"},
+        item("S1", "healable", age=60, transcript="/t/1"),
+        item("S2", "healable", age=120, transcript="/t/2"),
     ]
     monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: items)
     plan = cli._heal_plan("x", 1000.0)
@@ -3609,8 +3608,9 @@ def test_heal_plan_no_outstanding(monkeypatch):
 
 def test_heal_plan_only_unrepairable(monkeypatch):
     from daimon_briefing import cli, ledger
-    items = [{"sid": "H1", "class": "hung", "transcript": None, "project": None,
-              "age_str": "40m", "line": None}]
+    from tests._heal_items import item
+    items = [item("H1", "hung", kind="hung", age=2400, transcript=None, project=None,
+                  line=None)]
     monkeypatch.setattr(ledger, "_compute_outstanding", lambda text, now, force=False: items)
     plan = cli._heal_plan("x", 1000.0)
     assert plan["target"] is None
@@ -3623,10 +3623,9 @@ def test_heal_plan_force_targets_retry_exhausted(monkeypatch):
     # promotes retry-exhausted -> healable; _heal_plan just picks it up like
     # any other healable target — no special-casing needed at this layer.
     from daimon_briefing import cli, ledger
-    items = [
-        {"sid": "S-old", "class": "healable", "transcript": "/t/old.jsonl", "project": "/p",
-         "age_str": "9m", "line": "error: boom (transcript: /t/old.jsonl) after 3s"},
-    ]
+    from tests._heal_items import item
+    items = [item("S-old", "healable", age=540, transcript="/t/old.jsonl",
+                  retried=True)]
     seen = {}
 
     def fake_compute_outstanding(text, now, force=False):

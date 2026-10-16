@@ -19,6 +19,7 @@ from .. import (
     capture,
     config,
     harvest,
+    heal,
     jsonl,
     ledger,
     llm,
@@ -450,40 +451,72 @@ def _cmd_heal(args) -> int:
     wrapped directly; no restructuring of `_run_serialize` needed."""
     dry_run = getattr(args, "dry_run", False)
     force = getattr(args, "force", False)
-    # #601: heal owns repair, so the dead-index-snapshot reap lives here (the
-    # audit group is read-only by charter). Runs even when nothing is
-    # healable — the strands are what pin `audit privacy` at cannot-prove.
-    for p in recall.reap_dead_snapshots(apply=not dry_run):
-        print(f"{'would reap' if dry_run else 'reaped'} "
-              f"dead index snapshot: {p.name}")
-    # D9.6: a per-store index whose store is gone, or that nobody opened in
-    # 30 days, is dead weight holding a plaintext copy.
-    for p in recall.reap_stale_caches(apply=not dry_run):
-        print(f"{'would reap' if dry_run else 'reaped'} "
-              f"stale recall cache: {p.name}")
-    # #607: same repair charter — bound how long daimon-authored Windsurf
-    # conversation text lingers between forgets.
-    for p in store.reap_windsurf_state(apply=not dry_run):
-        print(f"{'would reap' if dry_run else 'reaped'} "
-              f"aged windsurf transcript: {p.name}")
+    project = getattr(args, "project", None)
+    since = getattr(args, "presumed_dead_before", None)
+    if since is not None and not project:
+        # D11: the assertion is scoped to one project, so it names one.
+        parser = getattr(args, "heal_parser", None)
+        if parser is not None:
+            parser.error("--presumed-dead-before requires --project")
+        print("heal: error: --presumed-dead-before requires --project",
+              file=sys.stderr)
+        return 2
+    # D12: one heal at a time per machine, taken before anything else so a
+    # second heal (a session-start hook spawns one on every start) is a no-op
+    # instead of a second runner on the same backend.
+    with heal.try_lock() as free:
+        if not free:
+            render.render_heal_busy()
+            return 0
+        # #601: heal owns repair, so the dead-index-snapshot reap lives here (the
+        # audit group is read-only by charter). Runs even when nothing is
+        # healable — the strands are what pin `audit privacy` at cannot-prove.
+        for p in recall.reap_dead_snapshots(apply=not dry_run):
+            print(f"{'would reap' if dry_run else 'reaped'} "
+                  f"dead index snapshot: {p.name}")
+        # D9.6: a per-store index whose store is gone, or that nobody opened in
+        # 30 days, is dead weight holding a plaintext copy.
+        for p in recall.reap_stale_caches(apply=not dry_run):
+            print(f"{'would reap' if dry_run else 'reaped'} "
+                  f"stale recall cache: {p.name}")
+        # #607: same repair charter — bound how long daimon-authored Windsurf
+        # conversation text lingers between forgets.
+        for p in store.reap_windsurf_state(apply=not dry_run):
+            print(f"{'would reap' if dry_run else 'reaped'} "
+                  f"aged windsurf transcript: {p.name}")
+        if (getattr(args, "all", False) or project
+                or getattr(args, "session", None)):
+            return _heal_loop(args, dry_run=dry_run, force=force)
+        text = _read_serialize_log()
+        now = time.time()
+        plan = _cli._heal_plan(text, now, force=force)
+        render.render_heal(plan, dry_run=dry_run, force=force)
+        if dry_run or plan["target"] is None:
+            return 0
+        t = plan["target"]
+        rc = _heal_target(t["sid"], t["transcript"], t["project"], t["line"])
+        return 0 if rc is None else rc
+
+
+def _read_serialize_log() -> str:
     try:
-        text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+        return (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     except OSError:
-        text = ""
-    now = time.time()
-    plan = _cli._heal_plan(text, now, force=force)
-    render.render_heal(plan, dry_run=dry_run, force=force)
-    if dry_run or plan["target"] is None:
-        return 0
-    t = plan["target"]
-    transcript_path = Path(t["transcript"])
+        return ""
+
+
+def _heal_target(sid, transcript, project, line) -> int | None:
+    """Re-serialize one planned target, writing its retry marker just before.
+    The serialize's exit code, or None when the transcript vanished since the
+    plan (nothing ran)."""
+    transcript_path = Path(transcript)
     if not transcript_path.exists():
-        render.render_heal_abort([f"heal aborted: transcript for {t['sid']} vanished"])
-        return 0
+        render.render_heal_abort([f"heal aborted: transcript for {sid} vanished"])
+        return None
     # A hung target has no result line (#34 made spawn-with-transcript hung
     # sessions healable) — the retry marker still needs a prior (#49).
-    prior = (t["line"] or "hung: spawned, no result").split(" (transcript:")[0]
-    _cli._append_retry_log(t["sid"], prior)
+    prior = (line or "hung: spawned, no result").split(" (transcript:")[0]
+    _cli._append_retry_log(sid, prior)
     # #360: the default retry re-runs the SAME extraction shape that already
     # failed. Opt-in escalation (DAIMON_HEAL_ESCALATION) re-serializes from
     # multiple perspectives instead — heal-path only, so the extra token cost
@@ -494,14 +527,61 @@ def _cmd_heal(args) -> int:
     # the rollout stem's `_session_key`) and Claude no, so a healed Codex
     # checkpoint keeps its `rollout-...` name and the sweep and the identical-
     # bytes guard still find it.
-    session = (t["sid"] if t["sid"] != ledger._session_key(transcript_path.stem)
+    session = (sid if sid != ledger._session_key(transcript_path.stem)
                else None)
-    with render.working(f"healing {t['sid']} — re-serializing transcript"):
+    with render.working(f"healing {sid} — re-serializing transcript"):
         if session is None:
-            return _cli._run_serialize(transcript_path, t["project"],
+            return _cli._run_serialize(transcript_path, project,
                                        escalate=escalate)
-        return _cli._run_serialize(transcript_path, t["project"],
+        return _cli._run_serialize(transcript_path, project,
                                    escalate=escalate, session=session)
+
+
+def _heal_loop(args, *, dry_run: bool, force: bool) -> int:
+    """`daimon heal --all` (and any scope flag): the serial runner (D7).
+
+    One serialize at a time, re-planned from a fresh read of serialize.log
+    after each, so a session healed meanwhile is never healed twice. A session
+    is attempted at most once per run (`force` ignores the retry marker, which
+    would otherwise heal a failing session forever), and each target's retry
+    marker is written immediately before its own serialize, never up front: a
+    marker is a spawn line, and one written for a queued target would turn it
+    into `repairing`. Exit 1 when any attempted target ended in error, else 0."""
+    slug = None
+    if getattr(args, "project", None):
+        slug = ledger._slug_of(_cli._resolve_project(args.project))
+        if not slug:
+            print(f"heal: cannot resolve a project for {args.project}",
+                  file=sys.stderr)
+            return 1
+    sessions = getattr(args, "session", None) or None
+    since = getattr(args, "presumed_dead_before", None)
+    attempted: set = set()
+    failed = 0
+    first = True
+    while True:
+        plan = _cli._heal_plan_all(
+            _read_serialize_log(), time.time(), force=force, slug=slug,
+            sessions=sessions, attempted=frozenset(attempted),
+            presumed_dead_before=since)
+        if first:
+            render.render_heal_all(plan, dry_run=dry_run, force=force)
+            first = False
+        if dry_run or not plan.targets:
+            break
+        t = plan.targets[0]
+        attempted.add(t.session_id)
+        render.render_heal(
+            {"target": {"sid": t.session_id, "transcript": t.transcript,
+                        "project": t.project, "age_str": t.age_str,
+                        "line": t.line}, "skipped": [], "note": ""},
+            dry_run=False, force=force)
+        rc = _heal_target(t.session_id, t.transcript, t.project, t.line)
+        if rc:
+            failed += 1
+    if attempted:
+        render.render_heal_summary(len(attempted), failed)
+    return 1 if failed else 0
 
 
 def register(sub, fmt) -> None:
@@ -561,4 +641,25 @@ def register_heal(sub, fmt) -> None:
         "--force", action="store_true",
         help="ignore a prior retry marker and re-heal a retry-exhausted session (#15)",
     )
-    p_heal.set_defaults(func=_cli._cmd_heal)
+    p_heal.add_argument(
+        "--all", action="store_true",
+        help="heal every healable session, one at a time, re-planning after each "
+             "(default: only the most recent failure)",
+    )
+    p_heal.add_argument(
+        "--project",
+        help="heal only the failures of this project directory (runs every one "
+             "of them, like --all)",
+    )
+    p_heal.add_argument(
+        "--session", action="append",
+        help="heal only this session id (repeatable); a Codex rollout stem "
+             "names its session",
+    )
+    p_heal.add_argument(
+        "--presumed-dead-before", type=float, metavar="EPOCH",
+        help="assert that no serialize of --project started before EPOCH is "
+             "still alive, unless a stamp was touched after it (a host whose "
+             "children die with it, such as a container; never on a laptop)",
+    )
+    p_heal.set_defaults(func=_cli._cmd_heal, heal_parser=p_heal)

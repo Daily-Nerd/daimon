@@ -663,6 +663,10 @@ SURFACES: tuple[Surface, ...] = (
                         "stderr, not keyed by project)"),)),
     Surface("logs/heartbeats/*", "ledger.touch_heartbeat",
             False, "exempt-no-plaintext", "none"),
+    # heal.try_lock: the machine-wide heal flock (#1179). An empty sidecar,
+    # opened a+ and never written, modelled on `.pointer.lock` above.
+    Surface("logs/.heal.lock", "heal.try_lock",
+            False, "exempt-no-plaintext", "none", audit_exempt=True),
     # -- backend diagnostics: stderr AND stdout of the LLM CLI child, which
     #    can echo prompt fragments — transcript text (#141). Secret-redacted
     #    and byte-bounded at the write seam (llm._log_backend_stderr), but

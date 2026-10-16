@@ -103,6 +103,7 @@ REQUIRED = (
     "_format_age",
     "_formatter_class",
     "_heal_plan",
+    "_heal_plan_all",
     "_hook_drift_present",
     "_hook_file_status",
     "_hooks_status_report",

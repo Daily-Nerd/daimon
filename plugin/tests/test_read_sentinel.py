@@ -278,6 +278,11 @@ case("cli:check sync", "default", A("check", "sync"), rc=(0, 1),
 case("cli:team status", "default", A("team", "status"), rc=(0, 1),
      dests=("json",))
 case("cli:heal", "dry", A("heal", "--dry-run"), dests=("dry_run",))
+case("cli:heal", "all", A("heal", "--all", "--dry-run"), dests=("all",))
+case("cli:heal", "scoped",
+     A("heal", proj_opt, "--session", "S-x", "--presumed-dead-before", "1",
+       "--dry-run"),
+     dests=("project", "session", "presumed_dead_before"))
 case("cli:recall-inject", "prompt", A("recall-inject", "--session", "S-x"),
      stdin="sentinel decision question belief", dests=("project", "session"),
      axes=("DAIMON_BRIEF_GLOBAL_FALLBACK", "DAIMON_EXTRA_READ_SLUGS"))
