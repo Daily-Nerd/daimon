@@ -926,7 +926,8 @@ def test_stats_json_carries_checks_at_the_tail(tmp_path, monkeypatch, capsys):
     # #974 appended `stitching` behind it under the same rule; `checks` is
     # still the tail as of #943, so pin the pair rather than weakening this
     # to a membership check.
-    assert list(payload)[-2:] == ["checks", "stitching"]
+    # #1184 appended `worldcheck` behind both under the same rule.
+    assert list(payload)[-3:] == ["checks", "stitching", "worldcheck"]
     assert payload["checks"] == {"armed": 1, "proposed": 0, "fired": 0,
                                  "clean": 0, "violation": 0, "unresolved": 0,
                                  "denied": 0, "log_state": "absent",
