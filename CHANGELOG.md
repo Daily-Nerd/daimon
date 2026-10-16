@@ -5,6 +5,30 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.0](https://github.com/Daily-Nerd/daimon/compare/v0.56.0...v0.57.0) (2026-10-16)
+
+
+### Features
+
+* **api:** heal_plan and heal_all let a host plan and launch serialize repairs ([#1194](https://github.com/Daily-Nerd/daimon/issues/1194)) ([fe3c0ae](https://github.com/Daily-Nerd/daimon/commit/fe3c0aeb1e5829a6a950a37fb1d37948a169e4f9))
+* **api:** heal_plan reads the heal plan and heal_all launches the detached heal child ([2488002](https://github.com/Daily-Nerd/daimon/commit/24880021c3f33509d46f74e21a9f5a3f82b724c1))
+* **api:** render_briefing returns the machine briefing and a format version ([c6a002f](https://github.com/Daily-Nerd/daimon/commit/c6a002f211460f329abde95fb4d6553d50432a0f))
+* **api:** render_briefing returns the machine briefing and a format version ([#1196](https://github.com/Daily-Nerd/daimon/issues/1196)) ([7353dc5](https://github.com/Daily-Nerd/daimon/commit/7353dc50cc0629c37eec495fb0d0e6fbb5228594))
+* **config:** settings_override and log_dir_override scope config to the calling context ([668c93c](https://github.com/Daily-Nerd/daimon/commit/668c93c44f0643030eac6b3126649051b68bcc28))
+* **heal:** daimon heal --all runs every healable session serially under one lock ([1eb0b38](https://github.com/Daily-Nerd/daimon/commit/1eb0b38b4af928337d372cc5c57295177d4e77c9))
+* **heal:** daimon heal --all runs every healable session serially under one lock ([#1192](https://github.com/Daily-Nerd/daimon/issues/1192)) ([1b9504c](https://github.com/Daily-Nerd/daimon/commit/1b9504c3b6e82eff892431a13ffe47f248bdf058))
+* **heal:** heal.launch starts the detached heal child and heal.child_env forwards the caller's store ([d620d2e](https://github.com/Daily-Nerd/daimon/commit/d620d2e26c859e8d1089ea59c7ea4b274f417608))
+* **heal:** plan every healable session in scope over one core ([44e125d](https://github.com/Daily-Nerd/daimon/commit/44e125d1d41a962663c3e2b4217f55421bd7b588))
+* **heal:** the heal child runs with the effective configuration under a settings override ([50aa260](https://github.com/Daily-Nerd/daimon/commit/50aa2605724ec9ebe0b8a14a3ab0ddc0f5611c80))
+* **render:** word a multi-target heal run, its summary and the busy line ([6547baa](https://github.com/Daily-Nerd/daimon/commit/6547baa9cf768102fa17150eb1a158af952ad459))
+* **testing:** sandbox and seeders give a host test a throwaway store ([b6bd622](https://github.com/Daily-Nerd/daimon/commit/b6bd6221493c8a08b18b05a9f319883375e2ac81))
+* **testing:** sandbox and seeders give a host test a throwaway store ([#1195](https://github.com/Daily-Nerd/daimon/issues/1195)) ([04ad3b7](https://github.com/Daily-Nerd/daimon/commit/04ad3b70345ab2eef8c75a0b5ec034ea0331799b))
+
+
+### Documentation
+
+* **api:** the heal child keeps the caller's effective configuration ([78b7372](https://github.com/Daily-Nerd/daimon/commit/78b7372544bd1441a8f6c7beba49db1a6405e71e))
+
 ## [0.56.0](https://github.com/Daily-Nerd/daimon/compare/v0.55.0...v0.56.0) (2026-10-15)
 
 
