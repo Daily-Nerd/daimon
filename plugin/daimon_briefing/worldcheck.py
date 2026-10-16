@@ -974,6 +974,14 @@ def check(checkpoint, project_dir, *, skip_reasons=None) -> dict:
         prev = rollup.get(id(item))
         if prev is None or _OUTCOME_RANK[outcome] > _OUTCOME_RANK[prev]:
             rollup[id(item)] = outcome
+        if cls != RECEIPT_VALIDITY:
+            # #1182: the TEXT claim's own answer, which `_worldcheck_confirmed`
+            # cannot give (a receipt confirmation sets it too). Transient like
+            # the other stamps; the render leaves the "noted" line off when
+            # the brief already answered the item's text claim.
+            seen = item.get("_worldcheck_text")
+            if seen is None or _OUTCOME_RANK[outcome] > _OUTCOME_RANK[seen]:
+                item["_worldcheck_text"] = outcome
         stats[f"{cls}:{outcome}"] = stats.get(f"{cls}:{outcome}", 0) + 1
     for outcome in rollup.values():
         stats[outcome] += 1
