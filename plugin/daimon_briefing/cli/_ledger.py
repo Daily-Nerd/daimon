@@ -104,7 +104,8 @@ def _masked_records(project, records, *, snap=None) -> list:
     """`records` as a reader may see them. A ruling inherited from a layer was
     read from that layer's bucket, so its own quarantines judge it; everything
     else is judged by `project` (with `snap` when the caller took it before a
-    write). One `view.masked` call per origin, never one per row."""
+    write). One `view.masked` call per origin, never one per row. A ruling row
+    carries `as_ratified`, set by the view (see `_refutation_json`)."""
     out: list = [None] * len(records)
     # the own group is judged even when empty, so a judge that fails fails here
     groups: dict = {"": []}
@@ -189,6 +190,13 @@ def _refutation_json(record) -> str:
     contradict the obvious reading.  The value is a constant today because
     `cited` is the only status the ledger can currently earn (#581 would add a
     resolved one).
+
+    A ruling record also carries `as_ratified` (#1206), always present and a
+    boolean.  It is false when an enforcement value of the ruling (its
+    anchors, the anchors a guard matched, or its check's match or body) was
+    withheld for any reason, so a shortened anchor set cannot be read as the
+    complete one a person ratified.  It names no value, count, path or
+    reason.  Refutation records carry no such key.
     """
     def stamped(row: dict) -> dict:
         return {**row, "evidence_status": "cited"}
@@ -435,6 +443,8 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     inherited_from = record.get("inherited_from")
     if inherited_from:
         lines[0] += f"  [from {config.home_relative(inherited_from)}]"
+    if record.get("as_ratified") is False:
+        lines.append("  not as ratified: an enforcement value is withheld")
     if not detailed:
         return lines
     lines.append(f"  Governs: {record.get('subject', '')}")

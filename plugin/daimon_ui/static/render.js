@@ -879,7 +879,11 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   export function renderRulingRow(r) {
     return '<div class="refut-row">' +
       '<div class="refut-record"><code class="obj-id">' + escapeHtml(r.refutation_id || "") +
-      '</code><span class="refut-state">' + escapeHtml(rulingMarker(r)) + "</span></div>" +
+      '</code><span class="refut-state">' + escapeHtml(rulingMarker(r)) + "</span>" +
+      // an enforcement value (anchors, check) is withheld: the list above is
+      // shorter than the one a person ratified (#1206)
+      (r.as_ratified === false ? '<span class="refut-state">[not as ratified]</span>' : "") +
+      "</div>" +
       '<div class="refut-body"><span class="refut-subject">' + escapeHtml(r.verdict || "") +
       "</span>" + renderRefutationAnchors(r.anchors) + "</div>" +
       '<span class="refut-at">' + escapeHtml(fmtDateTime(r.created_at)) + "</span>" +

@@ -1434,7 +1434,10 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
     lines.extend(_inherited_notes(project_dir))
     policy_rendered = False
     for row in shown:
-        suffix = _layer_suffix(row)
+        # a withheld enforcement value must not read as a complete rule
+        ratified_tag = ("  [not as ratified]"
+                        if row.get("as_ratified") is False else "")
+        suffix = ratified_tag + _layer_suffix(row)
         compact, cls = _compact_line(row)
         if compact is not None:
             lines.append(compact + suffix)

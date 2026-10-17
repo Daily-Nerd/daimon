@@ -201,6 +201,16 @@ Asking about an id that was never stored answers `no item`, so the one thing
 an exact-id question can learn is that this id was stored and later forgotten,
 which is the same fact a teammate already receives as a tombstone.
 
+One exception, for rulings. A ruling enforces, and a silently shorter anchor
+set would let a gate built on it fail open. So every ruling row a reader may
+see carries `as_ratified`, always present, and it is `false` when one of its
+enforcement values (its anchors, the anchors a guard matched, or its check's
+match or body) is withheld for any reason. The bit is on `ruling list --json`
+and `ruling show --json`, and their text output prints `not as ratified: an
+enforcement value is withheld`. The briefing's standing rulings tag the line
+`[not as ratified]`, and the viewer's rulings lane shows the same tag. The row still never names, counts or locates the value. Refutation rows
+carry no such key.
+
 An id whose copies are gone but whose lifecycle the ledger still names (a
 resolved loop that left every retained checkpoint) prints `Item: … (content
 unavailable)` and its lifecycle; `daimon blame` answers the same id the same
