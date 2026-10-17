@@ -158,3 +158,45 @@ def test_forget_on_a_title_only_value_removes_the_record(project):
     text = requests._path(project).read_text()
     assert "only-in-the-title-9f3a" not in text
     assert keep in text
+
+
+# ---- the CLI edge -----------------------------------------------------------
+
+
+def _cli(project, *args):
+    from daimon_briefing import cli
+    return cli.main(["request", *args, "--by", "agent", "--project", project])
+
+
+def _cli_open(project, *extra):
+    return _cli(project, "open", f"--to={store.project_slug(project)}",
+                "--ask", "publish the schema", "--why", "needed", "--anyway",
+                *extra)
+
+
+def test_cli_open_takes_a_title(project, capsys):
+    assert _cli_open(project, "--title", "Publish schema") == 0
+    (record,) = requests.records(project_dir=project).values()
+    assert record["title"] == "Publish schema"
+    assert "Publish schema" in capsys.readouterr().out
+
+
+def test_cli_open_refuses_an_over_long_title(project, capsys):
+    assert _cli_open(project, "--title", "t" * 81) == 1
+    out = capsys.readouterr().out
+    assert "title is too long (81 > 80 characters)" in out
+    assert not requests._path(project).exists()
+
+
+def test_cli_revise_replaces_and_clears_the_title(project, capsys):
+    q_id = _open(project, title="Old")
+    assert _cli(project, "revise", q_id, "--title", "New") == 0
+    assert requests.get(q_id, project_dir=project)["title"] == "New"
+    assert _cli(project, "revise", q_id, "--title", "") == 0
+    assert "title" not in requests.get(q_id, project_dir=project)
+
+
+def test_cli_revise_without_title_keeps_it(project, capsys):
+    q_id = _open(project, title="Keep")
+    assert _cli(project, "revise", q_id, "--ask", "sharper") == 0
+    assert requests.get(q_id, project_dir=project)["title"] == "Keep"

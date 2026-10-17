@@ -540,7 +540,7 @@ def _cmd_request_open(args) -> int:
             to=to, ask=args.ask, why=args.why, channel=_request_channel(args),
             blocking=bool(args.blocking), to_human=bool(args.to_human),
             evidence=args.evidence or "", supersedes=args.supersedes or "",
-            kind=args.kind, project_dir=project)
+            kind=args.kind, title=args.title or "", project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:open:refused")
         print(_refusal_message("request not recorded", exc))
@@ -569,7 +569,7 @@ def _cmd_request_revise(args) -> int:
     try:
         requests.revise(args.request_id, channel=_request_channel(args),
                         ask=args.ask, why=args.why, evidence=args.evidence,
-                        project_dir=project)
+                        title=args.title, project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:revise:refused")
         print(_refusal_message("request not revised", exc))
@@ -751,6 +751,11 @@ def register(sub, fmt) -> None:
     rq_open.add_argument("--why", required=True,
                          help="why it matters; the recipient reads this first")
     rq_open.add_argument(
+        "--title",
+        help="optional headline of a few words (80 characters at most) that "
+             "leads wherever the request is listed; the ask stays the full "
+             "text")
+    rq_open.add_argument(
         "--to-human", action="store_true",
         help="the ask is for that project's human, not its agent")
     rq_open.add_argument(
@@ -785,6 +790,9 @@ def register(sub, fmt) -> None:
     rq_revise.add_argument("--ask", help="replacement ask")
     rq_revise.add_argument("--why", help="replacement rationale")
     rq_revise.add_argument("--evidence", help="replacement source")
+    rq_revise.add_argument(
+        "--title", help="replacement title; --title '' removes it, and "
+                        "leaving it out keeps the current one")
     rq_revise.add_argument("--by", choices=["agent"], default=None,
                            help="declare yourself an agent; omit it only from "
                                 "an interactive terminal")
