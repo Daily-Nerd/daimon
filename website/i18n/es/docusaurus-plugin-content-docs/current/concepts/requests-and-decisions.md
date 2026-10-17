@@ -21,11 +21,14 @@ y la vista combinada que ve cualquiera de las dos partes se arma al momento
 de leer; nadie escribe nunca en el ledger de otro proyecto.
 
 ```sh
-daimon request open --to <directorio> --ask "…" --why "…"
+daimon request open --to <directorio> --ask "…" --why "…" --title "…"
 ```
 
 `--to` toma el directorio del proyecto destinatario, validado contra los
 proyectos que daimon ya conoce, con una sugerencia si hay un typo parecido.
+`--title` es opcional: unas pocas palabras, 80 caracteres como máximo, que
+dicen de qué trata el pedido. Lo encabeza donde se lista, y el ask conserva
+el texto completo. Sin título, lo reemplaza la primera oración del ask.
 Hay dos tipos de pedido:
 
 - **`work`**, el default: le pide al destinatario que cambie algo o gaste

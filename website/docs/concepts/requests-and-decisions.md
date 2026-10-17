@@ -21,11 +21,14 @@ sees is assembled at read time; nobody ever writes into another project's
 ledger.
 
 ```sh
-daimon request open --to <dir> --ask "…" --why "…"
+daimon request open --to <dir> --ask "…" --why "…" --title "…"
 ```
 
 `--to` takes the recipient's project directory, validated against the
 projects daimon already knows about, with a suggestion on a likely typo.
+`--title` is optional: a few words, 80 characters at most, naming what the
+request is about. It leads the request wherever it is listed, and the ask
+keeps the full text. Without one, the first sentence of the ask stands in.
 Two kinds of ask exist:
 
 - **`work`**, the default: asks the recipient to change something or spend
