@@ -47,13 +47,6 @@ EVENTS = frozenset({
     "ruled", "revision-proposed",
 })
 STATES = frozenset({"candidate", "active", "overturned"})
-# The prose paths of a ruling that are its ENFORCEMENT values: what a gate
-# built on the ruling matches against. A shorter anchor set or a blank check
-# pattern changes what the ruling enforces without changing its shape, so a
-# reader must be told when one was withheld (`as_ratified`, #1206). Each is a
-# declared prose path of `refutations.jsonl` (`surfaces.path_string` text).
-ENFORCEMENT_PATHS = frozenset({
-    "anchors[]", "guard_match.anchors[]", "check.match", "check.body"})
 AUTHORITIES = frozenset({"agent", "human", "mechanical"})
 # Authority is a property of the WRITE PATH, never a caller's claim about
 # itself. `--by human` was a flag whose only function was to let the caller

@@ -166,6 +166,12 @@ class Surface(NamedTuple):
     # the text, an overturn's note, a reply's note. A printer shows the
     # folded record, so the masker walks `prose + folded_prose` (11c).
     folded_prose: tuple[FieldPath, ...] = ()
+    # The prose paths of a ruling that are its ENFORCEMENT values: what a gate
+    # built on the ruling matches against. A shorter anchor set or a blank
+    # check pattern changes what the ruling enforces without changing its
+    # shape, so `view.masked` marks a ruling row `as_ratified: false` when one
+    # was withheld (#1206). Each is also declared in `prose`/`folded_prose`.
+    enforcement: tuple[FieldPath, ...] = ()
     # Read posture per state, in READ_STATES order (absent, degraded,
     # transient, unreadable); `foreign_read` is the same for a ledger read
     # across buckets or authors. `write` is the same per writer class.
@@ -334,6 +340,10 @@ SURFACES: tuple[Surface, ...] = (
                 FieldPath(("overturn_note",)),
                 FieldPath(("overturn_evidence",), True),
                 FieldPath(("guard_match", "anchors"), True)),
+            enforcement=(
+                FieldPath(("anchors",), True),
+                FieldPath(("guard_match", "anchors"), True),
+                FieldPath(("check", "match")), FieldPath(("check", "body"))),
             mergeable=True, read=_READ_NOTED, foreign_read=_READ_FOREIGN,
             write=_W_HUMAN,
             steps=(Step("refutations.forget_content_key", "value", "refutations.jsonl"),)),

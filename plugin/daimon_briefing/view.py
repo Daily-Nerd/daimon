@@ -2000,6 +2000,8 @@ def _mask_rows(project, ledger_name: str, rows,
     verdicts handed out for it (each stamped with its field `path`)."""
     surface = surfaces.bucket_ledger(ledger_name)
     paths = surface.prose + surface.folded_prose
+    enforcement = frozenset(surfaces.path_string(fp)
+                            for fp in surface.enforcement)
     own_slug = store.project_slug(config.resolve_project_dir(project))
     own = snap if snap is not None else judge(own_slug).snap
     others: dict[str, Snapshot] = {}
@@ -2032,8 +2034,13 @@ def _mask_rows(project, ledger_name: str, rows,
             return _mask_text(text, _snaps, MASK_POLICY[(ledger_name, path)],
                               _seen, path)
 
-        out = surfaces.map_prose(paths, row, fn)
-        result.append((_mask_tree(out, snaps, seen), tuple(seen)))
+        out = _mask_tree(surfaces.map_prose(paths, row, fn), snaps, seen)
+        if ledger_name == "refutations.jsonl" and out.get(
+                "polarity") == "ruling":
+            # a ruling enforces, so a withheld enforcement value must not read
+            # as a shorter, complete one; the bit names no value, count or path
+            out["as_ratified"] = not any(v.path in enforcement for v in seen)
+        result.append((out, tuple(seen)))
     return result
 
 
@@ -2051,19 +2058,14 @@ def masked(project, ledger_name: str, rows, *,
     otherwise it is taken once here with the BARE slug, never the path
     (`judge` routes a non-slug to the forgotten set alone). A requests row is a
     join, so it is also judged by the snapshot of every bucket it names, one
-    judge per slug per call."""
+    judge per slug per call.
+
+    A ruling row of `refutations.jsonl` also carries `as_ratified`: false when
+    an enforcement value (`Surface.enforcement`) was withheld for any reason,
+    true otherwise, so no reader mistakes a shortened anchor set for the one a
+    person ratified. It names no value, count, path or reason (#1206)."""
     return [row for row, _verdicts in _mask_rows(project, ledger_name, rows,
                                                  snap)]
-
-
-def masked_with_verdicts(project, ledger_name: str, rows, *,
-                         snap: Snapshot | None = None
-                         ) -> list[tuple[dict, tuple[Withheld, ...]]]:
-    """`masked`, and with each row the verdicts handed out for it, from the
-    same single judge. A verdict names the field `path` it was handed out for
-    and carries no text, so a caller can learn which kind of field lost a
-    value (a ruling's enforcement values) without learning the value."""
-    return _mask_rows(project, ledger_name, rows, snap)
 
 
 def withheld_in(project, ledger_name: str, row: dict, *,

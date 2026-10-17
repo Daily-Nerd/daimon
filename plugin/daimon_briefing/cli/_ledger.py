@@ -104,7 +104,8 @@ def _masked_records(project, records, *, snap=None) -> list:
     """`records` as a reader may see them. A ruling inherited from a layer was
     read from that layer's bucket, so its own quarantines judge it; everything
     else is judged by `project` (with `snap` when the caller took it before a
-    write). One `view.masked` call per origin, never one per row."""
+    write). One `view.masked` call per origin, never one per row. A ruling row
+    carries `as_ratified`, set by the view (see `_refutation_json`)."""
     out: list = [None] * len(records)
     # the own group is judged even when empty, so a judge that fails fails here
     groups: dict = {"": []}
@@ -112,15 +113,10 @@ def _masked_records(project, records, *, snap=None) -> list:
 
         groups.setdefault(record.get("inherited_from") or "", []).append(index)
     for origin, indexes in groups.items():
-        judged = view.masked_with_verdicts(
-            origin or project, _LEDGER, [records[i] for i in indexes],
-            snap=None if origin else snap)
-        for index, (row, verdicts) in zip(indexes, judged):
-            if row.get("polarity") == "ruling":
-                # a ruling enforces, so a withheld enforcement value must not
-                # read as a shorter, complete one; the bit names no value
-                row["as_ratified"] = not any(
-                    v.path in refutations.ENFORCEMENT_PATHS for v in verdicts)
+        rows = view.masked(origin or project, _LEDGER,
+                           [records[i] for i in indexes],
+                           snap=None if origin else snap)
+        for index, row in zip(indexes, rows):
             out[index] = row
     return out
 
