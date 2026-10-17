@@ -99,8 +99,9 @@ def test_commit_writes_skip_reason_lines_after_the_counters(events, monkeypatch)
         skips=("pr-state:skipped-cap",))
     effects_commit.commit(fx)
     usage = [e[1] for e in events if _is_usage(e)]
-    assert usage == ["worldcheck:pr-state:skipped", "worldcheck:skipped",
-                     "worldcheck:pr-state:skipped-cap"]
+    slug = store.project_slug("/p")
+    assert usage == [f"worldcheck:pr-state:skipped:{slug}", "worldcheck:skipped",
+                     f"worldcheck:pr-state:skipped-cap:{slug}"]
 
 
 def test_commit_records_the_first_outcome_of_each_world_row(

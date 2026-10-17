@@ -1084,10 +1084,8 @@ def test_cli_brief_flag_on_flags_contradiction_and_counts(
     # #397: the aggregate counters keep their slice-1 meaning AND every
     # outcome also lands under its class, so the fires-true rate is
     # measurable per class before any further expansion.
-    assert sum(
-        1 for ln in usage if ln.endswith(" worldcheck:pr-state:contradicted")) == 1
-    assert sum(
-        1 for ln in usage if ln.endswith(" worldcheck:pr-state:confirmed")) == 1
+    assert _usage_count(usage, "worldcheck:pr-state:contradicted") == 1
+    assert _usage_count(usage, "worldcheck:pr-state:confirmed") == 1
 
 
 def test_cli_brief_emits_per_class_counters_for_slice_2(
@@ -1104,9 +1102,28 @@ def test_cli_brief_emits_per_class_counters_for_slice_2(
     assert rc == 0
     assert "⚠ state changed since capture: src/fix.py missing" in capsys.readouterr().out
     usage = _usage_lines(tmp_path)
-    assert sum(
-        1 for ln in usage if ln.endswith(" worldcheck:file-exists:contradicted")) == 1
+    assert _usage_count(usage, "worldcheck:file-exists:contradicted") == 1
     assert sum(1 for ln in usage if ln.endswith(" worldcheck:contradicted")) == 1
+
+
+def test_cli_brief_class_tokens_name_the_project(monkeypatch, tmp_path, capsys):
+    """#1184: the per-class lines end in the slug of the project's bucket; the
+    aggregates stay machine-wide; every line keeps two whitespace fields."""
+    project = tmp_path / "repo"
+    project.mkdir()
+    cp = _cp(["the fix lives in src/fix.py"])
+    store.write_checkpoint("S-now", cp, project_dir=str(project), writer=Writer.HUMAN)
+    monkeypatch.setattr(worldcheck, "_gh_path", lambda: None)
+    monkeypatch.setenv("DAIMON_WORLDCHECK", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project))
+    assert cli.main(["brief"]) == 0
+    capsys.readouterr()
+    slug = store.project_slug(str(project))
+    usage = [ln for ln in _usage_lines(tmp_path) if "worldcheck:" in ln]
+    commands = {ln.split(" ", 1)[1] for ln in usage}
+    assert f"worldcheck:file-exists:contradicted:{slug}" in commands
+    assert "worldcheck:contradicted" in commands
+    assert all(len(ln.split()) == 2 for ln in usage)
 
 
 def test_cli_brief_slug_path_never_probes(monkeypatch, capsys):
@@ -1175,12 +1192,19 @@ def test_stats_surfaces_worldcheck_counters(monkeypatch, tmp_path, capsys):
     assert usage.get("worldcheck:confirmed") == 2
 
 
+def _unscoped(command):
+    """#1184: a per-class token may end in its project's slug; the counts
+    below are about the counter, so they compare the token without it."""
+    parsed = worldcheck.parse_usage_token(command)
+    return parsed.key if parsed is not None else command
+
+
 def _usage_count(lines, token):
     """#1181: count usage lines whose COMMAND token is exactly `token`. Anchored
     at the end of the line with the separating space, because an unanchored
     count of `worldcheck:pr-state:skipped` also matches every tagged
     `...:skipped-<reason>` line and reads double."""
-    return sum(1 for ln in lines if ln.endswith(" " + token))
+    return sum(1 for ln in lines if _unscoped(ln.split(" ", 1)[-1]) == token)
 
 
 def test_cli_brief_no_gh_writes_reason_tagged_skips(
@@ -1910,8 +1934,7 @@ def test_cli_brief_receipt_failure_appends_a_verification_row(
     # A POINTER and a REASON CODE, never the item's text (#376).
     assert "note 0" not in json.dumps(rows[0])
     usage = _usage_lines(tmp_path)
-    assert sum(
-        1 for ln in usage if ln.endswith(" worldcheck:receipt-validity:contradicted")) == 1
+    assert _usage_count(usage, "worldcheck:receipt-validity:contradicted") == 1
     assert sum(1 for ln in usage if ln.endswith(" worldcheck:contradicted")) == 1
 
 
@@ -1926,8 +1949,7 @@ def test_cli_brief_receipt_confirmed_writes_no_verification_row(
     capsys.readouterr()
     assert _verification_rows(proj) == []
     usage = _usage_lines(tmp_path)
-    assert sum(
-        1 for ln in usage if ln.endswith(" worldcheck:receipt-validity:confirmed")) == 1
+    assert _usage_count(usage, "worldcheck:receipt-validity:confirmed") == 1
 
 
 # ---- #1181: why a claim was skipped ------------------------------------------

@@ -21,6 +21,7 @@ from .. import (
     schema,
     serializer,
     store,
+    worldcheck,
 )
 from ..ledger import (
     AUTO_BRIEF_HOSTS,
@@ -44,7 +45,12 @@ def _stats_usage() -> dict:
     for line in text.splitlines():
         parts = line.split()
         if len(parts) == 2:
-            counts[parts[1]] = counts.get(parts[1], 0) + 1
+            # #1184: a per-class worldcheck token may end in its project's
+            # slug. This is the MACHINE-wide table, so it counts under the key
+            # the token has always had, whichever form the line was written in.
+            token = worldcheck.parse_usage_token(parts[1])
+            key = token.key if token is not None else parts[1]
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 

@@ -73,6 +73,7 @@ import subprocess
 import time
 from collections import namedtuple
 from pathlib import Path
+from typing import NamedTuple
 
 from . import config, receipts, serializer, store
 
@@ -119,6 +120,54 @@ DEPENDENCY_VERSION = "dependency-version"
 # from the item's `origin_session` stamp, not from its text, so they are
 # collected in their own pass and an item may legitimately carry BOTH.
 RECEIPT_VALIDITY = "receipt-validity"
+
+# #1184: the usage-log token of a per-class counter names its project. The
+# grammar is `worldcheck:<class>:<outcome>[:<slug>]`, one command token with
+# the slug LAST, like the receipt-probe counters (`worldcheck:receipt-probe:
+# <label>:<slug>`), so the line keeps its two whitespace fields and the
+# readers that keep only those (scar 0153) still see it. A project slug holds
+# only word characters and '-' (store.project_slug), so it never contains ':'
+# or whitespace. Lines written before the slug carry none and stay valid.
+USAGE_CLASSES = frozenset({PR_STATE, BRANCH_STATE, FILE_EXISTS,
+                           DEPENDENCY_VERSION, RECEIPT_VALIDITY})
+
+
+class UsageToken(NamedTuple):
+    cls: str
+    outcome: str       # confirmed | contradicted | skipped | skipped-<reason>
+    slug: str | None   # None on a line written before the slug existed
+
+    @property
+    def key(self) -> str:
+        """The token without its slug: the key every machine-wide counter
+        has always used."""
+        return f"worldcheck:{self.cls}:{self.outcome}"
+
+
+def usage_token(tag: str, slug: str | None = None) -> str:
+    """The usage-log command for a worldcheck counter `tag`: `<class>:
+    <outcome>` gains `:<slug>`; an aggregate (`confirmed`, `skipped`, ...) is
+    a machine-wide per-item rollup and stays as it is."""
+    token = f"worldcheck:{tag}"
+    cls, sep, _ = tag.partition(":")
+    if slug and sep and cls in USAGE_CLASSES:
+        return f"{token}:{slug}"
+    return token
+
+
+def parse_usage_token(command: str) -> UsageToken | None:
+    """Split a usage-log command into class, outcome and slug (the remainder
+    after the two known fields), or None when it is not a per-class counter.
+    Accepts the form with and without the slug."""
+    prefix, _, rest = command.partition(":")
+    cls, _, rest = rest.partition(":")
+    outcome, _, slug = rest.partition(":")
+    if prefix != "worldcheck" or cls not in USAGE_CLASSES:
+        return None
+    if not (outcome in ("confirmed", "contradicted", "skipped")
+            or (outcome.startswith("skipped-") and len(outcome) > 8)):
+        return None
+    return UsageToken(cls, outcome, slug or None)
 
 # Classes answered from disk alone — no subprocess, no network.
 _LOCAL_CLASSES = frozenset({BRANCH_STATE, FILE_EXISTS, DEPENDENCY_VERSION})

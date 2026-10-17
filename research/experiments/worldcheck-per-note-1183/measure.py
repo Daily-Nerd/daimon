@@ -55,8 +55,9 @@ CLASSES = (worldcheck.PR_STATE, worldcheck.FILE_EXISTS, worldcheck.BRANCH_STATE)
 CURE_SUFFIX = "-ok"
 NONE_RECORDED = "none recorded"
 HEX = frozenset("0123456789abcdef")
-USAGE_RE = re.compile(
-    r"(\S+) worldcheck:(" + "|".join(CLASSES) + r"):(confirmed|contradicted)")
+# One stamp and one worldcheck token. The token may end in the project slug
+# (#1184); `worldcheck.parse_usage_token` owns that grammar, so both forms count.
+USAGE_RE = re.compile(r"(\S+) (worldcheck:\S+)")
 HISTOGRAM = (("1", 1, 1), ("2-4", 2, 4), ("5-9", 5, 9), ("10+", 10, None))
 CONFIRMED_PER_NOTE = (
     "not in the stored data: confirmations are counted per class without the "
@@ -164,7 +165,12 @@ def _usage(path, since, now):
         m = USAGE_RE.fullmatch(line)
         if m is None:
             continue
-        stamp, cls, outcome = m.groups()
+        stamp, command = m.groups()
+        token = worldcheck.parse_usage_token(command)
+        if (token is None or token.cls not in counts
+                or token.outcome not in ("confirmed", "contradicted")):
+            continue
+        cls, outcome = token.cls, token.outcome
         counts[cls]["all"][outcome] += 1
         epoch = parse_epoch(stamp)
         if epoch is not None and _in_window(epoch, since, now):

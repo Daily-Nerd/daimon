@@ -160,18 +160,24 @@ def _commit_telemetry(recall_telemetry, sample) -> None:
 def _commit_worldcheck(cli, record: Verification) -> None:
     project, route = record.project, record.route
     stats, rows = record.stats, record.rows
+    # #1184: the per-class tokens name the project, so `daimon stats` can count
+    # THIS project's checks. The slug is the outcomes file's bucket (`route`),
+    # the one the per-note half of the section reads; the aggregates stay
+    # machine-wide. A project with no slug writes the unnamed form.
+    from . import store, worldcheck
+    slug = store.project_slug(route) or store.project_slug(project)
     # #397: the dict carries the aggregate outcomes AND a "<class>:<outcome>"
     # key per class, so one pass emits both the slice-1 counters and the
     # per-class fires-true rate the next expansion gate reads.
     for counter, count in sorted(stats.items()):
         for _ in range(int(count)):
-            _attempt(cli._note_usage, f"worldcheck:{counter}")
+            _attempt(cli._note_usage, worldcheck.usage_token(counter, slug))
     # #1181: one more line per skipped claim, `worldcheck:<class>:skipped-
     # <reason>`, BESIDE the untagged ones above (which keep their meaning).
     # The reason is glued into the command token so the line still has two
     # whitespace fields and the `usage.log` readers keep it.
     for tag in record.skips:
-        _attempt(cli._note_usage, f"worldcheck:{tag}")
+        _attempt(cli._note_usage, worldcheck.usage_token(tag, slug))
     # #919: the receipt-probe axis, project-scoped.
     _attempt(cli._note_receipt_probe_usage, project, stats)
     # A POINTER and a REASON CODE, never the item's text (#376).
