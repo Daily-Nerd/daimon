@@ -2035,8 +2035,7 @@ def _mask_rows(project, ledger_name: str, rows,
                               _seen, path)
 
         out = _mask_tree(surfaces.map_prose(paths, row, fn), snaps, seen)
-        if ledger_name == "refutations.jsonl" and out.get(
-                "polarity") == "ruling":
+        if enforcement and out.get("polarity") == "ruling":
             # a ruling enforces, so a withheld enforcement value must not read
             # as a shorter, complete one; the bit names no value, count or path
             out["as_ratified"] = not any(v.path in enforcement for v in seen)
