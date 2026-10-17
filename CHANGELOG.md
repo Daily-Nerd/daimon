@@ -5,6 +5,25 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.59.0](https://github.com/Daily-Nerd/daimon/compare/v0.58.0...v0.59.0) (2026-10-17)
+
+
+### Features
+
+* **rulings:** ruling rows say when they are no longer as ratified ([#1207](https://github.com/Daily-Nerd/daimon/issues/1207)) ([d5a3807](https://github.com/Daily-Nerd/daimon/commit/d5a3807a22df5dbbc52f93750427c0052aa2e160))
+* **rulings:** say when an enforcement value of a ruling is withheld ([c32ba12](https://github.com/Daily-Nerd/daimon/commit/c32ba1205c4d06ade9b007f31d8e1ca5cb1b24d3))
+
+
+### Bug Fixes
+
+* **config:** resolve the git user name once per process instead of once per stamped row ([#1204](https://github.com/Daily-Nerd/daimon/issues/1204)) ([b717182](https://github.com/Daily-Nerd/daimon/commit/b7171829d03f2b1c5f8c437bc34400a8e20aea7f))
+* **config:** resolve the git user name once per process per working directory ([63c99f5](https://github.com/Daily-Nerd/daimon/commit/63c99f55728445ae9cab864e73e9c32cfa701646))
+
+
+### Documentation
+
+* **scars:** candidate for subprocess helpers that gain per-row callers ([6670bd2](https://github.com/Daily-Nerd/daimon/commit/6670bd24349bc83951a29be7a115f6a7e6680de5))
+
 ## [0.58.0](https://github.com/Daily-Nerd/daimon/compare/v0.57.0...v0.58.0) (2026-10-17)
 
 
