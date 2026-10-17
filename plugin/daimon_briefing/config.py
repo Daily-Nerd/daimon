@@ -507,15 +507,34 @@ def team_retention_days() -> int:
 
 
 def _git_user_name() -> str:
-    """`git config user.name` in the current dir, or "" on ANY failure (not a repo,
-    git missing, timeout, unset). Same subprocess style as resolve_project_root —
-    the git dependency lives HERE in the policy layer, never in store (pure file-ops)."""
+    """`git config user.name` for the current working directory, or "" on ANY
+    failure (not a repo, git missing, timeout, unset).
+
+    Invariant: within one process and one working directory the name is read
+    at most once. The lookup is memoized in `_git_user_name_in`, keyed on the
+    directory, because `author()` is called per stamped ledger row and per
+    write, and each spawn costs tens of milliseconds. Failures are memoized
+    too: one process stamps ONE identity for one directory and does not flip
+    partway through a run. The git dependency lives HERE in the policy layer,
+    never in store (pure file-ops)."""
+    try:
+        cwd = os.getcwd()
+    except OSError:  # the working directory was deleted under the process
+        return ""
+    return _git_user_name_in(cwd)
+
+
+@lru_cache(maxsize=32)
+def _git_user_name_in(cwd: str) -> str:
+    """The memoized body of `_git_user_name`. Tests clear it with
+    `_git_user_name_in.cache_clear()` (see the autouse fixture in conftest)."""
     try:
         result = subprocess.run(
             ["git", "config", "user.name"],
             capture_output=True,
             text=True,
             timeout=2,
+            cwd=cwd,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return ""
@@ -528,9 +547,11 @@ def author() -> str:
     """Team author identity for namespacing: DAIMON_AUTHOR env → `git config
     user.name` → getpass.getuser(), falling to "unknown" if all fail. Never raises.
 
-    Not cached: a checkpoint write happens once per session-end, so the single git
-    call per write is negligible, and a process-level cache would only leak stale
-    identity between tests."""
+    DAIMON_AUTHOR is read live on every call. The git name is memoized per
+    process per working directory (see `_git_user_name`), because ledger rows
+    are stamped with this value one at a time and a spawn per row dominates
+    the cost of the write. A test that changes the git identity must clear
+    `_git_user_name_in`; the autouse fixture in conftest does so per test."""
     name = (_get("DAIMON_AUTHOR") or "").strip()
     if not name:
         name = _git_user_name()

@@ -1124,3 +1124,11 @@ def test_git_lookup_memo_is_cleared_between_tests(monkeypatch):
     config._git_user_name_in.cache_clear()
     config.author()
     assert calls["n"] == 2
+
+
+def test_git_user_name_is_empty_when_the_working_directory_is_gone(monkeypatch):
+    def _gone():
+        raise FileNotFoundError("cwd deleted")
+
+    monkeypatch.setattr(config.os, "getcwd", _gone)
+    assert config._git_user_name() == ""
