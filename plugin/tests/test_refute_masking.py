@@ -50,17 +50,16 @@ def test_list_and_search_mask_every_row_once(tmp_checkpoint_dir, capsys):
     assert rows[rid]["subject"].startswith("[withheld: quarantine")
 
 
-def test_guard_masks_the_anchors_it_matched(tmp_checkpoint_dir, capsys):
+def test_guard_cannot_match_a_quarantined_anchor(tmp_checkpoint_dir, capsys):
+    """The guard matches over the rows a reader may see (#1208), so a
+    quarantined anchor is the withheld marker and a query cannot hit it."""
     rid = _record(anchors=[m.QUARANTINED.casefold()])
     refutations.ratify(rid, channel="cli-tty", project_dir=m.PROJECT)
     m.quarantine()
     rc, out, _ = m.run(capsys, "refute", "guard", "zzz", "--anchor",
                        m.QUARANTINED, "--json")
     assert rc == 0 and "secret-q" not in out.lower()
-    row = json.loads(out)[0]
-    assert row["guard_match"]["anchors"] == [
-        row["guard_match"]["anchors"][0]]
-    assert row["guard_match"]["anchors"][0].startswith("[withheld")
+    assert json.loads(out) == []
 
 
 def test_ratify_refuses_a_record_with_withheld_text_and_writes_nothing(
