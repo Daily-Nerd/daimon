@@ -1,0 +1,80 @@
+{
+  "classes": {
+    "branch-state": {
+      "carried_claim_notes_window": 3,
+      "checks_confirmed_all": 25,
+      "checks_confirmed_window": 18,
+      "checks_contradicted_all": 11,
+      "checks_contradicted_window": 0,
+      "idless_carried_claim_notes_window": 0,
+      "k_over_u": "none recorded",
+      "ledger_contradiction_rows_window": 0,
+      "max_rows_on_one_note": "none recorded",
+      "notes_contradicted": "none recorded",
+      "repeat_histogram": {
+        "1": 0,
+        "10+": 0,
+        "2-4": 0,
+        "5-9": 0
+      },
+      "unattributed_window": 0
+    },
+    "file-exists": {
+      "carried_claim_notes_window": 17,
+      "checks_confirmed_all": 42,
+      "checks_confirmed_window": 13,
+      "checks_contradicted_all": 114,
+      "checks_contradicted_window": 54,
+      "idless_carried_claim_notes_window": 0,
+      "k_over_u": 0.47058823529411764,
+      "ledger_contradiction_rows_window": 54,
+      "max_rows_on_one_note": 18,
+      "notes_contradicted": 8,
+      "repeat_histogram": {
+        "1": 0,
+        "10+": 2,
+        "2-4": 5,
+        "5-9": 1
+      },
+      "unattributed_window": 0
+    },
+    "pr-state": {
+      "carried_claim_notes_window": 40,
+      "checks_confirmed_all": 275,
+      "checks_confirmed_window": 36,
+      "checks_contradicted_all": 51,
+      "checks_contradicted_window": 10,
+      "idless_carried_claim_notes_window": 0,
+      "k_over_u": 0.1,
+      "ledger_contradiction_rows_window": 10,
+      "max_rows_on_one_note": 5,
+      "notes_contradicted": 4,
+      "repeat_histogram": {
+        "1": 2,
+        "10+": 0,
+        "2-4": 1,
+        "5-9": 1
+      },
+      "unattributed_window": 0
+    }
+  },
+  "confirmed_per_note": "not in the stored data: confirmations are counted per class without the note they belong to, so confirmed per note is not estimated here",
+  "inputs": {
+    "buckets": 54,
+    "checkpoint_bytes": 12714696,
+    "checkpoint_files": 244,
+    "ledger_bytes": 318238,
+    "ledger_files": 29,
+    "ledger_rows": 2773,
+    "readable": 244,
+    "sha256": "0fbbd3b9c454a07dcae0f6a662b662d616b979bc970cd4de544253a4b1aae5f3",
+    "torn_lines": 0,
+    "usage_bytes": 6631857,
+    "usage_lines": 153017
+  },
+  "issue": 1183,
+  "window": {
+    "since": "2026-09-25T06:07:01Z",
+    "until": "2026-10-16T22:28:45Z"
+  }
+}
