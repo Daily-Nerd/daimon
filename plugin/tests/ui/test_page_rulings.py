@@ -58,3 +58,12 @@ def test_rulings_lane_never_sits_under_the_refutations_heading(srv):
     js = body.decode()
     view = js.split("renderRefutationsView", 1)[1]
     assert view.index("Standing rulings") < view.index(">Refutations</h1>")
+
+
+def test_ruling_row_badges_a_withheld_enforcement_value(srv):
+    # #1206: the payload carries `as_ratified`; the row says so when it is false
+    _, _, body = _get(srv + "/static/render.js")
+    js = body.decode()
+    row = js.split("renderRulingRow", 1)[1].split("renderRefutationsView", 1)[0]
+    assert "as_ratified === false" in row
+    assert "not as ratified" in row

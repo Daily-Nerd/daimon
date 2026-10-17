@@ -138,7 +138,7 @@ def test_a_judge_that_fails_shows_nothing(tmp_checkpoint_dir, capsys,
     def boom(*_a, **_k):
         raise RuntimeError("no")
 
-    monkeypatch.setattr(view, "masked_with_verdicts", boom)
+    monkeypatch.setattr(view, "masked", boom)
     rc, out, err = m.run(capsys, "refute", "show", rid)
     assert rc == 2 and out == "" and m.VISIBLE not in err
     assert err.count("\n") == 1

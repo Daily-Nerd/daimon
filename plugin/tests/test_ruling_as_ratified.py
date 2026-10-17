@@ -134,11 +134,63 @@ def test_an_inherited_ruling_carries_the_bit(
     assert rows[other]["as_ratified"] is True
 
 
+def test_the_view_itself_carries_the_bit(tmp_checkpoint_dir):
+    from daimon_briefing import view
+    full = _ruling(anchors=["issue:1"])
+    short = _ruling(subject="second", anchors=["issue:1", m.FORGOTTEN])
+    ref = refutations.assert_refutation(
+        subject="a refuted idea", verdict=m.VISIBLE, scope="census",
+        evidence=["issue:1"], channel="cli-agent", anchors=[m.FORGOTTEN],
+        project_dir=m.PROJECT)
+    m.forget()
+    folded = refutations.records(project_dir=m.PROJECT)
+    rows = {r["refutation_id"]: r for r in view.masked(
+        m.PROJECT, "refutations.jsonl", [folded[i] for i in (full, short, ref)])}
+    assert rows[full]["as_ratified"] is True
+    assert rows[short]["as_ratified"] is False
+    assert "as_ratified" not in rows[ref]
+
+
+def test_the_viewer_rulings_lane_carries_the_bit(tmp_checkpoint_dir):
+    from daimon_ui import server
+    full = _ruling(anchors=["issue:1"])
+    short = _ruling(subject="second", anchors=["issue:1", m.FORGOTTEN])
+    refutations.assert_refutation(
+        subject="a refuted idea", verdict=m.VISIBLE, scope="census",
+        evidence=["issue:1"], channel="cli-agent", anchors=[m.FORGOTTEN],
+        project_dir=m.PROJECT)
+    m.forget()
+    payload = server._refutations_payload(m.SLUG)
+    lane = {r["refutation_id"]: r for r in payload["rulings"]}
+    assert lane[full]["as_ratified"] is True
+    assert lane[short]["as_ratified"] is False
+    assert all("as_ratified" not in r for r in payload["rows"])
+
+
+def test_the_briefing_tags_a_ruling_that_is_not_as_ratified(
+        tmp_checkpoint_dir, sample_checkpoint):
+    from daimon_briefing import briefing
+    for verdict, anchors in (("a clean standing rule", ["issue:1"]),
+                             ("a shortened standing rule",
+                              ["issue:1", m.FORGOTTEN])):
+        rid = _ruling(subject=verdict, verdict=verdict, anchors=anchors)
+        refutations.ratify(rid, channel="cli-tty", project_dir=m.PROJECT)
+    m.forget()
+    out = briefing.render(sample_checkpoint, project_dir=m.PROJECT)
+    lines = {ln for ln in out.splitlines() if "standing rule" in ln}
+    assert len(lines) == 2
+    tagged = [ln for ln in lines if "[not as ratified]" in ln]
+    assert len(tagged) == 1 and "shortened" in tagged[0]
+    assert "forgotten" not in out
+
+
 def test_enforcement_paths_are_declared_prose_paths():
-    declared = set()
     s = surfaces.bucket_ledger("refutations.jsonl")
-    for fp in s.prose + s.folded_prose:
-        declared.add(surfaces.path_string(fp))
-    assert refutations.ENFORCEMENT_PATHS <= declared
-    assert refutations.ENFORCEMENT_PATHS == {
+    declared = {surfaces.path_string(fp) for fp in s.prose + s.folded_prose}
+    enforcement = {surfaces.path_string(fp) for fp in s.enforcement}
+    assert enforcement <= declared
+    assert enforcement == {
         "anchors[]", "guard_match.anchors[]", "check.match", "check.body"}
+    assert all(not other.enforcement for name in
+               surfaces.bucket_ledger_names() if name != "refutations.jsonl"
+               for other in [surfaces.bucket_ledger(name)])
