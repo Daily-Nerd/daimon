@@ -303,9 +303,18 @@ def build_world(tmp_path, monkeypatch) -> World:
     _write_folded_prose(world, project)
     _write_peer_requests(world, tmp_path, project)
     _write_forgotten_prose(world, project)
+    _write_world_outcome(world, project)
     _plant_quarantined_line(world)
     _teammate_quarantines(world, monkeypatch)
     return world
+
+
+def _write_world_outcome(world: World, project: str) -> None:
+    """A first outcome for an item that carries a sentinel value, through the
+    real writer. The row is a pointer and a hash: the value must not follow."""
+    assert store.append_world_outcomes(
+        [(world.ids["question"], "pr-state", "contradicted", "c" * 64)],
+        project_dir=project)
 
 
 def _teammate_quarantines(world: World, monkeypatch) -> None:

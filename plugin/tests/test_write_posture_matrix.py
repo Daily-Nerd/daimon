@@ -131,6 +131,8 @@ def _writers():
         # The two counters take no writer: EMITTER is their only class.
         "verification.jsonl": lambda w: store.append_verification(
             "o-1", "quote", "missed", project_dir=PROJECT),
+        "worldcheck-outcomes.jsonl": lambda w: store.append_world_outcomes(
+            [("o-1", "pr-state", "confirmed", "a" * 64)], project_dir=PROJECT),
         "forget-hits.jsonl": lambda w: store.record_forget_hits(
             [{"text": "a value"}], project_dir=PROJECT),
         # The own team sidecar: PROCEED in every state by the registry, but
@@ -163,7 +165,8 @@ def test_the_posture_of_every_cell(tmp_checkpoint_dir, monkeypatch,
 
 # The two counters take no writer (EMITTER is their only class), so a CURE
 # real-writer row does not exist for them.
-COUNTERS = {"verification.jsonl", "forget-hits.jsonl"}
+COUNTERS = {"verification.jsonl", "worldcheck-outcomes.jsonl",
+            "forget-hits.jsonl"}
 
 
 @pytest.mark.parametrize("name,state,writer", [

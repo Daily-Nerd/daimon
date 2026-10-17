@@ -422,6 +422,7 @@ from .stats import (  # noqa: E402
     _stats_retention,  # noqa: F401 — re-exported for compat
     _stats_stitching,  # noqa: F401 — re-exported for compat
     _stats_store,  # noqa: F401 — re-exported for compat
+    _stats_worldcheck,  # noqa: F401 — re-exported for compat
     _stats_usage,  # noqa: F401 — re-exported for compat
     _stats_verification,  # noqa: F401 — re-exported for compat
 )
@@ -450,6 +451,7 @@ from .status import (  # noqa: E402
     _status_world,  # noqa: F401 — re-exported for compat
     _tail_log_info,  # noqa: F401 — re-exported for compat
     _write_worldcheck_ledger,  # noqa: F401 — re-exported for compat
+    _write_worldcheck_outcomes,  # noqa: F401 — re-exported for compat
     status_payload,  # noqa: F401 — re-exported for compat
 )
 from .inject import (  # noqa: E402

@@ -286,6 +286,26 @@ def test_check_counts_are_anchored_and_ignore_tagged_skips(tmp_path, cps):
     assert result["inputs"]["usage_lines"] == len(usage)
 
 
+def test_check_counts_accept_the_slugged_form_beside_the_old_one(tmp_path, cps):
+    """#1184: the class tokens now end in the project slug. This script counts
+    the whole machine, so it counts a line with any slug and one without."""
+    make_bucket(cps)
+    usage = [
+        "2026-10-01T00:00:00Z worldcheck:pr-state:contradicted",
+        "2026-10-01T00:00:00Z worldcheck:pr-state:contradicted:-p-one",
+        "2026-10-01T00:00:00Z worldcheck:pr-state:contradicted:-p-two",
+        "2026-10-01T00:00:00Z worldcheck:pr-state:confirmed:-p-one",
+        "2026-10-01T00:00:00Z worldcheck:pr-state:skipped-cap:-p-one",
+        "2026-10-01T00:00:00Z worldcheck:pr-state:contradicted-extra:-p-one",
+        "2026-10-01T00:00:00Z worldcheck:receipt-probe:attempted:-p-one",
+        "2026-08-01T00:00:00Z worldcheck:pr-state:contradicted:-p-one"]
+    pr = run(tmp_path, usage=usage)["classes"]["pr-state"]
+    assert pr["checks_contradicted_all"] == 4
+    assert pr["checks_confirmed_all"] == 1
+    assert pr["checks_contradicted_window"] == 3
+    assert pr["checks_confirmed_window"] == 1
+
+
 def test_unattributed_is_window_checks_minus_ledger_rows(tmp_path, cps):
     make_bucket(cps, ledger=[
         ledger_row(SECRET_ID, "pr-state", "2026-10-01T00:00:00.100000Z")])

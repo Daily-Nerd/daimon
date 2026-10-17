@@ -2343,6 +2343,34 @@ def _stitching_line(s: dict) -> str:
     return line
 
 
+def _worldcheck_lines(w: dict) -> list[str]:
+    """#1184: the worldcheck per-note section, shared by the plain and rich
+    stats renderers. Units are in the words: NOTES are this project's unique
+    carried claims, CHECKS are individual probes of this project, and both
+    cover the window that opens at the first recorded outcome. A class with no
+    recorded outcome says so rather than printing 0 of 0."""
+    if not w.get("since"):
+        return ["none recorded yet: outcomes are counted from the first "
+                "world check that writes one"]
+    lines = [f"since {w['since']} (notes and checks: this project)"]
+    unscoped = []
+    for cls, c in w["classes"].items():
+        if c.get("unscoped_checks"):
+            unscoped.append(f"{cls} {c['unscoped_checks']}")
+        if c["notes_checked"] is None:
+            lines.append(f"{cls}: none recorded")
+            continue
+        lines.append(
+            f"{cls}: {c['notes_contradicted']} of {c['notes_checked']} notes "
+            f"contradicted at least once; checks: "
+            f"{c['checks_confirmed']} confirmed, "
+            f"{c['checks_contradicted']} contradicted")
+    if unscoped:
+        lines.append("unscoped checks (logged without a project, counted "
+                     "for none): " + ", ".join(unscoped))
+    return lines
+
+
 def _recall_follow_through_line(follow_through: dict) -> str:
     """#1058: the one follow-through summary line, shared by the plain and
     rich stats renderers — derived from `recall_telemetry._follow_through`'s
@@ -2490,6 +2518,12 @@ def _plain_stats(data: dict) -> None:
         # no visible measurement is how #829's record sat unread.
         print("stitching (this project):")
         print(f"  {_stitching_line(stitch)}")
+    wc = data.get("worldcheck")
+    if wc:
+        # #1184: always shown, same rule again: "none recorded" is an answer.
+        print("worldcheck (this project):")
+        for line in _worldcheck_lines(wc):
+            print(f"  {line}")
     res = data.get("resolutions")
     if res:
         # #480 slice 5: the credit block — who is closing loops. Always shown
@@ -2714,6 +2748,18 @@ def _rich_stats(data: dict) -> None:
         stitch_table.add_column("value")
         stitch_table.add_row("status", _stitching_line(stitch))
         console.print(stitch_table)
+
+    wc = data.get("worldcheck")
+    if wc:
+        # #1184: mirrors the plain renderer, same always-shown rule.
+        wc_table = Table(title="worldcheck (this project)",
+                         title_justify="left", show_header=True,
+                         header_style="bold")
+        wc_table.add_column("metric")
+        wc_table.add_column("value")
+        for line in _worldcheck_lines(wc):
+            wc_table.add_row("status", line)
+        console.print(wc_table)
 
     res = data.get("resolutions")
     if res:

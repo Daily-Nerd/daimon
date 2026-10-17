@@ -21,6 +21,7 @@ from .. import (
     schema,
     serializer,
     store,
+    worldcheck,
 )
 from ..ledger import (
     AUTO_BRIEF_HOSTS,
@@ -44,7 +45,12 @@ def _stats_usage() -> dict:
     for line in text.splitlines():
         parts = line.split()
         if len(parts) == 2:
-            counts[parts[1]] = counts.get(parts[1], 0) + 1
+            # #1184: a per-class worldcheck token may end in its project's
+            # slug. This is the MACHINE-wide table, so it counts under the key
+            # the token has always had, whichever form the line was written in.
+            token = worldcheck.parse_usage_token(parts[1])
+            key = token.key if token is not None else parts[1]
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 
@@ -512,6 +518,91 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
             "human_before_agent": human_before_agent}
 
 
+def _stats_worldcheck(project_dir) -> dict:
+    """Worldcheck per NOTE next to per CHECK, over ONE window and ONE project
+    (#1184, D10).
+
+    A note is the ledger's own identity, `(item_ref, class, claim_key)` in this
+    project's bucket (the same unit the #1183 measurement counts).
+    `notes_checked` is the notes with a recorded first outcome of either kind;
+    `notes_contradicted` those with a first contradicted outcome.
+
+    The per-check counts come from usage.log, which is all-time and whose
+    tokens name their project (`worldcheck.usage_token`), while
+    `worldcheck-outcomes.jsonl` only starts when it was first written. Lines
+    that name no project are counted apart as `unscoped_checks`. So both halves are cut at `since`, the earliest outcome row,
+    floored to the whole second: usage stamps are whole seconds and outcome
+    stamps carry microseconds, and an unfloored edge drops a check the same
+    second as the first row. The window closes at now: a check stamped later
+    belongs to no window the outcomes could have covered.
+
+    No outcome rows yet means no window and no per-note figure: every value is
+    None, never 0, so "nothing recorded" cannot read as "nothing contradicted".
+    A class with no rows inside a window that exists has None notes and its
+    per-check counts."""
+    first = store.first_world_outcomes(project_dir=project_dir)
+    notes: dict = {c: {} for c in sorted(store.WORLD_CHECKS)}
+    epochs = []
+    for (ref, check, claim_key, outcome), row in first.items():
+        held = notes[check].setdefault((ref, claim_key), set())
+        held.add(outcome)
+        epochs.append(store._verification_epoch(row.get("ts")))
+    since = min((e for e in epochs if e is not None), default=None)
+    out: dict = {"since": None, "classes": {}}
+    counts: dict = {}
+    if since is not None:
+        floor = int(since)
+        out["since"] = datetime.fromtimestamp(floor, timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        counts = _stats_checks_between(floor, time.time(),
+                                       store.project_slug(project_dir))
+    for cls, held in notes.items():
+        checks = counts.get(cls)
+        out["classes"][cls] = {
+            "notes_checked": len(held) if held else None,
+            "notes_contradicted": (
+                sum(1 for o in held.values() if "contradicted" in o)
+                if held else None),
+            "checks_confirmed": checks["confirmed"] if checks else None,
+            "checks_contradicted": checks["contradicted"] if checks else None,
+            "unscoped_checks": checks["unscoped"] if checks else None}
+    return out
+
+
+def _stats_checks_between(floor: int, now: float, slug: str | None) -> dict:
+    """{class: {confirmed, contradicted, unscoped}} from usage.log lines
+    stamped inside the one window `[floor, now]` (epoch seconds), the window
+    the notes half reports as `since`. A stamp after `now` is outside it.
+
+    Only a line whose token names THIS project (`slug`) is counted. A line
+    written before tokens named a project says nothing about which project it
+    belongs to, so it is not counted for any: `unscoped` is how many of those
+    fall in the window, for the line to say so. Only the two answer tokens
+    count: skip reasons are tagged (`skipped-<reason>`) and never match."""
+    out = {c: {"confirmed": 0, "contradicted": 0, "unscoped": 0}
+           for c in sorted(store.WORLD_CHECKS)}
+    try:
+        text = (config.log_dir() / "usage.log").read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        token = worldcheck.parse_usage_token(parts[1])
+        if (token is None or token.cls not in out
+                or token.outcome not in ("confirmed", "contradicted")):
+            continue
+        stamp = store._verification_epoch(parts[0])
+        if stamp is None or not floor <= stamp <= now:
+            continue
+        if token.slug is None:
+            out[token.cls]["unscoped"] += 1
+        elif token.slug == slug:
+            out[token.cls][token.outcome] += 1
+    return out
+
+
 def _cmd_stats(args) -> int:
     """Aggregate what is already on disk. Nothing is transmitted anywhere —
     sharing the output is a deliberate act (the user pastes it)."""
@@ -531,7 +622,9 @@ def _cmd_stats(args) -> int:
             # the same contract `status --json` documents.
             "checks": _stats_checks(project),
             # #974 step 1: same rule, same tail.
-            "stitching": _stats_stitching(project)}
+            "stitching": _stats_stitching(project),
+            # #1184: same rule, same tail.
+            "worldcheck": _stats_worldcheck(project)}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

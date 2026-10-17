@@ -57,6 +57,7 @@ def test_the_load_bearing_shapes_are_registered():
                   "checkpoints/{slug}/refutations.jsonl",
                   "checkpoints/{slug}/relations.jsonl",
                   "checkpoints/{slug}/verification.jsonl",
+                  "checkpoints/{slug}/worldcheck-outcomes.jsonl",
                   "checkpoints/{slug}/forget-hits.jsonl",
                   "checkpoints/.chunk-cache/*",
                   "recall.db",
@@ -407,7 +408,8 @@ def test_the_mergeable_ledgers_are_pinned_in_order():
     """A literal on purpose: a silent registry edit must fail here."""
     assert surfaces.mergeable_ledgers() == (
         "events.jsonl", "refutations.jsonl", "amendments.jsonl",
-        "requests.jsonl", "verification.jsonl", "forget-hits.jsonl",
+        "requests.jsonl", "verification.jsonl", "worldcheck-outcomes.jsonl",
+        "forget-hits.jsonl",
         "relations.jsonl", "trust.jsonl", "request_policy_tombstones.jsonl")
 
 

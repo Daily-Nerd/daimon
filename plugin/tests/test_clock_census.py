@@ -111,6 +111,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "checkpoint or store-event ts, second resolution, no order or "
         "event_id; the next candidate to move onto the clock if a host "
         "needs byte-identical checkpoints",
+    ("daimon_briefing/store.py", "append_world_outcomes", "datetime.now"):
+        "checkpoint or store-event ts, second resolution, no order or "
+        "event_id; the next candidate to move onto the clock if a host "
+        "needs byte-identical checkpoints",
     ("daimon_briefing/store.py", "_publish_keys", "datetime.now"):
         "checkpoint or store-event ts, second resolution, no order or "
         "event_id; the next candidate to move onto the clock if a host "

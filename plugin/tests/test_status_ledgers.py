@@ -76,7 +76,7 @@ def test_human_status_is_one_compact_line_when_all_ledgers_are_fine(
     out = capsys.readouterr().out.splitlines()
     ledger_lines = [ln for ln in out if "ledger" in ln.lower()
                     and "checkpoint" not in ln.lower()]
-    assert ledger_lines == ["ledgers: 1 ok, 8 absent"]
+    assert ledger_lines == ["ledgers: 1 ok, 9 absent"]
 
 
 def test_human_status_names_each_ledger_that_is_not_ok(proj, capsys):

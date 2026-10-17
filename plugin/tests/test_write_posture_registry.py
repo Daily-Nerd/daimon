@@ -30,6 +30,7 @@ EXPECTED = {
     # Cure-only writer (forget), which says PROCEED outright: no column.
     "request_policy_tombstones.jsonl": {},
     "verification.jsonl": {EMITTER: _E},
+    "worldcheck-outcomes.jsonl": {EMITTER: _E},
     "forget-hits.jsonl": {EMITTER: _E},
 }
 
@@ -67,6 +68,7 @@ def test_no_other_row_declares_a_write_posture():
         "checkpoints/{slug}/amendments.jsonl",
         "checkpoints/{slug}/requests.jsonl",
         "checkpoints/{slug}/verification.jsonl",
+        "checkpoints/{slug}/worldcheck-outcomes.jsonl",
         "checkpoints/{slug}/forget-hits.jsonl",
         "checkpoints/{slug}/*.quarantined-lines",
         "checkpoints/{slug}/relations.jsonl",
