@@ -23,6 +23,8 @@ from daimon_briefing.surfaces import Writer
 ITEM = "o-1234567890ab"
 LONG_ASK = ("Please review the release plan and tell me what is missing.\n"
             + "The rollout touches every host and every adapter. " * 12)
+LONG_SUBJECT = ("what the retired idf weighting does to recall on a long tail "
+                "of project names " * 6).strip()
 LONG_REASON = "the agent claims a fact nothing in the repo supports " * 8
 LONG_LOOP = "ship the fix for the flaky adapter on every host " * 4
 
@@ -43,7 +45,7 @@ def _seed_every_kind(bucket, *, sender="/p/X"):
         scope="repo", evidence=["issue:766"], channel="cli-agent",
         project_dir=bucket)
     refutations.assert_refutation(
-        subject="idf recall", verdict="does not improve recall",
+        subject=LONG_SUBJECT, verdict="does not improve recall",
         scope="repo", evidence=["measurement:n=50"], channel="cli-agent",
         project_dir=bucket)
     trust.propose(
@@ -108,10 +110,6 @@ def test_every_headline_is_one_line_and_bounded(project):
     _seed_every_kind(project)
     _seed_every_kind("/p/B", sender="/p/Y")
     for row in _all_rows(project):
-        # Ruling and refutation headlines are out of PR A's scope: they ship
-        # with PR D of #1129. Every other lane is census-checked now.
-        if row["kind"] in ("ruling", "refutation"):
-            continue
         assert "\n" not in row["headline"], row["kind"]
         assert len(row["headline"]) <= pending.HEADLINE_CHARS, row["kind"]
 
@@ -227,3 +225,68 @@ def test_decide_prints_the_labeled_ask_line(project, capsys):
     out = capsys.readouterr().out
     assert "  Ask: Please review the release plan" in out
     assert "  Reason: the agent claims a fact" in out
+
+
+# --- ruling and refutation rows (#1129 PR D) --------------------------------
+
+LONG_VERDICT = ("Never cut a release without a human reading the diff first, "
+                "and never reuse a tag once it has been published.\n"
+                "Applies to every host.")
+
+
+def _lane_row(project, kind):
+    return next(r for r in pending.queue(project_dir=project)["rows"]
+                if r["kind"] == kind)
+
+
+def test_ruling_row_is_titled_by_subject_and_shows_the_verdict_under_it(
+        project):
+    refutations.assert_ruling(
+        subject="release tags", verdict=LONG_VERDICT, scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir=project)
+    row = _lane_row(project, "ruling")
+    assert row["headline"] == "release tags"
+    assert row["detail"] == "Verdict: " + display.one_line(LONG_VERDICT)
+
+
+def test_ruling_card_prints_subject_header_then_the_verdict_line(project):
+    refutations.assert_ruling(
+        subject="release tags", verdict=LONG_VERDICT, scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir=project)
+    card = lifecycle._generic_card(_lane_row(project, "ruling"))
+    assert card[0].endswith("  release tags")
+    assert card[1].startswith("  Verdict: Never cut a release")
+    assert LONG_VERDICT.split(".")[0] in " ".join(
+        line.strip() for line in card)
+
+
+def test_long_ruling_subject_is_bounded_and_kept_whole_in_detail(project):
+    subject = LONG_SUBJECT[:240].rstrip()  # a ruling subject caps at 280
+    refutations.assert_ruling(
+        subject=subject, verdict="short rule", scope="repo",
+        evidence=["issue:766"], channel="cli-agent", project_dir=project)
+    row = _lane_row(project, "ruling")
+    assert len(row["headline"]) <= pending.HEADLINE_CHARS
+    assert row["headline"].endswith("…")
+    assert row["detail"].splitlines() == [
+        "Subject: " + subject, "Verdict: short rule"]
+
+
+def test_long_refutation_subject_is_bounded_and_kept_whole_in_detail(project):
+    refutations.assert_refutation(
+        subject=LONG_SUBJECT, verdict="does not improve recall",
+        scope="repo", evidence=["measurement:n=50"], channel="cli-agent",
+        project_dir=project)
+    row = _lane_row(project, "refutation")
+    assert len(row["headline"]) <= pending.HEADLINE_CHARS
+    assert row["detail"] == "Subject: " + display.one_line(LONG_SUBJECT)
+
+
+def test_short_refutation_subject_has_no_detail(project):
+    refutations.assert_refutation(
+        subject="idf recall", verdict="does not improve recall",
+        scope="repo", evidence=["measurement:n=50"], channel="cli-agent",
+        project_dir=project)
+    row = _lane_row(project, "refutation")
+    assert row["headline"] == "idf recall"
+    assert row["detail"] is None

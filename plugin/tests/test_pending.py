@@ -59,8 +59,11 @@ def test_candidate_ruling_waits_on_a_human(project):
     assert _ids(result) == [r_id]
     row = result["rows"][0]
     assert row["kind"] == "ruling"
-    # The rule text is the header a human reads, never the subject.
-    assert row["headline"] == "never bump to 1.0 without a human call"
+    # #1129: the short human-written subject titles the row; the rule text
+    # sits under it as the verdict line.
+    assert row["headline"] == "release"
+    assert row["detail"] == (
+        "Verdict: never bump to 1.0 without a human call")
 
 
 def test_an_active_ruling_owes_nothing(project):

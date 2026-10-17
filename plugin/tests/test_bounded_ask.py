@@ -110,11 +110,14 @@ def test_pending_row_detail_is_none_for_a_short_ask(project):
 
 def test_non_request_rows_carry_detail_none(project):
     from daimon_briefing import refutations
-    refutations.assert_ruling(
-        subject="release", verdict="never bump without a human",
-        scope="repo", evidence=["issue:766"], channel="cli-agent",
+    # A ruling row always carries its verdict as detail (#1129), so the
+    # lane that shortens nothing is a refutation with a short subject.
+    refutations.assert_refutation(
+        subject="idf recall", verdict="does not improve recall",
+        scope="repo", evidence=["measurement:n=50"], channel="cli-agent",
         project_dir=project)
     row = pending.queue(project_dir=project)["rows"][0]
+    assert row["kind"] == "refutation"
     assert row["detail"] is None
 
 
