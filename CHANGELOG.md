@@ -5,6 +5,36 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.0](https://github.com/Daily-Nerd/daimon/compare/v0.57.0...v0.58.0) (2026-10-17)
+
+
+### Features
+
+* **brief:** carried notes that name a PR, branch, file or dependency show when they were noted ([9dac0ca](https://github.com/Daily-Nerd/daimon/commit/9dac0ca6671a5634061a97e055e638ee817a6009))
+* **brief:** carried notes that name a PR, branch, file or dependency show when they were noted ([#1197](https://github.com/Daily-Nerd/daimon/issues/1197)) ([ab584ee](https://github.com/Daily-Nerd/daimon/commit/ab584ee98ab7084c40ed5db5f959de08baa0e475))
+* **cli:** request open and revise take --title ([451fad6](https://github.com/Daily-Nerd/daimon/commit/451fad656928130c0e0eddb303f293eb1a707585))
+* **requests:** lead with the sender's title wherever a request is titled ([8139a6c](https://github.com/Daily-Nerd/daimon/commit/8139a6c10cb827ad5713bcddc89f943175a5165e))
+* **requests:** optional sender-set title on a request ([047b203](https://github.com/Daily-Nerd/daimon/commit/047b2035b422942f540dfdedb49627281e3f3781))
+* **requests:** optional sender-set title on a request ([#1202](https://github.com/Daily-Nerd/daimon/issues/1202)) ([b7c3c58](https://github.com/Daily-Nerd/daimon/commit/b7c3c58899c988a51d036844547de2344098d523))
+* **stats:** worldcheck per-note rates ([5496b00](https://github.com/Daily-Nerd/daimon/commit/5496b005ba8975f194bb15df43a5585e6b70b87c)), closes [#1184](https://github.com/Daily-Nerd/daimon/issues/1184)
+* **worldcheck:** record the first confirmed and contradicted outcome per note ([53b1893](https://github.com/Daily-Nerd/daimon/commit/53b189385a82ae1f3a8400f34dba052d307a296a)), closes [#1184](https://github.com/Daily-Nerd/daimon/issues/1184)
+* **worldcheck:** record the first confirmed and contradicted outcome per note ([#1201](https://github.com/Daily-Nerd/daimon/issues/1201)) ([d4e051e](https://github.com/Daily-Nerd/daimon/commit/d4e051e7fc37f8819fa9862a8383f4435e40f724))
+* **worldcheck:** stamp each carried item with its text claim's own outcome ([2eeefb2](https://github.com/Daily-Nerd/daimon/commit/2eeefb203aac0f8de583b01f1efd19917b932d7f))
+* **worldcheck:** usage tokens name the project ([9d203e7](https://github.com/Daily-Nerd/daimon/commit/9d203e72b5b3f8fd9f734e1ba24a56257a2babf1)), closes [#1184](https://github.com/Daily-Nerd/daimon/issues/1184)
+
+
+### Bug Fixes
+
+* **decide:** title ruling rows by subject and show the verdict under it ([#1129](https://github.com/Daily-Nerd/daimon/issues/1129)) ([2187bbb](https://github.com/Daily-Nerd/daimon/commit/2187bbbf38d928554c1c5290bad0c30a3b22df4b))
+* **decide:** title ruling rows by subject and show the verdict under it ([#1200](https://github.com/Daily-Nerd/daimon/issues/1200)) ([76ac7ce](https://github.com/Daily-Nerd/daimon/commit/76ac7cec81225d27bb8f3cc2fba4ded32a0877ce))
+
+
+### Documentation
+
+* **brief:** explain the noted line on carried notes, English and Spanish ([a52a29c](https://github.com/Daily-Nerd/daimon/commit/a52a29cc98b3579673df8d4f64ad5341d1d73ab4))
+* **request:** teach --title in the skill and the request docs ([5b4e094](https://github.com/Daily-Nerd/daimon/commit/5b4e094bc66a5e1110a3764cb7c5f963d7e99536))
+* **skill:** teach that the noted time is capture, not state ([94a3e3b](https://github.com/Daily-Nerd/daimon/commit/94a3e3bcc6779f07f50e5daddb394ea8bb7aaecf))
+
 ## [0.57.0](https://github.com/Daily-Nerd/daimon/compare/v0.56.0...v0.57.0) (2026-10-16)
 
 
