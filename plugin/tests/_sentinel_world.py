@@ -434,7 +434,7 @@ def _write_folded_prose(world: World, project: str) -> None:
     slug = store.project_slug(project)
     rid = requests.open_request(
         to=slug, ask="a second census ask", why="because", evidence="e",
-        channel="ui", author=t, project_dir=project)
+        title=c, channel="ui", author=t, project_dir=project)
     requests.accept(rid, channel="ui", note="ok", author=q,
                     project_dir=project)
     requests.reply(rid, t, q, channel="ui", author=c, project_dir=project)
