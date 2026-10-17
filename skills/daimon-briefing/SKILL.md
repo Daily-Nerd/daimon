@@ -78,6 +78,11 @@ Request text fields (`ask`, `why`, `evidence`) cap at 2000 characters. Long
 content belongs in an artifact the request points at (a file, an issue, a
 PR), with the request itself carrying the pointer, not the full text.
 
+When you open one (`daimon request open --to <dir> --ask "<what>" --why
+"<why>" --title "<few words>" --by agent`), give it a `--title` of at most 80
+characters. It is the headline the recipient sees first; without one the
+headline is a guess cut from the start of the ask.
+
 When the briefing shows an active `policy:` line, you may open an ask of
 that kind to that recipient with `daimon request open --kind info`;
 anything asking for a change or effort still stays `work`.

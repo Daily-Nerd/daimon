@@ -300,8 +300,11 @@ Never present cross-project content as the current project's memory.
 Never write into another project's memory — record the ask:
 
 ```
-daimon request open --to <dir> --ask "<what>" --why "<why>" --by agent
+daimon request open --to <dir> --ask "<what>" --why "<why>" --title "<few words>" --by agent
 ```
+
+`--title` is optional, at most 80 characters: the headline the recipient sees
+first, so say what is being asked rather than how the ask begins.
 
 `daimon request list` shows this project's asks and where each stands.
 `request revise` answers a needs-info (three per record, then a new one with

@@ -390,7 +390,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface("checkpoints/{slug}/requests.jsonl", "requests.append",
             True, "rewrite", "forget", fold="requests.fold",
             prose=_scalars("ask", "why", "note", "evidence", "from_label",
-                           "act_author"),
+                           "act_author", "title"),
             folded_prose=(
                 FieldPath(("done_evidence",)),
                 FieldPath(("replies[]", "note")),

@@ -223,3 +223,76 @@ def test_the_mcp_inbox_tool_fails_closed_when_masked_raises(
     monkeypatch.setattr(view, "masked", boom)
     with pytest.raises(Exception):
         mcp_tools.HANDLERS["requests_inbox"]({"project": m.PROJECT})
+
+
+# ---- #1131: a title is masked exactly like an ask on every whole-record dump
+
+
+def test_a_quarantined_title_is_withheld_from_inbox_and_list_dumps(
+        tmp_checkpoint_dir, capsys):
+    rid = _ask(ask="a plain ask", title=m.QUARANTINED)
+    tid = m.quarantine()
+    rows = _json(capsys, "request", "inbox", "--json")
+    row = next(r for r in rows if r["request_id"] == rid)
+    assert row["title"] == f"[withheld: quarantine {tid}]"
+    rc, out, _ = m.run(capsys, "request", "inbox")
+    assert rc == 0 and "SECRET" not in out
+
+    own = requests.open_request(to=OTHER_SLUG, ask="from us", why="w",
+                                title=m.QUARANTINED, channel="cli-tty",
+                                project_dir=m.PROJECT)
+    rows = _json(capsys, "request", "list", "--json")
+    row = next(r for r in rows if r["request_id"] == own)
+    assert row["title"] == f"[withheld: quarantine {tid}]"
+    rc, out, _ = m.run(capsys, "request", "list")
+    assert rc == 0 and "SECRET" not in out
+
+
+def test_a_forgotten_title_never_reaches_the_dumps(tmp_checkpoint_dir,
+                                                    capsys):
+    rid = _ask(ask="a plain ask", title=m.FORGOTTEN)
+    m.forget()
+    rows = _json(capsys, "request", "inbox", "--json")
+    row = next(r for r in rows if r["request_id"] == rid)
+    assert row.get("title", "") == ""
+    rc, out, _ = m.run(capsys, "request", "inbox")
+    assert rc == 0 and m.FORGOTTEN not in out
+
+
+def test_the_mcp_inbox_masks_a_title(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import mcp_tools
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", m.PROJECT)
+    rid = _ask(ask="a plain ask", title=m.QUARANTINED)
+    tid = m.quarantine()
+    forgotten = _ask(ask="another ask", title=m.FORGOTTEN)
+    m.forget()
+    rows = json.loads(mcp_tools.HANDLERS["requests_inbox"]({}).text)
+    by_id = {r["request_id"]: r for r in rows}
+    assert by_id[rid]["title"] == f"[withheld: quarantine {tid}]"
+    assert by_id[forgotten].get("title", "") == ""
+    assert m.QUARANTINED not in json.dumps(rows)
+    assert m.FORGOTTEN not in json.dumps(rows)
+
+
+def test_a_title_only_value_is_absent_from_the_serialized_dump_bytes(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    """#1131: judged on the bytes each dump emits, not on the parsed record.
+    A forgotten value and a redacted secret that live only in a title."""
+    from daimon_briefing import mcp_tools
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    _ask(ask="a plain ask", title=m.FORGOTTEN)
+    _ask(ask="another plain ask", title=f"rotate {secret}")
+    requests.open_request(to=OTHER_SLUG, ask="from us", why="w",
+                          title=m.FORGOTTEN, channel="cli-tty",
+                          project_dir=m.PROJECT)
+    m.forget()
+    dumps = []
+    for argv in (("request", "inbox", "--json"), ("request", "list", "--json")):
+        rc, out, _ = m.run(capsys, *argv)
+        assert rc == 0
+        dumps.append(out)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", m.PROJECT)
+    dumps.append(mcp_tools.HANDLERS["requests_inbox"]({}).text)
+    for dump in dumps:
+        assert m.FORGOTTEN not in dump
+        assert secret not in dump

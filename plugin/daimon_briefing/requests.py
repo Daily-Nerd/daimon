@@ -175,6 +175,10 @@ _MAX_TEXT = 2000
 # #1127: the display bound for an ask shown as a title or a skimmable line.
 # One limit for every surface (decide headline, briefing panels, hook inject).
 ASK_CHARS = 160
+# #1131: the sender-set title is a few words. Bounded at the write edge like
+# every other field, and REFUSED when over (never cut: a cut title is a
+# sentence the sender did not write), exactly as an over-long ask is.
+TITLE_CHARS = 80
 _LABEL_MAX = 64
 # The verify_done transcript-speaker role, same bound amendments.py's
 # _ROLE_MAX uses for the identical session-end byte-check shape.
@@ -189,6 +193,20 @@ def short_ask(text) -> str:
     boundary (when one sits in the back half) with an ellipsis. Never longer
     than `ASK_CHARS`. The cut itself lives in `display.shorten` (#1129)."""
     return display.shorten(text, ASK_CHARS, sentence=True)
+
+
+def headline(record) -> str:
+    """#1131: the one owner of what a request shows in a title position.
+
+    The sender's title when it set one, else the bounded ask. The title was
+    already bounded at the write edge; it is bounded again here because this
+    reads a folded record, and a ledger line edited on disk must not widen a
+    headline. Every surface that titles a request calls this, so none of
+    them can disagree about which text leads."""
+    title = str((record or {}).get("title") or "").strip()
+    if title:
+        return display.shorten(title, ASK_CHARS)
+    return short_ask((record or {}).get("ask"))
 
 
 # Every field of a ledger row that can hold plaintext (#645 discipline).
@@ -370,9 +388,11 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     path = _path(project_dir)
     if path is None:
         return False
+    # #1131: the registry's scalar prose columns plus `author` (a person's
+    # name, redacted but deliberately not forgettable, see above), so a
+    # plaintext field added to the registry cannot be stored unredacted.
     admitted = policy.admit_row(
-        row, redact_fields=("ask", "why", "note", "evidence", "from_label",
-                            "author", "act_author"))
+        row, redact_fields=(*surfaces.scalar_prose_fields(_LEDGER), "author"))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         return jsonl.append_as(path, admitted, writer)
@@ -904,6 +924,11 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 "updated_at": row.get("ts"),
                 "history_count": 1,
             }
+            # #1131: present only when the sender set one, so a request
+            # without a title folds to exactly the record it always did.
+            title = str(row.get("title") or "")
+            if title:
+                out[q_id]["title"] = title
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
@@ -1137,6 +1162,14 @@ def fold(rows: list[dict], policies=frozenset(), *,
             for key in ("ask", "why", "evidence"):
                 if key in row:
                     current[key] = str(row.get(key) or "")
+            # #1131: a title key is the sender's intent (scar 0042); an
+            # empty one clears it, back to the record with no title.
+            if "title" in row:
+                title = str(row.get("title") or "")
+                if title:
+                    current["title"] = title
+                else:
+                    current.pop("title", None)
             current["revision"] += 1
             current["state"] = "open"
             current["history_count"] += 1
@@ -1457,7 +1490,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
                  blocking: bool = False, to_human: bool = False,
                  evidence: str = "", supersedes: str = "",
                  kind: str = DEFAULT_KIND, author: str | None = None,
-                 project_dir=None) -> str:
+                 title: str = "", project_dir=None) -> str:
     """Open a request addressed to another project's slug.
 
     Slug SHAPE is validated here; whether it names a bucket that exists is
@@ -1489,6 +1522,12 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     writer serving several people through one channel. Refused on a channel
     that derives its author from the environment (`_act_author`), so a
     shell-out can never sign an ask as somebody else.
+
+    #1131: `title` is an optional few-word headline the sender sets. It is
+    validated here, once: whitespace collapsed, redacted, and REFUSED past
+    `TITLE_CHARS` (as an over-long ask is; a cut title is words the sender
+    did not write). `supersedes` does not inherit one: the replacement
+    carries its own.
     """
     project_dir = config.resolve_project_dir(project_dir)
     if not _SLUG_RE.fullmatch(str(to or "")):
@@ -1521,6 +1560,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     ask = _scrub("ask", ask)
     why = _scrub("why", why)
     evidence = _scrub("evidence", evidence, required=False)
+    title = _scrub("title", title, required=False, limit=TITLE_CHARS)
     order = clock.now_ns()
     q_id = make_id(slug, ask, why, _ts(order))
     if get(q_id, project_dir=project_dir) is not None:
@@ -1539,6 +1579,8 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     })
     if evidence:
         row["evidence"] = evidence
+    if title:
+        row["title"] = title
     if supersedes:
         row["supersedes"] = supersedes
     if kind == "info" and CHANNEL_AUTHORITY.get(channel) != "human":
@@ -1600,8 +1642,13 @@ def _resolve_covering_open_policy(to: str, project_dir):
 
 def revise(request_id: str, *, channel: str, ask: str | None = None,
            why: str | None = None, evidence: str | None = None,
-           author: str | None = None, project_dir=None) -> None:
-    """Answer a needs-info, or sharpen an open ask. Capped at MAX_REVISIONS."""
+           author: str | None = None, title: str | None = None,
+           project_dir=None) -> None:
+    """Answer a needs-info, or sharpen an open ask. Capped at MAX_REVISIONS.
+
+    #1131: `title=None` keeps the title (a revise that sharpens the ask does
+    not touch the headline); a value replaces it; `""` clears it. Same
+    key-presence rule as the other fields."""
     current = _require(request_id, project_dir)
     if current["state"] not in _SENDER_MOVABLE:
         raise RequestError(
@@ -1622,9 +1669,13 @@ def revise(request_id: str, *, channel: str, ask: str | None = None,
         row["why"] = _scrub("why", why)
     if evidence is not None:
         row["evidence"] = _scrub("evidence", evidence, required=False)
-    if not any(key in row for key in ("ask", "why", "evidence")):
+    if title is not None:
+        row["title"] = _scrub("title", title, required=False,
+                              limit=TITLE_CHARS)
+    if not any(key in row for key in ("ask", "why", "evidence", "title")):
         raise RequestError(
-            "revision changes nothing; provide a new ask, why, or evidence")
+            "revision changes nothing; provide a new ask, why, evidence, "
+            "or title")
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise RequestError("revision not written")

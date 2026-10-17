@@ -223,7 +223,7 @@ def _request_rows(project_dir, slug, joined=None, *, masked=True,
                    masked=masked, snap=snap)
     for (rid, original), record in zip(pending_records, visible):
         ask = record.get("ask") or ""
-        short = requests.short_ask(ask)
+        short = requests.headline(record)
         rows.append((_row(
             kind="request", record_id=rid, slug=slug,
             headline=short,

@@ -448,7 +448,8 @@ def test_the_prose_declarations_are_pinned():
     assert surfaces.bucket_ledger("trust.jsonl").prose == (
         fp(("reason",)), fp(("evidence",), True))
     assert surfaces.bucket_ledger("requests.jsonl").prose == scalars(
-        "ask", "why", "note", "evidence", "from_label", "act_author")
+        "ask", "why", "note", "evidence", "from_label", "act_author",
+        "title")
     assert surfaces.bucket_ledger("events.jsonl").prose == scalars(
         "note", "item_text", "status")
 
@@ -504,7 +505,8 @@ def test_prose_values_walks_scalars_lists_and_nested_paths():
 
 def test_scalar_prose_fields_are_the_top_level_non_list_keys():
     assert surfaces.scalar_prose_fields("requests.jsonl") == (
-        "ask", "why", "note", "evidence", "from_label", "act_author")
+        "ask", "why", "note", "evidence", "from_label", "act_author",
+        "title")
     assert surfaces.scalar_prose_fields("refutations.jsonl") == (
         "subject", "verdict", "scope", "revisit_when", "note")
     assert surfaces.scalar_prose_fields("trust.jsonl") == ("reason",)

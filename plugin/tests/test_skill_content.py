@@ -611,3 +611,22 @@ def test_the_plugin_skill_teaches_the_noted_line():
     text = (repo / "skills/daimon-briefing/SKILL.md").read_text(encoding="utf-8")
     flat = " ".join(text.split())
     assert "(noted" in flat and "first captured, not its state now" in flat
+
+
+def test_every_text_that_teaches_opening_a_request_mentions_title():
+    """#1131: a sender that is never told about `--title` never sets one, and
+    every request then falls back to the guessed first sentence. The full body
+    is the one source installed on every host; the plugin skill is its own
+    surface. The compact body does not teach `request open` at all (it has no
+    room and carries only the pull), so there is no host row to add."""
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[2]
+    teaching = {
+        "full body": skill_content.render_full(),
+        "plugin skill": (repo / "skills/daimon-briefing/SKILL.md").read_text(
+            encoding="utf-8"),
+    }
+    for name, text in teaching.items():
+        assert "daimon request open" in text, name
+        assert "--title" in text, name
+    assert "daimon request open" not in skill_content.render_compact()

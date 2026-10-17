@@ -123,9 +123,9 @@ def _request_lines(record: dict, project_dir=None) -> list:
     sender is blocked on it."""
     state = requests.render_state(record, project_dir=project_dir)
     who = record.get("verdict_label") or f"{record.get('opened_by', '?')}-asked"
-    lines = [f"[{_MARKS.get(state, '?')} "
-             f"{_state_label(record, project_dir=project_dir)} · {who}] "
-             f"{record['request_id']}  {record.get('ask', '')}"]
+    lines = _card_header(
+        record, f"[{_MARKS.get(state, '?')} "
+                f"{_state_label(record, project_dir=project_dir)} · {who}] ")
     to = record.get("to", "")
     lines.append(f"  To: {to}" + (" (for a human)" if record.get("to_human")
                                   else ""))
@@ -196,9 +196,9 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
     `_request_lines`, labeled with the foreign SENDER (`From:`) instead of
     the local `to`, since every row here was addressed to THIS project."""
     state = requests.render_state(record, project_dir=project_dir)
-    lines = [f"[{_MARKS.get(state, '?')} "
-             f"{_state_label(record, project_dir=project_dir)}] "
-             f"{record['request_id']}  {record.get('ask', '')}"]
+    lines = _card_header(
+        record, f"[{_MARKS.get(state, '?')} "
+                f"{_state_label(record, project_dir=project_dir)}] ")
     lines.append(f"  From: {record.get('from_label') or '?'}"
                  + (" (for a human)" if record.get("to_human") else ""))
     # #961 slice 2: same posture as `_request_lines` — always printed, read
@@ -291,6 +291,27 @@ def _ask_line(ask) -> str:
     return line
 
 
+def _ask_lines(record: dict) -> list[str]:
+    """#1131: the inject surfaces' ask lines. A sender-set title leads on its
+    own line and the bounded ask follows, because this is what an agent
+    acts on and the title alone would hide the request."""
+    lines = [_ask_line(record.get("ask"))]
+    title = requests.headline(record) if record.get("title") else ""
+    if title:
+        lines.insert(0, f"  Title: {title}")
+    return lines
+
+
+def _card_header(record: dict, prefix: str) -> list[str]:
+    """#1131: a list/inbox card's header line, plus the full ask on its own
+    line when a title took the header's place. Without a title the header
+    carries the ask exactly as before."""
+    if record.get("title"):
+        return [f"{prefix}{record['request_id']}  {requests.headline(record)}",
+                f"  Ask: {record.get('ask', '')}"]
+    return [f"{prefix}{record['request_id']}  {record.get('ask', '')}"]
+
+
 def _inject_lines(record: dict) -> list[str]:
     """One delivered ask, compressed to what decides it. Deliberately
     thinner than `_inbox_lines`: this lands mid-session on the agent's
@@ -309,7 +330,7 @@ def _inject_lines(record: dict) -> list[str]:
              # and redoes the work — same placement rule as the two markers
              # above, read from the folded record only.
              + (" [done claimed]" if record.get("done_pending") else "")]
-    lines.append(_ask_line(record.get("ask")))
+    lines.extend(_ask_lines(record))
     if record.get("why"):
         lines.append(f"  Why: {record['why']}")
     return lines
@@ -342,7 +363,7 @@ def _verdict_inject_lines(record: dict) -> list[str]:
                    else state)
     lines = [f"daimon verdict: {mark} {state_label}  {record['request_id']} "
              f"(to {record.get('to') or '?'})"]
-    lines.append(_ask_line(record.get("ask")))
+    lines.extend(_ask_lines(record))
     note = str(record.get("note") or "").strip()
     if note:
         lines.append(f"  Note: {note}")
@@ -367,7 +388,7 @@ def _owed_inject_lines(record: dict) -> list[str]:
              + (" [info]" if record.get("kind") == "info" else "")
              + (" [blocking: the sender is waiting]"
                 if record.get("blocking") else "")]
-    lines.append(_ask_line(record.get("ask")))
+    lines.extend(_ask_lines(record))
     note = str(record.get("note") or "").strip()
     if note:
         lines.append(f"  Accepted with: {note}")
@@ -519,7 +540,7 @@ def _cmd_request_open(args) -> int:
             to=to, ask=args.ask, why=args.why, channel=_request_channel(args),
             blocking=bool(args.blocking), to_human=bool(args.to_human),
             evidence=args.evidence or "", supersedes=args.supersedes or "",
-            kind=args.kind, project_dir=project)
+            kind=args.kind, title=args.title or "", project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:open:refused")
         print(_refusal_message("request not recorded", exc))
@@ -548,7 +569,7 @@ def _cmd_request_revise(args) -> int:
     try:
         requests.revise(args.request_id, channel=_request_channel(args),
                         ask=args.ask, why=args.why, evidence=args.evidence,
-                        project_dir=project)
+                        title=args.title, project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:revise:refused")
         print(_refusal_message("request not revised", exc))
@@ -730,6 +751,11 @@ def register(sub, fmt) -> None:
     rq_open.add_argument("--why", required=True,
                          help="why it matters; the recipient reads this first")
     rq_open.add_argument(
+        "--title",
+        help="optional headline of a few words (80 characters at most) that "
+             "leads wherever the request is listed; the ask stays the full "
+             "text")
+    rq_open.add_argument(
         "--to-human", action="store_true",
         help="the ask is for that project's human, not its agent")
     rq_open.add_argument(
@@ -764,6 +790,9 @@ def register(sub, fmt) -> None:
     rq_revise.add_argument("--ask", help="replacement ask")
     rq_revise.add_argument("--why", help="replacement rationale")
     rq_revise.add_argument("--evidence", help="replacement source")
+    rq_revise.add_argument(
+        "--title", help="replacement title; --title '' removes it, and "
+                        "leaving it out keeps the current one")
     rq_revise.add_argument("--by", choices=["agent"], default=None,
                            help="declare yourself an agent; omit it only from "
                                 "an interactive terminal")

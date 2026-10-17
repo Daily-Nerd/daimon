@@ -1619,7 +1619,7 @@ def request_panel(project_dir=None, *, snap=None):
         # ask so the id stays in its own span.
         claim_marker = "  [done claimed]" if row.get("done_pending") else ""
         lines.append(f"→ {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}"
+                     f"{requests.headline(row)}"
                      f"{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1666,7 +1666,7 @@ def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
         kind_marker = "  [info]" if row.get("kind") == "info" else ""
         marker = "  [blocking]" if row.get("blocking") else ""
         lines.append(f"✓ {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}"
+                     f"{requests.headline(row)}"
                      f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
     overflow = entry.get("overflow") or 0
@@ -1741,7 +1741,7 @@ def verdict_panel(project_dir=None, *, snap=None):
                        if state == "accepted" and row.get("accepted_by") == "agent"
                        else state)
         lines.append(f"{mark} {state_label}  {row['request_id']}  "
-                     f"{_truncate_request_ask(row.get('ask', ''))}")
+                     f"{requests.headline(row)}")
         lines.append(f"  To: {row.get('to') or '?'}")
         note = str(row.get("note") or "").strip()
         if note:
