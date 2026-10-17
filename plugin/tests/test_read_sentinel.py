@@ -1091,12 +1091,15 @@ CONVERTED = {
     "cli:relations list": ("cli/relations_cmd.py", frozenset({"relations"})),
     "cli:relations show": ("cli/relations_cmd.py", frozenset({"relations"})),
     "http:/api/relations": ("../daimon_ui/server.py", frozenset({"relations"})),
-    # 11c: the prose verbs print what they read through `view.masked`. The
-    # call sits in the helper the verb modules share, `cli/_ledger.py`.
-    **{f"cli:refute {verb}": ("cli/_ledger.py", frozenset({"masked"}))
+    # 11c: the prose verbs print what they read through `view.masked` (here
+    # `masked_with_verdicts`, its sibling that also returns the verdicts, #1206).
+    # The call sits in the helper the verb modules share, `cli/_ledger.py`.
+    **{f"cli:refute {verb}": ("cli/_ledger.py",
+                              frozenset({"masked_with_verdicts"}))
        for verb in ("list", "show", "search", "guard", "ratify", "revise",
                     "overturn")},
-    **{f"cli:ruling {verb}": ("cli/_ledger.py", frozenset({"masked"}))
+    **{f"cli:ruling {verb}": ("cli/_ledger.py",
+                              frozenset({"masked_with_verdicts"}))
        for verb in ("list", "show", "ratify", "revise", "retire")},
     "cli:decide": ("pending.py", frozenset({"masked"})),
     "mcp:requests_inbox": ("mcp_tools.py", frozenset({"masked"})),

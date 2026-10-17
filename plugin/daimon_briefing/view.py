@@ -164,7 +164,12 @@ class Withheld:
     projection of the item's evidence (`_projection`: a valid quote receipt and
     the origin stamps, never a value) that the pointer-window filter takes
     before it removes the item; it is None where no copy was filtered (a
-    tombstone-only id, an index row) and is not part of equality."""
+    tombstone-only id, an index row) and is not part of equality.
+
+    `path` is the registry path of the prose field the verdict was handed out
+    for (`anchors[]`, `check.match`), set by `masked`'s walk so a caller can
+    tell which kind of field lost a value without ever seeing the value. It
+    is "" where no field is known and is not part of equality."""
 
     item_id: str | None
     kind: str
@@ -173,6 +178,7 @@ class Withheld:
     value_key: str
     notes: tuple = ()
     receipt: Mapping | None = field(default=None, compare=False)
+    path: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -1909,56 +1915,61 @@ def _strictest(text: str, snaps, closed_masks: bool) -> Withheld | None:
 
 
 def _mask_text(text: str, snaps, closed_masks: bool,
-               seen: list | None = None) -> str | None:
+               seen: list | None = None, path: str = "") -> str | None:
     """None for a forgotten whole value, the marker for a quarantined or
     closed one, else the text. A verdict is also appended to `seen` when the
-    caller asked to collect them."""
+    caller asked to collect them, stamped with the field `path` it was
+    handed out for."""
     verdict = _strictest(text, snaps, closed_masks)
     if verdict is None:
         return text
     if seen is not None:
-        seen.append(verdict)
+        seen.append(dataclasses.replace(verdict, path=path))
     return None if verdict.reason == "forgotten" else display.withheld_marker(
         verdict)
 
 
-def _mask_tree(node, snaps, seen: list | None = None):
+def _mask_tree(node, snaps, seen: list | None = None, path: str = ""):
     """Defence in depth: every string leaf of a folded record judged by value
     (forgotten and quarantined only; a closed ledger masks declared value
     copies, never an undeclared leaf), so a fold key the registry does not
     know cannot carry a withheld value out through a payload that dumps the
-    whole record."""
+    whole record. `path` is the registry-style path of `node` (`check`,
+    `replies[]`), so a verdict names the field it came from."""
     if isinstance(node, dict):
         for key, value in list(node.items()):
+            here = f"{path}.{key}" if path else key
             if isinstance(value, str):
-                leaf = _leaf(value, snaps, seen)
+                leaf = _leaf(value, snaps, seen, here)
                 node[key] = "" if leaf is None else leaf
             else:
-                _mask_tree(value, snaps, seen)
+                _mask_tree(value, snaps, seen, here)
     elif isinstance(node, list):
         kept = []
+        member_path = f"{path}[]"
         for member in node:
             if isinstance(member, str):
-                member = _leaf(member, snaps, seen)
+                member = _leaf(member, snaps, seen, member_path)
                 if member is None:
                     continue
             else:
-                _mask_tree(member, snaps, seen)
+                _mask_tree(member, snaps, seen, member_path)
             kept.append(member)
         node[:] = kept
     return node
 
 
-def _leaf(text: str, snaps, seen: list | None = None):
+def _leaf(text: str, snaps, seen: list | None = None, path: str = ""):
     """A string leaf of a record: scrub markers and forgotten values go
     (blank in a dict, dropped from a list), a quarantined one is the marker."""
     if not text.strip():
         return text
     if _SCRUBBED.search(text):
         if seen is not None:
-            seen.append(Withheld(None, "prose", "forgotten", None, ""))
+            seen.append(Withheld(None, "prose", "forgotten", None, "",
+                                 path=path))
         return None
-    return _mask_text(text, snaps, False, seen)
+    return _mask_text(text, snaps, False, seen, path)
 
 
 def named_snapshots(row: dict, cache: dict, *, skip=None) -> list[Snapshot]:
@@ -1983,9 +1994,10 @@ def prose_verdict_over(text, snaps, *, closed_masks: bool) -> Withheld | None:
     return _strictest(str(text or ""), snaps, closed_masks)
 
 
-def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
-               seen: list | None) -> list[dict]:
-    """The body of `masked`; `seen` collects the verdicts it handed out."""
+def _mask_rows(project, ledger_name: str, rows,
+               snap: Snapshot | None) -> list[tuple[dict, tuple[Withheld, ...]]]:
+    """The body of `masked`: each row as a reader may see it, with the
+    verdicts handed out for it (each stamped with its field `path`)."""
     surface = surfaces.bucket_ledger(ledger_name)
     paths = surface.prose + surface.folded_prose
     own_slug = store.project_slug(config.resolve_project_dir(project))
@@ -2000,28 +2012,28 @@ def _mask_rows(project, ledger_name: str, rows, snap: Snapshot | None,
     result = []
     for row in rows:
         snaps = snaps_of(row)
+        seen: list[Withheld] = []
 
-        def fn(text: str, fp: surfaces.FieldPath, _snaps=snaps):
+        def fn(text: str, fp: surfaces.FieldPath, _snaps=snaps, _seen=seen):
             path = surfaces.path_string(fp)
             if ledger_name == "events.jsonl" and path == "status":
                 # a lifecycle word: keep the class token a scrub preserved
                 text = _SCRUBBED.sub("", text).strip()
                 if not text:
-                    if seen is not None:
-                        seen.append(Withheld(None, "prose", "forgotten",
-                                             None, ""))
+                    _seen.append(Withheld(None, "prose", "forgotten",
+                                          None, "", path=path))
                     return None
             elif _SCRUBBED.search(text):
-                if seen is not None:
-                    seen.append(Withheld(None, "prose", "forgotten", None, ""))
+                _seen.append(Withheld(None, "prose", "forgotten", None, "",
+                                      path=path))
                 shown = trust.display_text(text)
                 return shown if (ledger_name == "trust.jsonl"
                                  and shown != text) else None
             return _mask_text(text, _snaps, MASK_POLICY[(ledger_name, path)],
-                              seen)
+                              _seen, path)
 
         out = surfaces.map_prose(paths, row, fn)
-        result.append(_mask_tree(out, snaps, seen))
+        result.append((_mask_tree(out, snaps, seen), tuple(seen)))
     return result
 
 
@@ -2040,7 +2052,18 @@ def masked(project, ledger_name: str, rows, *,
     (`judge` routes a non-slug to the forgotten set alone). A requests row is a
     join, so it is also judged by the snapshot of every bucket it names, one
     judge per slug per call."""
-    return _mask_rows(project, ledger_name, rows, snap, None)
+    return [row for row, _verdicts in _mask_rows(project, ledger_name, rows,
+                                                 snap)]
+
+
+def masked_with_verdicts(project, ledger_name: str, rows, *,
+                         snap: Snapshot | None = None
+                         ) -> list[tuple[dict, tuple[Withheld, ...]]]:
+    """`masked`, and with each row the verdicts handed out for it, from the
+    same single judge. A verdict names the field `path` it was handed out for
+    and carries no text, so a caller can learn which kind of field lost a
+    value (a ruling's enforcement values) without learning the value."""
+    return _mask_rows(project, ledger_name, rows, snap)
 
 
 def withheld_in(project, ledger_name: str, row: dict, *,
@@ -2048,9 +2071,7 @@ def withheld_in(project, ledger_name: str, row: dict, *,
     """The verdicts `masked` would hand out for one row: what is withheld in
     it, without the text. A ceremony asks this before it asks a person to sign
     a record whose words they could not read."""
-    seen: list[Withheld] = []
-    _mask_rows(project, ledger_name, [row], snap, seen)
-    return tuple(seen)
+    return _mask_rows(project, ledger_name, [row], snap)[0][1]
 
 
 @dataclass(frozen=True)

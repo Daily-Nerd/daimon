@@ -112,10 +112,15 @@ def _masked_records(project, records, *, snap=None) -> list:
 
         groups.setdefault(record.get("inherited_from") or "", []).append(index)
     for origin, indexes in groups.items():
-        rows = view.masked(origin or project, _LEDGER,
-                           [records[i] for i in indexes],
-                           snap=None if origin else snap)
-        for index, row in zip(indexes, rows):
+        judged = view.masked_with_verdicts(
+            origin or project, _LEDGER, [records[i] for i in indexes],
+            snap=None if origin else snap)
+        for index, (row, verdicts) in zip(indexes, judged):
+            if row.get("polarity") == "ruling":
+                # a ruling enforces, so a withheld enforcement value must not
+                # read as a shorter, complete one; the bit names no value
+                row["as_ratified"] = not any(
+                    v.path in refutations.ENFORCEMENT_PATHS for v in verdicts)
             out[index] = row
     return out
 
@@ -189,6 +194,13 @@ def _refutation_json(record) -> str:
     contradict the obvious reading.  The value is a constant today because
     `cited` is the only status the ledger can currently earn (#581 would add a
     resolved one).
+
+    A ruling record also carries `as_ratified` (#1206), always present and a
+    boolean.  It is false when an enforcement value of the ruling (its
+    anchors, the anchors a guard matched, or its check's match or body) was
+    withheld for any reason, so a shortened anchor set cannot be read as the
+    complete one a person ratified.  It names no value, count, path or
+    reason.  Refutation records carry no such key.
     """
     def stamped(row: dict) -> dict:
         return {**row, "evidence_status": "cited"}
@@ -435,6 +447,8 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     inherited_from = record.get("inherited_from")
     if inherited_from:
         lines[0] += f"  [from {config.home_relative(inherited_from)}]"
+    if record.get("as_ratified") is False:
+        lines.append("  not as ratified: an enforcement value is withheld")
     if not detailed:
         return lines
     lines.append(f"  Governs: {record.get('subject', '')}")

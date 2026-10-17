@@ -47,9 +47,10 @@ def test_a_forgotten_anchor_clears_the_bit_in_list_and_show(
         rc, out, _ = m.run(capsys, *argv)
         assert rc == 0 and TEXT_LINE in out
         assert "forgotten" not in out and "SECRET" not in out
-    for argv in (("ruling", "list"), ("ruling", "show", full)):
-        rc, out, _ = m.run(capsys, *argv)
-        assert TEXT_LINE not in out
+    rc, out, _ = m.run(capsys, "ruling", "show", full)
+    assert rc == 0 and TEXT_LINE not in out
+    rc, out, _ = m.run(capsys, "ruling", "list")
+    assert out.count(TEXT_LINE) == 1
 
 
 def test_a_quarantined_anchor_clears_the_bit(tmp_checkpoint_dir, capsys):
