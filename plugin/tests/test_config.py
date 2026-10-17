@@ -1047,3 +1047,88 @@ def test_resolve_read_project_prefers_the_argument_then_env_then_cwd(
 def test_resolve_read_project_never_reads_an_argument_as_a_slug(tmp_path):
     assert config.resolve_read_project("some-slug") == config.resolve_project_dir(
         "some-slug", allow_slug=False)
+
+
+# ---- #1203: one git user lookup per process per working directory ----------
+
+
+def _count_git_user_spawns(monkeypatch, name="Memo Tester"):
+    """Fake `subprocess.run` that answers `git config user.name` and counts
+    those calls. Any other command (resolve_project_root's rev-parse) goes to
+    the real implementation, so the count is the git user lookups only."""
+    real_run = subprocess.run
+    calls = {"n": 0}
+
+    def fake_run(cmd, *args, **kwargs):
+        if list(cmd) == ["git", "config", "user.name"]:
+            calls["n"] += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{name}\n", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(config.subprocess, "run", fake_run)
+    return calls
+
+
+def test_author_reads_git_user_name_once_per_process(monkeypatch):
+    monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
+    calls = _count_git_user_spawns(monkeypatch)
+    answers = {config.author() for _ in range(50)}
+    assert answers == {"Memo Tester"}
+    assert calls["n"] == 1
+
+
+def test_stamped_rows_share_one_git_lookup(monkeypatch):
+    from daimon_briefing import refutations
+
+    monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
+    calls = _count_git_user_spawns(monkeypatch)
+    project_dir = "/p/memo-stamp-recipient"
+    ruling_id = refutations.assert_ruling(
+        subject="memo stamp", verdict="agent may accept",
+        scope="cross-project requests", evidence=["issue:1203"],
+        channel="cli-tty", ratified=True,
+        request_policy={"sender": "p-memo-sender", "kind": "work",
+                        "verb": "accept", "by": "agent"},
+        project_dir=project_dir)
+    for _ in range(20):
+        refutations.revise(
+            ruling_id, channel="signed", evidence=["issue:1203"],
+            request_policy={"sender": "p-memo-sender", "kind": "work",
+                            "verb": "accept", "by": "agent"},
+            ratified=True, project_dir=project_dir)
+    assert calls["n"] == 1
+
+
+def test_git_user_name_is_keyed_on_the_working_directory(monkeypatch, tmp_path):
+    monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
+    calls = _count_git_user_spawns(monkeypatch)
+    first, second = tmp_path / "a", tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.chdir(first)
+    config.author()
+    assert calls["n"] == 1
+    monkeypatch.chdir(second)
+    config.author()
+    assert calls["n"] == 2
+    monkeypatch.chdir(first)
+    config.author()
+    assert calls["n"] == 2
+
+
+def test_git_lookup_memo_is_cleared_between_tests(monkeypatch):
+    monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
+    calls = _count_git_user_spawns(monkeypatch)
+    config.author()
+    assert calls["n"] == 1
+    config._git_user_name_in.cache_clear()
+    config.author()
+    assert calls["n"] == 2
+
+
+def test_git_user_name_is_empty_when_the_working_directory_is_gone(monkeypatch):
+    def _gone():
+        raise FileNotFoundError("cwd deleted")
+
+    monkeypatch.setattr(config.os, "getcwd", _gone)
+    assert config._git_user_name() == ""
