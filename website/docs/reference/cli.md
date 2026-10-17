@@ -75,7 +75,7 @@ A child project's briefing renders these inherited rulings first, each one tagge
 
 ### Checks at runtime
 
-Ratifying a ruling that carries a check writes two things under `~/.daimon/checks`: a manifest naming every armed check and the project directory it belongs to, and one file per check holding the exact body the ruling stores. Every ledger write that can arm or disarm a check rebuilds them; `daimon check sync` rebuilds them on demand, and so does `daimon hooks install`, which prints what it found.
+Ratifying a ruling that carries a check writes two things under `~/.daimon/checks`: a manifest naming every armed check and the project directory it belongs to, and one file per check holding the exact body the ruling stores. Every ledger write that can arm or disarm a check rebuilds them; `daimon check sync` rebuilds them on demand, and so does `daimon hooks install`, which prints what it found. A ruling with a withheld check pattern or body arms nothing, and both verbs print one line with how many rulings were skipped for that reason.
 
 On a host with a pre-action hook installed, a matching shell command runs its armed checks before it executes. The hook reads the manifest, keeps the checks whose project directory contains the action's working directory, and runs the ones whose pattern matches the command string. It always exits 0 and writes either one JSON object or nothing: the deny is a decision the hook makes deliberately, never an exit code that a crash could produce by accident.
 

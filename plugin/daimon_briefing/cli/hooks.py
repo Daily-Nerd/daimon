@@ -55,6 +55,8 @@ def _checks_lines() -> list:
     report = checks.sync(project, writer=Writer.HUMAN)
     lines = ([f"checks: {report.armed} armed for {report.slug}"] if report.ok
              else [f"checks: {report.reason}"])
+    if note := checks.not_as_ratified_line(report):
+        lines.append(note)
     for layer, layer_report in checks.sync_layers(project, writer=Writer.HUMAN):
         home = config.home_relative(layer)
         if not layer_report.ok:
@@ -62,6 +64,8 @@ def _checks_lines() -> list:
         elif layer_report.armed:
             lines.append(f"checks: {layer_report.armed} armed for "
                          f"{layer_report.slug} (layer {home})")
+        if note := checks.not_as_ratified_line(layer_report, home):
+            lines.append(note)
     return lines
 
 

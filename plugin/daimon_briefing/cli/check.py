@@ -118,6 +118,8 @@ def _cmd_check_sync(args) -> int:
     # Reported even at zero. A silent success is how a project that armed
     # nothing and a project whose sync never ran come to look identical.
     lines = [f"checks: {report.armed} armed for {report.slug}"]
+    if note := checks.not_as_ratified_line(report):
+        lines.append(note)
     for layer, layer_report in layer_reports:
         home = config.home_relative(layer)
         if not layer_report.ok:
@@ -125,6 +127,8 @@ def _cmd_check_sync(args) -> int:
         elif layer_report.armed:
             lines.append(f"checks: {layer_report.armed} armed for "
                          f"{layer_report.slug} (layer {home})")
+        if note := checks.not_as_ratified_line(layer_report, home):
+            lines.append(note)
     render.render_ledger_lines(lines)
     return 0 if ok else 1
 

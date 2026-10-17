@@ -76,7 +76,7 @@ El briefing de un proyecto hijo renderiza estas reglas heredadas primero, cada u
 
 ### Checks en ejecución
 
-Ratificar una regla que lleva un check escribe dos cosas bajo `~/.daimon/checks`: un manifiesto que nombra cada check armado y el directorio de proyecto al que pertenece, y un archivo por check con los bytes exactos que la regla guarda. Cada escritura en el ledger que puede armar o desarmar un check los reconstruye; `daimon check sync` los reconstruye a pedido, y también lo hace `daimon hooks install`, que imprime lo que encontró.
+Ratificar una regla que lleva un check escribe dos cosas bajo `~/.daimon/checks`: un manifiesto que nombra cada check armado y el directorio de proyecto al que pertenece, y un archivo por check con los bytes exactos que la regla guarda. Cada escritura en el ledger que puede armar o desarmar un check los reconstruye; `daimon check sync` los reconstruye a pedido, y también lo hace `daimon hooks install`, que imprime lo que encontró. Una regla con el patrón o el cuerpo de su check retenido no arma nada, y ambos comandos imprimen una línea con cuántas reglas se salteó por ese motivo.
 
 En un anfitrión con el hook de pre-acción instalado, un comando de shell que coincide corre sus checks armados antes de ejecutarse. El hook lee el manifiesto, se queda con los checks cuyo directorio de proyecto contiene el directorio de trabajo de la acción, y corre aquellos cuyo patrón coincide con la cadena del comando. Siempre sale con 0 y escribe o bien un objeto JSON o bien nada: el rechazo es una decisión que el hook toma deliberadamente, nunca un código de salida que un crash podría producir por accidente.
 

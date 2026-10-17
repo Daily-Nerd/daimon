@@ -2278,12 +2278,18 @@ def guard(query: str, *, anchors=(), project_dir=None) -> list[dict]:
     q = query.casefold()
     query_anchors = set(_anchors(anchors))
     query_anchors.update(f"issue:{n}" for n in _ISSUE_RE.findall(q))
+    # The match runs over the rows a reader may see, so a withheld anchor or
+    # subject cannot fire the guard: firing would be an oracle on a value the
+    # read must treat as absent (#1208). Lazy because `view` imports
+    # `amendments` and `requests`, both of which import this module; the same
+    # shape as `briefing.ruling_lines`.
+    from . import view
+
+    active = [record for record in records(project_dir=project_dir).values()
+              if record["state"] == "active"
+              and record.get("polarity") != "ruling"]
     matches = []
-    for record in records(project_dir=project_dir).values():
-        if record["state"] != "active":
-            continue
-        if record.get("polarity") == "ruling":
-            continue
+    for record in view.masked(project_dir, "refutations.jsonl", active):
         record_anchors = set(record.get("anchors") or [])
         subject = _SPACE_RE.sub(" ", record.get("subject") or "").strip().casefold()
         anchor_hits = sorted(query_anchors & record_anchors)

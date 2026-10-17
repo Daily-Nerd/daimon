@@ -54,7 +54,7 @@ def test_a_forgotten_check_match_arms_nothing(tmp_checkpoint_dir):
 
 
 def test_a_forgotten_check_body_arms_nothing(tmp_checkpoint_dir):
-    body = f"#!/bin/sh\n# {m.FORGOTTEN}\nexit 0\n"
+    body = m.FORGOTTEN
     _arm(body=body)
     m.forget()
     report = checks.sync(m.PROJECT, writer=Writer.HUMAN)
@@ -64,7 +64,7 @@ def test_a_forgotten_check_body_arms_nothing(tmp_checkpoint_dir):
 
 
 def test_a_forgotten_body_leaves_no_executable_behind(tmp_checkpoint_dir):
-    body = f"#!/bin/sh\n# {m.FORGOTTEN}\nexit 0\n"
+    body = m.FORGOTTEN
     _arm(body=body)
     checks.sync(m.PROJECT, writer=Writer.HUMAN)
     assert "SECRET-F" in _all_checks_bytes()

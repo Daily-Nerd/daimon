@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-from . import checks_runtime, config, jsonl, refutations, store
+from . import checks_runtime, config, jsonl, refutations, store, view
 from .surfaces import WritePosture, Writer
 
 
@@ -37,6 +37,10 @@ class SyncReport(NamedTuple):
     armed: int
     slug: str
     reason: str = ""
+    # Armed rulings left out because an enforcement value of theirs is
+    # withheld from a reader (forgotten, quarantined or closed). They arm
+    # nothing, and the count is all that is said about them.
+    not_as_ratified: int = 0
 
 
 def _write_body(path: Path, body: str) -> None:
@@ -58,14 +62,23 @@ def _write_body(path: Path, body: str) -> None:
     os.replace(tmp, path)  # atomic on POSIX
 
 
-def _wanted(project_dir, root: str) -> list:
+def _wanted(project_dir, root: str) -> tuple[list, int]:
     """Every entry this project's ledger says should be armed, paired with
-    its body. The ONE place the six-key manifest entry is built, so the
+    its body, and how many armed rulings were left out because they are not
+    as ratified. The ONE place the six-key manifest entry is built, so the
     writer and the audit that grades the writer cannot describe different
-    shapes."""
+    shapes.
+
+    The rows are read through the view, once for the whole listing, and a
+    ruling whose enforcement value is withheld from a reader contributes
+    nothing: an enforcement set is built only from values a reader may see.
+    `check.match` and `check.body` are never taken from a raw row."""
+    rows = refutations.listing(states={"active"}, polarity="ruling",
+                               project_dir=project_dir)
+    judged = view.masked(project_dir, "refutations.jsonl", rows)
     out = []
-    for record in refutations.listing(states={"active"}, polarity="ruling",
-                                      project_dir=project_dir):
+    skipped = 0
+    for record in judged:
         check = record.get("check")
         # `check_lifecycle` is derived at fold time and is the ONE place that
         # knows a candidate's check is not a mode. Reading `state` here
@@ -74,6 +87,9 @@ def _wanted(project_dir, root: str) -> list:
         # viewer payload, and this module's own sync); none of them changes
         # behavior for this one (scar 0053).
         if not isinstance(check, dict) or record.get("check_lifecycle") != "armed":
+            continue
+        if record.get("as_ratified") is not True:
+            skipped += 1
             continue
         sha = str(check.get("sha256") or "")
         ruling_id = str(record.get("refutation_id") or "")
@@ -87,7 +103,7 @@ def _wanted(project_dir, root: str) -> list:
             "sha256": sha,
             "armed_at": str(record.get("activated_at") or ""),
         }, str(check.get("body") or "")))
-    return out
+    return out, skipped
 
 
 def sync(project_dir=None, *, writer: Writer) -> SyncReport:
@@ -131,6 +147,16 @@ def sync_layers(project_dir=None, *, writer: Writer) -> list:
             for layer in config.layer_scopes(project_dir)]
 
 
+def not_as_ratified_line(report: SyncReport, layer_home: str = "") -> str:
+    """The one line both verbs print when a sync left armed rulings out, or
+    "" when it left none. A count only: it names no ruling, value or reason."""
+    if not report.ok or not report.not_as_ratified:
+        return ""
+    where = f" (layer {layer_home})" if layer_home else ""
+    return (f"checks: {report.not_as_ratified} ruling(s) not as ratified, "
+            f"not armed; see daimon ruling list{where}")
+
+
 def _sync(project_dir, writer: Writer) -> SyncReport:
     resolved = config.resolve_project_dir(project_dir)
     slug = store.project_slug(resolved)
@@ -154,7 +180,7 @@ def _sync(project_dir, writer: Writer) -> SyncReport:
                           "the existing manifest could not be read; rebuilding "
                           "from this project alone would disarm the others")
 
-    armed = _wanted(project_dir, root)
+    armed, skipped = _wanted(project_dir, root)
 
     entries = [entry for entry, _ in armed]
     others = [e for e in loaded.entries if e.get("project_dir") != root]
@@ -187,7 +213,7 @@ def _sync(project_dir, writer: Writer) -> SyncReport:
             (base / name).unlink()
         except OSError:
             pass
-    return SyncReport(True, len(entries), slug)
+    return SyncReport(True, len(entries), slug, not_as_ratified=skipped)
 
 
 # ---- auditing the manifest against the ledger (#943 slice 5) --------------
@@ -256,7 +282,8 @@ def _audit(project_dir) -> Audit:
     state = {"": "read", "no-manifest": "absent",
              "manifest-unreadable": "unreadable"}.get(loaded.reason, "unreadable")
 
-    wanted = {(e["ruling_id"], e["sha256"]) for e, _ in _wanted(project_dir, root)}
+    entries, _ = _wanted(project_dir, root)
+    wanted = {(e["ruling_id"], e["sha256"]) for e, _ in entries}
     # Project EQUALITY, never `armed_for`'s prefix match: that primitive
     # answers "which entries govern this cwd" and would pull in a parent
     # project's rows when run from a nested directory.
