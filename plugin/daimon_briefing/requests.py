@@ -195,6 +195,20 @@ def short_ask(text) -> str:
     return display.shorten(text, ASK_CHARS, sentence=True)
 
 
+def headline(record) -> str:
+    """#1131: the one owner of what a request shows in a title position.
+
+    The sender's title when it set one, else the bounded ask. The title was
+    already bounded at the write edge; it is bounded again here because this
+    reads a folded record, and a ledger line edited on disk must not widen a
+    headline. Every surface that titles a request calls this, so none of
+    them can disagree about which text leads."""
+    title = str((record or {}).get("title") or "").strip()
+    if title:
+        return display.shorten(title, ASK_CHARS)
+    return short_ask((record or {}).get("ask"))
+
+
 # Every field of a ledger row that can hold plaintext (#645 discipline).
 # One declaration, two consumers: `forget_content_key` decides which records
 # a deletion reaches, and `privacy.audit_project` decides which fields it
