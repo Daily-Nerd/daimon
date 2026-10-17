@@ -817,9 +817,11 @@ def test_the_prose_columns_are_planted_in_the_world(world_run, monkeypatch):
         missing = declared - planted
         # `note` and `act_author` are row fields a fold renames or does not
         # keep, `revision_proposed.note` has no writer and `from_label` would
-        # name the bucket itself
+        # name the bucket itself. `guard_match.anchors[]` cannot carry a
+        # sentinel any more: the guard matches over the rows a reader may
+        # see (#1208), so a withheld anchor never produces a match to hold it.
         assert missing <= {"revision_proposed.note", "note", "act_author",
-                           "from_label"}, (
+                           "from_label", "guard_match.anchors[]"}, (
             name, sorted(missing))
 
 

@@ -440,6 +440,11 @@ ALLOWED_UPWARD = {
         "stdlib-only presenter, one wording for every channel",
     ("daimon_briefing/ledger.py", "display"):
         "stdlib-only presenter, one wording for every channel",
+    ("daimon_briefing/checks.py", "view"):
+        "the armed-check manifest is built from judged rows (#1208)",
+    ("daimon_briefing/refutations.py", "view"):
+        "guard matches judged rows (#1208); imported inside the function, "
+        "because the view imports amendments and requests, which import this module",
 }
 LEAVES = {"daimon_briefing/jsonl.py": {"surfaces"},
           "daimon_briefing/surfaces.py": set()}
