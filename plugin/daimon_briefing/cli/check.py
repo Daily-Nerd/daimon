@@ -13,7 +13,7 @@ import json
 
 import daimon_briefing.cli as _cli
 
-from .. import checks, config, render
+from .. import checks_sync, config, render
 from ..surfaces import Writer
 
 
@@ -67,8 +67,8 @@ def _cmd_check_audit(args) -> int:
     the child too — the only place a descendant can see it, since a layer's
     own bucket may not even have a checkout on this machine."""
     project = _cli._resolve_project(args.project)
-    audit = checks.audit(project)
-    layer_audits = checks.audit_layers(project)
+    audit = checks_sync.audit(project)
+    layer_audits = checks_sync.audit_layers(project)
     if getattr(args, "json", False):
         payload = audit._asdict()
         if layer_audits:
@@ -93,12 +93,12 @@ def _cmd_check_sync(args) -> int:
     if getattr(args, "check", False):
         return _cmd_check_audit(args)
     project = _cli._resolve_project(args.project)
-    report = checks.sync(project, writer=Writer.HUMAN)
+    report = checks_sync.sync(project, writer=Writer.HUMAN)
     # #1095: every ruling layer above this project is re-armed the same
     # way, so an inherited enforce or warn check does not depend on a human
     # having run `check sync`/`hooks install` from inside the layer's own
     # project on THIS machine.
-    layer_reports = checks.sync_layers(project, writer=Writer.HUMAN)
+    layer_reports = checks_sync.sync_layers(project, writer=Writer.HUMAN)
     ok = report.ok and all(lr.ok for _, lr in layer_reports)
     if getattr(args, "json", False):
         payload = report._asdict()
@@ -118,6 +118,8 @@ def _cmd_check_sync(args) -> int:
     # Reported even at zero. A silent success is how a project that armed
     # nothing and a project whose sync never ran come to look identical.
     lines = [f"checks: {report.armed} armed for {report.slug}"]
+    if note := checks_sync.not_as_ratified_line(report):
+        lines.append(note)
     for layer, layer_report in layer_reports:
         home = config.home_relative(layer)
         if not layer_report.ok:
@@ -125,6 +127,8 @@ def _cmd_check_sync(args) -> int:
         elif layer_report.armed:
             lines.append(f"checks: {layer_report.armed} armed for "
                          f"{layer_report.slug} (layer {home})")
+        if note := checks_sync.not_as_ratified_line(layer_report, home):
+            lines.append(note)
     render.render_ledger_lines(lines)
     return 0 if ok else 1
 

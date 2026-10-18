@@ -1559,7 +1559,7 @@ def inherited_active(project_dir) -> list[dict]:
     layer first, deduped by id (nearest wins), tagged with `inherited_from`
     (the absolute owning layer directory).
 
-    Read-only, and deliberately NOT what `checks._wanted` or `listing()`
+    Read-only, and deliberately NOT what `checks_sync._wanted` or `listing()`
     read: this must never widen what a host arms, only what a child's
     ceremony discloses and its cap guard counts. `request_policy` rows are
     DROPPED — they never render into a child (the briefing's own ruling-
@@ -1880,7 +1880,7 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
 
 
 class _CheckSyncFailure(NamedTuple):
-    """Stands in for a `checks.SyncReport` when the writer could not even be
+    """Stands in for a `checks_sync.SyncReport` when the writer could not even be
     reached. Same field names, so the caller reads one shape."""
     reason: str
     ok: bool = False
@@ -1905,17 +1905,17 @@ def last_check_sync():
 
 
 def _load_checks():
-    """Imported at call time, not at module scope: `checks` reads this module
-    to build the manifest, and a top-level import would be a cycle."""
-    from . import checks
-    return checks
+    """Imported at call time, not at module scope: `checks_sync` reads this
+    module to build the manifest, and a top-level import would be a cycle."""
+    from . import checks_sync
+    return checks_sync
 
 
 def _sync_checks(project_dir=None, *, record=None, row=None,
                  force: bool = False, writer: Writer) -> None:
     """Rebuild the armed-check manifest after a write that could change it.
 
-    Skipped when nothing in sight carries a check. `checks.sync` re-folds the
+    Skipped when nothing in sight carries a check. `checks_sync.sync` re-folds the
     whole ledger, and every refutation ratify in the tree paying for a
     manifest that cannot have changed is a cost with no reader.
 
@@ -2045,7 +2045,7 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     # itself — it is on `current["revision_proposed"]`. Passing that dict
     # too widens `_sync_checks`'s "does this write carry a check" gate to
     # cover exactly that case; without it, a newly-armed check via an
-    # accepted proposal never reaches `checks.sync` at all (the literal
+    # accepted proposal never reaches `checks_sync.sync` at all (the literal
     # `armed 0 of 0 wanted` symptom this issue reported).
     _sync_checks(project_dir, record=current,
                 row=current.get("revision_proposed"),
@@ -2267,36 +2267,3 @@ def search(query: str, *, project_dir=None, states=None) -> list[dict]:
     scored.sort(key=lambda row: (row[0], row[1], row[2], row[3]),
                 reverse=True)
     return [row[-1] for row in scored]
-
-
-def guard(query: str, *, anchors=(), project_dir=None) -> list[dict]:
-    """High-precision active matches only: stable anchor or subject phrase.
-
-    Refutation polarity only (#693): the shipped guidance reads a guard hit
-    as "this approach lost", and a standing ruling is the opposite claim."""
-    query = _text("query", query)
-    q = query.casefold()
-    query_anchors = set(_anchors(anchors))
-    query_anchors.update(f"issue:{n}" for n in _ISSUE_RE.findall(q))
-    matches = []
-    for record in records(project_dir=project_dir).values():
-        if record["state"] != "active":
-            continue
-        if record.get("polarity") == "ruling":
-            continue
-        record_anchors = set(record.get("anchors") or [])
-        subject = _SPACE_RE.sub(" ", record.get("subject") or "").strip().casefold()
-        anchor_hits = sorted(query_anchors & record_anchors)
-        subject_hit = bool(subject and len(subject) >= 8 and subject in q)
-        if not anchor_hits and not subject_hit:
-            continue
-        copy = dict(record)
-        copy["guard_match"] = {
-            "rail": "anchor" if anchor_hits else "subject",
-            "anchors": anchor_hits,
-        }
-        matches.append(copy)
-    return sorted(matches, key=lambda row: (
-        0 if row["guard_match"]["rail"] == "anchor" else 1,
-        row["refutation_id"],
-    ))

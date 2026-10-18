@@ -304,7 +304,7 @@ def test_the_decision_vocabulary_is_what_the_firing_log_records():
 
 # ---- decide: one pipeline, driven by a manifest the ledger wrote ----------
 #
-# Every manifest below is written by `checks.sync` from a ruling ratified
+# Every manifest below is written by `checks_sync.sync` from a ruling ratified
 # through `refutations` on a human channel. A hand-written manifest would
 # test the adapter against a shape nobody produces, and the seam this slice
 # adds is exactly the one between what the ledger writes and what the hook

@@ -1,6 +1,6 @@
 """#943 slice 2: materializing armed checks from the ledger.
 
-`checks.sync` is the package half of the runtime contract. It reads the
+`checks_sync.sync` is the package half of the runtime contract. It reads the
 ledger and writes what a standalone hook can read without importing daimon:
 a manifest and one executable body per armed check.
 """
@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from daimon_briefing import checks, checks_runtime, config, normalize, refutations
+from daimon_briefing import checks_runtime, checks_sync, config, normalize, refutations
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/checks-sync"
@@ -61,7 +61,7 @@ def _bodies():
 def test_an_armed_check_lands_in_the_manifest_with_the_declared_fields(
         tmp_checkpoint_dir):
     ruling_id = _arm()
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok and report.armed == 1
     entries = _manifest().entries
     assert len(entries) == 1
@@ -79,7 +79,7 @@ def test_the_manifest_records_the_resolved_project_directory(
     """The runtime prefix-matches a realpath'd cwd against this value, so it
     has to be the same resolution the ledger routed the write through."""
     _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert _manifest().entries[0]["project_dir"] == \
         config.resolve_project_dir(PROJECT)
 
@@ -87,7 +87,7 @@ def test_the_manifest_records_the_resolved_project_directory(
 def test_the_body_is_materialized_executable_and_byte_exact(
         tmp_checkpoint_dir):
     _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     entry = _manifest().entries[0]
     path = config.checks_dir() / checks_runtime.body_name(entry)
     assert path.exists()
@@ -100,7 +100,7 @@ def test_the_manifest_the_writer_produces_is_one_the_runtime_can_use(
     """The two halves are only correct together. This is the seam: sync
     writes, the runtime reads, and a cwd inside the project finds the entry."""
     _arm(project=str(tmp_path))
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     loaded = _manifest()
     assert loaded.reason == ""
     armed = checks_runtime.armed_for(str(tmp_path), loaded)
@@ -115,7 +115,7 @@ def test_a_candidate_check_never_lands(tmp_checkpoint_dir):
     """`proposed` is a lifecycle, not a mode. A candidate's body is code no
     human ever confirmed, and record-only would still execute it."""
     _propose()
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok and report.armed == 0
     assert _manifest().entries == []
     assert _bodies() == []
@@ -123,27 +123,27 @@ def test_a_candidate_check_never_lands(tmp_checkpoint_dir):
 
 def test_a_ruling_with_no_check_lands_nothing(tmp_checkpoint_dir):
     _arm(check=False)
-    assert checks.sync(PROJECT, writer=Writer.HUMAN).armed == 0
+    assert checks_sync.sync(PROJECT, writer=Writer.HUMAN).armed == 0
     assert _manifest().entries == []
 
 
 def test_a_retired_ruling_drops_its_entry_and_its_body(tmp_checkpoint_dir):
     ruling_id = _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert len(_bodies()) == 1
     refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert _manifest().entries == []
     assert _bodies() == [], "a disarmed check must not stay on disk"
 
 
 def test_a_forgotten_ruling_drops_its_entry_and_its_body(tmp_checkpoint_dir):
     _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     refutations.forget_content_key(
         normalize.content_key("the rule for public posts in publishing"),
         project_dir=PROJECT)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert _manifest().entries == []
     assert _bodies() == []
 
@@ -152,14 +152,14 @@ def test_a_revised_body_removes_the_one_it_replaced(tmp_checkpoint_dir):
     """The file name carries the hash, so a new body is a new file. Leaving
     the old one behind would keep a script the ruling no longer stands for."""
     ruling_id = _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     stale = _bodies()
     new_body = BODY.replace("FORBIDDEN", "BANNED")
     refutations.revise(ruling_id, channel="cli-tty", evidence=["issue:943"],
                        check={"match": MATCH, "body": new_body,
                               "intent": "warn"},
                        project_dir=PROJECT)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert _bodies() != stale
     assert len(_bodies()) == 1
     entry = _manifest().entries[0]
@@ -174,12 +174,12 @@ def test_another_project_s_entries_and_bodies_survive(tmp_checkpoint_dir):
     """The checks directory is global and the sync is per project. A sync
     here must never disarm a ruling made somewhere else."""
     _arm(project=OTHER, subject="release notes", scope="publishing")
-    checks.sync(OTHER, writer=Writer.HUMAN)
+    checks_sync.sync(OTHER, writer=Writer.HUMAN)
     theirs = _manifest().entries
     assert len(theirs) == 1
 
     _arm(project=PROJECT)
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.armed == 1, "the report counts THIS project only"
     entries = _manifest().entries
     assert len(entries) == 2
@@ -190,12 +190,12 @@ def test_another_project_s_entries_and_bodies_survive(tmp_checkpoint_dir):
 def test_retiring_here_leaves_the_other_project_armed(tmp_checkpoint_dir):
     ruling_id = _arm(project=PROJECT)
     _arm(project=OTHER, subject="release notes", scope="publishing")
-    checks.sync(OTHER, writer=Writer.HUMAN)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(OTHER, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert len(_manifest().entries) == 2
 
     refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     entries = _manifest().entries
     assert [e["project_dir"] for e in entries] == \
         [config.resolve_project_dir(OTHER)]
@@ -209,12 +209,12 @@ def test_two_projects_sharing_a_body_keep_it_when_one_disarms(
     disarm the other one silently."""
     here = _arm(project=PROJECT)
     _arm(project=OTHER)
-    checks.sync(OTHER, writer=Writer.HUMAN)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(OTHER, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert len(_bodies()) == 1, "the fixture must actually share a name"
 
     refutations.retire(here, channel="cli-tty", project_dir=PROJECT)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert len(_manifest().entries) == 1
     assert len(_bodies()) == 1, "the other project still needs that body"
 
@@ -226,12 +226,12 @@ def test_a_repeat_sync_changes_neither_bytes_nor_mtimes(tmp_checkpoint_dir):
     """Every ledger writer calls this. A sync that rewrote identical files
     would churn the disk on every ratify in the tree."""
     _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     base = config.checks_dir()
     before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
               for p in base.iterdir()}
     time.sleep(0.01)
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     after = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
              for p in base.iterdir()}
     assert after == before
@@ -240,7 +240,7 @@ def test_a_repeat_sync_changes_neither_bytes_nor_mtimes(tmp_checkpoint_dir):
 def test_the_manifest_is_replaced_atomically_and_leaves_no_temp_file(
         tmp_checkpoint_dir):
     _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert [p.name for p in config.checks_dir().glob("*.tmp")] == []
 
 
@@ -256,17 +256,17 @@ def test_sync_reports_a_failure_instead_of_raising(
 
     # Patched BEFORE the ratify: arming already syncs, so a sync installed
     # afterwards would find the manifest correct and never write at all.
-    monkeypatch.setattr(checks.store, "_atomic_write", boom)
+    monkeypatch.setattr(checks_sync.store, "_atomic_write", boom)
     _arm()
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok is False
     assert "the disk said no" in report.reason
 
 
 def test_sync_reports_a_failure_for_a_project_that_names_no_bucket(
         tmp_checkpoint_dir, monkeypatch):
-    monkeypatch.setattr(checks.store, "project_slug", lambda *a, **k: "")
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    monkeypatch.setattr(checks_sync.store, "project_slug", lambda *a, **k: "")
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok is False
     assert report.reason
 
@@ -276,11 +276,11 @@ def test_a_manifest_that_cannot_be_read_does_not_erase_it(
     """A corrupt manifest is not permission to drop every other project's
     entries. Sync refuses rather than rebuilding from what it can see."""
     _arm(project=OTHER, subject="release notes", scope="publishing")
-    checks.sync(OTHER, writer=Writer.HUMAN)
+    checks_sync.sync(OTHER, writer=Writer.HUMAN)
     path = config.checks_dir() / "manifest.json"
     path.write_text("{ not json", encoding="utf-8")
     _arm(project=PROJECT)
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok is False
     assert path.read_text(encoding="utf-8") == "{ not json"
 
@@ -297,7 +297,7 @@ def test_the_sync_s_files_are_declared_in_the_surface_registry(shape):
     from daimon_briefing import surfaces
     entry = [s for s in surfaces.SURFACES if s.shape == shape]
     assert entry, f"{shape} is a new file under ~/.daimon"
-    assert entry[0].owner == "checks.sync"
+    assert entry[0].owner == "checks_sync.sync"
     assert entry[0].plaintext is True
     assert entry[0].delete == "rewrite"
 
@@ -314,7 +314,7 @@ def test_the_sync_s_files_appear_in_the_foreign_apply_gap(shape):
 def test_the_manifest_is_json_a_reader_outside_python_can_parse(
         tmp_checkpoint_dir):
     _arm()
-    checks.sync(PROJECT, writer=Writer.HUMAN)
+    checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     raw = (config.checks_dir() / "manifest.json").read_text(encoding="utf-8")
     assert isinstance(json.loads(raw), list)
     assert os.linesep or True
@@ -431,8 +431,8 @@ def test_a_failing_sync_never_fails_the_write(tmp_checkpoint_dir, monkeypatch):
     """The append already landed. Raising here would report a failed ratify
     for a ruling the ledger says is active."""
     ruling_id = _propose()
-    monkeypatch.setattr(checks, "sync",
-                        lambda *a, **k: checks.SyncReport(
+    monkeypatch.setattr(checks_sync, "sync",
+                        lambda *a, **k: checks_sync.SyncReport(
                             False, 0, "-p-checks-sync", "the disk said no"))
     refutations.ratify(ruling_id, channel="cli-tty", check_sha256=_sha(),
                        project_dir=PROJECT)
@@ -466,8 +466,8 @@ def test_the_ratify_ceremony_warns_when_the_manifest_did_not_update(
     ruling_id = _propose()
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
-    monkeypatch.setattr(checks, "sync",
-                        lambda *a, **k: checks.SyncReport(
+    monkeypatch.setattr(checks_sync, "sync",
+                        lambda *a, **k: checks_sync.SyncReport(
                             False, 0, "-p-checks-sync", "the disk said no"))
     rc = cli.main(["ruling", "ratify", ruling_id, "--project", PROJECT])
     out = capsys.readouterr().out
@@ -520,8 +520,8 @@ def test_check_sync_is_safe_to_repeat(tmp_checkpoint_dir):
 def test_check_sync_reports_a_failure_and_exits_non_zero(
         tmp_checkpoint_dir, monkeypatch, capsys):
     from daimon_briefing import cli
-    monkeypatch.setattr(checks, "sync",
-                        lambda *a, **k: checks.SyncReport(
+    monkeypatch.setattr(checks_sync, "sync",
+                        lambda *a, **k: checks_sync.SyncReport(
                             False, 0, "", "the disk said no"))
     rc = cli.main(["check", "sync", "--project", PROJECT])
     assert rc == 1
@@ -548,14 +548,15 @@ def test_a_record_whose_check_lost_its_hash_is_not_armed(
     no pin would give the runner nothing to re-hash against, which is the
     whole mechanism that catches an edited body."""
     monkeypatch.setattr(refutations, "listing", lambda **kwargs: [
-        {"refutation_id": "r-nohash", "check_lifecycle": "armed",
+        {"refutation_id": "r-nohash", "polarity": "ruling",
+         "check_lifecycle": "armed",
          "check": {"match": MATCH, "body": BODY, "intent": "warn"},
          "activated_at": "t"},
-        {"refutation_id": "", "check_lifecycle": "armed",
+        {"refutation_id": "", "polarity": "ruling", "check_lifecycle": "armed",
          "check": {"match": MATCH, "body": BODY, "sha256": _sha()},
          "activated_at": "t"},
     ])
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok and report.armed == 0
     assert _manifest().entries == []
     assert _bodies() == []
@@ -573,7 +574,7 @@ def test_a_stale_body_that_cannot_be_removed_does_not_sink_the_sync(
     # A directory in its place: unlink refuses, the way a locked file would.
     body.mkdir()
     refutations.retire(ruling_id, channel="cli-tty", project_dir=PROJECT)
-    report = checks.sync(PROJECT, writer=Writer.HUMAN)
+    report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok
     assert _manifest().entries == [], "the manifest must stop naming it"
     assert body.is_dir(), "the fixture stopped exercising the failure"
@@ -603,8 +604,8 @@ def test_forget_says_so_when_the_armed_body_may_have_outlived_the_ruling(
     # terminal and a confirmation before it will do this at all.
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
-    monkeypatch.setattr(checks, "sync",
-                        lambda *a, **k: checks.SyncReport(
+    monkeypatch.setattr(checks_sync, "sync",
+                        lambda *a, **k: checks_sync.SyncReport(
                             False, 0, "-p-checks-sync", "the disk said no"))
     assert cli.main(["forget", item_id, "--project", PROJECT]) == 4
     out = capsys.readouterr().out

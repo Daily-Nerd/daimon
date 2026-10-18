@@ -12,8 +12,8 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import (briefing, buckets, checks, config, normalize, refutations,
-                render, store)
+from .. import (briefing, buckets, checks, checks_sync, config, normalize,
+                refutations, render, store)
 from ._ledger import (
     _check_args,
     _check_ceremony_lines,
@@ -643,7 +643,7 @@ def _checks_payload(project) -> dict:
     another bucket's ids writes them into this project's checkpoint).
 
     Reading `check_lifecycle` here makes a fourth consumer of the field
-    (scar 0053). The other three are `_ruling_lines`, `checks._sync` and the
+    (scar 0053). The other three are `_ruling_lines`, `checks_sync._sync` and the
     viewer payload; none of them changes behavior for this one, and this
     reader adds no new derivation — it renders the value the fold already
     computed.
@@ -706,7 +706,7 @@ def _checks_payload(project) -> dict:
         return built
 
     summary = checks.firing_summary(project)
-    audit = checks.audit(project)
+    audit = checks_sync.audit(project)
     rows = []
     for record in refutations.listing(polarity="ruling", project_dir=project):
         check = record.get("check")

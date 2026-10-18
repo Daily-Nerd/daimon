@@ -430,12 +430,12 @@ def test_status_rich_keeps_the_manifest_block(tmp_path, monkeypatch, capsys):
 
 
 def test_status_rich_reports_manifest_drift(tmp_path, monkeypatch, capsys):
-    from daimon_briefing import checks, config
+    from daimon_briefing import checks_sync, config
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     monkeypatch.setattr(render, "supports_rich", lambda: True)
@@ -460,7 +460,7 @@ def test_status_rich_reports_an_unreadable_manifest(tmp_path, monkeypatch,
     capsys.readouterr()
     rc = cli.main(["hooks", "status"])
     out = capsys.readouterr().out
-    # an unreadable manifest is drift, the way checks.audit folds it
+    # an unreadable manifest is drift, the way checks_sync.audit folds it
     assert rc == 1
     assert "checks manifest (this project): could not be read" in out
     assert "fix: daimon check sync" in out
@@ -528,12 +528,12 @@ def test_hooks_status_reports_manifest_drift_and_exits_non_zero(
         tmp_path, monkeypatch, capsys):
     """Spec 10's own risk: the manifest goes stale after a forget or an
     overturn, and `hooks status` reports it the way it reports script drift."""
-    from daimon_briefing import checks, config
+    from daimon_briefing import checks_sync, config
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     rc = cli.main(["hooks", "status"])
@@ -548,12 +548,12 @@ def test_hooks_status_json_stays_a_list_of_hosts(tmp_path, monkeypatch,
     """The --json shape is a contract: a list of host entries, nothing else.
     The manifest block is a text-surface addition, and a script that wants
     the audit has `daimon check sync --check --json`."""
-    from daimon_briefing import checks, config
+    from daimon_briefing import checks_sync, config
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     rc = cli.main(["hooks", "status", "--json"])
@@ -574,12 +574,12 @@ def test_hooks_status_json_explains_why_it_exited_non_zero(tmp_path,
     """A non-zero exit a script cannot account for is worse than no audit.
     The manifest rides in the list as one more entry, shaped like a host so
     existing iterators keep working, and carrying the ids-only audit."""
-    from daimon_briefing import checks, config
+    from daimon_briefing import checks_sync, config
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     ruling_id = _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     rc = cli.main(["hooks", "status", "--json"])
@@ -594,12 +594,12 @@ def test_hooks_status_json_explains_why_it_exited_non_zero(tmp_path,
 
 def test_the_manifest_entry_reports_no_drift_when_the_manifest_is_in_step(
         tmp_path, monkeypatch, capsys):
-    from daimon_briefing import checks
+    from daimon_briefing import checks_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     rc = cli.main(["hooks", "status", "--json"])
     entry = json.loads(capsys.readouterr().out)[-1]
     assert entry["drift"] is False and rc == 0
@@ -623,12 +623,12 @@ def test_manifest_drift_never_reaches_the_hook_drift_pointer(tmp_path,
     list would make a stale manifest print "installed hooks out of date",
     which points at the wrong repair. The entry is appended at print time,
     never inside `_hooks_status_report`."""
-    from daimon_briefing import checks, config
+    from daimon_briefing import checks_sync, config
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DAIMON_PROJECT_DIR", str(tmp_path))
     _arm_a_check(tmp_path)
-    checks.sync(str(tmp_path), writer=Writer.HUMAN)
+    checks_sync.sync(str(tmp_path), writer=Writer.HUMAN)
     (config.checks_dir() / "manifest.json").write_text("[]\n",
                                                        encoding="utf-8")
     assert cli._hook_drift_present() is False
@@ -653,10 +653,10 @@ def test_hooks_status_survives_an_unreadable_checks_directory(
         tmp_path, monkeypatch, capsys):
     """The scripts audit is the verb's job; the manifest block is an extra,
     and losing the whole report over it would be the wrong trade."""
-    from daimon_briefing import checks
+    from daimon_briefing import checks_sync
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(checks, "audit",
+    monkeypatch.setattr(checks_sync, "audit",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     assert cli.main(["hooks", "status"]) == 0
     out = capsys.readouterr().out

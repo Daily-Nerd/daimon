@@ -74,6 +74,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/heal_host.py": "read",  # the host heal verbs: plans over heal.plan_all, launches through heal.launch, folds outcomes through serialize_liveness (api.heal_plan, api.heal_all)
     "daimon_briefing/serialize_liveness.py": "read",  # read-only liveness rows over serialize.log, heartbeats and checkpoints (api.serializes)
     "daimon_briefing/receipts.py": "read",  # verifies and reports provenance receipts of checkpoints
+    "daimon_briefing/refutation_guard.py": "read",  # `refute guard`: matches a query over the refutation rows a reader may see
     "daimon_briefing/render.py": "read",  # every human and rich renderer
     "daimon_briefing/worldcheck.py": "read",  # spot-checks checkpoint claims against the world
     "daimon_briefing/api.py": "view",  # re-exports of the read side
@@ -84,6 +85,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/channels.py": "write",  # authority of each write channel
     "daimon_briefing/clock.py": "write",  # the one clock and id source every ledger stamp reads
     "daimon_briefing/checks_host.py": "write",  # host adapter of the check runtime
+    "daimon_briefing/checks_sync.py": "write",  # builds the armed-check manifest and bodies from judged rows; the only writer of ~/.daimon/checks
     "daimon_briefing/checks_runtime.py": "write",  # standalone check runtime, mirrored into the hooks
     "daimon_briefing/codex_hooks.py": "write",  # edits Codex hook config
     "daimon_briefing/config.py": "write",  # settings and paths; reads no checkpoint

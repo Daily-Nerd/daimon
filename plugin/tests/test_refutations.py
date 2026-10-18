@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, refutations, store
+from daimon_briefing import cli, refutation_guard, refutations, store
 from daimon_briefing.surfaces import Writer
 
 
@@ -133,20 +133,20 @@ def test_agent_overturn_proposal_does_not_disable_active_guard(tmp_checkpoint_di
 def test_guard_fires_on_exact_issue_anchor_not_broad_topic(tmp_checkpoint_dir):
     ref_id = _assert(channel="cli-tty", ratified=True)
 
-    assert refutations.guard(
+    assert refutation_guard.guard(
         "should we revisit #502?", project_dir=PROJECT)[0]["refutation_id"] == ref_id
-    assert refutations.guard(
+    assert refutation_guard.guard(
         "rank all of our open issues", project_dir=PROJECT) == []
 
 
 def test_guard_excludes_candidates_and_overturned_records(tmp_checkpoint_dir):
     ref_id = _assert()
-    assert refutations.guard("revisit #502", project_dir=PROJECT) == []
+    assert refutation_guard.guard("revisit #502", project_dir=PROJECT) == []
     refutations.ratify(ref_id, channel="cli-tty", project_dir=PROJECT)
     refutations.overturn(
         ref_id, channel="cli-tty", evidence=["measurement:valid replacement"],
         project_dir=PROJECT)
-    assert refutations.guard("revisit #502", project_dir=PROJECT) == []
+    assert refutation_guard.guard("revisit #502", project_dir=PROJECT) == []
 
 
 def test_malformed_and_orphan_rows_are_inert(tmp_checkpoint_dir):
@@ -844,7 +844,7 @@ def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):
     # `is not None` sentinel in revise() means "unchanged", and append() must
     # not forge the key into the row and make fold() read it as a replacement.
     ref_id = _assert(channel="cli-tty", ratified=True)
-    assert refutations.guard("should we revisit #502?", project_dir=PROJECT)
+    assert refutation_guard.guard("should we revisit #502?", project_dir=PROJECT)
 
     refutations.revise(
         ref_id, channel="cli-tty", ratified=True,
@@ -854,7 +854,7 @@ def test_revision_without_anchors_keeps_the_guard_rail(tmp_checkpoint_dir):
     record = refutations.get(ref_id, project_dir=PROJECT)
     assert record["state"] == "active"
     assert record["anchors"] == ["issue:502", "command:daimon-why"]
-    assert refutations.guard("should we revisit #502?", project_dir=PROJECT)
+    assert refutation_guard.guard("should we revisit #502?", project_dir=PROJECT)
 
 
 def test_revision_replaces_the_evidence_it_supersedes(tmp_checkpoint_dir):

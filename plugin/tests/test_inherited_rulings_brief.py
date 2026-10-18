@@ -3,7 +3,7 @@ briefing. Depends on #1092 (`config.layer_scopes`, `store.bucket_root`,
 `store.record_bucket_root`, all shipped).
 
 Fixtures are built through the shipping writers (`refutations.assert_ruling`
-/ `ratify`, `checks.sync`) at real layer paths, following the #1092 pattern
+/ `ratify`, `checks_sync.sync`) at real layer paths, following the #1092 pattern
 in test_config_layer_scopes.py — never hand-shaped ledger rows (#962's
 landmine: hand-shaped fixtures hid three data-loss holes).
 
@@ -17,7 +17,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from daimon_briefing import (briefing, checks, clock, config, refutations,
+from daimon_briefing import (briefing, checks_sync, clock, config, refutations,
                              store)
 from daimon_briefing.surfaces import Writer
 
@@ -294,7 +294,7 @@ def test_manifest_enforce_line_for_worktree_not_in_the_ledger_walk(
     refutations.ratify(ruling_id, channel="ui",
                        check_sha256=hashlib.sha256(body.encode()).hexdigest(),
                        project_dir=str(repo))
-    checks.sync(str(repo), writer=Writer.HUMAN)
+    checks_sync.sync(str(repo), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
 
     lines = briefing.ruling_lines(str(wt))
@@ -335,7 +335,7 @@ def test_manifest_enforce_lines_are_capped_and_count_toward_overflow(
     wt = _worktree(repo)
     for n in range(3):
         _arm_enforce(repo, f"cap post rule {n}")
-    checks.sync(str(repo), writer=Writer.HUMAN)
+    checks_sync.sync(str(repo), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
     monkeypatch.setenv("DAIMON_RULING_CAP", "2")
 
@@ -355,7 +355,7 @@ def test_manifest_enforce_lines_share_the_cap_with_own_rows(
             subject="wt own subject")
     for n in range(2):
         _arm_enforce(repo, f"mixed cap rule {n}")
-    checks.sync(str(repo), writer=Writer.HUMAN)
+    checks_sync.sync(str(repo), writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_CAPTURE_HOST", "claude-code")
     monkeypatch.setenv("DAIMON_RULING_CAP", "2")
 

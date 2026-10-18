@@ -37,7 +37,7 @@ import statistics
 import sys
 import tempfile
 
-from daimon_briefing import refutations
+from daimon_briefing import refutation_guard, refutations
 
 SEED = 573
 SEEDS = int(os.environ.get("REPLAY_SEEDS", "200"))
@@ -142,7 +142,7 @@ def _replay(project: str, texts: list[str]):
     hit_texts = 0
     per_subject: dict[str, int] = {}
     for text in texts:
-        hits = refutations.guard(text[:1900], project_dir=project)
+        hits = refutation_guard.guard(text[:1900], project_dir=project)
         if hits:
             hit_texts += 1
         for hit in hits:

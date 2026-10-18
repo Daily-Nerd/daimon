@@ -478,7 +478,7 @@ def _status_checks(project_dir, now: float):
     `proposed` is counted beside `armed` because a candidate arms nothing but
     is still the thing a human has to act on, and a status that hid it would
     make an unratified check invisible until someone ran `ruling list`."""
-    from .. import checks
+    from .. import checks, checks_sync
 
     counts = {"armed": 0, "proposed": 0}
     for record in refutations.listing(polarity="ruling",
@@ -488,7 +488,7 @@ def _status_checks(project_dir, now: float):
         lifecycle = record.get("check_lifecycle")
         if lifecycle in counts:
             counts[lifecycle] += 1
-    # #1095: a layer's active check arms here too (`checks.sync_layers`, and
+    # #1095: a layer's active check arms here too (`checks_sync.sync_layers`, and
     # `armed_for` matches this project by path prefix), so `status` must
     # count it or a fresh machine reads "0 armed" under a check that is, in
     # fact, gating every action. `inherited_active` is always `state ==
@@ -520,7 +520,7 @@ def _status_checks(project_dir, now: float):
             age = ""  # an unexpected stamp reports the fact without an age
     return {**counts, "last_ts": last_ts, "age": age,
             "log_state": summary.log_state,
-            "drift": checks.audit(project_dir).drift}
+            "drift": checks_sync.audit(project_dir).drift}
 
 
 def _admission_lines(slug: str, outstanding) -> list:

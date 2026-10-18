@@ -49,19 +49,23 @@ def _checks_lines() -> list:
     refused outright on a tenant-scoped home, and widening it to a verb that
     materializes executables would hand bucket-choosing power past the check
     that gates it (#899, #948)."""
-    from .. import checks, config
+    from .. import checks_sync, config
 
     project = _cli._resolve_project(None)
-    report = checks.sync(project, writer=Writer.HUMAN)
+    report = checks_sync.sync(project, writer=Writer.HUMAN)
     lines = ([f"checks: {report.armed} armed for {report.slug}"] if report.ok
              else [f"checks: {report.reason}"])
-    for layer, layer_report in checks.sync_layers(project, writer=Writer.HUMAN):
+    if note := checks_sync.not_as_ratified_line(report):
+        lines.append(note)
+    for layer, layer_report in checks_sync.sync_layers(project, writer=Writer.HUMAN):
         home = config.home_relative(layer)
         if not layer_report.ok:
             lines.append(f"checks: {layer_report.reason} (layer {home})")
         elif layer_report.armed:
             lines.append(f"checks: {layer_report.armed} armed for "
                          f"{layer_report.slug} (layer {home})")
+        if note := checks_sync.not_as_ratified_line(layer_report, home):
+            lines.append(note)
     return lines
 
 
@@ -249,13 +253,13 @@ def _cmd_hooks_status(args) -> int:
 
     The block is an extra: an unreadable checks directory drops it rather
     than the report the verb actually owes."""
-    from .. import checks, config
+    from .. import checks_sync, config
 
     from .check import audit_lines
 
     report = _cli._hooks_status_report(Path.home())
     try:
-        audit = checks.audit(_cli._resolve_project(None))
+        audit = checks_sync.audit(_cli._resolve_project(None))
     except Exception:  # noqa: BLE001
         audit = None
     if getattr(args, "json", False):

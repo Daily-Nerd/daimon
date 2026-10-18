@@ -7,8 +7,8 @@ cross the secret scrubber before any transform that could defeat it (#647).
 """
 import pytest
 
-from daimon_briefing import (cli, normalize, privacy, refutations, store,
-                             surfaces)
+from daimon_briefing import (cli, normalize, privacy, refutation_guard, refutations,
+                             store, surfaces)
 from daimon_briefing.surfaces import Writer
 
 
@@ -192,7 +192,7 @@ def test_the_redacted_anchor_is_still_the_one_guard_matches(
     ref_id = _refute(anchors=[f"anchor-{SECRET}"], channel="cli-tty",
                      ratified=True)
 
-    rows = refutations.guard("unrelated prompt text",
+    rows = refutation_guard.guard("unrelated prompt text",
                              anchors=[f"anchor-{SECRET}"],
                              project_dir=PROJECT)
     assert [r["refutation_id"] for r in rows] == [ref_id]
