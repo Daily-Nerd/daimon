@@ -22,7 +22,8 @@ deleting that per-test manifest after a layer's own ratify has synced it.
 import subprocess
 from pathlib import Path
 
-from daimon_briefing import checks, checks_runtime, checks_sync, cli, config, refutations
+from daimon_briefing import (checks, checks_runtime, checks_sync, cli, config, normalize,
+                           refutations, store)
 from daimon_briefing.surfaces import Writer
 
 MATCH = "gh pr create"
@@ -302,3 +303,44 @@ def test_hooks_install_with_no_layers_is_byte_identical_to_before_1095(
     out = capsys.readouterr().out
     assert "checks: 0 armed for " in out
     assert "(layer " not in out
+
+
+# ---- a layer ruling whose enforcement value is withheld (#1208) ----------
+
+FORGOTTEN_MATCH = "SECRET-L layer match that another project forgot"
+
+
+def _forget_layer_match(directory):
+    assert store.append_event(
+        "o-layer-forget", "forgotten:" + normalize.content_key(FORGOTTEN_MATCH),
+        kind="tombstone", tombstone=True, project_dir=str(directory),
+        writer=Writer.HUMAN)
+
+
+def test_check_sync_says_a_layer_ruling_is_not_as_ratified(
+        tmp_path, monkeypatch, capsys):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    _arm_enforce(work, "a layer rule with a forgotten match", match=FORGOTTEN_MATCH)
+    _forget_layer_match(work)
+
+    assert cli.main(["check", "sync", "--project", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert ("1 ruling(s) not as ratified, not armed; see daimon ruling list "
+            f"(layer {config.home_relative(str(work))})") in out
+    assert "SECRET-L" not in out
+    assert _armed_for(str(repo)) == []
+
+
+def test_hooks_install_says_a_layer_ruling_is_not_as_ratified(
+        tmp_path, monkeypatch, capsys):
+    tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    _arm_enforce(work, "a layer rule with a forgotten match", match=FORGOTTEN_MATCH)
+    _forget_layer_match(work)
+    monkeypatch.chdir(repo)
+
+    assert cli.main(["hooks", "install", "windsurf"]) == 0
+    out = capsys.readouterr().out
+    assert ("1 ruling(s) not as ratified, not armed; see daimon ruling list "
+            f"(layer {config.home_relative(str(work))})") in out
+    assert "SECRET-L" not in out
+    assert _armed_for(str(repo)) == []

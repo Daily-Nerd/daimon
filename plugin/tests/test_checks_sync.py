@@ -548,10 +548,11 @@ def test_a_record_whose_check_lost_its_hash_is_not_armed(
     no pin would give the runner nothing to re-hash against, which is the
     whole mechanism that catches an edited body."""
     monkeypatch.setattr(refutations, "listing", lambda **kwargs: [
-        {"refutation_id": "r-nohash", "check_lifecycle": "armed",
+        {"refutation_id": "r-nohash", "polarity": "ruling",
+         "check_lifecycle": "armed",
          "check": {"match": MATCH, "body": BODY, "intent": "warn"},
          "activated_at": "t"},
-        {"refutation_id": "", "check_lifecycle": "armed",
+        {"refutation_id": "", "polarity": "ruling", "check_lifecycle": "armed",
          "check": {"match": MATCH, "body": BODY, "sha256": _sha()},
          "activated_at": "t"},
     ])
