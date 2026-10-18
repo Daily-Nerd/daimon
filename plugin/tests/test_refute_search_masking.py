@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from daimon_briefing import refutations, view
+from daimon_briefing import refutation_guard, refutations, view
 from tests import _masking as m
 
 TERM = "SECRET-F"          # appears only inside the forgotten value
@@ -33,7 +33,7 @@ def _cli_ids(capsys, term):
 
 def _search_ids(term):
     return [r["refutation_id"]
-            for r in refutations.search(term, project_dir=m.PROJECT)]
+            for r in refutation_guard.search(term, project_dir=m.PROJECT)]
 
 
 @pytest.mark.parametrize("field", ["subject", "verdict", "scope", "anchor"])

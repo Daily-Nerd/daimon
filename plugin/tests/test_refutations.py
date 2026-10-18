@@ -606,10 +606,10 @@ def test_lifecycle_write_failures_are_visible(tmp_checkpoint_dir, monkeypatch):
 def test_search_rejects_unknown_state_and_skips_nonmatches(tmp_checkpoint_dir):
     _assert()
     with pytest.raises(refutations.RefutationError, match="unknown state"):
-        refutations.search("receipt", states={"deleted"}, project_dir=PROJECT)
-    assert refutations.search(
+        refutation_guard.search("receipt", states={"deleted"}, project_dir=PROJECT)
+    assert refutation_guard.search(
         "receipt", states={"active"}, project_dir=PROJECT) == []
-    assert refutations.search("cosmic platypus", project_dir=PROJECT) == []
+    assert refutation_guard.search("cosmic platypus", project_dir=PROJECT) == []
 
 
 @pytest.mark.parametrize(("args", "message"), (
@@ -675,7 +675,7 @@ def test_cli_refute_reports_search_and_guard_errors(
     def fail_search(*_args, **_kwargs):
         raise refutations.RefutationError("search contract failed")
 
-    monkeypatch.setattr(refutations, "search", fail_search)
+    monkeypatch.setattr(refutation_guard, "search", fail_search)
     assert cli.main(["refute", "search", "receipt"]) == 1
     assert "search contract failed" in capsys.readouterr().out
 

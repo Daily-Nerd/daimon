@@ -208,7 +208,7 @@ def _cmd_refute_list(args) -> int:
 def _cmd_refute_search(args) -> int:
     project = _cli._resolve_project(args.project)
     try:
-        rows = refutations.search(
+        rows = refutation_guard.search(
             " ".join(args.query), project_dir=project,
             states=set(args.state or refutations.STATES))
     except refutations.RefutationError as exc:
