@@ -34,10 +34,11 @@ def guard(query: str, *, anchors=(), project_dir=None) -> list[dict]:
               if record["state"] == "active"
               and record.get("polarity") != "ruling"]
     matches = []
-    for record in view.masked(project_dir, "refutations.jsonl", active):
-        record_anchors = set(record.get("anchors") or [])
+    for judged in view.masked_rows(project_dir, "refutations.jsonl", active):
+        record = judged.row
+        record_anchors = set(judged.visible.get("anchors[]", ()))
         subject = refutations._SPACE_RE.sub(
-            " ", record.get("subject") or "").strip().casefold()
+            " ", " ".join(judged.visible.get("subject", ()))).strip().casefold()
         anchor_hits = sorted(query_anchors & record_anchors)
         subject_hit = bool(subject and len(subject) >= 8 and subject in q)
         if not anchor_hits and not subject_hit:
@@ -54,15 +55,12 @@ def guard(query: str, *, anchors=(), project_dir=None) -> list[dict]:
     ))
 
 
-def _visible_text(raw: dict, shown: dict) -> tuple[str, set]:
-    """The searchable text and anchors of a record. `shown` is `view.masked`'s
-    copy of `raw`: a field it changed (blanked, dropped from the anchors or
-    replaced by the withheld marker) is withheld and contributes nothing, so
-    neither the value nor the marker text can match."""
-    parts = [shown.get(name) or "" for name in _TEXT_FIELDS
-             if shown.get(name) == raw.get(name)]
-    raw_anchors = set(raw.get("anchors") or [])
-    anchors = {a for a in shown.get("anchors") or [] if a in raw_anchors}
+def _visible_text(judged: view.MaskedRow) -> tuple[str, set]:
+    """The searchable text and anchors of a record: only the values the view
+    judged visible, so a withheld value and its marker contribute nothing."""
+    anchors = set(judged.visible.get("anchors[]", ()))
+    parts = [text for name in _TEXT_FIELDS
+             for text in judged.visible.get(name, ())]
     return " ".join([*parts, *anchors]).casefold(), anchors
 
 
@@ -82,16 +80,15 @@ def search(query: str, *, project_dir=None, states=None) -> list[dict]:
             for record in refutations.records(project_dir=project_dir).values()
             if record["state"] in wanted]
     scored = []
-    for raw, shown in zip(
-            raws, view.masked(project_dir, "refutations.jsonl", raws)):
-        haystack, anchors = _visible_text(raw, shown)
+    for judged in view.masked_rows(project_dir, "refutations.jsonl", raws):
+        haystack, anchors = _visible_text(judged)
         anchor_hit = bool(issue_anchors & anchors)
         phrase_hit = q in haystack
         overlap = len(q_terms & set(_TERM_RE.findall(haystack)))
         if not (anchor_hit or phrase_hit or overlap):
             continue
         scored.append((anchor_hit, phrase_hit, overlap,
-                       shown.get("updated_at") or "", shown))
+                       judged.row.get("updated_at") or "", judged.row))
     scored.sort(key=lambda row: (row[0], row[1], row[2], row[3]),
                 reverse=True)
     return [row[-1] for row in scored]

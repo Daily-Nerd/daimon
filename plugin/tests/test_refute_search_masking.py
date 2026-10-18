@@ -95,3 +95,42 @@ def test_marker_text_of_a_withheld_field_does_not_match(tmp_checkpoint_dir):
                          )[0]["verdict"]
     assert marker != m.QUARANTINED
     assert _search_ids(marker) == []
+
+
+def test_guard_does_not_fire_on_the_marker_of_a_withheld_subject(
+        tmp_checkpoint_dir):
+    rid = _row(subject=m.QUARANTINED)
+    m.quarantine()
+    marker = view.masked(m.PROJECT, "refutations.jsonl",
+                         [refutations.get(rid, project_dir=m.PROJECT)]
+                         )[0]["subject"]
+    assert marker != m.QUARANTINED
+    assert refutation_guard.guard(f"about {marker} here",
+                                  project_dir=m.PROJECT) == []
+
+
+def test_masked_rows_names_the_visible_values_per_field(tmp_checkpoint_dir):
+    rid = _row(subject="a plain subject",
+               anchors=["issue:7", m.FORGOTTEN.casefold()])
+    m.forget()
+    judged = view.masked_rows(
+        m.PROJECT, "refutations.jsonl",
+        [refutations.get(rid, project_dir=m.PROJECT)])[0]
+    assert judged.visible["subject"] == ("a plain subject",)
+    assert judged.visible["verdict"] == (m.VISIBLE,)
+    assert judged.visible["anchors[]"] == ("issue:7",)
+    assert [v.path for v in judged.withheld] == ["anchors[]"]
+    assert judged.row == view.masked(
+        m.PROJECT, "refutations.jsonl",
+        [refutations.get(rid, project_dir=m.PROJECT)])[0]
+    assert view.withheld_in(
+        m.PROJECT, "refutations.jsonl",
+        refutations.get(rid, project_dir=m.PROJECT)) == judged.withheld
+
+
+def test_a_scrubbed_member_leaves_its_siblings_searchable(tmp_checkpoint_dir):
+    rid = _row(anchors=["issue:7", m.FORGOTTEN.casefold()],
+               subject="visible findable subject")
+    m.forget()
+    assert _search_ids("issue:7") == [rid]
+    assert _search_ids("findable") == [rid]
