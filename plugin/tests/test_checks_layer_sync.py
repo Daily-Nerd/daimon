@@ -22,7 +22,7 @@ deleting that per-test manifest after a layer's own ratify has synced it.
 import subprocess
 from pathlib import Path
 
-from daimon_briefing import checks, checks_runtime, cli, config, refutations
+from daimon_briefing import checks, checks_runtime, checks_sync, cli, config, refutations
 from daimon_briefing.surfaces import Writer
 
 MATCH = "gh pr create"
@@ -82,14 +82,14 @@ def test_layer_ratify_produces_manifest_entry_at_the_layer_root(tmp_path, monkey
 def test_child_sync_of_its_own_root_never_touches_a_layer_entry(tmp_path, monkeypatch):
     """This test exists to FAIL the day `refutations.listing` starts walking
     layers itself: if `_wanted` ever picked up the layer's rows under the
-    CHILD's root, `checks.sync(repo)` would add a SECOND manifest entry for
+    CHILD's root, `checks_sync.sync(repo)` would add a SECOND manifest entry for
     the same ruling id keyed to the child, and the same body would fire
     twice per action."""
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
     ruling_id = _arm_enforce(work, "a layer rule the child must not re-key")
 
     before = _manifest_path().read_text(encoding="utf-8")
-    report = checks.sync(str(repo), writer=Writer.HUMAN)
+    report = checks_sync.sync(str(repo), writer=Writer.HUMAN)
     after = _manifest_path().read_text(encoding="utf-8")
 
     assert report.ok
@@ -107,7 +107,7 @@ def test_hooks_install_in_child_arms_the_layer_on_a_fresh_manifest(tmp_path, mon
     # A ratify at the layer already synced ITS manifest via `_sync_checks`;
     # for this single-process test that IS the file a second machine would
     # read, so deleting it stands in for a machine that never ran
-    # `checks.sync` for the layer at all.
+    # `checks_sync.sync` for the layer at all.
     _manifest_path().unlink()
 
     monkeypatch.chdir(repo)
@@ -124,9 +124,9 @@ def test_hooks_install_reports_a_failed_layer_sync(tmp_path, monkeypatch, capsys
     monkeypatch.chdir(repo)
 
     def _fake_sync_layers(project_dir=None, *, writer):
-        return [(str(work), checks.SyncReport(False, 0, "", "boom"))]
+        return [(str(work), checks_sync.SyncReport(False, 0, "", "boom"))]
 
-    monkeypatch.setattr(checks, "sync_layers", _fake_sync_layers)
+    monkeypatch.setattr(checks_sync, "sync_layers", _fake_sync_layers)
     assert cli.main(["hooks", "install", "windsurf"]) == 0
     out = capsys.readouterr().out
     assert f"boom (layer {config.home_relative(str(work))})" in out
@@ -172,7 +172,7 @@ def test_promotion_window_child_and_layer_copies_both_armed_until_child_retires(
     assert {e["project_dir"] for e in matching} == {str(repo), str(work)}
 
     refutations.retire(child_id, channel="cli-tty", project_dir=str(repo))
-    checks.sync(str(repo), writer=Writer.HUMAN)
+    checks_sync.sync(str(repo), writer=Writer.HUMAN)
 
     entries = _armed_for(str(repo))
     matching = [e for e in entries if e["ruling_id"] == child_id]
@@ -248,9 +248,9 @@ def test_check_sync_reports_a_failed_layer_sync(tmp_path, monkeypatch, capsys):
     _arm_enforce(work, "a layer rule whose sync will be made to fail")
 
     def _fake_sync_layers(project_dir=None, *, writer):
-        return [(str(work), checks.SyncReport(False, 0, "", "boom"))]
+        return [(str(work), checks_sync.SyncReport(False, 0, "", "boom"))]
 
-    monkeypatch.setattr(checks, "sync_layers", _fake_sync_layers)
+    monkeypatch.setattr(checks_sync, "sync_layers", _fake_sync_layers)
     rc = cli.main(["check", "sync", "--project", str(repo)])
     out = capsys.readouterr().out
     assert rc == 1
@@ -283,7 +283,7 @@ def test_layer_bucket_holding_only_a_candidate_contributes_nothing_to_sync(
         check={"match": MATCH, "body": BODY, "intent": "enforce"},
         project_dir=str(work))
 
-    layer_reports = checks.sync_layers(str(repo), writer=Writer.HUMAN)
+    layer_reports = checks_sync.sync_layers(str(repo), writer=Writer.HUMAN)
     assert all(report.armed == 0 for _layer, report in layer_reports)
     entries = _armed_for(str(repo))
     assert entries == []

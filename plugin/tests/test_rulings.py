@@ -19,7 +19,8 @@ import pytest
 
 import time as _time
 
-from daimon_briefing import clock, config, redact, refutations, store, surfaces
+from daimon_briefing import (clock, config, redact, refutation_guard, refutations, store,
+                           surfaces)
 from daimon_briefing.surfaces import Writer
 
 
@@ -259,7 +260,7 @@ def test_guard_never_returns_rulings(tmp_checkpoint_dir):
     _rule(channel="cli-tty", ratified=True,
           subject="guard subject shared", scope="scope-r",
           anchors=["issue:693"])
-    hits = refutations.guard("does issue:693 allow this",
+    hits = refutation_guard.guard("does issue:693 allow this",
                              project_dir=PROJECT)
     assert hits == []
 
@@ -2961,7 +2962,7 @@ def test_ratify_applies_a_pending_text_only_proposal_and_clears_it(
 
 
 def test_ratify_accepting_a_proposal_arms_its_check(tmp_checkpoint_dir):
-    from daimon_briefing import checks
+    from daimon_briefing import checks_sync
     ruling_id = _rule(channel="cli-tty", ratified=True)
     refutations.revise(
         ruling_id, channel="cli-agent", evidence=["issue:1090"],
@@ -2974,7 +2975,7 @@ def test_ratify_accepting_a_proposal_arms_its_check(tmp_checkpoint_dir):
     assert "revision_proposed" not in record
     assert record["check"]["sha256"] == proposed_sha
     assert record["check_lifecycle"] == "armed"
-    audit = checks.audit(project_dir=PROJECT)
+    audit = checks_sync.audit(project_dir=PROJECT)
     assert ruling_id in audit.wanted
     assert ruling_id not in audit.missing
 
@@ -2988,7 +2989,7 @@ def test_a_forged_agent_ratified_row_does_not_apply_the_pending_proposal(
     would apply the pending proposal and arm its check with agent
     authority — the exact escalation the `revised` gate just above already
     refuses for a non-human touch on an active ruling."""
-    from daimon_briefing import checks
+    from daimon_briefing import checks_sync
     ruling_id = _rule(channel="cli-tty", ratified=True)
     refutations.revise(
         ruling_id, channel="cli-agent", evidence=["issue:1090"],
@@ -3006,7 +3007,7 @@ def test_a_forged_agent_ratified_row_does_not_apply_the_pending_proposal(
     assert record.get("revision_proposed") is not None
     assert "check" not in record
     assert record["activated_at"] == activated_at
-    audit = checks.audit(project_dir=PROJECT)
+    audit = checks_sync.audit(project_dir=PROJECT)
     assert ruling_id not in audit.wanted
 
 

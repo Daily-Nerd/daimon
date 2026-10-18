@@ -1,7 +1,7 @@
 """Every write exit says who is writing (#1132 PR 10b, D10.3).
 
 By AST: no call of `jsonl.append` / `jsonl.append_lines` without a `posture`,
-and no call of a module appender (or `store.write_checkpoint`, `checks.sync`)
+and no call of a module appender (or `store.write_checkpoint`, `checks_sync.sync`)
 without a `writer`. A new appender that skips the registry's write column
 fails here, not in the field. The scanner has a negative control: it is run
 on source that breaks each rule.
@@ -21,7 +21,7 @@ WRITER_CALLS = {
     ("store", "append_event"), ("store", "write_checkpoint"),
     ("requests", "append"), ("amendments", "append"), ("trust", "append"),
     ("refutations", "append"), ("relations", "_append"),
-    ("checks", "sync"), ("checks", "sync_layers"), ("checks", "_sync"),
+    ("checks_sync", "sync"), ("checks_sync", "sync_layers"), ("checks_sync", "_sync"),
 }
 # The same appenders called by their bare name inside their own module.
 BARE_WRITER_CALLS = {
@@ -125,8 +125,8 @@ def test_the_scanner_flags_a_module_appender_without_a_writer():
                  "store.write_checkpoint('s', {})",
                  "requests.append(row)", "amendments.append(row)",
                  "trust.append(row)", "refutations.append(row)",
-                 "relations._append(row)", "checks.sync(p)",
-                 "checks.sync_layers(p)", "self.store.append_event('i','s')"):
+                 "relations._append(row)", "checks_sync.sync(p)",
+                 "checks_sync.sync_layers(p)", "self.store.append_event('i','s')"):
         assert violations(call + "\n", "x.py"), call
     assert not violations("store.append_event('i', 's', writer=W)\n", "x.py")
 

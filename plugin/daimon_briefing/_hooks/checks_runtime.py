@@ -171,7 +171,7 @@ def checks_dir() -> Path:
     """Where the manifest and the materialized bodies live, resolved the way
     the WRITER resolves it.
 
-    `checks.sync` writes through config.checks_dir(); this reads. A path
+    `checks_sync.sync` writes through config.checks_dir(); this reads. A path
     resolved any other way here has the hook reading an empty directory
     while the CLI reports N checks armed, and neither side can see the
     split — the same writer/reader gap scar 0043 records one directory over.

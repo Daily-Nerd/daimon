@@ -12,7 +12,7 @@ learns nothing from it. And the exit code is 0 on every path: exit 2 is a
 documented unconditional block on both hosts, so an escaping exception that
 happened to exit non-zero would block an action no check ever judged.
 
-The manifest under test is written by `checks.sync` from a ruling ratified
+The manifest under test is written by `checks_sync.sync` from a ruling ratified
 in process through `refutations` on a human channel. A hand-written manifest
 would exercise a shape nobody produces.
 """

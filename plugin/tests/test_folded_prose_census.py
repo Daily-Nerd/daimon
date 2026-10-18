@@ -7,7 +7,7 @@ sentinel leaf's path is declared in `prose` or `folded_prose`. A new fold key
 that carries a person's text cannot ship undeclared.
 """
 
-from daimon_briefing import refutations, requests, store, surfaces
+from daimon_briefing import refutation_guard, refutations, requests, store, surfaces
 
 PROJECT = "/p/foldedprose"
 MARK = "zqcensus"
@@ -96,7 +96,7 @@ def test_every_sentinel_in_a_folded_refutation_is_a_declared_path(
     refutations.ratify(d, channel="cli-tty", project_dir=PROJECT)
 
     folded = list(refutations.records(project_dir=PROJECT).values())
-    guarded = refutations.guard("issue:" + MARK + "10",
+    guarded = refutation_guard.guard("issue:" + MARK + "10",
                                 anchors=["issue:" + MARK + "10"],
                                 project_dir=PROJECT)
     assert guarded, "the guard must match the planted anchor"

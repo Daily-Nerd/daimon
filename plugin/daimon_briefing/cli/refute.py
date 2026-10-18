@@ -9,7 +9,7 @@ import functools
 
 import daimon_briefing.cli as _cli
 
-from .. import refutations, render
+from .. import refutation_guard, refutations, render
 from ._ledger import (
     _masked_record,
     _masked_records,
@@ -238,7 +238,7 @@ def _cmd_refute_search(args) -> int:
 def _cmd_refute_guard(args) -> int:
     project = _cli._resolve_project(args.project)
     try:
-        rows = refutations.guard(
+        rows = refutation_guard.guard(
             " ".join(args.query), anchors=args.anchor,
             project_dir=project)
     except refutations.RefutationError as exc:

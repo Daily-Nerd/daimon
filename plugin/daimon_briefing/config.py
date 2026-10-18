@@ -1121,7 +1121,7 @@ def _layer_scopes(project_dir) -> list[str]:
     # Deferred import: config is the dependency base (store and refutations
     # both import config, never the reverse), so this must be resolved at
     # call time, not at module load, to avoid a cycle (the same trick
-    # `refutations._load_checks` uses for `checks`).
+    # `refutations._load_checks` uses for `checks_sync`).
     from . import briefing, store
     layers: list[str] = []
     for candidate in root_path.parents:

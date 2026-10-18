@@ -783,15 +783,15 @@ SURFACES: tuple[Surface, ...] = (
     #    reaches it in the ledger. Declaring these exempt would be the same
     #    claim contradicting itself one directory over.
     #
-    #    `rewrite` is what checks.sync already does: it rebuilds the manifest
+    #    `rewrite` is what checks_sync.sync already does: it rebuilds the manifest
     #    from the ledger and removes the bodies no active ruling wants, and
     #    every writer that can disarm a ruling calls it — forget included. So
     #    deletion reaches here by re-deriving from a ledger the forget
     #    already rewrote, rather than by a second walk that could disagree
     #    with the first. --
-    Surface("checks/manifest.json", "checks.sync", True, "rewrite", "forget",
+    Surface("checks/manifest.json", "checks_sync.sync", True, "rewrite", "forget",
             steps=_CHECKS_SYNC),
-    Surface("checks/*.sh", "checks.sync", True, "rewrite", "forget",
+    Surface("checks/*.sh", "checks_sync.sync", True, "rewrite", "forget",
             steps=_CHECKS_SYNC),
 )
 

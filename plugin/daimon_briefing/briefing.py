@@ -1309,7 +1309,7 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
     enforces them there, because `armed_for` matches by directory PREFIX,
     with no git awareness. Reading the manifest directly is how this section
     stays honest about what actually fires in a worktree, without re-walking
-    layers (`refutations.listing` — and therefore `checks._wanted` — must
+    layers (`refutations.listing` — and therefore `checks_sync._wanted` — must
     keep its own un-widened default, or a child sync would arm the same
     check a second time under its own root).
 
