@@ -2236,34 +2236,3 @@ def listing(*, states=None, polarity=None, project_dir=None) -> list[dict]:
                                row.get("updated_at") or "",
                                row["refutation_id"]))
     return rows
-
-
-def search(query: str, *, project_dir=None, states=None) -> list[dict]:
-    query = _text("query", query)
-    wanted = set(states or STATES)
-    unknown = wanted - STATES
-    if unknown:
-        raise RefutationError(f"unknown state: {', '.join(sorted(unknown))}")
-    q = query.casefold()
-    q_terms = set(re.findall(r"[\w.-]{2,}", q))
-    issue_anchors = {f"issue:{n}" for n in _ISSUE_RE.findall(q)}
-    scored = []
-    for record in records(project_dir=project_dir).values():
-        if record["state"] not in wanted:
-            continue
-        anchors = set(record.get("anchors") or [])
-        haystack = " ".join((
-            record.get("subject") or "", record.get("verdict") or "",
-            record.get("scope") or "", " ".join(anchors),
-        )).casefold()
-        terms = set(re.findall(r"[\w.-]{2,}", haystack))
-        anchor_hit = bool(issue_anchors & anchors)
-        phrase_hit = q in haystack
-        overlap = len(q_terms & terms)
-        if not (anchor_hit or phrase_hit or overlap):
-            continue
-        scored.append((anchor_hit, phrase_hit, overlap,
-                       record.get("updated_at") or "", record))
-    scored.sort(key=lambda row: (row[0], row[1], row[2], row[3]),
-                reverse=True)
-    return [row[-1] for row in scored]

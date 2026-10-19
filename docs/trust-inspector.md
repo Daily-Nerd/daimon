@@ -209,7 +209,7 @@ match or body) is withheld for any reason. The bit is on `ruling list --json`
 and `ruling show --json`, and their text output prints `not as ratified: an
 enforcement value is withheld`. The briefing's standing rulings tag the line
 `[not as ratified]`, and the viewer's rulings lane shows the same tag. The row still never names, counts or locates the value. Refutation rows
-carry no such key. The armed-check manifest is built from the same judged rows, so a ruling that is not as ratified arms nothing, and `check sync` and `hooks install` say how many were skipped. `refute guard` matches the anchors and subjects a reader may see, so a withheld one never fires it.
+carry no such key. The armed-check manifest is built from the same judged rows, so a ruling that is not as ratified arms nothing, and `check sync` and `hooks install` say how many were skipped. `refute guard` matches the anchors and subjects a reader may see, so a withheld one never fires it. `refute search` likewise matches and ranks only values the reader may see.
 
 An id whose copies are gone but whose lifecycle the ledger still names (a
 resolved loop that left every retained checkpoint) prints `Item: … (content

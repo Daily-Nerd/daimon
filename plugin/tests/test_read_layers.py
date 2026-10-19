@@ -74,7 +74,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/heal_host.py": "read",  # the host heal verbs: plans over heal.plan_all, launches through heal.launch, folds outcomes through serialize_liveness (api.heal_plan, api.heal_all)
     "daimon_briefing/serialize_liveness.py": "read",  # read-only liveness rows over serialize.log, heartbeats and checkpoints (api.serializes)
     "daimon_briefing/receipts.py": "read",  # verifies and reports provenance receipts of checkpoints
-    "daimon_briefing/refutation_guard.py": "read",  # `refute guard`: matches a query over the refutation rows a reader may see
+    "daimon_briefing/refutation_guard.py": "read",  # `refute guard` and `refute search`: match a query over the refutation rows a reader may see
     "daimon_briefing/render.py": "read",  # every human and rich renderer
     "daimon_briefing/worldcheck.py": "read",  # spot-checks checkpoint claims against the world
     "daimon_briefing/api.py": "view",  # re-exports of the read side

@@ -1994,10 +1994,21 @@ def prose_verdict_over(text, snaps, *, closed_masks: bool) -> Withheld | None:
     return _strictest(str(text or ""), snaps, closed_masks)
 
 
+class MaskedRow(NamedTuple):
+    """One row judged once: `row` as a reader may see it, `withheld` the
+    verdicts handed out for it (each stamped with its field `path`), and
+    `visible` the raw text of every prose value the reader may see, by field
+    path (`subject`, `anchors[]`). A matcher searches `visible` and nothing
+    else, so it never infers what was withheld from how `row` reads."""
+
+    row: dict
+    withheld: tuple[Withheld, ...]
+    visible: Mapping[str, tuple[str, ...]]
+
+
 def _mask_rows(project, ledger_name: str, rows,
-               snap: Snapshot | None) -> list[tuple[dict, tuple[Withheld, ...]]]:
-    """The body of `masked`: each row as a reader may see it, with the
-    verdicts handed out for it (each stamped with its field `path`)."""
+               snap: Snapshot | None) -> list[MaskedRow]:
+    """The body of `masked`: each row judged once (see `MaskedRow`)."""
     surface = surfaces.bucket_ledger(ledger_name)
     paths = surface.prose + surface.folded_prose
     enforcement = frozenset(surfaces.path_string(fp)
@@ -2015,8 +2026,10 @@ def _mask_rows(project, ledger_name: str, rows,
     for row in rows:
         snaps = snaps_of(row)
         seen: list[Withheld] = []
+        visible: dict[str, list[str]] = {}
 
-        def fn(text: str, fp: surfaces.FieldPath, _snaps=snaps, _seen=seen):
+        def fn(text: str, fp: surfaces.FieldPath, _snaps=snaps, _seen=seen,
+               _visible=visible):
             path = surfaces.path_string(fp)
             if ledger_name == "events.jsonl" and path == "status":
                 # a lifecycle word: keep the class token a scrub preserved
@@ -2031,15 +2044,20 @@ def _mask_rows(project, ledger_name: str, rows,
                 shown = trust.display_text(text)
                 return shown if (ledger_name == "trust.jsonl"
                                  and shown != text) else None
-            return _mask_text(text, _snaps, MASK_POLICY[(ledger_name, path)],
-                              _seen, path)
+            judged = len(_seen)
+            result_text = _mask_text(
+                text, _snaps, MASK_POLICY[(ledger_name, path)], _seen, path)
+            if len(_seen) == judged:
+                _visible.setdefault(path, []).append(text)
+            return result_text
 
         out = _mask_tree(surfaces.map_prose(paths, row, fn), snaps, seen)
         if enforcement and out.get("polarity") == "ruling":
             # a ruling enforces, so a withheld enforcement value must not read
             # as a shorter, complete one; the bit names no value, count or path
             out["as_ratified"] = not any(v.path in enforcement for v in seen)
-        result.append((out, tuple(seen)))
+        result.append(MaskedRow(
+            out, tuple(seen), {k: tuple(v) for k, v in visible.items()}))
     return result
 
 
@@ -2063,8 +2081,17 @@ def masked(project, ledger_name: str, rows, *,
     an enforcement value (`Surface.enforcement`) was withheld for any reason,
     true otherwise, so no reader mistakes a shortened anchor set for the one a
     person ratified. It names no value, count, path or reason (#1206)."""
-    return [row for row, _verdicts in _mask_rows(project, ledger_name, rows,
-                                                 snap)]
+    return [judged.row for judged in _mask_rows(project, ledger_name, rows,
+                                                snap)]
+
+
+def masked_rows(project, ledger_name: str, rows, *,
+                snap: Snapshot | None = None) -> list[MaskedRow]:
+    """`masked` with the judgment kept: for each row the masked copy, the
+    verdicts and the raw text of the values a reader may see. A reader-facing
+    match runs over `visible`, so a withheld value, and the marker that stands
+    in for it, can neither match nor rank."""
+    return _mask_rows(project, ledger_name, rows, snap)
 
 
 def withheld_in(project, ledger_name: str, row: dict, *,
@@ -2072,7 +2099,7 @@ def withheld_in(project, ledger_name: str, row: dict, *,
     """The verdicts `masked` would hand out for one row: what is withheld in
     it, without the text. A ceremony asks this before it asks a person to sign
     a record whose words they could not read."""
-    return _mask_rows(project, ledger_name, [row], snap)[0][1]
+    return _mask_rows(project, ledger_name, [row], snap)[0].withheld
 
 
 @dataclass(frozen=True)
