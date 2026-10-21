@@ -70,6 +70,12 @@ def status() -> dict:
             "explicit" if config.llm_command_fallback()
             else ("legacy-command" if fb else None)
         ),
+        # #1220: the arg-mode input cap, read from llm's own seams (the same
+        # numbers the serializer sizes prompts by). Advisory only: ready
+        # semantics are unchanged, exactly like the #747 fields above.
+        "prompt_limits": llm.input_limits(),
+        "prompt_hard_limit": (llm.primary_prompt_limit() or {}).get("limit"),
+        "prompt_rescue_limit": (llm.rescue_prompt_limit() or {}).get("limit"),
         "env_file": str(config._env_file_path()),
         "env_file_exists": config._env_file_path().exists(),
     }

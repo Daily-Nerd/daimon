@@ -604,6 +604,23 @@ def _flatten_messages(messages):
     return "\n\n".join(f"{m['role'].upper()}:\n{m['content']}" for m in messages)
 
 
+class _Resolved(tuple):
+    """A resolved (command, output_spec, input_spec) triple that also carries
+    the variable that chose its input mode, so the arg-cap error and the
+    doctor name the setting actually in effect without inferring it from the
+    caller (#1220). Still an ordinary 3-tuple everywhere it is unpacked."""
+    input_setting: str
+
+    def __new__(cls, triple, input_setting):
+        obj = super().__new__(cls, triple)
+        obj.input_setting = input_setting
+        return obj
+
+
+def _setting_of(resolved) -> str:
+    return getattr(resolved, "input_setting", "DAIMON_LLM_COMMAND_INPUT")
+
+
 def _resolve_command():
     """Resolve the command backend (command_str, output_spec, input_spec) or
     None.
@@ -627,9 +644,11 @@ def _resolve_command():
     command."""
     cmd = config.llm_command()
     if cmd:
-        return cmd, (config.llm_command_output() or "text"), config.llm_command_input()
+        return _Resolved((cmd, (config.llm_command_output() or "text"),
+                          config.llm_command_input()),
+                         "DAIMON_LLM_COMMAND_INPUT")
     if config.llm_backend().strip() == "claude-cli" and shutil.which("claude"):
-        return (*_CLAUDE_PRESET, "stdin")
+        return _Resolved((*_CLAUDE_PRESET, "stdin"), "DAIMON_LLM_COMMAND_INPUT")
     return None
 
 
@@ -649,9 +668,10 @@ def _resolve_fallback_command():
     asymmetry is the whole reason the overload had to be split."""
     cmd = config.llm_command_fallback()
     if cmd:
-        return (cmd,
-                (config.llm_command_fallback_output() or "text"),
-                config.llm_command_fallback_input())
+        return _Resolved((cmd,
+                          (config.llm_command_fallback_output() or "text"),
+                          config.llm_command_fallback_input()),
+                         "DAIMON_LLM_COMMAND_FALLBACK_INPUT")
     if resolve_backend()["backend"] not in ("command", "claude-cli"):
         return _resolve_command()
     return None
@@ -692,6 +712,65 @@ def command_missing_binary() -> str | None:
     return _missing_binary(cmd[0]) if cmd else None
 
 
+def prompt_bytes(messages) -> int:
+    """The size of the prompt a command backend receives for `messages`: the
+    same flatten and the same utf-8 byte count _apply_input_spec checks, so a
+    caller sizing a prompt and the exec-time cap can never measure differently."""
+    return len(_flatten_messages(messages).encode("utf-8"))
+
+
+def input_limits() -> list:
+    """Every command backend in the CONFIGURED chain with its prompt-size limit.
+
+    One dict per backend that can actually run: {"role": "primary"|"rescue",
+    "command": the command string, "setting": the variable that chose its input mode,
+    "input": the mode, "limit": bytes | None}. arg mode is bounded by
+    _ARG_MAX_BYTES; stdin and file:<flag> are not (None). A non-command primary
+    (litellm) has no entry. The rescue is listed only when _rescue would run it
+    (fallback enabled, resolves, binary exists), derived from the same
+    resolution _rescue and rescue_posture() use, never re-derived (#1220)."""
+    def _limit(spec):
+        return _ARG_MAX_BYTES if spec == "arg" else None
+
+    out = []
+    if resolve_backend()["backend"] in ("command", "claude-cli"):
+        cmd = _resolve_command()
+        if cmd is not None:
+            out.append({"role": "primary", "command": cmd[0],
+                        "setting": _setting_of(cmd),
+                        "input": cmd[2], "limit": _limit(cmd[2])})
+    fallback = _resolve_fallback_command()
+    if (config.llm_fallback() and fallback is not None
+            and not _missing_binary(fallback[0])):
+        out.append({"role": "rescue",
+                    "command": fallback[0],
+                    "setting": _setting_of(fallback),
+                    "input": fallback[2], "limit": _limit(fallback[2])})
+    return out
+
+
+def _limit_for(role: str):
+    for x in input_limits():
+        if x["role"] == role and x["limit"] is not None:
+            return x
+    return None
+
+
+def primary_prompt_limit():
+    """The primary's bounded input limit ({"limit", "setting", "command", ...})
+    or None. A HARD cap: a prompt over it cannot be served by the backend that
+    runs first, so nothing can serve it (#1220)."""
+    return _limit_for("primary")
+
+
+def rescue_prompt_limit():
+    """The rescue's bounded input limit or None (unbounded, or no rescue that
+    would run). A SOFT cap: a prompt over it still runs on the primary, it
+    just has no rescue. Prompts a caller can choose the size of (merges) are
+    sized to it (#1220)."""
+    return _limit_for("rescue")
+
+
 def _extract_output(stdout, output_spec):
     """Extract the LLM response from command output.
 
@@ -716,7 +795,8 @@ def _extract_output(stdout, output_spec):
 _ARG_MAX_BYTES = 100_000
 
 
-def _apply_input_spec(argv, prompt_text, input_spec, cwd):
+def _apply_input_spec(argv, prompt_text, input_spec, cwd,
+                      setting="DAIMON_LLM_COMMAND_INPUT"):
     """Wire `prompt_text` into argv/stdin per `input_spec`. Returns
     (argv, stdin_text) for `_run_command`.
 
@@ -740,7 +820,7 @@ def _apply_input_spec(argv, prompt_text, input_spec, cwd):
             raise ChatError(
                 f"prompt too large for arg-mode command input ({size} bytes "
                 f"> {_ARG_MAX_BYTES}-byte limit) — switch "
-                f"DAIMON_LLM_COMMAND_INPUT to file:<flag> or the stdin default"
+                f"{setting} to file:<flag> or the stdin default"
             )
         return [*argv, prompt_text], ""
     if input_spec.startswith("file:"):
@@ -828,7 +908,10 @@ def _chat_command(messages, deadline, resolved=None):
     `resolved` lets the caller supply an already-resolved
     (command, output_spec, input_spec) triple instead of re-deriving the
     primary — that is how the #475 rescue runs the FALLBACK's own specs
-    rather than the primary's."""
+    rather than the primary's.
+
+    The arg-cap error names the variable the resolved triple carries: the one
+    that chose THIS backend's input mode (#1220)."""
     if resolved is None:
         resolved = _resolve_command()
     if not resolved:
@@ -848,7 +931,8 @@ def _chat_command(messages, deadline, resolved=None):
     env = {**os.environ, "DAIMON_DISABLE": "1"}
     cwd = tempfile.mkdtemp(prefix="daimon-cli-")
     try:
-        argv, stdin_text = _apply_input_spec(argv, prompt_text, input_spec, cwd)
+        argv, stdin_text = _apply_input_spec(
+            argv, prompt_text, input_spec, cwd, _setting_of(resolved))
         try:
             rc, out, err = _run_command(argv, stdin_text, timeout, env, cwd)
         except FileNotFoundError:

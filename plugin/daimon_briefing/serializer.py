@@ -95,6 +95,11 @@ class LLMCallError(SerializeError):
     pass
 
 
+class PromptTooLargeError(LLMCallError):
+    """A prompt the configured backend chain cannot serve (#1220). Raised
+    BEFORE any backend runs, naming the call and the setting to change."""
+
+
 class OutputParseError(SerializeError):
     pass
 
@@ -1816,6 +1821,42 @@ def pin_imperatives(checkpoint, messages) -> int:
     return pinned
 
 
+# Room every request leaves for the retry marker _call_and_parse appends on a
+# second attempt. One rule for every call path: a request is judged on its
+# pristine size PLUS this headroom, so what fits on attempt 1 still fits on
+# attempt 2 (the marker is a sentence and a short error, far below this).
+_RETRY_HEADROOM_BYTES = 1024
+
+
+def _fits(messages, limit: int | None) -> bool:
+    return limit is None or llm.prompt_bytes(messages) + _RETRY_HEADROOM_BYTES <= limit
+
+
+def _check_prompt_limits(messages, what: str) -> bool:
+    """Gate one call on llm's two limits (#1220). Returns whether the rescue
+    can serve it.
+
+    - Over the PRIMARY's limit (hard): nothing that runs first can take the
+      prompt, so the call fails here, before any backend, named.
+    - Over the RESCUE's limit only: the primary can still serve it. The call
+      runs without a rescue, said once here, and the caller must not exec a
+      rescue that is certain to refuse."""
+    hard = llm.primary_prompt_limit()
+    if hard is not None and not _fits(messages, hard["limit"]):
+        raise PromptTooLargeError(
+            f"{what}: the prompt is {llm.prompt_bytes(messages)} bytes, over "
+            f"the {hard['limit']}-byte arg-mode limit of the primary command - "
+            f"set {hard['setting']} to file:<flag> or stdin")
+    soft = llm.rescue_prompt_limit()
+    if soft is not None and not _fits(messages, soft["limit"]):
+        log.warning("%s: prompt is %d bytes, over the rescue's %d-byte arg-mode "
+                    "limit; this call runs without a rescue (set %s to "
+                    "file:<flag> or stdin)", what, llm.prompt_bytes(messages),
+                    soft["limit"], soft["setting"])
+        return False
+    return True
+
+
 def _call_and_parse(chat, system, user_content, deadline, what: str,
                     parse_retries: int = 1) -> dict:
     """One LLM call -> parsed JSON dict, with named failures.
@@ -1847,6 +1888,10 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
     nonce'd attempt 2 goes to a real model.
     """
     attempts = 1 + parse_retries
+    # #1220: judged once, on the pristine request, before any backend runs.
+    rescue_can_serve = _check_prompt_limits(
+        [{"role": "system", "content": system},
+         {"role": "user", "content": user_content}], what)
     run_nonce = uuid.uuid4().hex[:12]
     # #743: the marker names WHAT failed, not just that something did — exception
     # text only (position info), never `raw` itself, which can echo request contents.
@@ -1886,6 +1931,8 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
             """
             if deadline is not None and deadline - time.monotonic() <= 0:
                 return None
+            if not rescue_can_serve:
+                return None  # certain to refuse at exec; already said above
             try:
                 rescued = llm.rescue_unparseable(
                     [
@@ -1899,12 +1946,13 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 return None
             return parsed_rescue if field_table.partial_reason(parsed_rescue) is None else None
 
+        request = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
         try:
             raw = chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": content},
-                ],
+                request,
                 # No temperature pinned here: config.llm_temperature() governs
                 # (default 0.0 for deterministic extraction; DAIMON_LLM_TEMPERATURE
                 # overrides for upstreams that reject non-default values).
@@ -2214,12 +2262,79 @@ def purge_chunk_cache():
     return purged, error
 
 
+def _merge_messages(session_id: str, group: list, attempt_note: str) -> list:
+    """The exact request one merge call sends. Grouping measures this same
+    object, so the size it splits on is the size that goes out (#1220)."""
+    return [
+        {"role": "system", "content": _merge_sys()},
+        {"role": "user", "content":
+            f"session_id: {session_id}\n\n"
+            f"PARTIAL CHECKPOINTS (JSON array, one per chunk, in chronological order):\n"
+            f"{json.dumps(group, ensure_ascii=False)}"
+            f"{attempt_note}"},
+    ]
+
+
+def _pack_groups(session_id: str, partials: list, k: int, attempt_note: str,
+                 limit: int | None) -> list:
+    """Greedy consecutive groups of at most `k` whose merge request fits
+    `limit` (None: no size bound, plain count grouping)."""
+    groups: list = []
+    current: list = []
+    for part in partials:
+        if current and (len(current) >= k or not _fits(
+                _merge_messages(session_id, current + [part], attempt_note),
+                limit)):
+            groups.append(current)
+            current = []
+        current.append(part)
+    groups.append(current)
+    return groups
+
+
+def _merge_groups(session_id: str, partials: list, k: int, attempt_note: str,
+                  level: int) -> list:
+    """Consecutive merge groups of at most `k`, each small enough to serve.
+
+    Merge size is the caller's to choose, so groups honor the tightest of
+    llm's two limits (primary and rescue): a long session gets a deeper tree
+    instead of a request the rescue cannot take (#1220). If no adjacent pair
+    fits the rescue's limit but pairs fit the primary's, the level is grouped
+    under the primary's limit alone and runs without a rescue (each call says
+    so, see _check_prompt_limits). Order is kept.
+
+    Terminates: every level either holds a group of two or more partials (the
+    list shrinks) or raises here. The error needs no adjacent pair to fit the
+    PRIMARY's limit (the hard one); it names the call and the primary's
+    setting before a single merge request of the level is sent. With no
+    primary limit, the rescue-sized pass is followed by unbounded count
+    grouping, which always shrinks the list (k >= 2)."""
+    hard = llm.primary_prompt_limit()
+    soft = llm.rescue_prompt_limit()
+    hard_n = hard["limit"] if hard else None
+    soft_n = soft["limit"] if soft else None
+    bounds = [n for n in (hard_n, soft_n) if n is not None]
+    groups = _pack_groups(session_id, partials, k, attempt_note,
+                          min(bounds) if bounds else None)
+    progressed = len(partials) <= 1 or any(len(g) > 1 for g in groups)
+    if not progressed and soft_n is not None and (hard_n is None or soft_n < hard_n):
+        groups = _pack_groups(session_id, partials, k, attempt_note, hard_n)
+        progressed = any(len(g) > 1 for g in groups)
+    if not progressed:
+        raise PromptTooLargeError(
+            f"merge level {level}: no two partial checkpoints fit in one "
+            f"merge request under the {hard_n}-byte arg-mode limit of the "
+            f"primary command - set {hard['setting']} to file:<flag> or stdin")
+    return groups
+
+
 def _merge_partials(chat, session_id: str, partials: list, deadline,
                     attempt_note: str = "") -> dict:
     """Hierarchically merge partial checkpoints into one, K partials at a time.
 
     Splits partials into CONSECUTIVE groups of config.merge_group_size() on each
-    level; singletons pass through unchanged — no LLM call. Groups within a level
+    level (fewer when the configured chain's prompt budget demands it, #1220);
+    singletons pass through unchanged — no LLM call. Groups within a level
     run concurrently (same ThreadPoolExecutor pattern as chunk fan-out). Continues
     until a single partial remains, which is the merged result.
 
@@ -2231,7 +2346,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
     level = 0
     while len(partials) > 1:
         level += 1
-        groups = [partials[i:i + K] for i in range(0, len(partials), K)]
+        groups = _merge_groups(session_id, partials, K, attempt_note, level)
         n_groups = len(groups)
         log.info("merge level %d: %d group(s)", level, n_groups)
 
@@ -2242,12 +2357,9 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
                 return group[0]
             ledger.touch_heartbeat(session_id)  # #342: alive, merging
             t0 = time.monotonic()
+            request = _merge_messages(session_id, group, attempt_note)
             merged = _call_and_parse(
-                chat, _merge_sys(),
-                f"session_id: {session_id}\n\n"
-                f"PARTIAL CHECKPOINTS (JSON array, one per chunk, in chronological order):\n"
-                f"{json.dumps(group, ensure_ascii=False)}"
-                f"{attempt_note}",
+                chat, request[0]["content"], request[1]["content"],
                 deadline, f"merge level {_level}, group {g + 1} of {_n_groups}",
             )
             log.info("merge level %d, group %d/%d done in %.0fs",
