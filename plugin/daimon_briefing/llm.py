@@ -604,6 +604,23 @@ def _flatten_messages(messages):
     return "\n\n".join(f"{m['role'].upper()}:\n{m['content']}" for m in messages)
 
 
+class _Resolved(tuple):
+    """A resolved (command, output_spec, input_spec) triple that also carries
+    the variable that chose its input mode, so the arg-cap error and the
+    doctor name the setting actually in effect without inferring it from the
+    caller (#1220). Still an ordinary 3-tuple everywhere it is unpacked."""
+    input_setting: str
+
+    def __new__(cls, triple, input_setting):
+        obj = super().__new__(cls, triple)
+        obj.input_setting = input_setting
+        return obj
+
+
+def _setting_of(resolved) -> str:
+    return getattr(resolved, "input_setting", "DAIMON_LLM_COMMAND_INPUT")
+
+
 def _resolve_command():
     """Resolve the command backend (command_str, output_spec, input_spec) or
     None.
@@ -627,9 +644,11 @@ def _resolve_command():
     command."""
     cmd = config.llm_command()
     if cmd:
-        return cmd, (config.llm_command_output() or "text"), config.llm_command_input()
+        return _Resolved((cmd, (config.llm_command_output() or "text"),
+                          config.llm_command_input()),
+                         "DAIMON_LLM_COMMAND_INPUT")
     if config.llm_backend().strip() == "claude-cli" and shutil.which("claude"):
-        return (*_CLAUDE_PRESET, "stdin")
+        return _Resolved((*_CLAUDE_PRESET, "stdin"), "DAIMON_LLM_COMMAND_INPUT")
     return None
 
 
@@ -649,9 +668,10 @@ def _resolve_fallback_command():
     asymmetry is the whole reason the overload had to be split."""
     cmd = config.llm_command_fallback()
     if cmd:
-        return (cmd,
-                (config.llm_command_fallback_output() or "text"),
-                config.llm_command_fallback_input())
+        return _Resolved((cmd,
+                          (config.llm_command_fallback_output() or "text"),
+                          config.llm_command_fallback_input()),
+                         "DAIMON_LLM_COMMAND_FALLBACK_INPUT")
     if resolve_backend()["backend"] not in ("command", "claude-cli"):
         return _resolve_command()
     return None
@@ -692,14 +712,6 @@ def command_missing_binary() -> str | None:
     return _missing_binary(cmd[0]) if cmd else None
 
 
-def _fallback_input_setting() -> str:
-    """The variable that chose the rescue's input mode: the explicit rescue
-    reads DAIMON_LLM_COMMAND_FALLBACK_INPUT, the #475 legacy shim (a litellm
-    primary falling back to DAIMON_LLM_COMMAND) reads DAIMON_LLM_COMMAND_INPUT."""
-    return ("DAIMON_LLM_COMMAND_FALLBACK_INPUT" if config.llm_command_fallback()
-            else "DAIMON_LLM_COMMAND_INPUT")
-
-
 def prompt_bytes(messages) -> int:
     """The size of the prompt a command backend receives for `messages`: the
     same flatten and the same utf-8 byte count _apply_input_spec checks, so a
@@ -725,36 +737,38 @@ def input_limits() -> list:
         cmd = _resolve_command()
         if cmd is not None:
             out.append({"role": "primary", "command": cmd[0],
-                        "setting": "DAIMON_LLM_COMMAND_INPUT",
+                        "setting": _setting_of(cmd),
                         "input": cmd[2], "limit": _limit(cmd[2])})
     fallback = _resolve_fallback_command()
     if (config.llm_fallback() and fallback is not None
             and not _missing_binary(fallback[0])):
         out.append({"role": "rescue",
                     "command": fallback[0],
-                    "setting": _fallback_input_setting(),
+                    "setting": _setting_of(fallback),
                     "input": fallback[2], "limit": _limit(fallback[2])})
     return out
 
 
-def _binding_limit():
-    """The tightest limit in the chain (primary wins a tie), or None."""
-    bound = [x for x in input_limits() if x["limit"] is not None]
-    return min(bound, key=lambda x: x["limit"]) if bound else None
+def _limit_for(role: str):
+    for x in input_limits():
+        if x["role"] == role and x["limit"] is not None:
+            return x
+    return None
 
 
-def prompt_budget_bytes() -> int | None:
-    """The largest prompt every backend in the configured chain can serve, or
-    None when none is bounded. A prompt over this cannot be served by the
-    rescue, so the primary would spend its whole timeout for nothing (#1220)."""
-    b = _binding_limit()
-    return b["limit"] if b else None
+def primary_prompt_limit():
+    """The primary's bounded input limit ({"limit", "setting", "command", ...})
+    or None. A HARD cap: a prompt over it cannot be served by the backend that
+    runs first, so nothing can serve it (#1220)."""
+    return _limit_for("primary")
 
 
-def prompt_budget_setting() -> str | None:
-    """The variable to change to lift prompt_budget_bytes(), or None."""
-    b = _binding_limit()
-    return b["setting"] if b else None
+def rescue_prompt_limit():
+    """The rescue's bounded input limit or None (unbounded, or no rescue that
+    would run). A SOFT cap: a prompt over it still runs on the primary, it
+    just has no rescue. Prompts a caller can choose the size of (merges) are
+    sized to it (#1220)."""
+    return _limit_for("rescue")
 
 
 def _extract_output(stdout, output_spec):
@@ -896,11 +910,8 @@ def _chat_command(messages, deadline, resolved=None):
     primary — that is how the #475 rescue runs the FALLBACK's own specs
     rather than the primary's.
 
-    A supplied `resolved` is always the rescue's triple (`_rescue` is the only
-    caller that passes one), so it also decides which variable the arg-cap
-    error names: the one that chose THIS backend's input mode (#1220)."""
-    input_setting = (_fallback_input_setting() if resolved is not None
-                     else "DAIMON_LLM_COMMAND_INPUT")
+    The arg-cap error names the variable the resolved triple carries: the one
+    that chose THIS backend's input mode (#1220)."""
     if resolved is None:
         resolved = _resolve_command()
     if not resolved:
@@ -921,7 +932,7 @@ def _chat_command(messages, deadline, resolved=None):
     cwd = tempfile.mkdtemp(prefix="daimon-cli-")
     try:
         argv, stdin_text = _apply_input_spec(
-            argv, prompt_text, input_spec, cwd, input_setting)
+            argv, prompt_text, input_spec, cwd, _setting_of(resolved))
         try:
             rc, out, err = _run_command(argv, stdin_text, timeout, env, cwd)
         except FileNotFoundError:

@@ -68,10 +68,6 @@ def rescue_arg(monkeypatch):
     return monkeypatch
 
 
-def _prompt_sizes(chat):
-    return [llm.prompt_bytes(c) for c in chat.calls]
-
-
 # ---- the control: the order that makes a late cap check expensive ----
 
 def test_arg_cap_is_checked_only_after_the_primary_has_run(rescue_arg):
@@ -110,155 +106,283 @@ def test_cap_error_names_the_setting_the_primary_reads(monkeypatch):
     assert "DAIMON_LLM_COMMAND_FALLBACK_INPUT" not in str(ei.value)
 
 
-# ---- llm.prompt_budget_bytes: one number for the configured chain ----
+# ---- llm: two limits, one per role ----
 
-def test_budget_is_none_with_no_arg_mode_anywhere(monkeypatch):
+def _limit(x):
+    return None if x is None else (x["limit"], x["setting"])
+
+
+def test_no_limits_with_no_arg_mode_anywhere(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "fakeprimary")
     monkeypatch.setattr(llm, "_missing_binary", lambda b: None)
-    assert llm.prompt_budget_bytes() is None
-    assert llm.prompt_budget_setting() is None
+    assert llm.primary_prompt_limit() is None
+    assert llm.rescue_prompt_limit() is None
 
 
-def test_budget_none_for_file_mode_rescue(rescue_arg):
+def test_file_mode_rescue_has_no_limit(rescue_arg):
     rescue_arg.setenv("DAIMON_LLM_COMMAND_FALLBACK_INPUT", "file:--prompt-file")
-    assert llm.prompt_budget_bytes() is None
+    assert llm.rescue_prompt_limit() is None
 
 
-def test_budget_is_the_cap_for_an_arg_mode_rescue(rescue_arg):
-    assert llm.prompt_budget_bytes() == llm._ARG_MAX_BYTES
-    assert llm.prompt_budget_setting() == "DAIMON_LLM_COMMAND_FALLBACK_INPUT"
+def test_arg_mode_rescue_is_a_rescue_limit_only(rescue_arg):
+    assert llm.primary_prompt_limit() is None
+    assert _limit(llm.rescue_prompt_limit()) == (
+        llm._ARG_MAX_BYTES, "DAIMON_LLM_COMMAND_FALLBACK_INPUT")
 
 
-def test_budget_is_the_cap_for_an_arg_mode_primary(monkeypatch):
+def test_arg_mode_primary_is_a_primary_limit_only(monkeypatch):
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "fakeprimary")
     monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
     monkeypatch.setattr(llm, "_missing_binary", lambda b: None)
-    assert llm.prompt_budget_bytes() == llm._ARG_MAX_BYTES
-    assert llm.prompt_budget_setting() == "DAIMON_LLM_COMMAND_INPUT"
+    assert _limit(llm.primary_prompt_limit()) == (
+        llm._ARG_MAX_BYTES, "DAIMON_LLM_COMMAND_INPUT")
+    assert llm.rescue_prompt_limit() is None
 
 
-def test_budget_ignores_a_rescue_that_cannot_run(rescue_arg):
+def test_rescue_limit_ignores_a_rescue_that_cannot_run(rescue_arg):
     rescue_arg.setattr(llm, "_missing_binary", lambda b: "fakerescue")
-    assert llm.prompt_budget_bytes() is None
+    assert llm.rescue_prompt_limit() is None
     rescue_arg.setattr(llm, "_missing_binary", lambda b: None)
     rescue_arg.setenv("DAIMON_LLM_FALLBACK", "0")
-    assert llm.prompt_budget_bytes() is None
+    assert llm.rescue_prompt_limit() is None
 
 
-def test_budget_names_the_legacy_shim_setting_for_a_litellm_primary(monkeypatch):
+def test_legacy_shim_rescue_names_the_command_input_setting(monkeypatch):
     # A litellm primary with no explicit rescue falls back to DAIMON_LLM_COMMAND,
     # whose input mode is DAIMON_LLM_COMMAND_INPUT.
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setenv("DAIMON_LLM_COMMAND", "fakerescue -p")
     monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
     monkeypatch.setattr(llm, "_missing_binary", lambda b: None)
-    assert llm.prompt_budget_bytes() == llm._ARG_MAX_BYTES
-    assert llm.prompt_budget_setting() == "DAIMON_LLM_COMMAND_INPUT"
+    assert llm.primary_prompt_limit() is None
+    assert _limit(llm.rescue_prompt_limit()) == (
+        llm._ARG_MAX_BYTES, "DAIMON_LLM_COMMAND_INPUT")
 
 
-def test_budget_binding_setting_is_the_smaller_limit(rescue_arg):
+def test_both_arg_each_role_names_its_own_setting(rescue_arg):
     rescue_arg.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
-    assert llm.prompt_budget_bytes() == llm._ARG_MAX_BYTES
-    # ties go to the primary, which runs first
-    assert llm.prompt_budget_setting() == "DAIMON_LLM_COMMAND_INPUT"
-    limits = {x["role"]: x for x in llm.input_limits()}
-    assert limits["rescue"]["setting"] == "DAIMON_LLM_COMMAND_FALLBACK_INPUT"
-    assert limits["primary"]["limit"] == limits["rescue"]["limit"] == llm._ARG_MAX_BYTES
+    assert llm.primary_prompt_limit()["setting"] == "DAIMON_LLM_COMMAND_INPUT"
+    assert llm.rescue_prompt_limit()["setting"] == "DAIMON_LLM_COMMAND_FALLBACK_INPUT"
+
+
+def test_resolved_triple_stays_a_plain_triple_and_carries_its_setting(rescue_arg):
+    fb = llm._resolve_fallback_command()
+    cmd, out, inp = fb
+    assert (cmd, out, inp) == ("fakerescue -p", "text", "arg")
+    assert fb == ("fakerescue -p", "text", "arg")
+    assert llm._setting_of(fb) == "DAIMON_LLM_COMMAND_FALLBACK_INPUT"
+    assert llm._setting_of(llm._resolve_command()) == "DAIMON_LLM_COMMAND_INPUT"
 
 
 def test_prompt_bytes_measures_what_exec_measures():
-    msgs = [{"role": "system", "content": "sys é"},
+    msgs = [{"role": "system", "content": "sys \u00e9"},
             {"role": "user", "content": "body"}]
     assert llm.prompt_bytes(msgs) == len(llm._flatten_messages(msgs).encode("utf-8"))
 
 
-# ---- merge grouping: the tree gets deeper instead of failing ----
+def _rescue_spy(monkeypatch):
+    """Primary fails (empty rc=1); records every exec so a rescue exec shows."""
+    execs = []
 
-def test_merge_prompts_never_exceed_the_rescue_cap(chunked, rescue_arg):
-    ms = _msgs(24)
-    nchunks = len(serializer.chunk_transcript(serializer._render_transcript(ms), 4, 0))
-    chat = _Script(lambda n, m: _blob_partial(30_000) if n <= nchunks else _good())
-    serializer.serialize_strict("S1", ms, chat=chat)
-    assert max(_prompt_sizes(chat)) <= llm._ARG_MAX_BYTES
-    assert len(chat.calls) > nchunks + 1        # more than one merge: the tree got deeper
-
-
-def test_merge_without_a_budget_keeps_the_configured_group_size(chunked):
-    ms = _msgs(24)
-    nchunks = len(serializer.chunk_transcript(serializer._render_transcript(ms), 4, 0))
-    chat = _Script(lambda n, m: _blob_partial(30_000) if n <= nchunks else _good())
-    serializer.serialize_strict("S1", ms, chat=chat)
-    assert len(chat.calls) == nchunks + 1       # one merge of every partial, unchanged
+    def run(argv, stdin, timeout, env, cwd):
+        execs.append(argv[0])
+        return 1, "", "boom"
+    monkeypatch.setattr(llm, "_run_command", run)
+    return execs
 
 
-def test_unfittable_merge_pair_fails_before_any_merge_call(chunked, rescue_arg):
-    ms = _msgs(24)
-    nchunks = len(serializer.chunk_transcript(serializer._render_transcript(ms), 4, 0))
-    chat = _Script(lambda n, m: _blob_partial(60_000) if n <= nchunks else _good())
-    with pytest.raises(serializer.PromptTooLargeError) as ei:
+# ---- the regression: a rescue must not break a run the primary can serve ----
+
+def test_primary_stdin_big_chunk_proceeds_without_a_rescue(chunked, rescue_arg, caplog):
+    ms = _msgs(8, content="z" * 60_000)         # ~240 KB per chunk prompt
+    chat = _Script(lambda n, m: _good())
+    with caplog.at_level("WARNING"):
         serializer.serialize_strict("S1", ms, chat=chat)
-    assert len(chat.calls) == nchunks            # no merge call was made
-    msg = str(ei.value)
-    assert "merge level 1" in msg
-    assert "DAIMON_LLM_COMMAND_FALLBACK_INPUT" in msg
+    assert chat.calls                            # the primary served the chunks
+    warned = [r.getMessage() for r in caplog.records
+              if "runs without a rescue" in r.getMessage()]
+    assert any("chunk 1 of" in w and "DAIMON_LLM_COMMAND_FALLBACK_INPUT" in w
+               for w in warned)
+
+
+def test_single_pass_and_perspective_proceed_without_a_rescue(monkeypatch, rescue_arg, caplog):
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = _Script(lambda n, m: _good())
+    with caplog.at_level("WARNING"):
+        serializer.serialize_strict("S1", _msgs(4, content="z" * 60_000), chat=chat)
+    assert len(chat.calls) == 1
+    assert "transcript: prompt is" in caplog.text
+
+
+def test_perspective_pass_proceeds_without_a_rescue(chunked, rescue_arg, caplog):
+    chat = _Script(lambda n, m: _good())
+    with caplog.at_level("WARNING"):
+        serializer.serialize_strict("S1", _msgs(8, content="z" * 60_000),
+                                    chat=chat, escalate=True)
+    assert "perspective" in caplog.text and "runs without a rescue" in caplog.text
+
+
+def test_no_rescue_exec_for_a_call_the_rescue_would_refuse(rescue_arg):
+    execs = _rescue_spy(rescue_arg)
+    big = "z" * 120_000
+
+    def chat(messages, **kw):
+        return llm._chat_command(messages, kw.get("deadline"))
+    rescue_arg.setattr(llm, "rescue_unparseable",
+                       lambda *a, **k: pytest.fail("rescue must not run"))
+    with pytest.raises(serializer.LLMCallError):
+        serializer._call_and_parse(chat, "sys", big, None, "chunk 1 of 1")
+    assert execs == ["fakeprimary"]
+
+
+def test_unparseable_output_skips_a_rescue_that_would_refuse(rescue_arg):
+    rescue_arg.setattr(llm, "rescue_unparseable",
+                       lambda *a, **k: pytest.fail("rescue must not run"))
+    calls = []
+
+    def prose(messages, **kw):
+        calls.append(1)
+        return "not json"
+    with pytest.raises(serializer.OutputParseError):
+        serializer._call_and_parse(prose, "sys", "z" * 120_000, None, "chunk 1 of 1")
+    assert len(calls) == 2                       # primary + its one retry only
+
+
+def test_a_prompt_the_rescue_can_serve_still_reaches_the_rescue(rescue_arg):
+    seen = []
+    rescue_arg.setattr(llm, "rescue_unparseable",
+                       lambda msgs, dl: seen.append(1) or json.dumps(_good()))
+    out = serializer._call_and_parse(lambda m, **k: "not json", "sys", "small",
+                                     None, "chunk 1 of 1")
+    assert seen and out["working_context"]
+
+
+# ---- primary arg: a hard cap on every prompt ----
+
+@pytest.fixture
+def primary_arg(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "fakeprimary")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_INPUT", "arg")
+    monkeypatch.setattr(llm, "_missing_binary", lambda b: None)
+    return monkeypatch
+
+
+def test_oversized_chunk_prompt_fails_before_any_call_with_a_primary_cap(chunked, primary_arg):
+    chat = _Script(lambda n, m: _good())
+    with pytest.raises(serializer.PromptTooLargeError) as ei:
+        serializer.serialize_strict("S1", _msgs(8, content="z" * 60_000), chat=chat)
+    assert chat.calls == []
+    assert "chunk" in str(ei.value)
+    assert "DAIMON_LLM_COMMAND_INPUT" in str(ei.value)
+    assert "FALLBACK" not in str(ei.value)
     assert isinstance(ei.value, serializer.LLMCallError)
 
 
-# ---- chunk, single-pass and perspective prompts ----
-
-def test_oversized_chunk_prompt_fails_before_any_backend_call(chunked, rescue_arg):
-    ms = _msgs(8, content="z" * 60_000)         # 4 lines per chunk: ~240 KB
-    chat = _Script(lambda n, m: _good())
-    with pytest.raises(serializer.PromptTooLargeError) as ei:
-        serializer.serialize_strict("S1", ms, chat=chat)
-    assert chat.calls == []
-    assert "chunk" in str(ei.value)
-    assert "DAIMON_LLM_COMMAND_FALLBACK_INPUT" in str(ei.value)
-
-
-def test_oversized_single_pass_prompt_fails_before_any_backend_call(monkeypatch, rescue_arg):
+def test_oversized_single_pass_and_perspective_fail_up_front(monkeypatch, primary_arg):
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
-    ms = _msgs(4, content="z" * 60_000)
     chat = _Script(lambda n, m: _good())
     with pytest.raises(serializer.PromptTooLargeError) as ei:
-        serializer.serialize_strict("S1", ms, chat=chat)
-    assert chat.calls == []
+        serializer.serialize_strict("S1", _msgs(4, content="z" * 60_000), chat=chat)
     assert "transcript" in str(ei.value)
-
-
-def test_oversized_perspective_pass_fails_before_any_backend_call(chunked, rescue_arg):
-    ms = _msgs(8, content="z" * 60_000)
-    chat = _Script(lambda n, m: _good())
+    monkeypatch.setenv("DAIMON_CHUNK_LINES", "4")
     with pytest.raises(serializer.PromptTooLargeError) as ei:
-        serializer.serialize_strict("S1", ms, chat=chat, escalate=True)
-    assert chat.calls == []
+        serializer.serialize_strict("S1", _msgs(8, content="z" * 60_000),
+                                    chat=chat, escalate=True)
     assert "perspective" in str(ei.value)
+    assert chat.calls == []
 
 
-def test_a_small_prompt_is_not_blocked_by_the_budget(monkeypatch, rescue_arg):
+def test_a_small_prompt_is_not_blocked_by_either_limit(monkeypatch, rescue_arg):
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
     chat = _Script(lambda n, m: _good())
     serializer.serialize_strict("S1", _msgs(4), chat=chat)
     assert len(chat.calls) == 1
 
 
+# ---- merge grouping: the tree gets deeper instead of failing ----
+
+def _six_chunk_session(blob):
+    ms = _msgs(24)
+    n = len(serializer.chunk_transcript(serializer._render_transcript(ms), 4, 0))
+    chat = _Script(lambda i, m: _blob_partial(blob) if i <= n else _good())
+    return ms, n, chat
+
+
+def test_merge_prompts_never_exceed_the_rescue_cap(chunked, rescue_arg):
+    ms, n, chat = _six_chunk_session(30_000)
+    serializer.serialize_strict("S1", ms, chat=chat)
+    assert max(llm.prompt_bytes(c) for c in chat.calls[n:]) <= llm._ARG_MAX_BYTES
+    assert len(chat.calls) > n + 1               # more than one merge: deeper tree
+
+
+def test_merge_without_a_limit_keeps_the_configured_group_size(chunked):
+    ms, n, chat = _six_chunk_session(30_000)
+    serializer.serialize_strict("S1", ms, chat=chat)
+    assert len(chat.calls) == n + 1
+
+
+def test_merge_with_no_pair_under_the_rescue_cap_runs_under_the_primary_cap(
+        chunked, rescue_arg, caplog):
+    # Primary is unbounded: pairs of 60 KB partials do not fit the rescue cap
+    # but the primary serves them, so the level proceeds and says so.
+    ms, n, chat = _six_chunk_session(60_000)
+    with caplog.at_level("WARNING"):
+        serializer.serialize_strict("S1", ms, chat=chat)
+    assert len(chat.calls) > n                   # merges ran
+    assert "merge level 1" in caplog.text and "runs without a rescue" in caplog.text
+
+
+def test_merge_groups_fit_a_primary_cap_alone(chunked, primary_arg):
+    ms, n, chat = _six_chunk_session(30_000)
+    serializer.serialize_strict("S1", ms, chat=chat)
+    assert max(llm.prompt_bytes(c) for c in chat.calls[n:]) <= llm._ARG_MAX_BYTES
+
+
+def test_no_pair_under_the_primary_cap_fails_before_any_merge_call(chunked, primary_arg):
+    ms, n, chat = _six_chunk_session(60_000)
+    with pytest.raises(serializer.PromptTooLargeError) as ei:
+        serializer.serialize_strict("S1", ms, chat=chat)
+    assert len(chat.calls) == n                  # no merge call was made
+    assert "merge level 1" in str(ei.value)
+    assert "DAIMON_LLM_COMMAND_INPUT" in str(ei.value)
+
+
+def test_every_merge_level_shrinks_or_raises(chunked, rescue_arg, monkeypatch):
+    # Termination: with partials too big for any pair, the level is grouped
+    # under the (absent) primary cap, i.e. by count, and the list shrinks.
+    partials = [_blob_partial(60_000) for _ in range(5)]
+    groups = serializer._merge_groups("S1", partials, 3, "", 1)
+    assert any(len(g) > 1 for g in groups)
+    assert [p for g in groups for p in g] == partials   # order kept
+
+
 # ---- the doctor view ----
 
-def test_configure_status_carries_the_chain_limits_from_llm(rescue_arg):
+def test_configure_status_carries_the_limits_from_llm(rescue_arg):
     st = configure.status()
-    assert st["prompt_budget_bytes"] == llm.prompt_budget_bytes()
     assert st["prompt_limits"] == llm.input_limits()
+    assert st["prompt_hard_limit"] is None
+    assert st["prompt_rescue_limit"] == llm.rescue_prompt_limit()["limit"]
 
 
-def test_doctor_warns_when_a_backend_in_the_chain_is_in_arg_mode(rescue_arg, capsys):
+def test_doctor_says_what_an_arg_mode_rescue_means(rescue_arg, capsys):
     render._plain_configure(configure.status())
     out = capsys.readouterr().out
-    assert "arg mode" in out
-    assert "fakerescue" in out
+    assert "rescue command (fakerescue -p) is in arg mode" in out
+    assert "merges are sized to 100000 bytes" in out
+    assert "without a rescue" in out
     assert "DAIMON_LLM_COMMAND_FALLBACK_INPUT" in out
-    assert str(llm._ARG_MAX_BYTES) in out
+
+
+def test_doctor_says_what_an_arg_mode_primary_means(primary_arg, capsys):
+    render._plain_configure(configure.status())
+    out = capsys.readouterr().out
+    assert "primary command (fakeprimary) is in arg mode" in out
+    assert "fails before any call" in out
+    assert "DAIMON_LLM_COMMAND_INPUT" in out
 
 
 def test_doctor_is_silent_without_an_arg_mode_backend(monkeypatch, capsys):

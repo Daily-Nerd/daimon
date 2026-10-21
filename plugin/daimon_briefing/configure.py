@@ -74,7 +74,8 @@ def status() -> dict:
         # numbers the serializer sizes prompts by). Advisory only: ready
         # semantics are unchanged, exactly like the #747 fields above.
         "prompt_limits": llm.input_limits(),
-        "prompt_budget_bytes": llm.prompt_budget_bytes(),
+        "prompt_hard_limit": (llm.primary_prompt_limit() or {}).get("limit"),
+        "prompt_rescue_limit": (llm.rescue_prompt_limit() or {}).get("limit"),
         "env_file": str(config._env_file_path()),
         "env_file_exists": config._env_file_path().exists(),
     }
