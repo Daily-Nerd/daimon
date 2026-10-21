@@ -27,14 +27,14 @@ jobs:
       # and expires in about an hour. No fallback: without APP_ID and
       # APP_PRIVATE_KEY this step fails, rather than opening an unsigned
       # release PR that main refuses.
-      - uses: actions/create-github-app-token@v1
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         id: app-token
         with:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - id: rp
-        uses: googleapis/release-please-action@v5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
           # config-file + manifest so extra-files keep plugin/pyproject.toml,
           # .claude-plugin/plugin.json and marketplace.json in version lock-step.
@@ -51,10 +51,10 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       # the package lives in plugin/, not the repo root
       - run: uv build --project plugin -o dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
