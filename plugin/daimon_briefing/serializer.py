@@ -95,6 +95,11 @@ class LLMCallError(SerializeError):
     pass
 
 
+class PromptTooLargeError(LLMCallError):
+    """A prompt the configured backend chain cannot serve (#1220). Raised
+    BEFORE any backend runs, naming the call and the setting to change."""
+
+
 class OutputParseError(SerializeError):
     pass
 
@@ -1816,6 +1821,23 @@ def pin_imperatives(checkpoint, messages) -> int:
     return pinned
 
 
+def _check_prompt_budget(messages, what: str) -> None:
+    """Refuse, before any backend runs, a prompt the configured chain cannot
+    serve (#1220). The budget is llm's: the smallest input limit across the
+    primary and the rescue. A prompt over it would burn the primary's whole
+    timeout and then be refused by the rescue at exec, so the call fails here,
+    named, with the one setting that lifts the limit."""
+    budget = llm.prompt_budget_bytes()
+    if budget is None:
+        return
+    size = llm.prompt_bytes(messages)
+    if size > budget:
+        raise PromptTooLargeError(
+            f"{what}: the prompt is {size} bytes, over the {budget}-byte limit "
+            f"of the configured LLM chain (arg-mode command input) - set "
+            f"{llm.prompt_budget_setting()} to file:<flag> or stdin")
+
+
 def _call_and_parse(chat, system, user_content, deadline, what: str,
                     parse_retries: int = 1) -> dict:
     """One LLM call -> parsed JSON dict, with named failures.
@@ -1899,12 +1921,14 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 return None
             return parsed_rescue if field_table.partial_reason(parsed_rescue) is None else None
 
+        request = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
+        _check_prompt_budget(request, what)
         try:
             raw = chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": content},
-                ],
+                request,
                 # No temperature pinned here: config.llm_temperature() governs
                 # (default 0.0 for deterministic extraction; DAIMON_LLM_TEMPERATURE
                 # overrides for upstreams that reject non-default values).
@@ -2214,12 +2238,69 @@ def purge_chunk_cache():
     return purged, error
 
 
+# Room a merge group leaves for the retry marker _call_and_parse appends on a
+# second attempt, so a group that fits on attempt 1 still fits on attempt 2.
+_RETRY_HEADROOM_BYTES = 1024
+
+
+def _merge_messages(session_id: str, group: list, attempt_note: str) -> list:
+    """The exact request one merge call sends. Grouping measures this same
+    object, so the size it splits on is the size that goes out (#1220)."""
+    return [
+        {"role": "system", "content": _merge_sys()},
+        {"role": "user", "content":
+            f"session_id: {session_id}\n\n"
+            f"PARTIAL CHECKPOINTS (JSON array, one per chunk, in chronological order):\n"
+            f"{json.dumps(group, ensure_ascii=False)}"
+            f"{attempt_note}"},
+    ]
+
+
+def _merge_groups(session_id: str, partials: list, k: int, attempt_note: str,
+                  level: int) -> list:
+    """Consecutive merge groups of at most `k`, each small enough to serve.
+
+    Without a budget (no arg-mode backend in the chain) this is plain count
+    grouping. With one, a group is closed as soon as adding the next partial
+    would push its merge request past the budget, so a long session gets a
+    deeper tree instead of a request the rescue cannot take (#1220). Order is
+    kept: groups are consecutive runs of `partials`.
+
+    Terminates: every level either shrinks the list (some group holds two or
+    more partials) or raises here. When no adjacent pair fits, nothing can be
+    merged at all and the error names the call and the setting before a
+    single merge request is sent."""
+    budget = llm.prompt_budget_bytes()
+    if budget is None:
+        return [partials[i:i + k] for i in range(0, len(partials), k)]
+    limit = budget - _RETRY_HEADROOM_BYTES
+
+    def fits(group):
+        return llm.prompt_bytes(_merge_messages(session_id, group, attempt_note)) <= limit
+
+    groups: list = []
+    current: list = []
+    for part in partials:
+        if current and (len(current) >= k or not fits(current + [part])):
+            groups.append(current)
+            current = []
+        current.append(part)
+    groups.append(current)
+    if len(partials) > 1 and all(len(g) == 1 for g in groups):
+        raise PromptTooLargeError(
+            f"merge level {level}: no two partial checkpoints fit in one "
+            f"merge request under the {budget}-byte limit - set "
+            f"{llm.prompt_budget_setting()} to file:<flag> or stdin")
+    return groups
+
+
 def _merge_partials(chat, session_id: str, partials: list, deadline,
                     attempt_note: str = "") -> dict:
     """Hierarchically merge partial checkpoints into one, K partials at a time.
 
     Splits partials into CONSECUTIVE groups of config.merge_group_size() on each
-    level; singletons pass through unchanged — no LLM call. Groups within a level
+    level (fewer when the configured chain's prompt budget demands it, #1220);
+    singletons pass through unchanged — no LLM call. Groups within a level
     run concurrently (same ThreadPoolExecutor pattern as chunk fan-out). Continues
     until a single partial remains, which is the merged result.
 
@@ -2231,7 +2312,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
     level = 0
     while len(partials) > 1:
         level += 1
-        groups = [partials[i:i + K] for i in range(0, len(partials), K)]
+        groups = _merge_groups(session_id, partials, K, attempt_note, level)
         n_groups = len(groups)
         log.info("merge level %d: %d group(s)", level, n_groups)
 
@@ -2242,12 +2323,9 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
                 return group[0]
             ledger.touch_heartbeat(session_id)  # #342: alive, merging
             t0 = time.monotonic()
+            request = _merge_messages(session_id, group, attempt_note)
             merged = _call_and_parse(
-                chat, _merge_sys(),
-                f"session_id: {session_id}\n\n"
-                f"PARTIAL CHECKPOINTS (JSON array, one per chunk, in chronological order):\n"
-                f"{json.dumps(group, ensure_ascii=False)}"
-                f"{attempt_note}",
+                chat, request[0]["content"], request[1]["content"],
                 deadline, f"merge level {_level}, group {g + 1} of {_n_groups}",
             )
             log.info("merge level %d, group %d/%d done in %.0fs",

@@ -822,9 +822,29 @@ def _fallback_binary_warning(st: dict) -> str | None:
             f"({st.get('fallback_command')}) cannot run; fix {knob}")
 
 
+def _prompt_budget_warning(st: dict) -> str | None:
+    """#1220: a backend in the chain that takes its prompt as an argument
+    cannot serve a large one, and the serializer sizes every prompt to the
+    smallest such limit. The line names that backend, the budget it leaves and
+    the variable to change; every number is the one llm computed (the status
+    snapshot carries it), never a second derivation here."""
+    budget = st.get("prompt_budget_bytes")
+    if budget is None:
+        return None
+    bound = [x for x in st.get("prompt_limits") or [] if x.get("limit") == budget]
+    if not bound:
+        return None
+    x = bound[0]
+    return (f"⚠ {x['role']} command ({x['command']}) is in arg mode: prompts "
+            f"are limited to {budget} bytes, so long sessions merge in smaller "
+            f"groups and one oversized chunk fails; set {x['setting']} to "
+            f"file:<flag> or stdin to lift it")
+
+
 def _configure_warnings(st: dict) -> list:
     return [w for w in (_command_binary_warning(st),
-                        _fallback_binary_warning(st)) if w]
+                        _fallback_binary_warning(st),
+                        _prompt_budget_warning(st)) if w]
 
 
 def _plain_configure(st: dict) -> None:
