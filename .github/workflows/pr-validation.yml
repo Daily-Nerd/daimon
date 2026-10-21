@@ -164,8 +164,15 @@ jobs:
           '
 
       - name: Check Branch Name
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          branch="${{ github.head_ref }}"
+          branch="$HEAD_REF"
+          # Dependabot names its own branches dependabot/<ecosystem>/... and
+          # they cannot be renamed; its PRs still go through every other check.
+          if [[ "$branch" == dependabot/* ]]; then
+            exit 0
+          fi
           if ! grep -qE '^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)/[a-z0-9._-]+$' <<<"$branch"; then
             echo "::error::Branch name must match type/description (lowercase, a-z0-9._-)"
             exit 1
