@@ -5,6 +5,36 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.59.0](https://github.com/Daily-Nerd/daimon/compare/v0.58.0...v0.59.0) (2026-10-21)
+
+
+### Features
+
+* **rulings:** ruling rows say when they are no longer as ratified ([#1207](https://github.com/Daily-Nerd/daimon/issues/1207)) ([d5a3807](https://github.com/Daily-Nerd/daimon/commit/d5a3807a22df5dbbc52f93750427c0052aa2e160))
+* **rulings:** say when an enforcement value of a ruling is withheld ([c32ba12](https://github.com/Daily-Nerd/daimon/commit/c32ba1205c4d06ade9b007f31d8e1ca5cb1b24d3))
+
+
+### Bug Fixes
+
+* **checks:** build armed checks and the guard only from values a reader may see ([#1210](https://github.com/Daily-Nerd/daimon/issues/1210)) ([0dc1334](https://github.com/Daily-Nerd/daimon/commit/0dc1334426cca78529ab91c5ed4e703f8b4c9420))
+* **checks:** build the armed-check manifest and the guard from rows a reader may see ([fbbf0e7](https://github.com/Daily-Nerd/daimon/commit/fbbf0e7f172f5cf6733958f071ab5ac6980732c3))
+* **config:** resolve the git user name once per process instead of once per stamped row ([#1204](https://github.com/Daily-Nerd/daimon/issues/1204)) ([b717182](https://github.com/Daily-Nerd/daimon/commit/b7171829d03f2b1c5f8c437bc34400a8e20aea7f))
+* **config:** resolve the git user name once per process per working directory ([63c99f5](https://github.com/Daily-Nerd/daimon/commit/63c99f55728445ae9cab864e73e9c32cfa701646))
+* **heal:** retry marker carries project and transcript, fold reads them over the long window ([040da7a](https://github.com/Daily-Nerd/daimon/commit/040da7a65e64dfc4dd281bf4a0e38f41388033c2))
+* **heal:** retry marker carries project and transcript, fold reads them over the long window ([#1215](https://github.com/Daily-Nerd/daimon/issues/1215)) ([5ea0c1a](https://github.com/Daily-Nerd/daimon/commit/5ea0c1a0cca11c94a732870829d590ed445183da))
+* **refutations:** judge visible values in the view instead of diffing masked rows ([b1ceee6](https://github.com/Daily-Nerd/daimon/commit/b1ceee6ce81d513b8e69c00ab766592617e747b6))
+* **refutations:** match refute search over the values a reader may see ([444d636](https://github.com/Daily-Nerd/daimon/commit/444d636ddf368eae33e3282092d007e41fe04ca0))
+* **refutations:** match refute search over the values a reader may see ([#1212](https://github.com/Daily-Nerd/daimon/issues/1212)) ([fbd3480](https://github.com/Daily-Nerd/daimon/commit/fbd34809d0af209e1cdb73effb9fdafb9e3e47f6))
+* **serialize:** reject a model dict with the wrong envelope shape at the parse boundary ([ea40e26](https://github.com/Daily-Nerd/daimon/commit/ea40e2632e2972f9d5fef0a58793fcd5aff6f494))
+* **serialize:** reject a partial with the wrong envelope shape at the parse boundary ([#1219](https://github.com/Daily-Nerd/daimon/issues/1219)) ([539066d](https://github.com/Daily-Nerd/daimon/commit/539066d76ae2a6a2230917a27c37f751b57b6c4c))
+* **serialize:** reject misplaced envelope fields, accept an absent block in a partial ([2f7991c](https://github.com/Daily-Nerd/daimon/commit/2f7991c8309f367386c6a6e319c060bae858e61d))
+
+
+### Documentation
+
+* add SECURITY.md with private vulnerability reporting ([a5ba745](https://github.com/Daily-Nerd/daimon/commit/a5ba7452c3e9859cfc4eb47b98ca04dd0c598070))
+* **scars:** candidate for subprocess helpers that gain per-row callers ([6670bd2](https://github.com/Daily-Nerd/daimon/commit/6670bd24349bc83951a29be7a115f6a7e6680de5))
+
 ## [0.58.0](https://github.com/Daily-Nerd/daimon/compare/v0.57.0...v0.58.0) (2026-10-17)
 
 
