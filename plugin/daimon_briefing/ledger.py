@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, display, jsonl, store, transcript
+from . import config, display, jsonl, provenance, store, transcript
 
 
 def _append_serialize_log(line: str) -> None:
@@ -49,7 +49,8 @@ def _append_transcript_notes(session_id: str, notes) -> None:
         _append_serialize_log(f"note for {session_id}: {note}")
 
 
-def _append_retry_log(session_id: str, prior: str) -> None:
+def _append_retry_log(session_id: str, prior: str, project: str | None,
+                      transcript: str) -> None:
     """Mark a #26 heal retry in serialize.log BEFORE re-serializing. The line is
     a TIMESTAMPED spawn-style marker (matching the hook spawn-line stamp format)
     so `status` surfaces it AND the dedup check can find it later — one retry per
@@ -62,13 +63,21 @@ def _append_retry_log(session_id: str, prior: str) -> None:
     operator override past it (`_outstanding_failures`'s `force` param). This
     writer's format is unchanged either way: a forced retry appends the SAME
     marker shape, so a forced heal re-classifies as retry-exhausted again until
-    the next --force. Best-effort: never break a heal."""
+    the next --force. Best-effort: never break a heal.
+
+    The marker opens an attempt, so it carries the same routing facts a hook's
+    spawn line does, in the same groups (`project: <dir>` in the first parens,
+    `(transcript: <path>)` last; an unknown project is `?`, as the hooks write
+    it). Routing then never depends on one earlier spawn line staying inside
+    a window the fold reads (#1213)."""
     try:
         log_dir = config.log_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
-            f.write(f"{stamp} session-start: retry serialize for {session_id} (prior: {prior})\n")
+            f.write(f"{stamp} session-start: retry serialize for {session_id} "
+                    f"(reason: heal-retry, project: {project or '?'}) "
+                    f"(prior: {prior}) (transcript: {transcript})\n")
     except OSError:
         pass
 
@@ -210,6 +219,38 @@ def _has_checkpoint(sid: str) -> bool:
                for p in config.checkpoint_dir().glob("rollout-*.json"))
 
 
+def _spawn_routing(line: str) -> dict:
+    """The routing facts a spawn-style line carries: `project` (None for the
+    hooks' `?`) and `transcript`, each present only when the line has its group.
+    One reader for the fold and for the long-window pass that feeds it."""
+    facts: dict = {}
+    pm = _LEDGER_PROJECT_RE.search(line)
+    if pm:
+        raw = pm.group(1).strip()
+        facts["project"] = raw if (raw and raw != "?") else None
+    tm = _LEDGER_SPAWN_TRANSCRIPT_RE.search(line)
+    if tm:
+        facts["transcript"] = tm.group(1)
+    return facts
+
+
+def _routing_before_tail(lines: list, tail: int, text: str) -> dict:
+    """Session key -> routing facts of the spawn-style lines that precede the
+    last `tail` lines, read over the same long window the admission fold uses.
+    A busy log scrolls a session's spawn out of the tail while its retry and
+    error lines stay in; the facts the spawn line alone carried (project,
+    transcript) are recovered here, and the tail still decides everything
+    else (#1213)."""
+    window = _admission_window(text).splitlines()
+    facts: dict = {}
+    for line in window[:max(0, len(window) - tail)]:
+        m = _SPAWN_RE.match(line.strip())
+        if m:
+            facts.setdefault(_session_key(m.group(2)), {}).update(
+                _spawn_routing(line.strip()))
+    return facts
+
+
 def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
     """Fold serialize.log into per-session terminal state. Unlike
     _parse_serialize_log (last-of-each-kind, no pairing), this attributes every
@@ -220,17 +261,22 @@ def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
     `tail` is how many of the last lines are folded; `None` folds them all, for
     the admission pass, which must not lose a refusal to the 200-line window
     (D10.4). A refused admission carrying a `(session: <id>)` group is keyed by
-    that id rather than the transcript stem."""
+    that id rather than the transcript stem.
+
+    Routing facts (`project`, `transcript`) are the exception to the tail: a
+    session first met inside it is seeded with what its earlier spawn-style
+    lines said, read over the admission window (#1213)."""
     sessions: dict = {}
+    lines = text.splitlines()
+    earlier = {} if tail is None else _routing_before_tail(lines, tail, text)
 
     def _entry(sid: str) -> dict:
         return sessions.setdefault(sid, {
-            "spawned": False, "spawn_ts": None, "spawn_age": None, "project": None,
-            "result_kind": None, "result_line": None, "transcript": None,
-            "retried": False,
+            "spawned": False, "spawn_ts": None, "spawn_age": None,
+            "project": None, "result_kind": None, "result_line": None,
+            "transcript": None, "retried": False, **earlier.get(sid, {}),
         })
 
-    lines = text.splitlines()
     for line in lines if tail is None else lines[-tail:]:
         line = line.strip()
         m = _SPAWN_RE.match(line)
@@ -250,13 +296,7 @@ def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
                 e["spawn_age"] = int(now - e["spawn_ts"])
             except ValueError:
                 pass
-            pm = _LEDGER_PROJECT_RE.search(line)
-            if pm:
-                raw = pm.group(1).strip()
-                e["project"] = raw if (raw and raw != "?") else None
-            tm = _LEDGER_SPAWN_TRANSCRIPT_RE.search(line)
-            if tm:
-                e["transcript"] = tm.group(1)
+            e.update(_spawn_routing(line))
             if "retry serialize for" in line:
                 e["retried"] = True
             continue
@@ -355,7 +395,7 @@ def _is_admission_refusal(e) -> bool:
 def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exists,
                           force=False, heartbeat_age=None,
                           checkpoint_covers=None, admission_state=None,
-                          presumed_dead=None) -> list:
+                          presumed_dead=None, project_bound=None) -> list:
     """Sessions still LOST — no checkpoint AND latest state != success.
     `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
     stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
@@ -376,7 +416,17 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
     attempt becomes healable and a killed retry stops reading `repairing`. The
     predicate owns scope and proof of life (a stamp touched after the host's
     epoch still wins), so a true answer skips the heartbeat check below too.
-    None is the unchanged reading."""
+    None is the unchanged reading.
+
+    `project_bound(transcript) -> bool` (#1213) says a transcript is filed under
+    a project, so a checkpoint made from it belongs in that project's bucket.
+    A session that would be `healable` but whose project is unknown, for such a
+    transcript, is `project-unknown` instead: heal's runner routes a missing
+    project to the global dir, which is wrong for it. None skips the check."""
+    def routable(e) -> bool:
+        return (project_bound is None or e["project"] is not None
+                or not project_bound(e["transcript"]))
+
     out = []
     for sid, e in ledger.items():
         if e["result_kind"] in ("success", "skipped"):
@@ -409,6 +459,8 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                 cls = "healable"
             else:
                 cls = "unrecoverable"
+            if cls == "healable" and not routable(e):
+                cls = "project-unknown"
             item = {"sid": sid, "kind": "error", "class": cls, "age": age,
                     "age_str": _format_age(age) if age is not None else "unknown",
                     "transcript": e["transcript"], "project": e["project"],
@@ -450,12 +502,23 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             cls = ("healable"
                    if t and transcript_exists(t) and (not e["retried"] or force)
                    else "hung")
+            if cls == "healable" and not routable(e):
+                cls = "project-unknown"
             out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
                         "age_str": _format_age(age), "transcript": t,
                         "project": e["project"], "spawned": True, "line": None,
                         "retried": e["retried"]})
     out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
     return out
+
+
+def _project_bound(transcript) -> bool:
+    """Is this transcript filed under a project directory? Only a Claude Code
+    transcript is (`~/.claude/projects/<dir>/<session>.jsonl`); the other hosts
+    file theirs by date, workspace hash or not at all. The recognizer is the
+    one provenance uses to name the host, so the two cannot disagree (#1213)."""
+    return provenance.infer_host(
+        transcript, claude_projects=config.claude_projects_dir())[0] == "claude-code"
 
 
 def _slug_of(project) -> str:
@@ -615,6 +678,7 @@ def _scan_outstanding(text: str, now: float, force: bool = False,
         checkpoint_covers=checkpoint_covers,
         admission_state=state_of,
         presumed_dead=presumed_dead,
+        project_bound=_project_bound,
     )
     out = _outstanding_failures(_session_ledger(text, now), now, **common)
     long_fold = _admission_ledger(text, now)
@@ -629,6 +693,9 @@ _HEAL_SKIP_REASON = {
     "retry-exhausted": "retry already attempted, still failing (re-run with --force)",
     "unrecoverable": "no spawn record or transcript gone — cannot auto-heal",
     "hung": "spawned, no result (hung/killed) — transcript unavailable",
+    "project-unknown": ("project unknown for a transcript filed under a project "
+                        "— would be checkpointed to the global dir; re-run "
+                        "'daimon serialize <transcript> --project <dir>'"),
 }
 
 

@@ -1014,6 +1014,12 @@ def _outstanding_lines(outstanding) -> list:
             )
         elif f["class"] == "unrecoverable":
             lines.append(f"  - {f['sid']}  error {age} ago — transcript unavailable, cannot auto-heal")
+        elif f["class"] == "project-unknown":
+            # #1213: heal would file the checkpoint in the global dir, so it
+            # waits for a person to name the project.
+            lines.append(f"  - {f['sid']}  error {age} ago — project unknown, "
+                         "heal will not route it to the global dir "
+                         "(`daimon serialize <transcript> --project <dir>`)")
         elif f["class"] == "admission-refused":
             # D10.4: heal holds this back until the ledger reads again, so
             # "run heal" alone would send the reader in a circle.

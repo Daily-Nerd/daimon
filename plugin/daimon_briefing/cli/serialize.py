@@ -516,7 +516,7 @@ def _heal_target(sid, transcript, project, line) -> int | None:
     # A hung target has no result line (#34 made spawn-with-transcript hung
     # sessions healable) — the retry marker still needs a prior (#49).
     prior = (line or "hung: spawned, no result").split(" (transcript:")[0]
-    _cli._append_retry_log(sid, prior)
+    _cli._append_retry_log(sid, prior, project, transcript)
     # #360: the default retry re-runs the SAME extraction shape that already
     # failed. Opt-in escalation (DAIMON_HEAL_ESCALATION) re-serializes from
     # multiple perspectives instead — heal-path only, so the extra token cost

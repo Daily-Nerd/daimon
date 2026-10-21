@@ -13,7 +13,7 @@ from typing import NamedTuple
 
 from . import config, display, store
 from .ledger import (_ADMISSION_WINDOW_BYTES, _memoized_admission_state,
-                     _outstanding_failures, _session_key, _session_ledger,
+                     _outstanding_failures, _project_bound, _session_key, _session_ledger,
                      _slug_of, _checkpoint_stamp, heartbeat_index)
 
 
@@ -125,7 +125,8 @@ def serialize_rows_core(text, now, *, slug=None, sessions=None, since=None,
         """The classifier's verdict on one entry, checkpoints ignored."""
         found = _outstanding_failures(
             {key: entry}, now, lambda sid: False, ceiling, transcript_exists,
-            heartbeat_age=lambda sid: hb_age, admission_state=admission_state)
+            heartbeat_age=lambda sid: hb_age, admission_state=admission_state,
+            project_bound=_project_bound)
         return found[0] if found else None
 
     def row_for(key):
