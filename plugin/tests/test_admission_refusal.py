@@ -205,7 +205,7 @@ def test_heal_drains_a_refusal_only_once_the_ledger_is_proven(
     retried = []
     serialized = []
     monkeypatch.setattr(cli, "_append_retry_log",
-                        lambda sid, prior: retried.append(sid))
+                        lambda sid, prior, project, transcript: retried.append(sid))
     monkeypatch.setattr(cli, "_run_serialize",
                         lambda p, proj, escalate=False, session=None:
                         serialized.append((str(p), proj, session)) or 0)

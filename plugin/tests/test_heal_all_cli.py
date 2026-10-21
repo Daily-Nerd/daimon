@@ -69,9 +69,9 @@ class Steps:
         self.outcome = "ok"      # "ok" | "error"
         self.on_run = None       # hook run before the result line is written
 
-    def retry(self, sid, prior):
+    def retry(self, sid, prior, project, transcript):
         self.calls.append(("marker", sid))
-        ledger._append_retry_log(sid, prior)
+        ledger._append_retry_log(sid, prior, project, transcript)
 
     def run(self, path, project, escalate=False, session=None):
         sid = path.stem
