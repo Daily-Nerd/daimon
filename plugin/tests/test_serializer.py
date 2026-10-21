@@ -267,10 +267,7 @@ def test_single_pass_prompt_restates_contract_after_the_transcript(fake_chat_fac
 def test_single_pass_validation_retry_note_stays_last(fake_chat_factory):
     # The retry note is the most specific instruction in the prompt, so the
     # restated contract must not displace it from the end.
-    # Envelope-shaped (so the parse boundary accepts it) but item-invalid: the
-    # failure under test is the final validation's resample, not #1218's re-ask.
-    bad = json.dumps({"session_id": "S1", "working_context": {},
-                      "epistemic_snapshot": {}})
+    bad = json.dumps({"session_id": "S1", "working_context": {}})
     chat = fake_chat_factory([bad, _valid_checkpoint_json("S1")])
     serializer.serialize("S1", make_messages(20), chat=chat)
     assert len(chat.calls) == 2
@@ -2334,10 +2331,10 @@ def test_save_chunk_cache_records_the_single_served_producer(tmp_checkpoint_dir)
     # receipt), never the configured alias (scar 0032).
     from daimon_briefing import llm
     llm.note_served("provider/real-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     assert _chunk_entry(tmp_checkpoint_dir, "k1") == {
         "served_model": "provider/real-model",
-        "partial": {"working_context": {"a": 1}, "epistemic_snapshot": {}},
+        "partial": {"working_context": {"a": 1}},
     }
 
 
@@ -2348,14 +2345,14 @@ def test_save_chunk_cache_refuses_a_mixed_producer_run(tmp_checkpoint_dir):
     from daimon_briefing import llm
     llm.note_served("a-model")
     llm.note_served("z-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     assert not (tmp_checkpoint_dir / ".chunk-cache" / "k1.json").exists()
 
 
 def test_save_chunk_cache_records_honest_absence_without_receipts(
         tmp_checkpoint_dir):
     # Command backend exposes no receipts: null, never the alias copied in.
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     assert _chunk_entry(tmp_checkpoint_dir, "k1")["served_model"] is None
 
 
@@ -2364,7 +2361,7 @@ def test_save_chunk_cache_still_refuses_after_a_fallback_fired(
     # #28/#343 gate untouched by the #465 envelope work.
     from daimon_briefing import llm
     monkeypatch.setattr(llm, "fallback_used", lambda: True)
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     assert not (tmp_checkpoint_dir / ".chunk-cache").exists()
 
 
@@ -2387,8 +2384,8 @@ def test_load_chunk_cache_returns_the_partial_when_producer_matches(
         tmp_checkpoint_dir):
     from daimon_briefing import llm
     llm.note_served("provider/real-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
-    assert serializer._load_chunk_cache("k1") == {"working_context": {"a": 1}, "epistemic_snapshot": {}}
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
+    assert serializer._load_chunk_cache("k1") == {"working_context": {"a": 1}}
 
 
 def test_load_chunk_cache_rejects_a_different_producer(
@@ -2397,7 +2394,7 @@ def test_load_chunk_cache_rejects_a_different_producer(
     # a substitute must not be replayed into a run served by another model.
     from daimon_briefing import cli, llm
     llm.note_served("substitute-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     llm.reset_served_models()
     llm.note_served("provider/real-model")
     noted = []
@@ -2410,7 +2407,7 @@ def test_load_chunk_cache_rejects_a_receiptless_entry_in_a_receipted_run(
         monkeypatch, tmp_checkpoint_dir):
     # A run that HAS receipts must not replay unattributable content.
     from daimon_briefing import cli, llm
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     llm.note_served("provider/real-model")
     noted = []
     monkeypatch.setattr(cli, "_note_usage", noted.append)
@@ -2422,7 +2419,7 @@ def test_load_chunk_cache_rejects_everything_once_the_run_is_mixed(
         monkeypatch, tmp_checkpoint_dir):
     from daimon_briefing import cli, llm
     llm.note_served("provider/real-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     llm.note_served("substitute-model")
     noted = []
     monkeypatch.setattr(cli, "_note_usage", noted.append)
@@ -2438,9 +2435,9 @@ def test_load_chunk_cache_adopts_the_recorded_producer_when_run_has_none(
     # verification above and the existing mixed-run stamp/WARNING (#458).
     from daimon_briefing import llm
     llm.note_served("provider/real-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     llm.reset_served_models()
-    assert serializer._load_chunk_cache("k1") == {"working_context": {"a": 1}, "epistemic_snapshot": {}}
+    assert serializer._load_chunk_cache("k1") == {"working_context": {"a": 1}}
     assert llm.served_models() == ["provider/real-model"]
 
 
@@ -2471,7 +2468,7 @@ def test_chunk_cache_verification_counters_never_break_a_serialize(
     # Telemetry only: a broken usage log must cost nothing but the counter.
     from daimon_briefing import cli, llm
     llm.note_served("substitute-model")
-    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}, "epistemic_snapshot": {}})
+    serializer._save_chunk_cache("k1", {"working_context": {"a": 1}})
     llm.reset_served_models()
     llm.note_served("provider/real-model")
     monkeypatch.setattr(cli, "_note_usage",

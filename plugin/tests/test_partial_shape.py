@@ -100,7 +100,7 @@ def test_1b_flat_chunk_that_stays_flat_names_the_chunk(monkeypatch):
     with pytest.raises(serializer.OutputParseError) as ei:
         serializer.serialize_strict("S1", make_messages(24), chat=chat)
     assert "chunk 1 of" in str(ei.value)
-    assert "working_context is not a dict" in str(ei.value)
+    assert "open_questions is outside working_context" in str(ei.value)
     assert not [p for p in _cached_partials() if "working_context" not in p]
 
 
@@ -118,7 +118,7 @@ def test_1d_flat_merge_output_names_the_merge_group(monkeypatch):
     with pytest.raises(serializer.OutputParseError) as ei:
         serializer.serialize_strict("S1", ms, chat=chat)
     assert "merge level 1, group 1 of 1" in str(ei.value)
-    assert "working_context is not a dict" in str(ei.value)
+    assert "open_questions is outside working_context" in str(ei.value)
 
 
 def test_flat_primary_is_rescued_by_a_well_shaped_fallback(monkeypatch):
@@ -142,7 +142,7 @@ def test_flat_rescue_is_rejected_not_wrapped(monkeypatch):
     with pytest.raises(serializer.OutputParseError) as ei:
         serializer._call_and_parse(chat, "sys", "user", None, "perspective p, chunk 2 of 3")
     assert "perspective p, chunk 2 of 3" in str(ei.value)
-    assert "working_context is not a dict" in str(ei.value)
+    assert "open_questions is outside working_context" in str(ei.value)
 
 
 def test_epistemic_snapshot_shape_is_checked_too():
@@ -153,11 +153,45 @@ def test_epistemic_snapshot_shape_is_checked_too():
 
 def test_partial_reason_is_envelope_only():
     # A partial may lack what the final checkpoint requires (session_id is
-    # code-assigned, items are checked on the merged result): only the
-    # object-typed top-level blocks are the partial's contract.
+    # code-assigned, items are checked on the merged result).
     assert field_table.partial_reason(good()) is None
-    assert field_table.partial_reason({"working_context": {}, "epistemic_snapshot": {}}) is None
-    assert field_table.checkpoint_reason(
-        {"working_context": {}, "epistemic_snapshot": {}}) is not None
-    assert field_table.partial_reason({}) == "working_context is not a dict"
+    assert field_table.partial_reason({}) is None
     assert field_table.partial_reason([]) == "partial is not a dict"
+
+
+def test_absent_block_is_accepted_but_the_final_checkpoint_still_requires_it():
+    no_snapshot = {"working_context": good()["working_context"], "worker_queue": []}
+    assert field_table.partial_reason(no_snapshot) is None
+    assert "epistemic_snapshot" not in no_snapshot   # nothing inserted
+    full = {**good(), "session_id": "S1"}
+    assert field_table.checkpoint_reason(full) is None
+    del full["epistemic_snapshot"]
+    assert field_table.checkpoint_reason(full) == "epistemic_snapshot is not a dict"
+
+
+@pytest.mark.parametrize("key,block", [
+    ("active_topic", "working_context"), ("open_questions", "working_context"),
+    ("recent_decisions", "working_context"), ("strong_beliefs", "epistemic_snapshot"),
+    ("uncertainties", "epistemic_snapshot"),
+    ("contradictions_flagged", "epistemic_snapshot"),
+])
+def test_misplaced_child_is_rejected_naming_it(key, block):
+    p = good()
+    p[key] = []
+    assert field_table.partial_reason(p) == f"{key} is outside {block}"
+
+
+def test_chunk_partial_missing_epistemic_snapshot_merges_end_to_end(monkeypatch):
+    _chunked(monkeypatch)
+    ms = make_messages(24)
+    n_chunks = len(serializer.chunk_transcript(serializer._render_transcript(ms), 4, 0))
+
+    def fn(n, content):
+        if n == 1:   # chunk 1 omits the block entirely
+            return {"working_context": good()["working_context"], "worker_queue": []}
+        return good()
+
+    chat = Script(fn)
+    ckpt = serializer.serialize_strict("S1", ms, chat=chat)
+    assert serializer.validation_reason(ckpt) is None
+    assert len(chat.calls) == n_chunks + 1    # no re-ask, one merge

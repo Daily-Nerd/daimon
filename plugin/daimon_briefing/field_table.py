@@ -477,24 +477,36 @@ def item_reason(item: object) -> str | None:
 
 
 def partial_reason(partial: object) -> str | None:
-    """None when a model-authored PARTIAL has the checkpoint envelope shape,
-    else WHICH object-typed block is wrong (#1218).
+    """None when a model-authored PARTIAL has a usable envelope shape, else
+    WHICH rule rejected it (#1218).
 
     A partial (chunk, perspective, merge or rescue output) enters the merge
     tree or the chunk cache before any final validation, so its envelope is
-    checked at that boundary. Envelope only, by design: the same
-    `validate="object"` rows checkpoint_reason applies, and nothing else.
-    session_id is code-assigned after the merge, and the items inside a
-    partial are judged once, on the merged result. The reason strings are
-    checkpoint_reason's own, so an error names the same predicate either way.
-    A flat dict is rejected, never wrapped: which keys belong in which block
-    would be a guess."""
+    checked at that boundary, from the same ENVELOPE_RULES rows
+    checkpoint_reason uses:
+
+    - an object block (`validate="object"`) that is PRESENT but not a dict
+      is rejected, with checkpoint_reason's own reason string;
+    - a child of an object block (a dotted row such as
+      `working_context.active_topic`) sitting at the TOP LEVEL is rejected,
+      naming it: that is the flat shape, a model that dropped the block;
+    - an ABSENT block is accepted. It is an honest empty contribution the
+      merge handles, and the final checkpoint still requires both blocks
+      (checkpoint_reason). Nothing is inserted: no wrapping, no defaults.
+
+    Envelope only: session_id is code-assigned after the merge and the items
+    inside a partial are judged once, on the merged result."""
     if not isinstance(partial, dict):
         return "partial is not a dict"
+    blocks = [r.name for r in ENVELOPE_RULES
+              if dict(r.constraints).get("validate") == "object"]
+    for name in blocks:
+        if name in partial and not isinstance(partial[name], dict):
+            return f"{name} is not a dict"
     for r in ENVELOPE_RULES:
-        if dict(r.constraints).get("validate") == "object":
-            if not isinstance(partial.get(r.name), dict):
-                return f"{r.name} is not a dict"
+        block, _, child = r.name.partition(".")
+        if child and block in blocks and child in partial:
+            return f"{child} is outside {block}"
     return None
 
 
