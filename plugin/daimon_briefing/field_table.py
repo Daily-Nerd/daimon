@@ -476,6 +476,28 @@ def item_reason(item: object) -> str | None:
     return None
 
 
+def partial_reason(partial: object) -> str | None:
+    """None when a model-authored PARTIAL has the checkpoint envelope shape,
+    else WHICH object-typed block is wrong (#1218).
+
+    A partial (chunk, perspective, merge or rescue output) enters the merge
+    tree or the chunk cache before any final validation, so its envelope is
+    checked at that boundary. Envelope only, by design: the same
+    `validate="object"` rows checkpoint_reason applies, and nothing else.
+    session_id is code-assigned after the merge, and the items inside a
+    partial are judged once, on the merged result. The reason strings are
+    checkpoint_reason's own, so an error names the same predicate either way.
+    A flat dict is rejected, never wrapped: which keys belong in which block
+    would be a guess."""
+    if not isinstance(partial, dict):
+        return "partial is not a dict"
+    for r in ENVELOPE_RULES:
+        if dict(r.constraints).get("validate") == "object":
+            if not isinstance(partial.get(r.name), dict):
+                return f"{r.name} is not a dict"
+    return None
+
+
 def checkpoint_reason(checkpoint: object) -> str | None:
     """None when the checkpoint is valid, else WHICH predicate rejected it —
     the generated twin of serializer.validation_reason, driven by

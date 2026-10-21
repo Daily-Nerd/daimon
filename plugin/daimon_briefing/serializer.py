@@ -1897,7 +1897,7 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 parsed_rescue = llm.extract_json(rescued)
             except (llm.ChatError, json.JSONDecodeError, ValueError, TypeError):
                 return None
-            return parsed_rescue if isinstance(parsed_rescue, dict) else None
+            return parsed_rescue if field_table.partial_reason(parsed_rescue) is None else None
 
         try:
             raw = chat(
@@ -1950,6 +1950,26 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 return rescued
             raise OutputParseError(
                 f"model output on {what} is not a JSON object after {attempt} attempts"
+            )
+        # #1218: a dict of the wrong SHAPE is unusable output exactly like
+        # prose is. Same retry, same rescue (whose result went through the same
+        # predicate), then a named error. Never wrapped into the envelope.
+        shape = field_table.partial_reason(parsed)
+        if shape is not None:
+            if _can_retry():
+                last_error = f"wrong shape: {shape}"
+                log.warning("wrong-shape output on %s (attempt %d/%d): %s, "
+                            "retrying with cache-buster",
+                            what, attempt, attempts, shape)
+                continue
+            rescued = _try_rescue()
+            if rescued is not None:
+                log.warning("rescued wrong-shape output on %s via the fallback "
+                            "(#663)", what)
+                return rescued
+            raise OutputParseError(
+                f"model output on {what} has the wrong shape after "
+                f"{attempt} attempts: {shape}"
             )
         return parsed
     # Unreachable while attempts >= 1, which holds for every caller: all four
@@ -2082,7 +2102,9 @@ def _load_chunk_cache(key: str):
         _note_chunk_cache_miss("serialize:chunk-cache-legacy-miss")
         return None
     partial = obj.get("partial")
-    if not isinstance(partial, dict):
+    if field_table.partial_reason(partial) is not None:
+        # #1218: entries written before the parse boundary checked shape (flat
+        # partials) stop replaying here, so no purge is needed.
         return None
     recorded = obj.get("served_model")
     if recorded is not None and not isinstance(recorded, str):
