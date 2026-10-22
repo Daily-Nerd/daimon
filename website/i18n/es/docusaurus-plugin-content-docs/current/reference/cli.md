@@ -8,6 +8,15 @@ description: "Todos los comandos de daimon agrupados por tarea: captura, brief, 
 Cada verbo de daimon, agrupado por lo que querés hacer. El `--help` de cada
 comando trae la superficie completa de flags; esta página es el mapa.
 
+En un home con alcance de inquilino (`DAIMON_TENANT_SCOPED`) ningún verbo deja
+que quien llama salga de su propio proyecto: `--slug`, `--all-projects`,
+`audit privacy --all`, `brief --global-fallback` y un `--project` que nombre
+otro bucket se rechazan con un error claro, y `decide` no muestra cuentas de
+otros proyectos. Sin alcance de inquilino los verbos se comportan como se
+describe abajo. Una shell todavía puede cambiar su propio directorio o entorno,
+así que la CLI no es un límite contra un agente que tenga una; las
+herramientas MCP y la biblioteca sí lo son.
+
 ## Preparar
 
 | comando | qué hace |
