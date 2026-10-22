@@ -14,12 +14,14 @@ unverified by this project, see the Verify section below.
 ## What each script does
 
 - **`daimon-gemini-session-start.py`** — `SessionStart` hook. Shells out to
-  `daimon brief` and injects the result via Gemini's
+  `daimon brief --label` and injects the result via Gemini's
   `{"hookSpecificOutput": {"additionalContext": ...}}` envelope. Gemini
   requires **pure-JSON stdout** ("Silence is Mandatory") — unlike the Claude
   Code hook, nothing is ever printed raw; operator-facing diagnostics ride
   `{"systemMessage": ...}` instead. `SessionStart` is advisory-only: exit 0
-  always, startup is never blocked.
+  always, startup is never blocked. The CLI picks the checkpoint and prints
+  the label line; the hook decides nothing (fallback rules are on the
+  [Claude Code page](claude-code.md)).
 - **`daimon-gemini-session-end.py`** — `SessionEnd` hook. Mirrors the Claude
   Code `SessionEnd` hook: spawns `daimon serialize <transcript_path>` detached
   when `transcript_path` is non-empty, and logs a graceful skip when it is

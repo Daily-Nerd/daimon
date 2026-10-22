@@ -630,3 +630,24 @@ def test_every_text_that_teaches_opening_a_request_mentions_title():
         assert "daimon request open" in text, name
         assert "--title" in text, name
     assert "daimon request open" not in skill_content.render_compact()
+
+
+# ---- #1223: the host grants cross-project reads over MCP ------------------
+
+
+def test_the_mcp_teaching_names_the_host_grant_in_both_bodies():
+    # The model must not be taught `slug` / `all_projects` as an open door:
+    # over MCP they are refused unless the host set the grant.
+    full = skill_content.render_full()
+    mcp = full.split("## MCP")[1].split("\n## ")[0]
+    assert "DAIMON_MODEL_CROSS_PROJECT" in mcp
+    assert "refused" in mcp
+    assert "host" in skill_content.render_compact().split("MCP:")[1]
+    for body in (full, skill_content.render_compact()):
+        assert "(`slug` = `--slug`)" not in body
+
+
+def test_a_refusal_is_taught_as_final():
+    full = skill_content.render_full()
+    assert "Never work around" in full
+    assert "do not retry another way" in full

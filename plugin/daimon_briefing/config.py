@@ -195,6 +195,10 @@ def brief_global_fallback() -> bool:
     content reads as contamination no matter how it is labeled (two field
     reports on the #94 arc). Opt in to the full foreign body with
     DAIMON_BRIEF_GLOBAL_FALLBACK=full (or 1)."""
+    if tenant_scoped():
+        # #1223: the global pointer is the newest checkpoint of ANY project;
+        # a tenant home never reads it, whatever the environment says.
+        return False
     return (_get("DAIMON_BRIEF_GLOBAL_FALLBACK") or "") in ("full", "1")
 
 
@@ -623,8 +627,9 @@ def tenant_scoped() -> bool:
 # silently got their own instead would read the answer as complete.
 TENANT_SCOPE_REFUSAL = (
     "this daimon home is tenant-scoped (DAIMON_TENANT_SCOPED): a caller may "
-    "not choose a scope (slug, all_projects); reads stay in this project's "
-    "own scope plus any host-declared DAIMON_EXTRA_READ_SLUGS")
+    "not choose a scope (slug, all_projects, a project path elsewhere, the "
+    "global-pointer fallback); reads stay in this project's own scope plus "
+    "any host-declared DAIMON_EXTRA_READ_SLUGS")
 
 
 def model_cross_project() -> bool:

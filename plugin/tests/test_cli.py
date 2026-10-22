@@ -78,8 +78,7 @@ def test_cli_serialize_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory, 
     # checkpoint file exists, keyed by the transcript stem
     ckpt = store.read_checkpoint("sample_transcript")
     assert ckpt is not None
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "sample_transcript"
+    assert store.read_own_stream_latest()["session_id"] == "sample_transcript"
 
 
 def test_cli_brief_prints_briefing(tmp_checkpoint_dir, sample_checkpoint, capsys,
@@ -4774,8 +4773,7 @@ def test_cli_heal_of_old_session_does_not_steal_latest(
     ])
     assert cli.main(["serialize", str(older)]) == 0
 
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-newer"
+    assert store.read_own_stream_latest()["session_id"] == "S-newer"
     assert store.read_checkpoint("S-older") is not None
 
 

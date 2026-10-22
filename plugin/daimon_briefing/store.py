@@ -2127,8 +2127,19 @@ def attach_anchor(project_dir, locator: tuple, anchor: dict, *,
                             writer=Writer.HUMAN)
 
 
-def global_latest_path() -> Path:
-    """Where the global latest pointer lives (may not exist yet)."""
+def global_pointer_readable() -> bool:
+    """Whether a DISPLAY read may consult the global pointer, the newest
+    checkpoint of ANY project (#1223). Never on a tenant-scoped home: a caller
+    there reads its own bucket or nothing. The persist path does not ask: it
+    reads the pointer directly (`read_own_stream_latest`)."""
+    return not config.tenant_scoped()
+
+
+def global_latest_path() -> Path | None:
+    """Where the global latest pointer lives (may not exist yet), or None
+    where a display may not look at it (`global_pointer_readable`)."""
+    if not global_pointer_readable():
+        return None
     return config.checkpoint_dir() / _LATEST
 
 
@@ -2367,19 +2378,27 @@ def _admit_payload(checkpoint: dict, slug, admit: "Admit", fell_back: bool) -> "
 
 
 def _scoped_read(project_dir, route: "Route", admit: "Admit") -> "ReadResult":
-    """THE latest-read (#795): every projection below goes through here, so
-    there is exactly one implementation of route and admit."""
+    """THE latest-read for DISPLAY (#795): every projection below goes through
+    here, so there is exactly one implementation of route and admit.
+
+    A project with no slug reads nothing on either route (#1223): there is no
+    bucket to prefer and no way to say which checkpoint is foreign to it. The
+    global pointer is only consulted for a project that has an identity, only
+    on `Route.OWN_ELSE_GLOBAL`, and never on a tenant-scoped home. The persist
+    path is not a display read and does not come through here
+    (`read_own_stream_latest`)."""
     if not isinstance(route, Route):
         raise TypeError(f"route must be a Route, got {route!r}")
     if not isinstance(admit, Admit):
         raise TypeError(f"admit must be an Admit, got {admit!r}")
     d = config.checkpoint_dir()
     slug = project_slug(project_dir)
-    if slug:
-        got = _read_pointer_object(d / slug / _LATEST)
-        if got is not None:
-            return _admit_payload(got, slug, admit, fell_back=False)
-    if route is Route.OWN:
+    if not slug:
+        return ReadResult(None, False, None)
+    got = _read_pointer_object(d / slug / _LATEST)
+    if got is not None:
+        return _admit_payload(got, slug, admit, fell_back=False)
+    if route is Route.OWN or not global_pointer_readable():
         return ReadResult(None, False, None)
     got = _read_pointer_object(d / _LATEST)
     if got is None:
@@ -2415,9 +2434,9 @@ def read_own_stream_latest(project_dir=None) -> dict | None:
     the global pointer IS that stream's own prior checkpoint (pre-routing
     legacy). Takes NO policy argument on purpose: nothing an env var can
     reach may change what write_checkpoint persists."""
-    project_dir = _resolved(project_dir)
-    route = Route.OWN if project_slug(project_dir) else Route.OWN_ELSE_GLOBAL
-    return read_latest_body(project_dir=project_dir, route=route, admit=Admit.ANY)
+    slug = project_slug(_resolved(project_dir))
+    d = config.checkpoint_dir()
+    return _read_pointer_object(d / slug / _LATEST if slug else d / _LATEST)
 
 
 # The legacy surface — read_latest(fallback=) and read_latest_reportable —

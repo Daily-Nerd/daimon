@@ -143,25 +143,29 @@ def created_epoch(created) -> float | None:
     return ts.replace(tzinfo=timezone.utc).timestamp()
 
 
-def age_line(latest: Path) -> str:
-    """Human age of the checkpoint, so a stale briefing is visibly stale. Age
-    prefers the written `created` stamp (which survives pointer rotation) and
-    falls back to file mtime for legacy checkpoints (#93)."""
-    try:
-        data = json.loads(latest.read_text(encoding="utf-8"))
-    except Exception:
-        data = {}
-    epoch = created_epoch(data.get("created"))
-    ref = epoch if epoch is not None else latest.stat().st_mtime
-    secs = max(0, time.time() - ref)
-    if secs < 3600:
-        age = f"{int(secs // 60)}m"
-    elif secs < 86400:
-        age = f"{secs / 3600:.1f}h"
-    else:
-        age = f"{secs / 86400:.1f}d"
-    session_id = data.get("session_id", "?")
-    return f"(checkpoint: {session_id}, written {age} ago)"
+def run_brief(cli, cwd: str, host=None, *, timeout: float, auto: bool = False):
+    """Run `daimon brief` for a session-start hook and return the process.
+
+    The CLI owns which checkpoint is read and how it is labelled (#1223):
+    `--label` makes it print the one `DAIMON BRIEFING (checkpoint: ...)` line
+    for the checkpoint it actually rendered, fallback included. A hook prints
+    what comes back and decides nothing. A `daimon` older than the flag
+    rejects it with argparse's exit 2, so retry without the newest flag first
+    (keeping `--auto`), then plain: a briefing must never die over
+    instrumentation. An old CLI prints no label and the hook invents none."""
+    base = [cli, "brief"]
+    attempts = [base + (["--auto"] if auto else []) + ["--label"]]
+    if auto:
+        attempts.append(base + ["--auto"])
+    attempts.append(base)
+    env = project_env(cwd, host)
+    proc = None
+    for argv in attempts:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=timeout, env=env)
+        if proc.returncode != 2:
+            break
+    return proc
 
 
 def project_env(cwd, host=None, **extra):

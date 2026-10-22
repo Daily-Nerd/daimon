@@ -87,7 +87,8 @@ def test_gemini_session_start_labels_global_fallback(
 ):
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
 
-    proc = _run(START_HOOK, {"cwd": "/p/never-seen", "source": "startup"}, tmp_path)
+    proc = _run(START_HOOK, {"cwd": "/p/never-seen", "source": "startup"}, tmp_path,
+                {"DAIMON_BRIEF_GLOBAL_FALLBACK": "1"})
 
     assert proc.returncode == 0
     ctx = _additional_context(proc.stdout)

@@ -295,6 +295,7 @@ def test_the_audit_says_no_bucket_in_scope_under_tenant_scope(
     _write(FORGETFUL, ["more words"])
     _events(FORGETFUL).write_bytes(b"<<<<<<< HEAD\n")
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", OTHER)   # the host names the project
     assert cli.main(["audit", "privacy", "--project", OTHER]) == 3
     out = capsys.readouterr().out
     assert "no bucket in scope" in out
@@ -322,6 +323,7 @@ def test_status_names_no_bucket_under_tenant_scope(tmp_checkpoint_dir, capsys,
     _write(FORGETFUL, ["more words"])
     _events(FORGETFUL).write_bytes(b"<<<<<<< HEAD\n")
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", OTHER)   # the host names the project
     payload, _rc = cli.status_payload(OTHER)
     assert payload["ledgers"]["forget_incomplete"] == []
 

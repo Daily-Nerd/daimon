@@ -2950,6 +2950,7 @@ def test_cli_open_short_name_honors_tenant_scope(
     """#899: a tenant-scoped home must not learn a foreign bucket's name by
     having it resolve."""
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", project)   # the host names it
     assert _cli_open_to(project, "recipient") == 1
     assert not requests.records(project_dir=project)
     captured = capsys.readouterr()

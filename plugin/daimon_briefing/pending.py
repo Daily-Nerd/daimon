@@ -874,7 +874,14 @@ def foreign_queues_typed(*, project_dir=None) -> ForeignQueues:
 
 
 def foreign_counts(*, project_dir=None) -> dict[str, int]:
-    """`foreign_counts_typed(...).counts`; see it."""
+    """`foreign_counts_typed(...).counts`; see it.
+
+    The counts-only form is what a surface SHOWS (the `decide` footer). On a
+    tenant-scoped home it is empty without reading anything (#1223): a host
+    must not learn that other buckets exist. The typed form keeps its notes,
+    which already have a tenant wording without a count."""
+    if config.tenant_scoped():
+        return {}
     return foreign_counts_typed(project_dir=project_dir).counts
 
 

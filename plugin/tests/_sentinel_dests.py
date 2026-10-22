@@ -25,6 +25,7 @@ DESTS = {
         "slug": ("OUT", "R1"),
         "global_fallback": ("OUT", "R4"),
         "auto": ("OUT", "R4"),
+        "label": ("OUT", "R4"),
     },
     "anchor": {
         "file": ("OUT", "R4"),

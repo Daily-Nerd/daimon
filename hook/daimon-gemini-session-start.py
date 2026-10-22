@@ -51,26 +51,10 @@ def _emit_briefing(cwd: str, cli) -> None:
         )
         return
 
-    # Per-project routing: prefer this project's latest (slugged from the
-    # payload cwd); fall back to the global latest so pre-routing checkpoints
-    # and fresh projects still brief — visibly labeled, since a global
-    # checkpoint may belong to a DIFFERENT project.
-    slug = lib.slug(cwd)
-    ckpt_dir = lib.checkpoint_dir()
-    latest = ckpt_dir / slug / "latest.json" if slug else None
-    fallback = False
-    if latest is None or not latest.exists():
-        fallback = latest is not None  # project known, but no checkpoint of its own
-        latest = ckpt_dir / "latest.json"
-    if not latest.exists():
-        return  # nothing to brief; empty stdout is legal, plain text is not
-
-    # The CLI must route the same way this hook did: hand it the project cwd.
+    # The CLI decides which checkpoint is read and labels it (#1223); this
+    # hook hands it the project cwd and prints what comes back.
     try:
-        proc = subprocess.run(
-            [cli, "brief"], capture_output=True, text=True, timeout=TIMEOUT,
-            env=lib.project_env(cwd),
-        )
+        proc = lib.run_brief(cli, cwd, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         _emit_message(f"daimon: `daimon brief` timed out after {TIMEOUT}s — briefing skipped")
         return
@@ -84,8 +68,7 @@ def _emit_briefing(cwd: str, cli) -> None:
     if not text or text.startswith("No checkpoint yet"):
         return
 
-    suffix = " (global fallback - checkpoint may be from another project)" if fallback else ""
-    _emit_context(f"DAIMON BRIEFING {lib.age_line(latest)}{suffix}\n{text}")
+    _emit_context(text)
 
 
 def main() -> int:

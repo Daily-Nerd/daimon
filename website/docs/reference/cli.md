@@ -8,6 +8,14 @@ description: "Every daimon command grouped by task: capture, brief, recall, reso
 Every daimon verb, grouped by what you are trying to do. Each command's
 `--help` carries the full flag surface; this page is the map.
 
+On a tenant-scoped home (`DAIMON_TENANT_SCOPED`) no verb lets the caller leave
+its own project: `--slug`, `--all-projects`, `audit privacy --all`,
+`brief --global-fallback` and a `--project` that names another bucket are
+refused with a plain error, and `decide` shows no counts of other projects.
+Off tenant scope the verbs behave as described below. A shell can still change
+its own directory or environment, so the CLI is not a boundary against an
+agent that has one; the MCP tools and the library are.
+
 ## Set up
 
 | command | what it does |

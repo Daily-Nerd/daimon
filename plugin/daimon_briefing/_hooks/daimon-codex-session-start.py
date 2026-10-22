@@ -14,7 +14,6 @@ so the renderer stays single-source-of-truth.
 import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 # Shared helpers live in a same-dir sibling module (see _daimon_hook_lib.py).
@@ -29,24 +28,6 @@ except Exception:  # noqa: BLE001 — missing/corrupt lib must never crash the h
 TIMEOUT = 8
 
 
-def _age_line(latest: Path) -> str:
-    # Host-specific: Codex's age line is mtime-only. It deliberately does NOT use
-    # lib.age_line (which prefers the `created` stamp, #93) — kept as-is to hold
-    # behavior byte-identical; adopting the created-stamp form is a follow-up.
-    secs = max(0, time.time() - latest.stat().st_mtime)
-    if secs < 3600:
-        age = f"{int(secs // 60)}m"
-    elif secs < 86400:
-        age = f"{secs / 3600:.1f}h"
-    else:
-        age = f"{secs / 86400:.1f}d"
-    try:
-        session_id = json.loads(latest.read_text(encoding="utf-8")).get("session_id", "?")
-    except Exception:
-        session_id = "?"
-    return f"(checkpoint: {session_id}, written {age} ago)"
-
-
 def _emit_context(text: str) -> None:
     print(json.dumps({
         "hookSpecificOutput": {
@@ -57,18 +38,13 @@ def _emit_context(text: str) -> None:
 
 
 def _emit_briefing(cwd: str, cli) -> None:
-    slug = lib.slug(cwd)
-    ckpt_dir = lib.checkpoint_dir()
-    latest = ckpt_dir / slug / "latest.json" if slug else None
-    fallback = False
-    if latest is None or not latest.exists():
-        fallback = latest is not None
-        latest = ckpt_dir / "latest.json"
-    if not latest.exists():
-        return
-
+    # No binary at all is the plugin-install onboarding state (#91): one
+    # actionable line, the same one the Claude Code and Gemini hooks print.
     if cli is None:
-        _emit_context("daimon: checkpoint exists but `daimon` CLI was not found")
+        _emit_context(
+            "daimon: `daimon` CLI not found - briefing skipped. Install it: "
+            "uv tool install 'git+https://github.com/Daily-Nerd/daimon#subdirectory=plugin'"
+        )
         return
 
     try:
@@ -77,10 +53,7 @@ def _emit_briefing(cwd: str, cli) -> None:
         # brief` cannot tell which host is asking, and an `enforce` check
         # ruling never renders compact (a `request_policy` ruling is
         # unaffected either way; it renders compact regardless of host).
-        proc = subprocess.run(
-            [cli, "brief"], capture_output=True, text=True, timeout=TIMEOUT,
-            env=lib.project_env(cwd, "codex"),
-        )
+        proc = lib.run_brief(cli, cwd, "codex", timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         _emit_context(f"daimon: `daimon brief` timed out after {TIMEOUT}s")
         return
@@ -94,8 +67,7 @@ def _emit_briefing(cwd: str, cli) -> None:
     if not text or text.startswith("No checkpoint yet"):
         return
 
-    suffix = " (global fallback - checkpoint may be from another project)" if fallback else ""
-    _emit_context(f"DAIMON BRIEFING {_age_line(latest)}{suffix}\n{text}")
+    _emit_context(text)
 
 
 def main() -> int:

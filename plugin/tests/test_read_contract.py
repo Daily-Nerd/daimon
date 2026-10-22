@@ -136,12 +136,11 @@ def test_s7_global_stamped_other(tmp_checkpoint_dir, route, admit, expect):
     assert got == ((body, True, None) if expect == "body-fb" else expect)
 
 
-# S8-S10: reader identity UNKNOWN. OWN routes have no pointer to read — every
-# column-1/2 cell is empty and NO production site may ever land there. Columns
-# 3-4: nothing is foreign to a session with no project identity (R3,
-# store's shipped identity-less branch), so even a stamped body is admitted,
-# and fell_back=True because the value came off the global pointer (v3.1
-# amendment 2 — PARTIAL: bodies forced, the route fact has no reader today).
+# S8-S10: reader identity UNKNOWN (#1223). Every route and every admit reads
+# nothing, whatever the global pointer holds: nothing is foreign to a session
+# with no project identity only in the sense that there is nothing it may read.
+# The persist path (store.read_own_stream_latest) is not a display read and is
+# pinned in test_cli_scope_owner.py.
 @pytest.mark.parametrize("reader", [None, "", "   "], ids=["none", "empty", "whitespace"])
 @pytest.mark.parametrize("route,admit", COMBOS)
 @pytest.mark.parametrize("stamp", ["S8", None, OTHER],
@@ -152,10 +151,10 @@ def test_identity_less_reader(tmp_checkpoint_dir, stamp, route, admit, reader):
     else:
         body = _ck(stamp)
         _write_global(tmp_checkpoint_dir, body)
-    if body is None or route is Route.OWN:
-        assert _cell(reader, route, admit) == (None, False, None)
-    else:
-        assert _cell(reader, route, admit) == (body, True, None)
+    # #1223: a reader with no project identity reads nothing on every route.
+    # There is no bucket to prefer and no way to say which checkpoint is
+    # foreign to it, so the global pointer is never consulted for it.
+    assert _cell(reader, route, admit) == (None, False, None)
 
 
 # Torn/non-object GLOBAL pointer: S5-S7 collapse to S4, S9-S10 collapse to S8,

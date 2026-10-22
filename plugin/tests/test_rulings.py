@@ -2924,6 +2924,16 @@ def test_ruling_list_reports_an_unresolved_ledger_instead_of_a_traceback(
     rows, or it dies several statements before its own unresolved branch."""
     rc = cli.main(["ruling", "list", "--project", PROJECT])
     captured = capsys.readouterr()
+    if _config_fault == "corrupt-env-file":
+        # #1223: naming a --project asks the scope owner whether it leaves the
+        # own bucket, and that reads DAIMON_TENANT_SCOPED from the same env
+        # file. A scope that cannot be decided reads nothing: one error line
+        # from `guarded`, no traceback, no rows.
+        assert rc == 2
+        assert "could not be read" in captured.err
+        assert "nothing was shown" in captured.err
+        assert captured.out == ""
+        return
     assert rc == 1
     assert "cannot resolve a ledger path" in captured.err
     assert "DAIMON_CHECKPOINT_DIR" in captured.err
@@ -2934,6 +2944,12 @@ def test_ruling_list_json_keeps_its_shape_on_an_unresolved_ledger(
         tmp_checkpoint_dir, _config_fault, capsys):
     rc = cli.main(["ruling", "list", "--project", PROJECT, "--json"])
     captured = capsys.readouterr()
+    if _config_fault == "corrupt-env-file":
+        # see the test above: an undecidable scope reads nothing (#1223)
+        assert rc == 2
+        assert captured.out == ""
+        assert "nothing was shown" in captured.err
+        return
     assert rc == 1
     assert json.loads(captured.out) == []
     assert "cannot resolve a ledger path" in captured.err

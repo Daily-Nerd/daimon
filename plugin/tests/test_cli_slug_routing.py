@@ -197,8 +197,12 @@ def test_a_tenant_scoped_home_cannot_be_escaped_through_project(
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
     capsys.readouterr()
 
-    assert cli.main(["ruling", "list", "--json", f"--project={_b()}"]) == 1
-    assert ruling_id not in capsys.readouterr().out
+    # #1223: the slug-shaped value resolves as a path, which is another bucket
+    # than the host's own, so the tenant home refuses it out loud (rc 2).
+    assert cli.main(["ruling", "list", "--json", f"--project={_b()}"]) == 2
+    cap = capsys.readouterr()
+    assert ruling_id not in cap.out
+    assert "tenant-scoped" in cap.err
 
 
 def test_a_tenant_scoped_home_cannot_be_written_through_project(

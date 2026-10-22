@@ -41,7 +41,9 @@ uv tool install 'daimon-briefing[pretty]'
   the only channel Kimi gives a hook to put text into the session, so it
   carries the briefing. Kimi has no session-start injection point (see
   Limitations below). The model sees the briefing as a user message wrapped
-  in a `hook_result` tag, attached to your first prompt.
+  in a `hook_result` tag, attached to your first prompt. The CLI picks the
+  checkpoint and prints the label line; the hook decides nothing (fallback
+  rules are on the [Claude Code page](claude-code.md)).
 - **`daimon-kimi-session-end.py`**: `SessionEnd` hook. Serializes the
   finished session when an interactive Kimi session exits, including the
   turns after the last `Stop` capture. Bytes `Stop` already captured are

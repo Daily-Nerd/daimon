@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path  # noqa: F401 — tests reach it as cli.Path
 
-from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, jsonl, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, render, requests, schema, serializer, store, teamsync, transcript, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, jsonl, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, render, requests, schema, serializer, store, teamsync, transcript, view, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 # Aliased: `trust` below (from . import (..., trust)) already binds the
 # `cli.trust` VERB submodule at this scope — this is the LIBRARY ledger
 # module (daimon_briefing.trust). cli/brief.py reads it directly now; the
@@ -126,6 +126,10 @@ def _resolve_project(arg, *, for_write: bool = False) -> str:
     `config.resolve_project_dir_for_write`'s docstring for why this cannot be
     the default for every call site: it must never touch a read.
     """
+    # #1223: a project that is another bucket is a caller-chosen scope. The
+    # decision is `view.cli_read`'s (refused on a tenant-scoped home, granted
+    # otherwise); a raise here is turned into rc 2 by `main`.
+    view.cli_read(project=arg)
     if for_write:
         return config.resolve_project_dir_for_write(
             arg or config.project_dir() or os.getcwd(), allow_slug=False)
@@ -213,12 +217,17 @@ def _note_receipt_probe_usage(project_dir, wc_stats: dict) -> None:
 # ---- recall: FTS search over local + team checkpoint history (#112) ----
 
 
-def _refuses_caller_scope(slug=None, all_projects: bool = False) -> bool:
+def _refuses_caller_scope(slug=None, all_projects: bool = False,
+                          global_fallback: bool = False) -> bool:
     """#899: on a tenant-scoped home a caller-chosen scope is refused out
-    loud, rc 2, never narrowed in silence. One check for `recall`, `brief`
-    and `why`, the three read verbs that take an address."""
-    if config.tenant_scoped() and (slug or all_projects):
-        print(f"error: {config.TENANT_SCOPE_REFUSAL}", file=sys.stderr)
+    loud, rc 2, never narrowed in silence. One check for every verb that takes
+    an address or widens its read; the decision itself is `view.cli_read`
+    (#1223), the same one `_resolve_project` makes for `--project`."""
+    try:
+        view.cli_read(slug=slug, all_projects=all_projects,
+                      global_fallback=global_fallback)
+    except view.ScopeRefused as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return True
     return False
 
@@ -267,7 +276,7 @@ def guarded(fn=None, *, writes: bool = False):
         def wrapper(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except jsonl.Refused:
+            except (jsonl.Refused, view.ScopeRefused):
                 raise
             # reported as one line, never shown around
             except Exception as exc:  # noqa: BLE001
@@ -741,7 +750,7 @@ def main(argv=None) -> int:
     try:
         with jsonl.surface_refusals():
             return args.func(args)
-    except jsonl.Refused as exc:
+    except (jsonl.Refused, view.ScopeRefused) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

@@ -29,17 +29,6 @@ except Exception:  # noqa: BLE001 — missing/corrupt lib must never crash the h
 TIMEOUT = 8  # seconds; hook budget is 10
 
 
-def _run_brief(cli, cwd: str, auto: bool):
-    argv = [cli, "brief", "--auto"] if auto else [cli, "brief"]
-    # #1089: same host tag `daimon-session-end.py` already forwards for
-    # capture (`project_env(cwd, "claude-code")`) — without it `daimon
-    # brief` cannot tell which host is asking, and an `enforce` check
-    # ruling never renders compact (a `request_policy` ruling is unaffected
-    # either way; it renders compact regardless of host).
-    return subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT,
-                          env=lib.project_env(cwd, "claude-code"))
-
-
 def _emit_briefing(cwd: str, cli) -> None:
     # No binary at all is the plugin-install onboarding state (#91): the plugin
     # ships the hooks, the CLI arrives separately. One actionable line, exit 0.
@@ -50,28 +39,14 @@ def _emit_briefing(cwd: str, cli) -> None:
         )
         return
 
-    # Per-project routing: prefer this project's latest (slugged from the
-    # payload cwd); fall back to the global latest so pre-routing checkpoints
-    # and fresh projects still brief — visibly labeled, since a global
-    # checkpoint may belong to a DIFFERENT project.
-    slug = lib.slug(cwd)
-    ckpt_dir = lib.checkpoint_dir()
-    latest = ckpt_dir / slug / "latest.json" if slug else None
-    fallback = False
-    if latest is None or not latest.exists():
-        fallback = latest is not None  # project known, but no checkpoint of its own
-        latest = ckpt_dir / "latest.json"
-    if not latest.exists():
-        return  # nothing to brief; stay quiet
-
-    # The CLI must route the same way this hook did: hand it the project cwd.
+    # The CLI decides which checkpoint is read and labels it (#1223); this
+    # hook hands it the project cwd and prints what comes back. #1089: the
+    # same host tag `daimon-session-end.py` forwards for capture, so `daimon
+    # brief` knows which host is asking and renders an `enforce` ruling
+    # compact. `--auto` marks the render as hook-driven (#54); `run_brief`
+    # retries without the newest flags when the CLI on PATH is older.
     try:
-        proc = _run_brief(cli, cwd, auto=True)
-        if proc.returncode == 2:
-            # argparse exit 2: a pre-flag `daimon` on PATH rejected --auto
-            # (the plugin updates independently of the CLI). A briefing must
-            # never die over instrumentation — retry plain.
-            proc = _run_brief(cli, cwd, auto=False)
+        proc = lib.run_brief(cli, cwd, "claude-code", timeout=TIMEOUT, auto=True)
     except subprocess.TimeoutExpired:
         print(f"daimon: `daimon brief` timed out after {TIMEOUT}s — briefing skipped")
         return
@@ -84,8 +59,6 @@ def _emit_briefing(cwd: str, cli) -> None:
     if not text or text.startswith("No checkpoint yet"):
         return
 
-    suffix = " (global fallback — checkpoint may be from another project)" if fallback else ""
-    print(f"DAIMON BRIEFING {lib.age_line(latest)}{suffix}")
     print(text)
 
 

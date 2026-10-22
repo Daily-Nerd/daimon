@@ -57,9 +57,11 @@ python3 hook/codex-hooks.py status
 
 ## What each script does
 
-- **`daimon-codex-session-start.py`** — `SessionStart` hook. Reads the latest
-  project checkpoint and returns Codex `additionalContext` JSON, so the
-  briefing is injected as developer context.
+- **`daimon-codex-session-start.py`**: `SessionStart` hook. Runs `daimon brief
+  --label` for the payload `cwd` and returns the output as Codex
+  `additionalContext` JSON, so the briefing is injected as developer context.
+  The CLI picks the checkpoint and prints the label line; the hook decides
+  nothing (see the [Claude Code page](claude-code.md) for the fallback rules).
 - **`daimon-codex-user-prompt-submit.py`**: `UserPromptSubmit` hook,
   measured live on Codex CLI 0.153.1: it fires once per user prompt and its
   plain stdout reaches the model, no `additionalContext` envelope needed.

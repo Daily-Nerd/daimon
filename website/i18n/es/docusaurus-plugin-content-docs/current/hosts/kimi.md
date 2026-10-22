@@ -44,7 +44,9 @@ uv tool install 'daimon-briefing[pretty]'
   que es el que lleva el briefing. Kimi no tiene un punto de inyección al
   inicio de sesión (mirá Limitaciones más abajo). El modelo ve el briefing
   como un mensaje de usuario envuelto en una etiqueta `hook_result`,
-  adjunto a tu primer prompt.
+  adjunto a tu primer prompt. El CLI elige el checkpoint e imprime la línea de
+  etiqueta; el hook no decide nada (las reglas de fallback están en la
+  [página de Claude Code](claude-code.md)).
 - **`daimon-kimi-session-end.py`**: hook `SessionEnd`. Serializa la sesión
   terminada cuando una sesión interactiva de Kimi se cierra, incluidos los
   turnos posteriores a la última captura de `Stop`. Los bytes que `Stop` ya
