@@ -10,6 +10,7 @@ test here plants a FOREIGN bucket that matches, then asks as a project that
 resolves to no slug, with tenant scope on and off."""
 import inspect
 import json
+import sqlite3
 import typing
 
 import pytest
@@ -213,7 +214,7 @@ def test_a_scope_case_nobody_handles_raises_instead_of_widening(
     with pytest.raises(AssertionError):
         view.unreachable_scope(bogus)
     with pytest.raises(AssertionError):
-        recall._scope_filter(bogus)  
+        recall._scope_filter(bogus)
     with pytest.raises(AssertionError):
         recall._closed_still(bogus, config.recall_db(), [])
     monkeypatch.setattr(view, "read_scope",
@@ -223,8 +224,15 @@ def test_a_scope_case_nobody_handles_raises_instead_of_widening(
 
 
 def test_closed_still_narrows_to_a_named_scope_and_ignores_a_denied_one(
-        tmp_checkpoint_dir):
-    path = tmp_checkpoint_dir / "missing.db"     # no index: nothing is closed
+        tmp_path):
+    path = tmp_path / "closed.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO meta VALUES ('closed', ?)",
+                 (json.dumps(["-closed-bucket"]),))
+    conn.commit()
+    conn.close()
+    # A closed bucket exists in the index, but neither scope touches it.
     assert recall._closed_still(view.Named("-x"), path, []) is False
     assert recall._closed_still(view.Denied(), path, []) is False
 
