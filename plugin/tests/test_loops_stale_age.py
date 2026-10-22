@@ -142,6 +142,8 @@ def test_cli_brief_slug_route_has_no_pointer(tmp_checkpoint_dir, monkeypatch, ca
 def test_mcp_brief_pointer_only_for_the_own_project(tmp_checkpoint_dir, monkeypatch):
     _tight(monkeypatch)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    # The slug and the foreign project path are cross-project reads (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     _write()
     _write(project=OTHER)
     own = mcp_tools.HANDLERS["daimon_brief"]({}).text

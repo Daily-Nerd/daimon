@@ -271,6 +271,7 @@ def test_the_mcp_projects_tool_raises_when_the_peek_raises(
         tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import mcp_tools
     _write("/p/peek-mcp", "a visible topic text")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/peek-mcp")   # the listed bucket is the own one
 
     def boom(*_a, **_k):
         raise RuntimeError("peek")

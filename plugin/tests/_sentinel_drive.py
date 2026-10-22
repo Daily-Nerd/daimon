@@ -193,7 +193,10 @@ def run_cli(argv, *, stdin="", stdin_tty=False, stdout_tty=False, env=()):
 def run_mcp(name, arguments, *, env=()):
     from daimon_briefing import mcp_tools
     result = Result()
-    with environment(env):
+    # The sentinel measures the widest read the model surface can make, so the
+    # host grant is on (#1223): without it `all_projects` is refused and the
+    # case would observe a refusal, not the read.
+    with environment((("DAIMON_MODEL_CROSS_PROJECT", "1"), *env)):
         try:
             got = mcp_tools.HANDLERS[name](dict(arguments))
             result.chunks = [got.text, *got.notes]
