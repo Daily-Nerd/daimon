@@ -118,6 +118,8 @@ def _cmd_audit_privacy(args) -> int:
     proven clean / 1 residue / 3 cannot-prove; 3 exists because "could not
     check" must never look like "all clean"."""
     if getattr(args, "all_projects", False):
+        if _cli._refuses_caller_scope(all_projects=True):
+            return 2
         results = privacy.audit_all()
     else:
         results = [privacy.audit_project(_cli._resolve_project(args.project))]

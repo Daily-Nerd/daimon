@@ -273,7 +273,8 @@ def _cmd_brief(args, fx) -> int:
     fx.add(Effects(usage=(
         "brief:auto" if getattr(args, "auto", False) else "brief",)))
     slug = getattr(args, "slug", None)
-    if _cli._refuses_caller_scope(slug):
+    if _cli._refuses_caller_scope(
+            slug, global_fallback=bool(getattr(args, "global_fallback", False))):
         return 2
     if slug:
         # Deliberate cross-project read (#243). Explicit-never-automatic is

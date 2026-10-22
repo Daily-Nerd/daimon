@@ -1594,6 +1594,7 @@ def test_status_prints_a_remedy_that_actually_runs(linked, tmp_checkpoint_dir,
            {"events.jsonl": _row("e1")})
     if scoped:
         monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+        monkeypatch.setenv("DAIMON_PROJECT_DIR", link)   # host-set project
 
     cli.main(["status", f"--project={link}"])
 
@@ -1613,6 +1614,7 @@ def test_ruling_list_prints_a_remedy_that_actually_runs(
            {"refutations.jsonl": _row("r1")})
     if scoped:
         monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+        monkeypatch.setenv("DAIMON_PROJECT_DIR", link)   # host-set project
 
     assert cli.main(["ruling", "list", f"--project={link}"]) == 1
 

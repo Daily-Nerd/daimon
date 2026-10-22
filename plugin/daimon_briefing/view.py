@@ -438,29 +438,55 @@ class ModelRead:
         return isinstance(self.scope, All)
 
 
+def _decide(*, slug: str | None, all_projects: bool, project: str | None,
+            global_fallback: bool, granted: bool, refusal: str) -> ModelRead:
+    """The one comparison both surfaces make: does this request leave the own
+    bucket? A request leaves it when it names another `slug`, asks for
+    `all_projects`, asks for the global pointer, or points `project` at a
+    directory whose bucket is not the server's own. A request that leaves it
+    without the surface's grant is refused out loud (`ScopeRefused`); one that
+    stays inside is answered, whichever argument expressed it."""
+    own = store.project_slug(config.resolve_read_project(None))
+    target = config.resolve_read_project(project)
+    leaves = (bool(all_projects) or bool(global_fallback)
+              or bool(slug and slug != own)
+              or store.project_slug(target) != own)
+    if leaves and not granted:
+        raise ScopeRefused(refusal)
+    return ModelRead(read_scope(target, slug=slug or None,
+                                all_projects=bool(all_projects)), target,
+                     project or None)
+
+
 def model_read(*, slug: str | None = None, all_projects: bool = False,
                project: str | None = None) -> ModelRead:
     """THE decision for the model surface (#1223): the host, never the caller,
     chooses a read scope. Every MCP tool hands its selector arguments here.
 
-    A request leaves the own bucket when it names another `slug`, asks for
-    `all_projects`, or points `project` at a directory whose bucket is not the
-    server's own. That is refused out loud (`ScopeRefused`) unless the host set
+    A request that leaves the own bucket is refused unless the host set
     DAIMON_MODEL_CROSS_PROJECT, and never under DAIMON_TENANT_SCOPED, where the
-    grant has no effect. A request that stays inside the own bucket is
-    answered, whichever argument expressed it. The refusal is a property of
-    the read, not of an argument's name: a selector added to a tool is covered
-    by passing it here."""
-    own = store.project_slug(config.resolve_read_project(None))
-    target = config.resolve_read_project(project)
-    leaves = (bool(all_projects)
-              or bool(slug and slug != own)
-              or store.project_slug(target) != own)
-    if leaves and not config.model_cross_project():
-        raise ScopeRefused(config.model_scope_refusal())
-    return ModelRead(read_scope(target, slug=slug or None,
-                                all_projects=bool(all_projects)), target,
-                     project or None)
+    grant has no effect. The refusal is a property of the read, not of an
+    argument's name: a selector added to a tool is covered by passing it
+    here."""
+    return _decide(slug=slug, all_projects=all_projects, project=project,
+                   global_fallback=False, granted=config.model_cross_project(),
+                   refusal=config.model_scope_refusal())
+
+
+def cli_read(*, slug: str | None = None, all_projects: bool = False,
+             project: str | None = None,
+             global_fallback: bool = False) -> ModelRead:
+    """THE decision for the CLI (#1223): the same comparison as `model_read`
+    with a different grant. The CLI is the human's own shell, so off tenant
+    scope every request is granted and the verbs behave as they always did.
+    On a tenant-scoped home (DAIMON_TENANT_SCOPED) none is: a `--project`
+    naming another bucket, `--slug`, `--all-projects` and the global-pointer
+    fallback are refused out loud with the tenant refusal. `cli._resolve_project`
+    and `cli._refuses_caller_scope` call this and nothing else decides it."""
+    return _decide(slug=slug, all_projects=all_projects, project=project,
+                   global_fallback=global_fallback,
+                   granted=not config.tenant_scoped(),
+                   refusal=config.TENANT_SCOPE_REFUSAL)
 
 
 def machine_sets() -> tuple[frozenset, frozenset]:
