@@ -120,8 +120,7 @@ def test_on_session_end_writes_checkpoint(tmp_checkpoint_dir, fake_chat_factory,
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
     assert store.read_checkpoint("S-end") is not None
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-end"
+    assert store.read_own_stream_latest()["session_id"] == "S-end"
 
 
 def test_on_session_end_strips_model_supplied_format_version(

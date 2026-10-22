@@ -22,8 +22,7 @@ def test_write_then_read_round_trip(tmp_checkpoint_dir, sample_checkpoint):
 
 def test_latest_pointer_updated_on_write(tmp_checkpoint_dir, sample_checkpoint):
     store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
-    latest = store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                    admit=store.Admit.ANY)
+    latest = store.read_own_stream_latest()
     assert latest is not None
     assert latest["session_id"] == "S-prev"
 
@@ -31,14 +30,12 @@ def test_latest_pointer_updated_on_write(tmp_checkpoint_dir, sample_checkpoint):
 def test_latest_reflects_most_recent_write(tmp_checkpoint_dir, sample_checkpoint):
     store.write_checkpoint("S-old", {**sample_checkpoint, "session_id": "S-old"}, writer=Writer.HUMAN)
     store.write_checkpoint("S-new", {**sample_checkpoint, "session_id": "S-new"}, writer=Writer.HUMAN)
-    latest = store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                    admit=store.Admit.ANY)
+    latest = store.read_own_stream_latest()
     assert latest["session_id"] == "S-new"
 
 
 def test_read_latest_none_when_empty(tmp_checkpoint_dir):
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY) is None
+    assert store.read_own_stream_latest() is None
 
 
 def test_read_checkpoint_none_when_missing(tmp_checkpoint_dir):
@@ -360,8 +357,7 @@ def test_read_latest_prefers_project(tmp_checkpoint_dir, sample_checkpoint):
     assert store.read_latest_body(project_dir="/p/B", route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-b"
     # global latest still points at the most recent write (any project)
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-b"
+    assert store.read_own_stream_latest()["session_id"] == "S-b"
 
 
 def test_read_latest_falls_back_to_global(tmp_checkpoint_dir, sample_checkpoint):
@@ -703,8 +699,7 @@ def test_dual_write_failure_does_not_break_serialize(tmp_checkpoint_dir, sample_
     monkeypatch.setattr(config, "team_dir", lambda: blocker / "team")
     out = store.write_checkpoint("S-a", sample_checkpoint, writer=Writer.HUMAN)  # must NOT raise
     assert out.exists()  # local write intact
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY) is not None
+    assert store.read_own_stream_latest() is not None
 
 
 def test_gc_ignores_team_dir(tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
@@ -1071,8 +1066,7 @@ def test_read_team_own_synced_copy_not_clamped(tmp_checkpoint_dir, sample_checkp
 def test_write_older_checkpoint_does_not_steal_global_latest(tmp_checkpoint_dir, sample_checkpoint):
     store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), writer=Writer.HUMAN)
     store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), writer=Writer.HUMAN)
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-new"
+    assert store.read_own_stream_latest()["session_id"] == "S-new"
     # the per-session checkpoint itself still lands — only the pointer is guarded
     assert store.read_checkpoint("S-old") is not None
 
@@ -1082,8 +1076,7 @@ def test_write_older_checkpoint_does_not_steal_project_latest(tmp_checkpoint_dir
     store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), project_dir="/p/A", writer=Writer.HUMAN)
     assert store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-new"
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-new"
+    assert store.read_own_stream_latest()["session_id"] == "S-new"
 
 
 def test_write_older_checkpoint_guards_pointers_independently(tmp_checkpoint_dir, sample_checkpoint):
@@ -1091,8 +1084,7 @@ def test_write_older_checkpoint_guards_pointers_independently(tmp_checkpoint_dir
     # the global pointer is newer and stays put.
     store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), project_dir="/p/B", writer=Writer.HUMAN)
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-new"
+    assert store.read_own_stream_latest()["session_id"] == "S-new"
     assert store.read_latest_body(project_dir="/p/B", route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.ANY)["session_id"] == "S-old"
 
@@ -1100,8 +1092,7 @@ def test_write_older_checkpoint_guards_pointers_independently(tmp_checkpoint_dir
 def test_write_newer_checkpoint_still_takes_latest(tmp_checkpoint_dir, sample_checkpoint):
     store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), writer=Writer.HUMAN)
     store.write_checkpoint("S-new", _stamped(sample_checkpoint, "S-new", 0), writer=Writer.HUMAN)
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-new"
+    assert store.read_own_stream_latest()["session_id"] == "S-new"
 
 
 def test_write_over_legacy_pointer_without_created_takes_latest(tmp_checkpoint_dir, sample_checkpoint):
@@ -1112,8 +1103,7 @@ def test_write_over_legacy_pointer_without_created_takes_latest(tmp_checkpoint_d
     legacy.pop("created", None)
     (d / "latest.json").write_text(json.dumps(legacy), encoding="utf-8")
     store.write_checkpoint("S-old", _stamped(sample_checkpoint, "S-old", 2), writer=Writer.HUMAN)
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY)["session_id"] == "S-old"
+    assert store.read_own_stream_latest()["session_id"] == "S-old"
 
 
 # ---- first_seen: per-item birth stamp, exact-text carry-over (#126) ----
@@ -1969,8 +1959,7 @@ def test_read_latest_corrupt_project_pointer_falls_through_to_global(
 def test_read_latest_corrupt_global_pointer_returns_none(tmp_checkpoint_dir):
     tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     (tmp_checkpoint_dir / "latest.json").write_text("{not json", encoding="utf-8")
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY) is None  # tolerant, no raise
+    assert store.read_own_stream_latest() is None  # tolerant, no raise
 
 
 # ---- non-object pointer payloads (#817): valid JSON that is not a dict is absent ----
@@ -2010,15 +1999,13 @@ def test_read_latest_non_object_project_pointer_no_fallback_returns_none(
 def test_read_latest_non_object_global_pointer_returns_none(tmp_checkpoint_dir, payload):
     tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     (tmp_checkpoint_dir / "latest.json").write_text(payload, encoding="utf-8")
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY) is None
+    assert store.read_own_stream_latest() is None
 
 
 def test_read_latest_agrees_with_reportable_on_non_object_pointer(tmp_checkpoint_dir):
     tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
     (tmp_checkpoint_dir / "latest.json").write_text('["x"]', encoding="utf-8")
-    assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
-                                  admit=store.Admit.ANY) is None
+    assert store.read_own_stream_latest() is None
     assert store.read_latest_body(route=store.Route.OWN_ELSE_GLOBAL,
                                   admit=store.Admit.OWN_OR_UNROUTED) is None  # the two readers agree (#817)
 

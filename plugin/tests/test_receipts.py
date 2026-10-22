@@ -215,7 +215,7 @@ def test_plan_mint_ok(keys_ready, fake_cli, monkeypatch):
 # ---- mint ------------------------------------------------------------------
 
 def _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
-                    session="S-r", extra=None):
+                    session="S-r", extra=None, project_dir=None):
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     cp = {"session_id": session, "transcript_hash": _TSCRIPT_HEX,
           "created": "2026-07-09T00:00:00Z",
@@ -223,7 +223,8 @@ def _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
               {"text": "d1", "trust": "verbatim", "quote": "q1"}]}}
     if extra:
         cp.update(extra)
-    path = store.write_checkpoint(session, cp, writer=Writer.HUMAN)
+    path = store.write_checkpoint(session, cp, project_dir=project_dir,
+                                  writer=Writer.HUMAN)
     return path
 
 
@@ -469,10 +470,15 @@ def test_status_line_none_when_off(tmp_checkpoint_dir):
     assert receipts.status_line() is None
 
 
+# A status line answers for a project (#1223): an identity-less read reads
+# nothing, so these name the one they report on.
+_STATUS_PROJ = "/p/receipts-status"
+
+
 def test_status_line_signed(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli):
     _mint_via_store(tmp_checkpoint_dir, monkeypatch, keys_ready, fake_cli,
-                    session="S-sl")
-    line = receipts.status_line()
+                    session="S-sl", project_dir=_STATUS_PROJ)
+    line = receipts.status_line(project_dir=_STATUS_PROJ)
     assert line and "signed" in line
 
 
@@ -790,13 +796,17 @@ def test_status_line_never_reports_another_projects_session(
     assert "no checkpoint to sign yet" in line
 
 
-def test_status_line_unknown_project_still_reads_the_global_pointer(
+def test_status_line_unknown_project_reads_nothing(
         tmp_checkpoint_dir, monkeypatch):
-    # #791 must not cost the pre-routing case its line: with no project identity
-    # there is no per-project pointer to prefer and nothing is foreign (#784).
+    # #1223: with no project identity there is no bucket to prefer and no way
+    # to say which checkpoint is foreign, so the line names no session. (#791
+    # kept the global pointer for this case; the pre-routing store it served
+    # is read by the persist path only.)
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     store.write_checkpoint("S-global", {"session_id": "S-global"}, writer=Writer.HUMAN)
-    assert "S-global" in receipts.status_line()
+    line = receipts.status_line()
+    assert "S-global" not in line
+    assert "no checkpoint to sign yet" in line
 
 
 def test_cli_verify_receipt_never_targets_another_projects_session(
@@ -821,8 +831,9 @@ def test_cli_verify_receipt_never_targets_another_projects_session(
 def test_status_line_marked_but_missing(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
     # A receipt-era marker but no sidecar (mint failed) -> MISSING line.
-    store.write_checkpoint("S-sm", {"session_id": "S-sm", "receipts": True}, writer=Writer.HUMAN)
-    line = receipts.status_line()
+    store.write_checkpoint("S-sm", {"session_id": "S-sm", "receipts": True},
+                           project_dir=_STATUS_PROJ, writer=Writer.HUMAN)
+    line = receipts.status_line(project_dir=_STATUS_PROJ)
     assert "MISSING" in line
 
 
@@ -834,9 +845,10 @@ def test_status_line_predates_receipts(tmp_checkpoint_dir, monkeypatch):
     # one, and the age wording would be a false cause.
     monkeypatch.delenv("DAIMON_RECEIPTS", raising=False)
     store.write_checkpoint("S-pre2", {"session_id": "S-pre2",
-                                      "transcript_hash": "ab" * 32}, writer=Writer.HUMAN)
+                                      "transcript_hash": "ab" * 32},
+                           project_dir=_STATUS_PROJ, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
-    line = receipts.status_line()
+    line = receipts.status_line(project_dir=_STATUS_PROJ)
     assert "predates receipts" in line
 
 
@@ -848,8 +860,9 @@ def test_status_line_unsigned_without_transcript_does_not_blame_age(
     # state with a false cause — it said the checkpoint PREDATES receipts, for a
     # checkpoint written seconds earlier. Say which of the two it actually is.
     monkeypatch.setenv("DAIMON_RECEIPTS", "1")
-    store.write_checkpoint("S-insession", {"session_id": "S-insession"}, writer=Writer.HUMAN)
-    line = receipts.status_line()
+    store.write_checkpoint("S-insession", {"session_id": "S-insession"},
+                           project_dir=_STATUS_PROJ, writer=Writer.HUMAN)
+    line = receipts.status_line(project_dir=_STATUS_PROJ)
     assert "predates receipts" not in line
     assert "no transcript to bind" in line
     assert "expected" in line
