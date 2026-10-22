@@ -113,7 +113,8 @@ def test_codex_session_start_labels_global_fallback(
 ):
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
 
-    proc = _run(START_HOOK, {"cwd": "/p/never-seen"}, tmp_path)
+    proc = _run(START_HOOK, {"cwd": "/p/never-seen"}, tmp_path,
+                {"DAIMON_BRIEF_GLOBAL_FALLBACK": "1"})
 
     assert proc.returncode == 0
     ctx = _additional_context(proc.stdout)
@@ -330,7 +331,8 @@ def test_codex_session_start_sweep_never_breaks_briefing_output(
     # No transcript_path in the payload at all -> sweep can't act, briefing is
     # unaffected (matches every pre-#188 session-start test's payload shape).
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
-    proc = _run(START_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
+    proc = _run(START_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path,
+                {"DAIMON_BRIEF_GLOBAL_FALLBACK": "1"})
     assert proc.returncode == 0
     ctx = _additional_context(proc.stdout)
     assert "checkpoint: S-global" in ctx

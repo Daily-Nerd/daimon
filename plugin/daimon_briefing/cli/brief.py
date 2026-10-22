@@ -266,6 +266,28 @@ def _prepared(project, route, worldcheck_project=None):
         return None
 
 
+def _checkpoint_label(checkpoint: dict, fallback_used: bool) -> str:
+    """The one line a host hook puts above the briefing (`brief --label`): the
+    session and age of the checkpoint THIS read rendered, and whether it came
+    off the global pointer. The hook prints it as given; it has no second
+    opinion on which checkpoint that was (#1223)."""
+    sid = checkpoint.get("session_id") or "?"
+    epoch = store._created_epoch(checkpoint.get("created"))
+    written = ""
+    if epoch is not None:
+        secs = max(0.0, time.time() - epoch)
+        if secs < 3600:
+            age = f"{int(secs // 60)}m"
+        elif secs < 86400:
+            age = f"{secs / 3600:.1f}h"
+        else:
+            age = f"{secs / 86400:.1f}d"
+        written = f", written {age} ago"
+    suffix = (" (global fallback - checkpoint may be from another project)"
+              if fallback_used else "")
+    return f"DAIMON BRIEFING (checkpoint: {sid}{written}){suffix}"
+
+
 @effects_commit.committing
 def _cmd_brief(args, fx) -> int:
     # Every attempt counts, a refused one included: the usage line is
@@ -366,6 +388,8 @@ def _cmd_brief(args, fx) -> int:
                     f"{counts.quarantined} quarantined item(s) withheld "
                     "(a teammate's)"])
         return 0
+    if getattr(args, "label", False) and isinstance(checkpoint, dict):
+        render.render_brief_line([_checkpoint_label(checkpoint, fallback_used)])
     # Label the global-pointer fallback (#29): status calls the same situation
     # "global checkpoint (fallback)"; brief must not present another project's
     # state as this project's without saying so.
@@ -426,6 +450,13 @@ def register(sub, fmt) -> None:
         "--auto", action="store_true",
         help="mark this render as hook-driven (SessionStart) so `daimon stats` "
              "can separate automatic briefings from deliberate re-reads (#54)",
+    )
+    p_brief.add_argument(
+        "--label", action="store_true",
+        help="print one `DAIMON BRIEFING (checkpoint: ...)` line above the "
+             "briefing, naming the checkpoint this read rendered and whether "
+             "it came off the global pointer; host hooks print it as given "
+             "(#1223)",
     )
     p_brief.set_defaults(func=_cmd_brief)
 

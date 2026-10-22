@@ -133,20 +133,24 @@ def test_brief_hook_age_from_created_not_mtime(tmp_checkpoint_dir, sample_checkp
 
 
 def test_brief_hook_labels_global_fallback(tmp_checkpoint_dir, sample_checkpoint, tmp_path):
-    # Project is known but has no checkpoint of its own -> global, visibly labeled.
+    # Project is known but has no checkpoint of its own; the operator opted in
+    # to the global pointer -> global, visibly labeled by the CLI (#1223).
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
-    proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
+    proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path,
+                extra_env={"DAIMON_BRIEF_GLOBAL_FALLBACK": "1"})
     assert proc.returncode == 0
     assert "checkpoint: S-global" in proc.stdout
     assert "global fallback" in proc.stdout
 
 
-def test_brief_hook_no_cwd_behaves_as_today(tmp_checkpoint_dir, sample_checkpoint, tmp_path):
+def test_brief_hook_no_cwd_does_not_pick_the_global_pointer(tmp_checkpoint_dir, sample_checkpoint, tmp_path):
+    # #1223: the hook decides nothing; the CLI resolves the project and a
+    # project with no checkpoint of its own is not handed another one.
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, {"session_id": "S-new"}, tmp_path)
     assert proc.returncode == 0
-    assert "checkpoint: S-global" in proc.stdout
-    assert "global fallback" not in proc.stdout  # no project known -> nothing to flag
+    assert "checkpoint: S-global" not in proc.stdout
+    assert "global fallback" not in proc.stdout
 
 
 def test_brief_hook_quiet_when_no_checkpoint_anywhere(tmp_checkpoint_dir, tmp_path):
@@ -177,7 +181,7 @@ def test_brief_hook_fail_open_on_garbage_stdin(tmp_checkpoint_dir, sample_checkp
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
     proc = _run(BRIEF_HOOK, "{not json!", tmp_path)
     assert proc.returncode == 0
-    assert "checkpoint: S-global" in proc.stdout  # degraded to global, not dead
+    assert "checkpoint: S-global" not in proc.stdout  # degraded, never to another project
 
 
 def _fake_cli_recording(tmp_path) -> tuple[Path, Path]:
@@ -355,9 +359,11 @@ def test_brief_hook_retries_without_auto_on_preflag_cli(tmp_path, tmp_checkpoint
         line for line in capture.read_text().splitlines()
         if line.split()[:1] == ["brief"]
     ]
-    assert len(brief_calls) == 2  # --auto attempted first, then the plain retry
-    assert "--auto" in brief_calls[0]
-    assert "--auto" not in brief_calls[1]
+    # --auto --label first, then --auto alone, then plain (#1223)
+    assert len(brief_calls) == 3
+    assert "--auto" in brief_calls[0] and "--label" in brief_calls[0]
+    assert "--auto" in brief_calls[1] and "--label" not in brief_calls[1]
+    assert "--auto" not in brief_calls[2]
 
 
 # ---- daimon-session-end.py ----
@@ -1188,7 +1194,8 @@ def test_brief_hook_sweep_never_breaks_briefing_output(
     # No transcript_path in the payload at all -> sweep can't act, briefing is
     # unaffected (matches every pre-#185 brief-hook test's payload shape).
     store.write_checkpoint("S-global", {**sample_checkpoint, "session_id": "S-global"}, writer=Writer.HUMAN)
-    proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path)
+    proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen", "session_id": "S-new"}, tmp_path,
+                extra_env={"DAIMON_BRIEF_GLOBAL_FALLBACK": "1"})
     assert proc.returncode == 0
     assert "checkpoint: S-global" in proc.stdout
 
