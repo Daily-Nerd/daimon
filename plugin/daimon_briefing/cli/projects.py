@@ -41,7 +41,7 @@ def projects_rows(project_arg=None) -> list:
     return projects_listing(project_arg)[0]
 
 
-def projects_listing(project_arg=None) -> tuple:
+def projects_listing(project_arg=None, *, own_only: bool = False) -> tuple:
     """`(rows, notes)`: one JSON-ready row per checkpoint bucket, newest
     first, and the notes of the listing (`view.projects_notes`: a bucket whose
     trust ledger cannot be read, a forget set that may be incomplete). Single
@@ -51,10 +51,12 @@ def projects_listing(project_arg=None) -> tuple:
     view's call (`view.peek`): a forgotten, quarantined or unverifiable one is
     None, the same as no topic at all. `view.projects` reads a checkpoint only
     for a bucket the caller may list (#899), so a tenant-scoped home gets its
-    own and never opens another."""
+    own and never opens another. `own_only` narrows the same way without
+    tenant scope: the MCP tool lists only its own bucket unless the host
+    granted cross-project reads (#1223)."""
     cur_slug = store.project_slug(_cli._resolve_project(project_arg))
     rows = []
-    listed = view.projects(cur_slug)
+    listed = view.projects(cur_slug, own_only=own_only)
     for b in listed:
         created = b.created
         rows.append({
@@ -74,7 +76,7 @@ def projects_listing(project_arg=None) -> tuple:
     rows.sort(key=lambda r: r["_epoch"], reverse=True)
     for r in rows:
         del r["_epoch"]
-    return rows, view.projects_notes(cur_slug, listed)
+    return rows, view.projects_notes(cur_slug, listed, own_only=own_only)
 
 
 def _cmd_slug(args) -> int:

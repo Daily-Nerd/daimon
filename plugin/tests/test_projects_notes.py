@@ -67,6 +67,9 @@ def test_projects_rows_keeps_its_shape(closed_store):
 def test_mcp_keeps_the_array_in_text_and_carries_the_note(closed_store,
                                                           monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", OWN)
+    # The closed bucket is listed, so the note counts it, only on a host that
+    # granted cross-project reads (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     got = mcp_tools.HANDLERS["daimon_projects"]({})
     assert isinstance(json.loads(got.text), list)
     assert got.notes == (NOTE,)

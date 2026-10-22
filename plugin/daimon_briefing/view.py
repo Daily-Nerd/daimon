@@ -306,14 +306,16 @@ def _is_bucket(name: str) -> bool:
     return True
 
 
-def buckets(own: str | None) -> tuple[str, ...]:
+def buckets(own: str | None, *, own_only: bool = False) -> tuple[str, ...]:
     """The bucket names a caller may enumerate, sorted: every subdirectory of
     the checkpoint dir that holds a `latest.json` (a torn pointer still counts,
     as in `store.list_buckets`). The one enumeration and the one tenant rule
     (#899): under `config.tenant_scoped()` it is the caller's own bucket `own`
     when that exists, and nothing else, so a listing cannot name another
-    tenant. Names only; no checkpoint body is read."""
-    if config.tenant_scoped():
+    tenant. `own_only` asks for that same narrowing without tenant scope: the
+    model surface lists only its own bucket unless the host granted more
+    (#1223). Names only; no checkpoint body is read."""
+    if config.tenant_scoped() or own_only:
         return (own,) if own and bucket_exists(own, own) else ()
     try:
         names = sorted(p.name for p in config.checkpoint_dir().iterdir())
@@ -402,6 +404,63 @@ def read_scope(project, *, slug: str | None = None,
     if own is None:
         return Denied()
     return Own(own, tuple(config.extra_read_slugs()))
+
+
+# The arguments a model-facing tool may carry that select a bucket. Every
+# MCP handler passes exactly these to `model_read` and nothing else decides a
+# scope; the structural test fails a declared argument that is in neither this
+# tuple nor its list of arguments that cannot address a bucket.
+MODEL_SELECTORS = ("slug", "all_projects", "project")
+
+
+class ScopeRefused(Exception):
+    """A model-surface read that leaves the own bucket without the host's
+    grant. The message is the refusal text the caller reads."""
+
+
+@dataclass(frozen=True)
+class ModelRead:
+    """What `model_read` decided: the `scope` and the resolved project
+    directory the consumer reads for (the server's own, or the one a
+    permitted `project` path named). `project_arg` is that path as the caller
+    gave it, for a consumer that resolves it itself and reports on it."""
+
+    scope: Scope
+    project: str
+    project_arg: str | None = None
+
+    @property
+    def slug(self) -> str | None:
+        return self.scope.slug if isinstance(self.scope, Named) else None
+
+    @property
+    def all_projects(self) -> bool:
+        return isinstance(self.scope, All)
+
+
+def model_read(*, slug: str | None = None, all_projects: bool = False,
+               project: str | None = None) -> ModelRead:
+    """THE decision for the model surface (#1223): the host, never the caller,
+    chooses a read scope. Every MCP tool hands its selector arguments here.
+
+    A request leaves the own bucket when it names another `slug`, asks for
+    `all_projects`, or points `project` at a directory whose bucket is not the
+    server's own. That is refused out loud (`ScopeRefused`) unless the host set
+    DAIMON_MODEL_CROSS_PROJECT, and never under DAIMON_TENANT_SCOPED, where the
+    grant has no effect. A request that stays inside the own bucket is
+    answered, whichever argument expressed it. The refusal is a property of
+    the read, not of an argument's name: a selector added to a tool is covered
+    by passing it here."""
+    own = store.project_slug(config.resolve_read_project(None))
+    target = config.resolve_read_project(project)
+    leaves = (bool(all_projects)
+              or bool(slug and slug != own)
+              or store.project_slug(target) != own)
+    if leaves and not config.model_cross_project():
+        raise ScopeRefused(config.model_scope_refusal())
+    return ModelRead(read_scope(target, slug=slug or None,
+                                all_projects=bool(all_projects)), target,
+                     project or None)
 
 
 def machine_sets() -> tuple[frozenset, frozenset]:
@@ -848,7 +907,7 @@ class Listed:
     closed: bool = False
 
 
-def projects(own: str | None) -> tuple[Listed, ...]:
+def projects(own: str | None, *, own_only: bool = False) -> tuple[Listed, ...]:
     """The buckets a caller may list (`buckets(own)`, the one tenant rule), each
     with its latest pointer's envelope and `peek`. A checkpoint body is read
     only for an allowed bucket: another tenant's pointer is never opened.
@@ -857,7 +916,8 @@ def projects(own: str | None) -> tuple[Listed, ...]:
     stamp = store.forgotten_stamp()   # once for the listing, not per bucket
     incomplete = store.forgotten_incomplete()   # likewise
     out = []
-    for b in store.list_buckets(only=frozenset(buckets(own))):
+    for b in store.list_buckets(only=frozenset(buckets(own,
+                                                       own_only=own_only))):
         cp = b["checkpoint"]
         data = cp if isinstance(cp, dict) else {}
         # One light snapshot per bucket serves the peek AND the closed flag
@@ -881,18 +941,19 @@ def forgotten_notes() -> tuple[str, ...]:
         else ()
 
 
-def projects_notes(own: str | None, listed=None) -> tuple[str, ...]:
+def projects_notes(own: str | None, listed=None, *,
+                   own_only: bool = False) -> tuple[str, ...]:
     """The notes a project listing carries: `projects-closed` for the listed
     buckets whose trust ledger cannot be read (a count, except under tenant
     scope, where it would count buckets the caller may not list) and
     `forget-incomplete`. `listed` is the caller's `projects(own)` when it
     already holds it."""
-    listed = projects(own) if listed is None else listed
+    listed = projects(own, own_only=own_only) if listed is None else listed
     closed = sum(1 for b in listed if b.closed)
     lines = []
     if closed:
         lines.append(display.projects_closed_note(
-            closed, config.tenant_scoped()))
+            closed, config.tenant_scoped() or own_only))
     return display.cap_notes([*lines, *forgotten_notes()])
 
 

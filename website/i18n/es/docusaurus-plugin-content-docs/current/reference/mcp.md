@@ -43,10 +43,21 @@ El servidor hereda la disciplina entre proyectos de daimon:
 - **Las lecturas tienen alcance de proyecto.** El proyecto se resuelve desde
   el directorio de trabajo del proceso, o desde `DAIMON_PROJECT_DIR` si está
   definido — pon uno de los dos en la configuración MCP de tu host.
+- **El host elige el alcance, nunca el modelo.** Por defecto cada
+  herramienta responde solo por este proyecto. Un pedido que nombra otro
+  proyecto (un `slug`, `all_projects`, o una ruta `project` fuera de este
+  proyecto) se rechaza con un mensaje que nombra `DAIMON_MODEL_CROSS_PROJECT`,
+  y `daimon_projects` lista solo este proyecto. Define
+  `DAIMON_MODEL_CROSS_PROJECT=1` en el entorno del proceso o en el archivo env
+  para permitir esas lecturas; las descripciones de las herramientas entonces
+  ofrecen los argumentos. Bajo `DAIMON_TENANT_SCOPED` la variable no tiene
+  efecto. Esto vale para las herramientas MCP; un agente con shell puede
+  igual correr la CLI desde otro directorio.
 - **Sin fallback implícito.** Un proyecto sin checkpoint recibe
-  `no checkpoint for this project` más un puntero a `daimon_projects` —
-  nunca el contenido de otro proyecto. Cruzar de proyecto es siempre
-  explícito: pasa un `slug` a `daimon_brief` o `daimon_recall`.
+  `no checkpoint for this project`, nunca el contenido de otro proyecto. Con
+  la variable activa, el mensaje además apunta a `daimon_projects`, y cruzar
+  de proyecto sigue siendo explícito: pasa un `slug` a `daimon_brief` o
+  `daimon_recall`.
 - **Kill switch respetado.** Con `DAIMON_DISABLE=1` el servidor sale limpio
   sin servir, así un daimon deshabilitado nunca rompe el arranque del host.
 - **El uso queda local.** Cada llamada escribe una línea `mcp:<tool>` en el

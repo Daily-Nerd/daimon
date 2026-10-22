@@ -31,7 +31,32 @@ _INVALID_PARAMS = -32602
 
 def _tool_descriptors():
     """Static tools/list payload. Input schemas are hand-written dicts —
-    they describe the shim's arguments, not the library's internals."""
+    they describe the shim's arguments, not the library's internals.
+
+    A selector that addresses another bucket (`slug`, `all_projects`, a
+    `project` path) is offered only when the host granted cross-project reads
+    (`config.model_cross_project`, #1223): a model that is never told it can
+    ask does not spend a call on a refusal, and the refusal still stands for a
+    model that asks anyway (`view.model_read`)."""
+    cross = config.model_cross_project()
+    project_path = {"type": "string", "description": "project directory path"}
+    recall_props = {
+        "query": {"type": "string", "description": "search terms"},
+        "limit": {"type": "integer", "default": 20},
+        "session": {"type": "string",
+                    "description": ("the live session id this pull should be "
+                                    "attributed to, if known")},
+    }
+    brief_props: dict = {}
+    if cross:
+        recall_props["all_projects"] = {"type": "boolean",
+                                        "description": "search every project"}
+        recall_props["slug"] = {
+            "type": "string",
+            "description": "search one other project by slug"}
+        brief_props["slug"] = {"type": "string",
+                               "description": "read another project by slug"}
+        brief_props["project"] = project_path
     return [
         {
             "name": "daimon_recall",
@@ -40,23 +65,13 @@ def _tool_descriptors():
                 "trust class (verbatim = exact quote, inferred = model "
                 "conclusion), author, origin project slug, and a `status` "
                 "field in plain words when a row is resolved, superseded or "
-                "contradicted (null for a live row). Cross-project search "
-                "only via all_projects/slug — never implicit."),
+                "contradicted (null for a live row). "
+                + ("Cross-project search only via all_projects/slug — never "
+                   "implicit." if cross else
+                   "Searches this project only.")),
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "query": {"type": "string",
-                              "description": "search terms"},
-                    "all_projects": {"type": "boolean",
-                                     "description": "search every project"},
-                    "slug": {"type": "string",
-                             "description": "search one other project by slug"},
-                    "limit": {"type": "integer", "default": 20},
-                    "session": {"type": "string",
-                                "description": ("the live session id this "
-                                                "pull should be attributed "
-                                                "to, if known")},
-                },
+                "properties": recall_props,
                 "required": ["query"],
             },
             "annotations": {"readOnlyHint": True},
@@ -67,24 +82,18 @@ def _tool_descriptors():
                 "The latest briefing for this project: what the last session "
                 "was doing, decisions, open loops — trust-tagged. Strictly "
                 "project-scoped: no checkpoint here answers 'none', never "
-                "another project's content (pass slug to read one "
-                "explicitly)."),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "slug": {"type": "string",
-                             "description": "read another project by slug"},
-                    "project": {"type": "string",
-                                "description": "project directory path"},
-                },
-            },
+                "another project's content"
+                + (" (pass slug to read one explicitly)." if cross else ".")),
+            "inputSchema": {"type": "object", "properties": brief_props},
             "annotations": {"readOnlyHint": True},
         },
         {
             "name": "daimon_projects",
-            "description": ("Every project daimon has memory for: slug, age, "
-                            "last topic. Use a slug with daimon_brief/"
-                            "daimon_recall for explicit cross-project reads."),
+            "description": (
+                "Every project daimon has memory for: slug, age, last topic. "
+                "Use a slug with daimon_brief/daimon_recall for explicit "
+                "cross-project reads." if cross else
+                "This project's own entry: slug, age, last topic."),
             "inputSchema": {"type": "object", "properties": {}},
             "annotations": {"readOnlyHint": True},
         },
@@ -95,10 +104,7 @@ def _tool_descriptors():
                             "failures, alarms."),
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "project": {"type": "string",
-                                "description": "project directory path"},
-                },
+                "properties": {"project": project_path} if cross else {},
             },
             "annotations": {"readOnlyHint": True},
         },
@@ -112,10 +118,7 @@ def _tool_descriptors():
                 "CLI-only (`daimon request ...`)."),
             "inputSchema": {
                 "type": "object",
-                "properties": {
-                    "project": {"type": "string",
-                                "description": "project directory path"},
-                },
+                "properties": {"project": project_path} if cross else {},
             },
             "annotations": {"readOnlyHint": True},
         },

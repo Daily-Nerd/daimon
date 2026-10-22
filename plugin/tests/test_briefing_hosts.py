@@ -197,7 +197,8 @@ def test_a_forgotten_note_and_evidence_leave_no_line_in_the_verdict_panel(
     assert "  Note:" not in out and "  Done:" not in out
 
 
-def test_the_mcp_tool_masks_a_quarantined_ruling(tmp_checkpoint_dir):
+def test_the_mcp_tool_masks_a_quarantined_ruling(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _seed()
     _ruling(Q)
     _quarantine()
@@ -270,7 +271,8 @@ def test_a_closed_brief_keeps_the_panels(tmp_checkpoint_dir, monkeypatch,
     assert "port the model" in out       # human furniture is not masked
 
 
-def test_a_closed_mcp_brief_says_why_and_shows_no_item(tmp_checkpoint_dir):
+def test_a_closed_mcp_brief_says_why_and_shows_no_item(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _closed_world()
     out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT}).text
     assert out.startswith(briefing.GREETING)
@@ -347,6 +349,7 @@ def test_the_slug_brief_reports_a_preparation_failure(
 
 def test_the_mcp_tool_raises_a_tool_error_when_the_view_cannot_be_built(
         tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     _seed()
 
     def boom(*_a, **_k):
@@ -636,7 +639,8 @@ def test_the_rich_cli_brief_shows_the_noted_line(tmp_checkpoint_dir,
     assert _shows(out, _NOTE_PR, line)
 
 
-def test_the_mcp_tool_shows_the_noted_line(tmp_checkpoint_dir):
+def test_the_mcp_tool_shows_the_noted_line(tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     line = _noted_cp(_NOTE_PR)
     out = mcp_tools.HANDLERS["daimon_brief"]({"project": PROJECT}).text
     assert _shows(out, _NOTE_PR, line)

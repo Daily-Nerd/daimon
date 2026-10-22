@@ -200,8 +200,10 @@ def test_request_inbox_prints_the_note_and_json_sends_it_to_stderr(
     assert "1 sender(s) skipped" in out.err
 
 
-def test_the_mcp_inbox_carries_the_note_in_tool_notes(tmp_checkpoint_dir):
+def test_the_mcp_inbox_carries_the_note_in_tool_notes(tmp_checkpoint_dir,
+                                                      monkeypatch):
     from daimon_briefing import mcp_tools
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", RECIPIENT)   # the named project is the own one
     _open()
     with open(_ledger(), "ab") as handle:
         handle.write(b"<<<<<<< HEAD\n")

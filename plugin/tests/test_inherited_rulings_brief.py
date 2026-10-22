@@ -472,6 +472,8 @@ def test_mcp_brief_slug_shows_slug_line_and_no_caller_cwd_rulings(
                            project_dir=str(slug_target), writer=Writer.HUMAN)
     slug = store.project_slug(str(slug_target))
 
+    # A named slug is a cross-project read: the host grants it (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     _, out = rpc(_init(), _call("daimon_brief", {"slug": slug}))
     text, is_err = _result(out)
     assert is_err is False

@@ -1178,8 +1178,10 @@ def test_pre_llm_call_injects_the_badge(tmp_checkpoint_dir, monkeypatch):
     assert BADGE_2 in out["context"]
 
 
-def test_the_mcp_brief_surfaces_the_badge(tmp_checkpoint_dir):
+def test_the_mcp_brief_surfaces_the_badge(tmp_checkpoint_dir, monkeypatch):
     _corroborated_checkpoint()
+    # A named slug is a cross-project read: the host grants it (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     out = mcp_tools.HANDLERS["daimon_brief"](
         {"slug": store.project_slug(PROJECT)}).text
     assert BADGE_2 in out

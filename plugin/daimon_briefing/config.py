@@ -627,6 +627,34 @@ TENANT_SCOPE_REFUSAL = (
     "own scope plus any host-declared DAIMON_EXTRA_READ_SLUGS")
 
 
+def model_cross_project() -> bool:
+    """Whether the HOST lets the model surface (the MCP tools) read outside
+    this project's own bucket (DAIMON_MODEL_CROSS_PROJECT, #1223). Off by
+    default: on the model surface the host, never the caller, chooses a read
+    scope, and a tool argument that names another bucket is the caller
+    choosing. Read at process start through the same accessor as every other
+    flag (process env or env file), never from prompt content. Under
+    `tenant_scoped()` it has no effect: a tenant home never lets a caller
+    leave its own scope."""
+    return _flag("DAIMON_MODEL_CROSS_PROJECT") and not tenant_scoped()
+
+
+# The model-surface refusal when no host grant is set. Under tenant scope the
+# refusal is TENANT_SCOPE_REFUSAL: `model_scope_refusal` picks, so there is one
+# source for what a refused MCP read says.
+MODEL_SCOPE_REFUSAL = (
+    "this tool reads this project's own scope only: a caller may not choose "
+    "another project (slug, all_projects, a project path elsewhere). The host "
+    "can allow it with DAIMON_MODEL_CROSS_PROJECT=1")
+
+
+def model_scope_refusal() -> str:
+    """The one refusal text for a model-surface read that leaves the own
+    bucket: the tenant text when tenant scope is on (the grant cannot lift it),
+    else the one that names the host setting."""
+    return TENANT_SCOPE_REFUSAL if tenant_scoped() else MODEL_SCOPE_REFUSAL
+
+
 def extra_read_slugs() -> tuple[str, ...]:
     """Slugs the host lets this session read AMBIENTLY, beside its own
     (DAIMON_EXTRA_READ_SLUGS, comma separated), for a shared scope whose
