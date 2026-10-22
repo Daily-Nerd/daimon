@@ -1873,15 +1873,18 @@ def machine_brief(target, now, *, loops_pointer: bool) -> RenderedBriefing:
     filtered = annotated.checkpoint
     if filtered is None:
         # Orientation without content: name the explicit path, leak nothing
-        # (#96, machine edition). #899: on a tenant-scoped home even the count
-        # is enumeration, and the remedy the hint names is the refused
-        # argument.
-        others = 0 if config.tenant_scoped() else len(store.list_buckets())
+        # (#96, machine edition). #899, #1223: the count and the remedy the
+        # hint names (daimon_projects, then a slug) are cross-project
+        # reads, offered only when the host granted them; otherwise the hint
+        # says nothing of other projects.
+        cross = config.model_cross_project()
+        others = len(store.list_buckets()) if cross else 0
         hint = (f"daimon knows {others} project(s) — call daimon_projects "
                 "and pass a slug to read one explicitly."
                 if others else
                 "no projects have checkpoints yet — the first serialized "
-                "session creates one.")
+                "session creates one." if cross else
+                "the first serialized session creates one.")
         return RenderedBriefing(
             f"{ruling_text}no checkpoint for this project. {hint}",
             "no-checkpoint", notes)

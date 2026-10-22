@@ -552,6 +552,8 @@ def test_brief_tool_no_checkpoint_gives_orientation_never_foreign_content(
     from daimon_briefing import store
     store.write_checkpoint("S-other", sample_checkpoint, project_dir="/p/OTHER", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/FRESH")
+    # The hint names daimon_projects only on a host that granted it (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     _, out = rpc(_init(), _call("daimon_brief", {}))
     text, is_err = _result(out)
     assert is_err is False              # absence is an answer, not an error
@@ -632,6 +634,8 @@ def test_projects_tool_matches_cli_rows(tmp_checkpoint_dir, sample_checkpoint,
     store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("S-b", sample_checkpoint, project_dir="/p/B", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    # Every bucket is listed only on a host that granted it (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     _, out = rpc(_init(), _call("daimon_projects", {}))
     text, is_err = _result(out)
     assert is_err is False
@@ -739,6 +743,9 @@ def test_requests_inbox_tool_takes_an_explicit_project(tmp_checkpoint_dir,
                                  channel="cli-agent",
                                  project_dir="/p/mcp-sender-b")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/somewhere-else")
+    # A project path that is not the server's own is a cross-project read, so
+    # it needs the host grant (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     _, out = rpc(_init(),
                 _call("requests_inbox", {"project": "/p/mcp-recipient-b"}))
     text, is_err = _result(out)

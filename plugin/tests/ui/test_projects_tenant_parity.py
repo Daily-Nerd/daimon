@@ -56,7 +56,9 @@ def _viewer_slugs(base):
 
 
 def test_without_tenant_scope_all_three_list_every_bucket(
-        two_tenants, viewer, capsys):
+        two_tenants, viewer, capsys, monkeypatch):
+    # The MCP listing is every bucket only when the host granted it (#1223).
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
     both = set(two_tenants)
     assert _cli_slugs(capsys) == both
     assert _mcp_slugs() == both

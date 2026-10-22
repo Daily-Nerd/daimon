@@ -57,6 +57,19 @@ def _tool(name: str):
     return deco
 
 
+def _read(arguments: dict) -> view.ModelRead:
+    """The ONE place a handler turns its selector arguments into a read scope:
+    `view.model_read` decides, and a refusal is a tool error the model reads.
+    No handler tests a selector itself (#1223)."""
+    try:
+        return view.model_read(
+            slug=arguments.get("slug") or None,
+            all_projects=bool(arguments.get("all_projects")),
+            project=arguments.get("project") or None)
+    except view.ScopeRefused as refused:
+        raise ToolError(str(refused)) from None
+
+
 @_tool("recall")
 def _recall(arguments: dict, fx) -> ToolResult:
     query = str(arguments.get("query") or "").strip()
@@ -68,9 +81,9 @@ def _recall(arguments: dict, fx) -> ToolResult:
         # Same guard as the CLI: slug scopes to ONE project.
         raise ToolError("slug scopes to one project; drop it or drop "
                         "all_projects")
-    if config.tenant_scoped() and (slug or all_projects):
-        # #899: refused out loud, never narrowed in silence.
-        raise ToolError(config.TENANT_SCOPE_REFUSAL)
+    # #899, #1223: a scope the host did not grant is refused out loud, never
+    # narrowed in silence.
+    read = _read({"slug": slug, "all_projects": all_projects})
     limit = arguments.get("limit")
     limit = 20 if not isinstance(limit, int) or limit < 1 else limit
     # #1053: the live session this pull should be attributed to, if the
@@ -80,11 +93,10 @@ def _recall(arguments: dict, fx) -> ToolResult:
     # clause goes through (cli._suggest_line): whatever the hint offers,
     # this accepts back.
     session = recall_telemetry.clean_session(arguments.get("session"))
-    from . import cli
-    project = cli._resolve_project(None)
     try:
-        recalled = recall.query(query, project_dir=project, slug=slug,
-                                all_projects=all_projects, limit=limit)
+        recalled = recall.query(query, project_dir=read.project,
+                                slug=read.slug,
+                                all_projects=read.all_projects, limit=limit)
     except recall.RecallError as e:
         raise ToolError(str(e))
     except Exception as e:  # noqa: BLE001 - a failed judge shows nothing
@@ -122,12 +134,11 @@ def _brief(arguments: dict, fx) -> str:
     if slug and project_arg:
         raise ToolError('slug and project are two answers to "which bucket" '
                         "— pass one")
-    if config.tenant_scoped() and slug:
-        raise ToolError(config.TENANT_SCOPE_REFUSAL)
+    read = _read({"slug": slug, "project": project_arg})
     from . import cli
     # Strictly scoped read (#94): never the global pointer. A named slug is
     # passed straight through; otherwise the resolved project's own bucket.
-    target = slug if slug else cli._resolve_project(project_arg)
+    target = read.slug or read.project
     # The body (Route.OWN, the same preparation the CLI and Hermes run, the
     # deterministic render) is `briefing.machine_brief`, shared with
     # `api.render_briefing`. A view that cannot be built is a tool error.
@@ -135,7 +146,7 @@ def _brief(arguments: dict, fx) -> str:
     # project: never for a named slug or a foreign --project.
     got = briefing.machine_brief(
         target, time.time(),
-        loops_pointer=not slug and cli.loops_lists_project(target))
+        loops_pointer=not read.slug and cli.loops_lists_project(target))
     if got.state == "unavailable":
         raise ToolError(got.notes[0])
     return got.text
@@ -144,8 +155,12 @@ def _brief(arguments: dict, fx) -> str:
 @_tool("projects")
 def _projects(arguments: dict, fx) -> ToolResult:
     from . import cli
+
+    # No selector to decide: the listing names and teases other buckets, so
+    # without the host's grant it is the model's own bucket only (#1223).
     try:
-        rows, notes = cli.projects_listing(None)
+        rows, notes = cli.projects_listing(
+            None, own_only=not config.model_cross_project())
     except Exception as exc:
         raise ToolError("the projects could not be listed "
                         f"({type(exc).__name__})") from exc
@@ -156,7 +171,7 @@ def _projects(arguments: dict, fx) -> ToolResult:
 @_tool("status")
 def _status(arguments: dict, fx) -> str:
     from . import cli
-    payload, _rc = cli.status_payload(arguments.get("project") or None)
+    payload, _rc = cli.status_payload(_read(arguments).project_arg)
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
@@ -167,8 +182,7 @@ def _requests_inbox(arguments: dict, fx) -> ToolResult:
     CLI-only gate); an MCP client that wants it calls this tool explicitly.
     Every write verb (open/revise/accept/reject/needs-info/suppress/reply/done)
     stays CLI-only — no tool here mutates the ledger."""
-    from . import cli
-    project = cli._resolve_project(arguments.get("project") or None)
+    project = _read(arguments).project
     got = requests.inbox(project)
     # Every prose column is judged over the bucket's light snapshot (and the
     # snapshot of each bucket a row names) before it leaves this tool; the
