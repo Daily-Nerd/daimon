@@ -13,6 +13,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,29 @@ def test_brief_label_is_absent_when_no_checkpoint_was_rendered(world, capsys,
     out = capsys.readouterr().out
     assert "DAIMON BRIEFING" not in out
     assert "S-global" not in out
+
+
+@pytest.mark.parametrize(("ago", "shown"), [
+    (5 * 60, "written 5m ago"),
+    (3 * 3600, "written 3.0h ago"),
+    (2 * 86400, "written 2.0d ago"),
+])
+def test_brief_label_states_the_age_of_the_rendered_checkpoint(
+        monkeypatch, ago, shown):
+    from daimon_briefing.cli import brief as brief_cli
+    now = 2_000_000_000.0
+    monkeypatch.setattr(brief_cli.time, "time", lambda: now)
+    created = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - ago))
+    label = brief_cli._checkpoint_label(
+        {"session_id": "S-1", "created": created}, False)
+    assert label == f"DAIMON BRIEFING (checkpoint: S-1, {shown})"
+
+
+def test_brief_label_without_a_created_stamp_states_no_age():
+    from daimon_briefing.cli import brief as brief_cli
+    label = brief_cli._checkpoint_label({}, True)
+    assert label == ("DAIMON BRIEFING (checkpoint: ?) (global fallback - "
+                     "checkpoint may be from another project)")
 
 
 def test_without_the_flag_brief_prints_no_label(world, capsys, monkeypatch):
