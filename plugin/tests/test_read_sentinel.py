@@ -183,6 +183,7 @@ case("cli:brief", "slug", A("brief", slug_opt), shows=VISIBLE, dests=("slug",))
 case("cli:brief", "global", A("brief", "--global-fallback"),
      dests=("global_fallback",))
 case("cli:brief", "auto", A("brief", "--auto"), dests=("auto",))
+case("cli:brief", "label", A("brief", "--label"), dests=("label",))
 case("cli:anchor", "print", A("anchor", "mod.py", "fn"),
      dests=("file", "symbol", "project"), rc=(0, 1))
 # a needle that matches ONLY the quarantined question: a withheld match is

@@ -170,15 +170,17 @@ corroborate itself. Omit only when the host has no way to tell the live session 
 
 === brief ===
 usage: daimon brief [-h] [--project PROJECT] [--team] [--slug SLUG] [--global-fallback] [--auto]
-options: -h, --help show this help message and exit --project PROJECT project directory to brief
-(default: DAIMON_PROJECT_DIR, then cwd) --team also show a 'Teammates' section: each teammate's
-active topic + recent decisions from the shared team memory (#111) --slug SLUG brief another
-project's bucket by its slug (see `daimon projects`) — deliberate cross-project read,
+[--label] options: -h, --help show this help message and exit --project PROJECT project directory to
+brief (default: DAIMON_PROJECT_DIR, then cwd) --team also show a 'Teammates' section: each
+teammate's active topic + recent decisions from the shared team memory (#111) --slug SLUG brief
+another project's bucket by its slug (see `daimon projects`) — deliberate cross-project read,
 provenance-labeled, no fallback (#243) --global-fallback when this project has no checkpoint, render
 the full global checkpoint (possibly another project's) instead of the header-only note (#96) --auto
 mark this render as hook-driven (SessionStart) so `daimon stats` can separate automatic briefings
-from deliberate re-reads (#54) Examples: daimon brief daimon brief --project . DAIMON_PLAIN=1 daimon
-brief
+from deliberate re-reads (#54) --label print one `DAIMON BRIEFING (checkpoint: ...)` line above the
+briefing, naming the checkpoint this read rendered and whether it came off the global pointer; host
+hooks print it as given (#1223) Examples: daimon brief daimon brief --project . DAIMON_PLAIN=1
+daimon brief
 
 === anchor ===
 usage: daimon anchor [-h] [--project PROJECT] [--attach TEXT-MATCH] file symbol positional
