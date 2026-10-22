@@ -63,9 +63,12 @@ python3 hook/codex-hooks.py status
 
 - **`daimon-codex-session-end.py`** — hook `SessionEnd`. Serializa la sesión
   terminada en segundo plano cuando Codex la cierra de forma ordenada.
-- **`daimon-codex-session-start.py`** — hook `SessionStart`. Lee el último
-  checkpoint del proyecto y devuelve JSON `additionalContext` de Codex, así
-  el briefing se inyecta como contexto de desarrollo.
+- **`daimon-codex-session-start.py`**: hook `SessionStart`. Ejecuta `daimon brief
+  --label` para el `cwd` del payload y devuelve la salida como JSON
+  `additionalContext` de Codex, así el briefing se inyecta como contexto de
+  desarrollo. El CLI elige el checkpoint e imprime la línea de etiqueta; el
+  hook no decide nada (las reglas de fallback están en la
+  [página de Claude Code](claude-code.md)).
 - **`daimon-codex-user-prompt-submit.py`**: hook `UserPromptSubmit`, medido
   en vivo en Codex CLI 0.153.1: dispara una vez por cada prompt del usuario y
   su salida estándar en texto plano llega al modelo, sin necesitar el sobre

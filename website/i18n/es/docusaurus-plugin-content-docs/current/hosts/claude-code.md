@@ -57,17 +57,23 @@ custodia las acciones de shell:
 - **`daimon-session-brief.py`** — hook `SessionStart`. Lee el payload de stdin
   y delega en el CLI `daimon brief` instalado (única fuente de verdad para el
   renderizado); imprime el briefing a stdout, que Claude Code inyecta como
-  contexto de sesión. **Enrutamiento por proyecto:** el `cwd` del payload se
-  convierte en slug con la regla propia de daimon (`/Users/x/proj` ->
-  `-Users-x-proj`; corré [`daimon slug <path>`](../reference/cli#estado) para
-  imprimirlo para cualquier ruta). Este no es el esquema que usa Claude Code
-  para `~/.claude/projects`, que pliega `_` donde daimon lo conserva. Se
-  prefiere el `<checkpoint-dir>/<slug>/latest.json` de este proyecto; si el
-  proyecto no tiene checkpoint propio, se usa el `latest.json` global y el
-  encabezado del briefing se etiqueta `(global fallback — checkpoint may be
-  from another project)`. El cwd se reenvía al CLI vía `DAIMON_PROJECT_DIR`
-  para que ambos enruten igual. Sin `cwd` en el payload -> comportamiento
-  global, sin etiqueta. Fail-open: siempre sale con 0, imprime una línea de
+  contexto de sesión. **Enrutamiento por proyecto:** el hook no elige un
+  checkpoint. El `cwd` del payload se reenvía al CLI vía `DAIMON_PROJECT_DIR`,
+  y `daimon brief --label` lee el checkpoint de este proyecto (regla de slug
+  del bucket: `/Users/x/proj` -> `-Users-x-proj`; corré
+  [`daimon slug <path>`](../reference/cli#estado) para imprimirlo para
+  cualquier ruta; no es el esquema que usa Claude Code para
+  `~/.claude/projects`, que pliega `_` donde daimon lo conserva) e imprime la
+  línea `DAIMON BRIEFING (checkpoint: ..., written ... ago)` sobre el
+  briefing; el hook la imprime tal cual. Un proyecto sin checkpoint propio no
+  recibe el briefing de otro proyecto. El checkpoint global se lee solo cuando
+  `DAIMON_BRIEF_GLOBAL_FALLBACK` lo habilita, para un proyecto con identidad, y
+  nunca en un home con `DAIMON_TENANT_SCOPED`; la etiqueta termina entonces en
+  `(global fallback - checkpoint may be from another project)`. Un payload sin
+  `cwd` cae al directorio de trabajo del propio proceso del hook, nunca al
+  puntero global, y un proyecto sin identidad no recibe briefing. Un `daimon`
+  anterior a `--label` imprime el briefing sin la línea de etiqueta. Lo mismo
+  vale para los hooks de Codex, Gemini y Kimi. Fail-open: siempre sale con 0, imprime una línea de
   diagnóstico ante una falla en lugar de morir en silencio. Respeta
   `DAIMON_DISABLE` y `DAIMON_CHECKPOINT_DIR`.
 - **`daimon-session-end.py`** — hook `SessionEnd`. Lee el payload de stdin y
