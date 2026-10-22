@@ -1488,11 +1488,25 @@ def _dedupe_rows(rows: list[dict], want_n: int) -> list[dict]:
     return out
 
 
-def _scope_clause(scopes: list[str], column: str = "i.project_slug") -> str:
-    return f" AND {column} IN ({', '.join('?' for _ in scopes)})"
+def _scope_filter(scope: view.Scope,
+                  column: str = "i.project_slug") -> tuple[str, tuple[str, ...]]:
+    """`(sql clause, params)` that restricts a query to `scope` (#1223). `All`
+    is the only case with no clause; `Denied` matches no row even for a caller
+    that forgot to stop first, so the SQL layer fails closed too."""
+    if isinstance(scope, view.Own):
+        slugs = scope.slugs
+    elif isinstance(scope, view.Named):
+        slugs = (scope.slug,)
+    elif isinstance(scope, view.All):
+        return "", ()
+    elif isinstance(scope, view.Denied):
+        return " AND 0", ()
+    else:
+        view.unreachable_scope(scope)
+    return f" AND {column} IN ({', '.join('?' for _ in slugs)})", slugs
 
 
-def _closed_still(scopes, path: Path, notes: list) -> bool:
+def _closed_still(scope: view.Scope, path: Path, notes: list) -> bool:
     """Whether a bucket this read touches is still closed (#1132 PR 9a).
 
     The index records the buckets whose trust ledger was unreadable when it
@@ -1511,8 +1525,14 @@ def _closed_still(scopes, path: Path, notes: list) -> bool:
         closed = json.loads(row[0]) if row else []
     except (sqlite3.Error, ValueError, TypeError):
         return False
-    if scopes is not None:
-        closed = [slug for slug in closed if slug in scopes]
+    if isinstance(scope, view.Own):
+        closed = [slug for slug in closed if slug in scope.slugs]
+    elif isinstance(scope, view.Named):
+        closed = [slug for slug in closed if slug == scope.slug]
+    elif isinstance(scope, view.Denied):
+        closed = []
+    elif not isinstance(scope, view.All):
+        view.unreachable_scope(scope)
     if not closed:
         return False
     stamp = store.forgotten_stamp()
@@ -1651,8 +1671,8 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     """FTS5 MATCH over the (auto-refreshed) index, judged. Live items first,
     then by descending ``match_score`` (the sign-normalized bm25 rank), newest
     checkpoint first within equal score. Scope: project_dir's
-    slug unless all_projects (or the project is unknown — no filter then,
-    matching read_team's semantics). An explicit `slug` IS the scope (#243):
+    slug unless all_projects; an unknown project reads nothing (`view.Denied`,
+    #1223). An explicit `slug` IS the scope (#243):
     it addresses a bucket by its stored identity — the slug is lossy, so this
     is the only route to buckets whose source path is gone (other machine,
     deleted dir) — and overrides both project_dir and all_projects (callers
@@ -1671,18 +1691,21 @@ def query(text: str, project_dir=None, all_projects: bool = False,
     expr = _match_expr(text)
     if expr is None:
         return Recalled([], ())
+    # #899: an unaddressed read fans across own + host-allowlisted scopes;
+    # an explicit slug or all_projects is exactly what it says. #1223: an
+    # unknown project is Denied and reads nothing.
+    scope = view.read_scope(project_dir, slug=slug, all_projects=all_projects)
+    if isinstance(scope, view.Denied):
+        return Recalled([], ())
     notes: list[str] = []
     try:
         _ensure_fresh()
     except (OSError, sqlite3.Error) as exc:
         _note_error("search.refresh", exc)  # then try the query on what exists
         notes.append("stale")
-    # #899: an unaddressed read fans across own + host-allowlisted scopes;
-    # an explicit slug or all_projects is exactly what it says.
-    scopes = ([slug] if slug else
-              view.read_scopes(project_dir, all_projects=all_projects))
+    scope_sql, scope_params = _scope_filter(scope)
     path = config.recall_db()
-    if _closed_still(scopes, path, notes):
+    if _closed_still(scope, path, notes):
         _note(notes, "closed")
     _incomplete_cleared(path, notes)
     _authors_changed(path, notes)
@@ -1703,8 +1726,7 @@ def query(text: str, project_dir=None, all_projects: bool = False,
         " FROM items_fts JOIN items i ON i.id = items_fts.rowid"
         " WHERE items_fts MATCH ?"
     )
-    if scopes is not None:
-        sql += _scope_clause(scopes)
+    sql += scope_sql
     # frontier is a TIEBREAK after relevance (#234): equally-relevant rows
     # from the newest checkpoint edge out older ones — silently, no label.
     # Contradiction leads the demotion keys (#837): "at least as strongly as
@@ -1726,8 +1748,7 @@ def query(text: str, project_dir=None, all_projects: bool = False,
 
     def _run(match_expr: str) -> list[dict]:
         params: list = [match_expr]
-        if scopes is not None:
-            params.extend(scopes)
+        params.extend(scope_params)
         # #288 overfetch: a carried item occupies one row PER checkpoint that
         # carries it, and dedupe below collapses those — fetch headroom so the
         # deduped list can still fill the caller's limit. 4x covers typical
@@ -1757,7 +1778,7 @@ def query(text: str, project_dir=None, all_projects: bool = False,
             kept, _dropped = _attempt()
             # The rebuild may have closed a bucket the first check found
             # open (its trust ledger went bad), so the notes are recomputed.
-            if _closed_still(scopes, path, notes):
+            if _closed_still(scope, path, notes):
                 _note(notes, "closed")
     except sqlite3.OperationalError as exc:
         if "fts5" in str(exc).lower() and "no such module" in str(exc).lower():
@@ -1821,25 +1842,25 @@ def find(item_id: str, project_dir=None,
     Found is the newest matching row (ties broken by `created`). Withheld
     says the newest copy may not be shown (reason only, no value) and, like a
     dropped query row, rebuilds the index once."""
-    scopes = ([slug] if slug
-              else view.read_scopes(project_dir, all_projects=False))
-    if scopes is None:
+    scope = view.read_scope(project_dir, slug=slug)
+    if isinstance(scope, view.Denied):
         return Absent()
     try:
         _ensure_fresh()
     except (OSError, sqlite3.Error, RecallError) as exc:
         _note_error("lookup_item.refresh", exc)
     path = config.recall_db()
-    _closed_still(scopes, path, [])
+    _closed_still(scope, path, [])
+    scope_sql, scope_params = _scope_filter(scope, "project_slug")
     try:
         rows = _select(
             "SELECT text, quote, trust, kind, author, project_slug,"
             " session_id, created, superseded_by, item_id, frontier,"
             " scene AS _scene"
             " FROM items WHERE item_id = ?"
-            + _scope_clause(scopes, "project_slug")
+            + scope_sql
             + " ORDER BY created DESC LIMIT 1",
-            (item_id, *scopes))
+            (item_id, *scope_params))
     except sqlite3.Error as exc:
         _note_error("lookup_item", exc)
         return Absent()
@@ -1954,9 +1975,10 @@ def suggest(prompt: str, project_dir=None, current_session=None,
     # #899: the auto-inject path fans across own + host-allowlisted scopes
     # too; a shared scope reached by `recall` but not here would exist when
     # asked for and vanish when it would have helped.
-    scopes = view.read_scopes(project_dir, all_projects=False)
-    if scopes is None:
+    scope = view.read_scope(project_dir)
+    if isinstance(scope, view.Denied):
         return []
+    scope_sql, scope_params = _scope_filter(scope)
     terms = salient_terms(prompt)
     if not terms:
         return []
@@ -2013,20 +2035,20 @@ def suggest(prompt: str, project_dir=None, current_session=None,
         # search's 3-way link/resolution split within the superseded half —
         # the two supersede kinds still separate by weighted score in that
         # Python sort.
-        " WHERE items_fts MATCH ?" + _scope_clause(scopes) +
+        " WHERE items_fts MATCH ?" + scope_sql +
         " ORDER BY (i.invalidated_by IS NOT NULL) ASC,"
         " (i.superseded_by IS NOT NULL) ASC, match_score DESC"
         f" LIMIT {_SUGGEST_CANDIDATE_LIMIT}"
     )
     path = config.recall_db()
     try:
-        _closed_still(scopes, path, [])
+        _closed_still(scope, path, [])
         # Judged BEFORE the coverage pass below: a withheld row's terms must
         # never count toward _MIN_OVERLAP, or a value the reader may not see
         # would still decide that its session is worth surfacing.
-        rows, dropped = _judge_rows(_select(sql, (expr, *scopes)))
+        rows, dropped = _judge_rows(_select(sql, (expr, *scope_params)))
         if dropped and _rebuild_forced(path, []):
-            rows, _dropped = _judge_rows(_select(sql, (expr, *scopes)))
+            rows, _dropped = _judge_rows(_select(sql, (expr, *scope_params)))
     except sqlite3.Error as exc:
         _note_error("suggest", exc)
         return []  # suggestion is opportunistic — any db trouble means silence

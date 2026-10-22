@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (briefing, capture, config, effects_commit, harvest, jsonl,
-               ledger, llm, recall, serializer, store, transcript)
+               ledger, llm, recall, serializer, store, transcript, view)
 
 log = logging.getLogger("daimon_briefing")
 
@@ -252,6 +252,11 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         if not is_first_turn:
             return None
         project = config.resolve_project_root(config.project_dir())
+        # #1223: a session with no project identity is denied, not given the
+        # newest checkpoint of any project. Nothing to read, no rulings to
+        # scope: no briefing.
+        if isinstance(view.read_scope(project), view.Denied):
+            return None
         # #784: read_latest's global pointer is the most recent checkpoint of ANY
         # project, so a project with no bucket of its own was injected with a
         # foreign briefing on its first session. `daimon brief` already suppresses
@@ -260,12 +265,9 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # world. Asking read_latest not to fall back (rather than detecting after
         # the fact that it did) also covers the torn own-pointer, which falls
         # through to the global pointer while the project's path still exists.
-        # The fallback stays ON when the project is UNKNOWN: there is no per-project
-        # pointer to prefer, the global one is the only briefing that exists, and
-        # nothing is foreign to a session with no project identity (pre-routing
-        # hosts that do not pass a cwd). The leak needs a KNOWN project. The
-        # policy lives once, in briefing.injection_read_route, shared with the
-        # recall-inject surface so the two cannot drift (#795).
+        # An UNKNOWN project never reaches this point (denied above, #1223).
+        # The policy lives once, in briefing.injection_read_route, shared with
+        # the recall-inject surface so the two cannot drift (#795).
         # #1132 PR 7a: one preparation for every briefing host. `prepare`
         # opens the checkpoint through the view (withheld values removed, an
         # unreadable trust ledger closing it), resolved loops dropped, and the
@@ -281,8 +283,8 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
             lines = [*annotated.notes, *rulings]
             return {"context": "\n".join(lines)} if lines else None
         # #693: rulings are scoped to the RESOLVED project (never the raw
-        # process cwd). Note the read above keeps its global fallback, so
-        # the checkpoint may be another project's — the rulings are still
+        # process cwd). With the operator's global fallback on, the
+        # checkpoint may be another project's — the rulings are still
         # this project's own.
         # OWN_ELSE_GLOBAL may have served another project's checkpoint (the
         # body read does not say), so `daimon loops` is only pointed at when

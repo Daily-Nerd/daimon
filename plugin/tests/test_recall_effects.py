@@ -323,25 +323,32 @@ def test_an_unreadable_forgotten_set_does_not_cost_the_telemetry(
 # ---- scope is the view's -------------------------------------------------
 
 
-def test_read_scopes_is_own_slug_then_the_hosts_extras(monkeypatch):
+def test_read_scope_is_own_slug_then_the_hosts_extras(monkeypatch):
     monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", "shared-a,shared-b")
-    got = view.read_scopes(PROJECT, all_projects=False)
-    assert got == [store.project_slug(PROJECT), "shared-a", "shared-b"]
+    got = view.read_scope(PROJECT, all_projects=False)
+    assert got == view.Own(store.project_slug(PROJECT),
+                           ("shared-a", "shared-b"))
+    assert got.slugs == (store.project_slug(PROJECT), "shared-a", "shared-b")
 
 
-def test_read_scopes_for_all_projects_is_unfiltered():
-    assert view.read_scopes(PROJECT, all_projects=True) is None
+def test_read_scope_for_all_projects_is_all():
+    assert view.read_scope(PROJECT, all_projects=True) == view.All()
 
 
 def test_the_tenant_rule_never_lets_all_projects_widen_a_read(monkeypatch):
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
-    assert view.read_scopes(PROJECT, all_projects=True) == [
-        store.project_slug(PROJECT)]
+    assert view.read_scope(PROJECT, all_projects=True) == view.Own(
+        store.project_slug(PROJECT))
 
 
-def test_read_scopes_of_an_unknown_project_is_none(monkeypatch):
+def test_read_scope_of_an_unknown_project_is_denied(monkeypatch):
     monkeypatch.setattr(store, "project_slug", lambda _p: None)
-    assert view.read_scopes(PROJECT, all_projects=False) is None
+    assert view.read_scope(PROJECT, all_projects=False) == view.Denied()
+
+
+def test_read_scope_of_an_explicit_slug_is_that_bucket():
+    assert view.read_scope(None, slug="-some-bucket") == view.Named(
+        "-some-bucket")
 
 
 def test_a_tenant_scoped_query_cannot_read_another_projects_rows(

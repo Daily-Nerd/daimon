@@ -2571,7 +2571,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     [(author, checkpoint), ...] newest-first by each author's newest checkpoint.
 
     Legacy project filter: only checkpoints whose stamped `project_slug` matches
-    this project's slug. When the project is unknown (slug None) no filter applies.
+    this project's slug. An unknown project (slug None) reads nothing (#1223).
 
     Retention (#113): checkpoints older than DAIMON_TEAM_RETENTION_DAYS (by the
     same _file_recency the ranking uses; 0 = keep all) are skipped AT READ TIME
@@ -2597,8 +2597,10 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
         # copy of a value it forgot could not be told from any other: no
         # foreign checkpoint is admitted (the mirror of an unproven author).
         return []
-    root = config.team_dir()
     want_slug = project_slug(project_dir)
+    if want_slug is None:
+        return []
+    root = config.team_dir()
     cutoff = team_retention_cutoff()
     candidates = teamproject.read_candidates(project_dir)
     # #600 slice B: a teammate's published tombstone suppresses their value
@@ -2628,8 +2630,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
                 continue  # torn/foreign file — skip, never crash the fan-in
             if not isinstance(cp, dict):
                 continue
-            if check_stamp and want_slug is not None \
-                    and cp.get("project_slug") != want_slug:
+            if check_stamp and cp.get("project_slug") != want_slug:
                 continue
             rec = _file_recency(p)
             if cutoff is not None and rec < cutoff:

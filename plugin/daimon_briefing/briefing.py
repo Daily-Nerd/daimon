@@ -397,14 +397,13 @@ _CANDIDATE_ID_SHAPE = re.compile(r"[a-z]-[0-9a-f]{6,40}(-\d+)?")
 def injection_read_route(project) -> "store.Route":
     """The ONE display-policy route shared by the two briefing-injection
     surfaces (#784, #795): fall back to the global pointer only when the
-    project is unknown — nothing is foreign to a session with no project
-    identity — or the operator opted in. The `project is None` term is live
-    on the hook path (resolve_project_root propagates None) and dead on the
-    CLI path (_resolve_project always returns a str); folding them is safe,
-    citing the duplication as a shared cause is not. Display callers only:
+    operator opted in, for a project that has an identity. A project with no
+    identity is `view.Denied` (#1223): `store` reads nothing for it on either
+    route, and a host with no project identity (Hermes) gets no briefing
+    rather than the newest checkpoint of any project. Display callers only:
     the persist path (store.write_checkpoint) must never consult this, or an
     env var could change what carry writes (#126)."""
-    if project is None or config.brief_global_fallback():
+    if config.brief_global_fallback():
         return store.Route.OWN_ELSE_GLOBAL
     return store.Route.OWN
 

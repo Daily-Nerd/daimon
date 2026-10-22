@@ -14,7 +14,6 @@ from .. import (
     provenance,
     render,
     serializer,
-    store,
     transcript,
     view,
 )
@@ -76,8 +75,17 @@ def _corpus(project, want_all: bool):
     it is neither audited, counted nor printed. One `view.sessions` listing and
     one `view.open_sessions` per bucket; the listing parses each file once more
     than the open does, which is accepted."""
-    own = store.project_slug(project)
-    slugs = view.buckets(own) if (want_all or own is None) else (own,)
+    scope = view.read_scope(project, all_projects=want_all)
+    if isinstance(scope, view.Own):
+        slugs: tuple[str, ...] = (scope.own,)
+    elif isinstance(scope, view.All):
+        slugs = view.buckets(None)
+    elif isinstance(scope, view.Named):
+        slugs = (scope.slug,)
+    elif isinstance(scope, view.Denied):
+        slugs = ()
+    else:
+        view.unreachable_scope(scope)
     for slug in slugs:
         listed = view.sessions(slug)
         ids = sorted(row.session_id for row in listed.rows)

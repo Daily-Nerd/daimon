@@ -385,9 +385,14 @@ def test_mcp_recall_telemetry_commits_after_the_rows_are_built(
 
 
 def test_hermes_pre_llm_call_records_no_usage(tmp_checkpoint_dir,
-                                              sample_checkpoint, monkeypatch):
+                                              sample_checkpoint, monkeypatch,
+                                              tmp_path):
     from daimon_briefing import hooks
-    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
+    project = (tmp_path / "hermes-proj").resolve()
+    project.mkdir()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project))
+    store.write_checkpoint("S-prev", sample_checkpoint,
+                           project_dir=str(project), writer=Writer.HUMAN)
     monkeypatch.setattr(cli, "_note_usage", lambda tag: pytest.fail(tag))
     out = hooks.pre_llm_call(session_id="S2", user_message="hi",
                              conversation_history=[], is_first_turn=True,
