@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, NamedTuple
+from typing import Any, Literal, Mapping, NamedTuple, NoReturn
 
 from . import (amendments, carry, config, display, index_locate, jsonl,
                multihash, normalize, provenance, refutations)
@@ -333,30 +333,75 @@ def bucket_exists(slug: str, own: str | None) -> bool:
     return _is_bucket(slug)
 
 
-def read_scopes(project, *, all_projects: bool = False) -> list[str] | None:
-    """The slugs an UNADDRESSED read may see (#899): this project's own plus
-    whatever the host declared in DAIMON_EXTRA_READ_SLUGS, own first. None
-    when the project is unknown, so each caller keeps its own "unknown" rule
-    (search: no filter; lookup: None; suggest: silence) and the allowlist can
-    never turn an unscoped read into a read of the listed buckets.
+@dataclass(frozen=True)
+class Own:
+    """The caller's own bucket plus whatever the host declared in
+    DAIMON_EXTRA_READ_SLUGS (#899). `own` is a real slug by construction: a
+    project that has none is `Denied`, never an `Own` with nothing in it."""
 
-    `all_projects` asks for no filter at all (None). Under
-    `config.tenant_scoped()` it is ignored: a caller-chosen cross-project
-    address is a cross-tenant read, so the entry points refuse it and this is
-    the same rule one layer down: an in-process caller that passes
-    `all_projects=True` under tenant scope is narrowed to own + extras, where
-    the CLI and MCP entry points refuse out loud. An explicit `slug` is the scope itself and
-    never comes through here."""
+    own: str
+    extras: tuple[str, ...] = ()
+
+    @property
+    def slugs(self) -> tuple[str, ...]:
+        """Own first, then the host's extras, each once."""
+        return (self.own, *(e for e in self.extras if e != self.own))
+
+
+@dataclass(frozen=True)
+class Named:
+    """One bucket the caller addressed by its stored identity (#243)."""
+
+    slug: str
+
+
+@dataclass(frozen=True)
+class All:
+    """Every bucket. Only an honored `all_projects` produces it."""
+
+
+@dataclass(frozen=True)
+class Denied:
+    """Nothing: the project is unknown, so there is no bucket to read and no
+    way to say which ones are foreign to it. Reads nothing on every consumer."""
+
+
+Scope = Own | Named | All | Denied
+
+
+def unreachable_scope(unhandled: NoReturn) -> NoReturn:
+    """The exhaustiveness hook: a consumer that branches on every `Scope` case
+    ends with `unreachable_scope(scope)`, and mypy rejects it the moment a case
+    is added that the branch chain does not handle."""
+    raise AssertionError(f"unhandled read scope: {unhandled!r}")
+
+
+def read_scope(project, *, slug: str | None = None,
+               all_projects: bool = False) -> Scope:
+    """THE decision of which buckets a read may see (#1223). Every read that
+    filters by bucket asks here, once, and branches on the answer; there is no
+    `None` for one caller to read as "everything" and another as "nothing".
+
+      - an explicit `slug` is the scope itself (`Named`); the entry points
+        refuse it under `config.tenant_scoped()` before it gets here;
+      - `all_projects` asks for every bucket (`All`). Under tenant scope it is
+        ignored and the read narrows to the own scope: a caller-chosen
+        cross-project address is a cross-tenant read, so the entry points
+        refuse it out loud and this is the same rule one layer down for an
+        in-process caller;
+      - otherwise the project's own bucket plus the host's
+        DAIMON_EXTRA_READ_SLUGS (`Own`);
+      - a project with no slug is `Denied`: it reads nothing, so the
+        allowlist can never turn an unscoped read into a read of the listed
+        buckets, and an unknown project can never widen to every bucket."""
+    if slug:
+        return Named(slug)
     if all_projects and not config.tenant_scoped():
-        return None
+        return All()
     own = store.project_slug(config.resolve_project_dir(project))
     if own is None:
-        return None
-    scopes = [own]
-    for extra in config.extra_read_slugs():
-        if extra not in scopes:
-            scopes.append(extra)
-    return scopes
+        return Denied()
+    return Own(own, tuple(config.extra_read_slugs()))
 
 
 def machine_sets() -> tuple[frozenset, frozenset]:
@@ -1139,7 +1184,10 @@ def sessions(project) -> Sessions:
     is counted, since nothing says whose it was. Under tenant scope (#899) it
     is not counted: a count of files the caller cannot attribute to its own
     bucket would report activity in buckets it may not see."""
-    slug = store.project_slug(config.resolve_project_dir(project))
+    scope = read_scope(project)
+    if not isinstance(scope, Own):
+        return Sessions((), 0, ())      # Denied: no bucket, so no file is its
+    slug = scope.own
     root = config.checkpoint_dir()
     try:
         files = store._session_files(root)
@@ -1174,7 +1222,10 @@ def open_sessions(project, session_ids, *, live: bool,
     belong to the project, one snapshot for all (`snap`, or a fresh full one).
     An id that names nothing the caller may open (a torn file, another
     project's, an escape from the store) is absent from the result."""
-    slug = store.project_slug(config.resolve_project_dir(project))
+    scope = read_scope(project)
+    if not isinstance(scope, Own):
+        return {}                       # Denied: no bucket, so no file is its
+    slug = scope.own
     snap = snap if snap is not None else snapshot(project)
     out = {}
     for sid in session_ids:

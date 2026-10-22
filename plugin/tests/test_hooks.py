@@ -49,10 +49,15 @@ def test_pre_llm_call_returns_none_when_no_checkpoint(tmp_checkpoint_dir):
     assert out is None
 
 
-def test_pre_llm_call_injects_briefing(tmp_checkpoint_dir, sample_checkpoint):
+def test_pre_llm_call_injects_briefing(tmp_checkpoint_dir, sample_checkpoint,
+                                       tmp_path, monkeypatch):
     from daimon_briefing import store
 
-    store.write_checkpoint("S-prev", sample_checkpoint, writer=Writer.HUMAN)
+    project = (tmp_path / "proj").resolve()
+    project.mkdir()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", str(project))
+    store.write_checkpoint("S-prev", sample_checkpoint,
+                           project_dir=str(project), writer=Writer.HUMAN)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
@@ -636,18 +641,24 @@ def test_pre_llm_call_reads_own_route_for_a_known_project(tmp_checkpoint_dir, mo
     assert captured["project_dir"] == "/git/top"
 
 
-def test_pre_llm_call_falls_back_only_when_project_is_unknown(tmp_checkpoint_dir, monkeypatch):
-    from daimon_briefing import store
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_pre_llm_call_reads_nothing_when_project_is_unknown(
+        tmp_checkpoint_dir, monkeypatch, opt_in):
+    """#1223: an unknown project is denied. The read is not even attempted,
+    and the operator's global-fallback opt-in does not resurrect it: that
+    opt-in is for a project that has an identity."""
     monkeypatch.setattr(hooks.config, "resolve_project_root", lambda raw: None)
+    if opt_in:
+        monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
     captured = {}
     monkeypatch.setattr(hooks.store, "read_latest_result",
                         _route_spy(captured))
-    hooks.pre_llm_call(
+    out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
     )
-    assert captured["route"] is store.Route.OWN_ELSE_GLOBAL
-    assert captured["admit"] is store.Admit.ANY
+    assert out is None
+    assert captured == {}
 
 
 def test_pre_llm_call_env_opt_in_restores_the_global_fallback(tmp_checkpoint_dir, monkeypatch):
@@ -1122,12 +1133,13 @@ def test_pre_llm_call_torn_project_pointer_does_not_fall_through_to_foreign_body
     assert "PR #6" not in (out or {}).get("context", "")
 
 
-def test_pre_llm_call_unknown_project_still_reads_the_global_pointer(
+def test_pre_llm_call_unknown_project_gets_no_briefing(
     tmp_checkpoint_dir, sample_checkpoint, monkeypatch
 ):
-    """#784 must not cost pre-routing hosts their briefing. With no project
-    identity there is no per-project pointer to prefer and nothing is foreign,
-    so the global pointer stays the briefing of record."""
+    """#1223: with no project identity there is nothing to scope a read to and
+    nothing that can be called foreign, so the host gets no briefing. The
+    newest checkpoint of any project is never the answer, and neither are the
+    standing rulings, which are scoped to a project."""
     from daimon_briefing import store
 
     monkeypatch.delenv("DAIMON_PROJECT_DIR", raising=False)
@@ -1136,7 +1148,7 @@ def test_pre_llm_call_unknown_project_still_reads_the_global_pointer(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
     )
-    assert "PR #6" in (out or {}).get("context", "")
+    assert out is None
 
 
 # ---- #1179 PR 2: the Hermes door holds a heartbeat lease (D3) ----
