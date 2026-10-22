@@ -41,10 +41,19 @@ The server inherits daimon's cross-project discipline:
 - **Reads are project-scoped.** The project is resolved from the process
   working directory, or `DAIMON_PROJECT_DIR` when set — put one of them in
   your host's MCP config.
+- **The host chooses the scope, never the model.** By default every tool
+  answers for this project only. A request that names another project (a
+  `slug`, `all_projects`, or a `project` path outside this project) is refused
+  with a message that names `DAIMON_MODEL_CROSS_PROJECT`, and
+  `daimon_projects` lists only this project. Set `DAIMON_MODEL_CROSS_PROJECT=1`
+  in the process env or the env file to allow those reads; the tool
+  descriptions then offer the arguments. Under `DAIMON_TENANT_SCOPED` the
+  setting has no effect. This holds for the MCP tools; an agent with a shell
+  can still run the CLI from another directory.
 - **No implicit fallback.** A project with no checkpoint gets
-  `no checkpoint for this project` plus a pointer to `daimon_projects` —
-  never another project's content. Crossing projects is always explicit:
-  pass a `slug` to `daimon_brief` or `daimon_recall`.
+  `no checkpoint for this project`, never another project's content. With
+  the setting on, the message also points to `daimon_projects`, and crossing
+  projects stays explicit: pass a `slug` to `daimon_brief` or `daimon_recall`.
 - **Kill switch honored.** With `DAIMON_DISABLE=1` the server exits cleanly
   without serving, so a disabled daimon never breaks host startup.
 - **Usage stays local.** Each call writes one `mcp:<tool>` line to daimon's
