@@ -80,10 +80,12 @@ son de solo agregar y cada autor escribe únicamente su propio archivo, así que
 el único conflicto que dos máquinas de un mismo autor pueden producir es que
 ambas agreguen una línea después de la misma base; la regla conserva ambas
 líneas en vez de dejar marcadores de conflicto que hacen que el lector omita al
-autor. Sobre un archivo existente solo se agregan las líneas que faltan, y en
-un remoto ya establecido las líneas se commitean para que el siguiente sync
-las lleve al equipo. `daimon team status` nombra un clon cuyo archivo carece de
-la regla.
+autor. Sobre un archivo existente solo se agregan las líneas que faltan.
+`daimon team sync` escribe y commitea la regla antes de mergear, así que un
+clon creado antes de que la regla existiera la recibe en su siguiente sync y
+los clones del equipo convergen; no agregues las líneas a mano, una copia sin
+trackear bloquea el merge que trae la copia commiteada de un compañero.
+`daimon team status` nombra un clon cuyo archivo carece de la regla.
 
 **4. Verifica** en cada máquina:
 

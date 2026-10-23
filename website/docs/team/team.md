@@ -73,9 +73,11 @@ append-only and each author writes only their own file, so the one conflict two
 machines of one author can produce is both appending a line after the same
 base; the rule keeps both lines instead of leaving conflict markers that make
 the reader skip the author. On an existing file only the missing lines are
-appended, and on an established remote the lines are committed so the next
-sync carries them to the team. `daimon team status` names a clone whose file
-lacks the rule.
+appended. `daimon team sync` writes and commits the rule before it merges, so
+a clone made before the rule existed receives it on its next sync and the
+team's clones converge; do not add the lines by hand, an untracked copy blocks
+the merge that brings a teammate's committed copy in. `daimon team status`
+names a clone whose file lacks the rule.
 
 **4. Verify** on each machine:
 
