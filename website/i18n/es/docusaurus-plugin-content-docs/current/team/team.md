@@ -259,9 +259,11 @@ ella los archivos permanecen en la historia de git).
   sobre tu historia local *y* la del equipo.
 - **`daimon team status`** — frescura por remoto, tu propio conteo de
   checkpoints sin pushear, los autores vistos en el sidecar, la allowlist
-  de alcance (qué repos pueden sincronizar a cada remoto), y una advertencia
+  de alcance (qué repos pueden sincronizar a cada remoto), una advertencia
   cuando el `.gitattributes` del clon carece de la regla `merge=union` para
-  los ledgers publicados.
+  los ledgers publicados, y una línea para el proyecto actual cuando sus
+  cuarentenas activas aún no están publicadas (ver "Las cuarentenas también
+  viajan" abajo).
 
 Los checkpoints de compañeros se muestran dentro de una ventana de edad de
 lectura controlada por `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0`
@@ -300,6 +302,15 @@ lo enrute o no el proyecto ahora.
   acceso a un sidecar, o tras `daimon ledger repair trust`. Varios autores se
   combinan por unión: la liberación de un compañero solo levanta su propia
   afirmación.
+- **Ver lo que sigue local.** `daimon team status` termina con una línea para
+  el proyecto desde el que lo corres cuando su ledger tiene una cuarentena
+  activa cuya última fila falta en un clon al que el proyecto rutea:
+  `<project>: 2 active quarantine(s) not yet published; run daimon trust
+  republish`. La presencia se verifica por el id de la fila, igual que lo hace
+  el publicador, y el comando no escribe nada. Una cuarentena liberada nunca
+  cuenta. Cuando el ledger de un clon no se puede leer, la línea lo dice en vez
+  de reportar cero. Con `--json` la fila de cada remoto ruteado lleva el mismo
+  conteo bajo `unpublished_quarantines`.
 - **Autoridad.** El acceso de escritura al sidecar es la frontera de confianza,
   igual que para checkpoints y tombstones. Las filas publicadas son
   afirmaciones declaradas, no autenticadas. Un miembro con acceso de escritura

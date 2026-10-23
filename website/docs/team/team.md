@@ -220,8 +220,13 @@ receives no checkpoints`. If foreign project trees already accumulated under
   history *and* the team's.
 - **`daimon team status`** — per-remote freshness, your own unpushed checkpoint
   count, the authors seen in the sidecar, the scope allowlist (which repos may
-  sync into each remote), and a warning when the clone's `.gitattributes` lacks
-  the `merge=union` rule for the published ledgers.
+  sync into each remote), a warning when the clone's `.gitattributes` lacks
+  the `merge=union` rule for the published ledgers, and one line for the
+  current project when its active quarantines are not yet published
+  (`<project>: 2 active quarantine(s) not yet published; run daimon trust
+  republish`). Presence is checked by the row's id, the way the publisher
+  checks it, and the command writes nothing; when a clone's ledger cannot be
+  read the line says so instead of reporting zero.
 
 Teammates' checkpoints are shown within a read-time age window controlled by
 `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0` means keep everything). Aging out

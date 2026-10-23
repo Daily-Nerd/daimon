@@ -234,8 +234,10 @@ receives no checkpoints`. If foreign project trees already accumulated under
   history *and* the team's.
 - **`daimon team status`** — per-remote freshness, your own unpushed checkpoint
   count, the authors seen in the sidecar, the scope allowlist (which repos may
-  sync into each remote), and a warning when the clone's `.gitattributes` lacks
-  the `merge=union` rule for the published ledgers.
+  sync into each remote), a warning when the clone's `.gitattributes` lacks
+  the `merge=union` rule for the published ledgers, and one line for the
+  current project when its active quarantines are not yet published (see
+  "Quarantines travel too" below).
 
 Teammates' checkpoints are shown within a read-time age window controlled by
 `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0` means keep everything). Aging out
@@ -292,6 +294,15 @@ now.
   (`trust` exits 4 and says which sidecar), after enabling the team, after being
   granted a sidecar, or after `daimon ledger repair trust`. Several authors
   fold by union: one teammate's release lifts only their own claim.
+- **See what is still local.** `daimon team status` ends with one line for the
+  project you run it from when its ledger holds an active quarantine whose
+  latest row is missing from a clone the project routes to:
+  `<project>: 2 active quarantine(s) not yet published; run daimon trust
+  republish`. Presence is checked by the row's id, the way the publisher
+  checks it, and the command writes nothing. A released quarantine never
+  counts. When a clone's ledger cannot be read the line says so instead of
+  reporting zero. With `--json` each routed remote's row carries the same
+  count under `unpublished_quarantines`.
 - **Authority.** Sidecar write access is the trust boundary, as for checkpoints
   and tombstones. Published rows are declared claims, not authenticated ones. A
   member with write access can over-suppress by publishing an `active` row, and
