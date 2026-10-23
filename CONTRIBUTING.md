@@ -45,3 +45,13 @@ blocking, mypy advisory for now), scar lint, and the PR convention check.
 The `lint (ruff + mypy)` job is intended to be a required status check in
 branch protection — flipping that switch is a repo-settings action for the
 maintainer, not something the tree controls.
+
+## Commits
+
+PRs merge with a merge commit, so every commit on your branch reaches `main`
+as itself and release-please reads each one: the subject becomes a changelog
+line, and a `!` in the subject or a `BREAKING CHANGE:` footer in the body is
+what marks a breaking change. The PR convention check runs release-please's
+own parser over every branch commit, so write each subject as
+`type(scope): description`, to the same bar as a PR title. The PR title and
+body are not read for the changelog.
