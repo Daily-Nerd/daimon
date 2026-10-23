@@ -48,18 +48,24 @@ jobs:
             exit 1
           fi
 
+      # The result goes to a path keyed on this run, and ONLY that path is
+      # uploaded: benchmark/results/ also holds the committed baselines, so a
+      # glob would publish them as this run's artifact even when the harness
+      # aborted (#344 exits 3 and writes nothing). With the exact path, an
+      # aborted run uploads nothing and the warning below actually fires.
       - name: Run LongMemEval-S harness
         run: |
           uv run --extra dev python -m tests.bench.run \
             --suite longmemeval-s \
             --sample "${{ github.event.inputs.sample }}" \
             --seed "${{ github.event.inputs.seed }}" \
-            --workers "${{ github.event.inputs.workers }}"
+            --workers "${{ github.event.inputs.workers }}" \
+            --out "${GITHUB_WORKSPACE}/benchmark/results/run-${GITHUB_RUN_ID}.json"
 
       - name: Upload result artifact
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: longmemeval-s-result
-          path: benchmark/results/*.json
+          path: benchmark/results/run-${{ github.run_id }}.json
           if-no-files-found: warn

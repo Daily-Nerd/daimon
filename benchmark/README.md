@@ -140,6 +140,24 @@ cached checkpoint from a different pipeline is a different measurement.
 The backend/model come from daimon's own config (`~/.daimon/env` /
 `DAIMON_LLM_*`). No secret (API key, base URL) is ever written to a result file.
 
+**A results file implies the pipeline ran.** Each per-call serialize failure
+(a gateway 401, a timeout, a validation rejection) becomes a `failed` tally on
+its question, and the run keeps going so one bad session cannot kill a
+500-question run. The runner then checks the whole run: when
+`failed / (failed + serialized + cached)` exceeds `SERIALIZE_FAILURE_RATIO_MAX`
+(`tests/bench/run.py`, 0.10; the committed baseline failed 0 of its 243
+sessions), it exits with status 3, names the counts and the threshold, and
+writes **no** results file. The denominator is every session that reached the
+serializer, so the ratio is the share of the scored sample that is missing: a
+cached session is in the sample like a fresh one (a warm re-run with one bad
+call among three fresh ones is not a broken run), while a too-short session
+never reached the serializer and is not counted. A recall number over a
+haystack that was never indexed is not a low score, it is no measurement.
+`--force-score` writes the report anyway for debugging, and that report
+carries `metrics.forced_score: true` plus the `serialize_failed` /
+`serialize_sessions` / `serialize_failure_ratio` tallies (recorded on every
+report, clean ones too), so a forced number can never pass as a clean one.
+
 ## Results
 
 Baseline artifacts live under `results/`, each a self-contained JSON with its
