@@ -136,3 +136,50 @@ def test_issue_bypasses_keep_their_required_labels_and_mixed_pr_guard():
     assert "documentation-only PRs labeled type:docs" in template
     assert "CI-only PRs labeled type:ci AND status:approved" in template
     assert "Mixed changes never receive an issue bypass" in template
+
+
+# #1176: PRs merge with a merge commit, so each branch commit reaches main as
+# itself and release-please parses each one. The gates read those commits; a
+# gate that validated the PR title or body instead would guard text
+# release-please never reads, and the template would teach the wrong place to
+# put a breaking-change marker.
+COLLECT_FORMAT = "git log -z --reverse --no-merges --format='%h%n%B'"
+
+
+def test_the_gates_read_the_branch_commits():
+    body = WORKFLOW.read_text(encoding="utf-8")
+    # One collector splits git output on NUL (the one byte git refuses inside
+    # a message); both gates then loop over the files it wrote.
+    assert COLLECT_FORMAT in body
+    assert body.count('"$RUNNER_TEMP"/commits/*.txt') >= 1
+    assert 'process.env.COMMITS' in body
+    # Walking base..head needs the history, which a default shallow checkout
+    # of the merge ref does not carry.
+    assert "fetch-depth: 0" in body
+    # Zero collected commits is a failure, not a vacuous pass (scar 0065's
+    # shape: a gate that skips what it cannot read while exiting zero).
+    assert '"$n" -eq 0' in body
+
+
+def test_the_gates_no_longer_feed_the_pr_body_to_the_parser():
+    body = WORKFLOW.read_text(encoding="utf-8")
+    parse_step = body.split("Check Release-Please Can Parse", 1)[1]
+    assert "gh pr view" not in parse_step.split("Check Branch Name", 1)[0]
+    breaking_step = body.split("Check Breaking-Change Marker", 1)[1]
+    assert "gh pr view" not in breaking_step.split("Check Release-Please", 1)[0]
+
+
+@pytest.mark.parametrize("path", [TEMPLATE, WORKFLOW, REPO / "CONTRIBUTING.md"])
+def test_contributor_text_describes_the_merge_commit_not_a_squash(path):
+    text = path.read_text(encoding="utf-8")
+    assert not re.search(r"squash", text, re.IGNORECASE), (
+        f"{path.name} still explains the squash era; PRs merge with a merge "
+        "commit and release-please reads the branch commits")
+    assert "merge commit" in text
+
+
+def test_workflow_error_messages_carry_no_em_dash():
+    # ::error:: lines are public text shown to every contributor.
+    for line in WORKFLOW.read_text(encoding="utf-8").splitlines():
+        if "::error::" in line:
+            assert "—" not in line, line

@@ -29,6 +29,14 @@ jobs:
       # gate and its regression contract can change together.
       CI_ONLY_PATH_RE: '^(\.github/(workflows/[^/]+\.ya?ml|actions/.+|dependabot\.ya?ml|PULL_REQUEST_TEMPLATE\.md)|\.pre-commit-config\.yaml|codecov\.ya?ml|release-please-config\.json|\.release-please-manifest\.json|plugin/tests/test_pr_template_matches_gates\.py)$'
     steps:
+      # The commit gates below walk base..head, so the job needs the history
+      # behind the PR, which a default checkout of the merge ref does not
+      # carry. fetch-depth 0 fetches every branch in full; the repo is small
+      # and a computed depth cannot be trusted once main has moved on.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
       # Three narrowly-defined paths may skip a separate issue:
       #   scars: human sign-off already happened at `scar promote`;
       #   docs: prose-only changes carrying type:docs;
@@ -100,8 +108,12 @@ jobs:
             exit 1
           fi
 
+      # The title names the PR in the list and, while the repo setting
+      # merge_commit_title=PR_TITLE holds, it is also the merge commit subject
+      # on main. release-please reads the branch commits for the changelog,
+      # not the title; this is a readability rule so the PR list reads like
+      # the changelog the branch introduces.
       - name: Check Conventional PR Title
-        # squash-merge makes the PR title the commit subject on main
         run: |
           title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
           if ! grep -qE '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._-]+\))?!?: .+' <<<"$title"; then
@@ -109,58 +121,110 @@ jobs:
             exit 1
           fi
 
-      # #561: squash-merge composes main's commit from PR title + body and
-      # discards local commit footers (scar 0041 — it mis-versioned a release
-      # twice). release-please reads exactly two markers: `!` in the subject or
-      # a BREAKING CHANGE: footer line; prose counts for nothing. If the body
-      # DESCRIBES a breaking change, at least one machine-readable marker must
-      # survive the squash — the title `!` is the one a squash cannot eat.
-      - name: Check Breaking-Change Marker
+      # #1176: PRs merge with a merge commit, so every branch commit reaches
+      # main as itself and release-please parses each one on its own. The
+      # subject is a changelog line; the body is where a footer lives. The PR
+      # title and body are not what release-please reads, whichever subject
+      # the merge commit carries: a conventional merge subject duplicates the
+      # branch commits' lines, a plain "Merge pull request" subject is
+      # dropped. So the gates read the branch commits.
+      #
+      # One collector writes one file per commit under $RUNNER_TEMP/commits,
+      # named NNNN-<short sha>.txt in history order, and each gate loops over
+      # those files. Splitting: %B is the raw message and may contain blank
+      # lines, so a newline cannot end a record. -z ends each record with NUL,
+      # which git refuses inside a commit message, so NUL can only mean "next
+      # commit". Record shape: <short sha>, newline, message.
+      # --no-merges: a "Merge branch 'main' into ..." commit on the branch is
+      # not a changelog line and release-please drops it as unparsable, which
+      # is the right outcome, so it is not held to the commit rules.
+      - name: Collect branch commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
-          title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
-          if grep -qiE 'breaking[ -]change' <<<"$body" \
-             && ! grep -qE '^[a-z]+(\([a-z0-9._-]+\))?!: ' <<<"$title" \
-             && ! grep -qiE '^BREAKING[- ]CHANGE: ' <<<"$body"; then
-            echo "::error::PR body mentions a breaking change but the title has no '!' and the body has no 'BREAKING CHANGE:' footer line. Neither marker survives the squash to release-please, so this would ship as an ordinary bump. Add '!' to the title (preferred: a squash cannot eat it), add the footer line, or reword the body if it is not actually breaking."
+          # Both ends of the range must be in the checkout before git log runs:
+          # a missing commit would fail inside the process substitution below,
+          # where the error is swallowed and the empty result would be blamed
+          # on the branch instead of on the fetch.
+          for ref in "$BASE_SHA" "$HEAD_SHA"; do
+            if ! git cat-file -e "$ref^{commit}" 2>/dev/null; then
+              echo "::error::commit $ref is not in this checkout, so the gates cannot walk $BASE_SHA..$HEAD_SHA. The cause is missing history, not the branch: the checkout step needs fetch-depth: 0, and a shallow or stale fetch leaves the base commit out."
+              exit 1
+            fi
+          done
+          d="$RUNNER_TEMP/commits"; rm -rf "$d"; mkdir -p "$d"
+          n=0
+          while IFS= read -r -d '' record; do
+            n=$((n + 1))
+            sha="${record%%$'\n'*}"
+            printf '%s' "${record#*$'\n'}" > "$d/$(printf '%04d' "$n")-$sha.txt"
+          done < <(git log -z --reverse --no-merges --format='%h%n%B' "$BASE_SHA..$HEAD_SHA")
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no commits found in $BASE_SHA..$HEAD_SHA. The gates have nothing to read, and an empty check is not a pass. If the branch holds only merge commits, add the change as a commit of its own."
             exit 1
           fi
+          echo "Collected $n commit(s) from $BASE_SHA..$HEAD_SHA"
 
-      # #880: squash composes main's commit from the PR title and body, so the
-      # body IS what release-please parses. A body it cannot parse is dropped
-      # from the changelog AND from the version bump while the Release workflow
-      # exits zero (scar 0065). Running the real parser instead of matching
-      # known-bad shapes is deliberate: two prose rules were derived for this
-      # failure and both turned out to be wrong.
+      # #561: release-please reads exactly two breaking-change markers: `!`
+      # in a commit subject or a `BREAKING CHANGE:` footer line in that same
+      # commit's body; prose counts for nothing. Scar 0041 records the release
+      # that shipped as a patch because the only marker was in text
+      # release-please never read. The marker has to be in the commit that
+      # describes the break, since that commit is what reaches main.
+      - name: Check Breaking-Change Marker
+        run: |
+          failed=0
+          for f in "$RUNNER_TEMP"/commits/*.txt; do
+            name="${f##*/}"; sha="${name%.txt}"; sha="${sha#*-}"
+            subject="$(head -n 1 "$f")"
+            if grep -qiE 'breaking[ -]change' "$f" \
+               && ! grep -qE '^[a-z]+(\([a-z0-9._-]+\))?!: ' <<<"$subject" \
+               && ! grep -qiE '^BREAKING[- ]CHANGE: ' "$f"; then
+              echo "::error::commit $sha ($subject) mentions a breaking change but its subject has no '!' and its body has no 'BREAKING CHANGE:' footer line. release-please reads only those two markers, so this would ship as an ordinary bump. Add '!' to that commit's subject (type(scope)!: ...), add the footer line to its body, or reword the commit if it is not actually breaking. The PR title and body carry no weight here."
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      # #880: a commit release-please cannot parse is dropped from the
+      # changelog AND from the version bump while the Release workflow exits
+      # zero (scar 0065). Running the real parser over every branch commit
+      # instead of matching known-bad shapes is deliberate: two prose rules
+      # were derived for this failure and both turned out to be wrong.
       - name: Check Release-Please Can Parse
         run: |
           d="$RUNNER_TEMP/rp"; mkdir -p "$d"
-          {
-            printf '%s (#%s)\n\n' \
-              "$(gh pr view "$PR" --repo "$REPO" --json title -q .title)" "$PR"
-            gh pr view "$PR" --repo "$REPO" --json body -q .body | tr -d '\r'
-          } > "$d/msg.txt"
           # Pinned to release-please 17.x's own dependency so this gate cannot
           # test a different grammar than the release does.
           npm install --prefix "$d" --no-save --no-audit --no-fund --silent \
             '@conventional-commits/parser@0.4.1'
-          cd "$d" && node --input-type=module -e '
+          cd "$d" && COMMITS="$RUNNER_TEMP/commits" node --input-type=module -e '
             import {parser} from "@conventional-commits/parser";
-            import {readFileSync} from "fs";
-            try {
-              parser(readFileSync("msg.txt", "utf8"));
-            } catch (e) {
-              console.log("::error::release-please cannot parse the commit this "
-                + "PR will squash into: " + e.message
-                + ". Such a commit is dropped from the changelog and from the "
-                + "version bump while the Release workflow still reports success. "
-                + "Usual cause: a body line whose first token is immediately "
-                + "followed by an open paren containing another open paren, for "
-                + "example a line starting with foo(bar(x)). Indent that line two "
-                + "spaces, or put a word before it. Fences and backticks do not "
-                + "help. See scar 0065.");
-              process.exit(1);
+            import {readdirSync, readFileSync} from "fs";
+            import {join} from "path";
+            const dir = process.env.COMMITS;
+            let failed = false;
+            for (const name of readdirSync(dir).sort()) {
+              const message = readFileSync(join(dir, name), "utf8");
+              try {
+                parser(message);
+              } catch (e) {
+                const sha = name.replace(/^\d+-/, "").replace(/\.txt$/, "");
+                const subject = message.split("\n", 1)[0];
+                console.log("::error::release-please cannot parse commit " + sha
+                  + " (" + subject + "): " + e.message
+                  + ". Such a commit is dropped from the changelog and from the "
+                  + "version bump while the Release workflow still reports success. "
+                  + "Usual cause: a body line whose first token is immediately "
+                  + "followed by an open paren containing another open paren, for "
+                  + "example a line starting with foo(bar(x)). Indent that line two "
+                  + "spaces, or put a word before it. Fences and backticks do not "
+                  + "help. See scar 0065.");
+                failed = true;
+              }
             }
+            if (failed) process.exit(1);
           '
 
       - name: Check Branch Name
