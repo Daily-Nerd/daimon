@@ -991,10 +991,35 @@ class PublishFailure(NamedTuple):
 
     @property
     def remote(self) -> str:
-        try:
-            return Path(self.path).relative_to(config.team_dir()).parts[0]
-        except (ValueError, IndexError):
-            return ""
+        return _remote_of(self.path)
+
+
+def _remote_of(path) -> str:
+    """The sidecar clone a path under the team dir belongs to (its first
+    segment), or "" for a path outside it."""
+    try:
+        return Path(path).relative_to(config.team_dir()).parts[0]
+    except (ValueError, IndexError):
+        return ""
+
+
+def _unproven_reason(got, ledger: str) -> str:
+    """Why a capped read of a published `ledger` proves nothing: the one
+    wording the publisher reports a failure with and `team status` reports
+    an unknown with."""
+    return (f"its {ledger} ledger is over the 1 MB cap" if got.over_cap
+            else f"its {ledger} ledger is {got.health.value}")
+
+
+def _absent_rows(got, wanted) -> list:
+    """The rows of `wanted` whose `event_id` the capped read holds no row
+    for: the publisher's presence test (PR 13), by `event_id` and nothing
+    else, so a retry never duplicates and a re-sent row is a no-op. The same
+    test decides what `team status` calls not yet published (#1175)."""
+    have = {r.get("event_id") for r in got.rows
+            if isinstance(r, dict) and isinstance(r.get("event_id"), str)}
+    return [r for r in wanted
+            if not (r.get("event_id") and r["event_id"] in have)]
 
 
 class Published(list):
@@ -1028,9 +1053,7 @@ def _publish_keys(content_keys, project_dir) -> Published:
         if not todo:
             continue
         if got.unproven:
-            why = ("its tombstone ledger is over the 1 MB cap" if got.over_cap
-                   else f"its tombstone ledger is {got.health.value}")
-            failed.append((path, why))
+            failed.append((path, _unproven_reason(got, "tombstone")))
             continue
         rows = [json.dumps({"ts": stamp, "key": k,
                             "author": config.author()}, ensure_ascii=False)
@@ -1203,16 +1226,11 @@ def _publish_planned(clean, project_dir) -> Published:
                 plan.setdefault(path, (adir, []))[1].extend(wanted)
     for path, (adir, wanted) in plan.items():
         got = reads.get(path) or _capped_rows(path)
-        have = {r.get("event_id") for r in got.rows
-                if isinstance(r, dict) and isinstance(r.get("event_id"), str)}
-        todo = [r for r in wanted
-                if not (r.get("event_id") and r["event_id"] in have)]
+        todo = _absent_rows(got, wanted)
         if not todo:
             continue
         if got.unproven:
-            why = ("its quarantine ledger is over the 1 MB cap" if got.over_cap
-                   else f"its quarantine ledger is {got.health.value}")
-            failed.append((path, why))
+            failed.append((path, _unproven_reason(got, "quarantine")))
             continue
         lines = [json.dumps(r, ensure_ascii=False) for r in todo]
         try:
@@ -1232,6 +1250,43 @@ def _publish_planned(clean, project_dir) -> Published:
         written.append(str(path))
         wrote.update(r["value_key"] for r in todo)
     return Published(written, failed, wrote)
+
+
+class UnpublishedRead(NamedTuple):
+    """What the routed clones do not hold of a project's active claims
+    (#1175): `missing` maps each routed ledger path (as `str`) to the
+    `event_id`s absent there, proven by a clean read; `unknown` is a
+    `PublishFailure` per routed ledger whose read proves nothing (over the
+    cap, transient, unreadable), the same reasons the publisher reports.
+    `routed` is False when the project routes to no clone."""
+
+    missing: dict
+    unknown: tuple
+    routed: bool
+
+
+def unpublished_quarantines(claims, project_dir=None) -> UnpublishedRead:
+    """Which of `claims` (this project's active quarantines as the hash-only
+    rows `trust.standing_claims` builds) each routed clone does not hold, by
+    `event_id`, through the capped read the publisher checks presence with.
+    Reads only, writes nothing: `daimon team status` asks this (#1175). A
+    ledger that cannot be proven answers "unknown", never "absent", so a
+    read that failed is never reported as zero. Never raises."""
+    project_dir = _resolved(project_dir)
+    missing: dict = {}
+    unknown: list = []
+    dirs = _own_team_dirs(project_dir, clones_only=True)
+    for adir in dirs:
+        path = adir / _QUARANTINE_NAME
+        got = _capped_rows(path)
+        if got.unproven:
+            unknown.append(PublishFailure(path, _unproven_reason(
+                got, "quarantine")))
+            continue
+        missing[str(path)] = frozenset(
+            r["event_id"] for r in _absent_rows(got, claims)
+            if r.get("event_id"))
+    return UnpublishedRead(missing, tuple(unknown), bool(dirs))
 
 
 # One ledger is read on the briefing path, so it cannot be unbounded: a

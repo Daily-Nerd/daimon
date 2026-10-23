@@ -39,6 +39,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from . import (channels, clock, config, jsonl, normalize, policy, redact, schema, store,
                surfaces)
@@ -569,7 +570,19 @@ def republish(*, channel: str, project_dir=None):
     if not config.team_enabled():
         return store.Published()
     _require_writable(project_dir)
-    rows = events(project_dir=project_dir)
+    return store.publish_quarantine(standing_claims(project_dir=project_dir),
+                                    project_dir=project_dir)
+
+
+def standing_claims(project_dir=None, *, read=None) -> list[dict]:
+    """This project's standing claims as the team sees them: for every
+    ACTIVE record the latest local activating row, for every RELEASED record
+    the latest local release row, each VERBATIM (its original `order` and
+    `event_id`, never a row stamped now) plus the record's `state`, `kind`
+    and `value_key`. The one definition `republish` sends and `unpublished`
+    checks presence of (#1175). `read` is a `jsonl.read` of this ledger the
+    caller already holds, the seam `events` takes."""
+    rows = events(project_dir=project_dir, read=read)
     claims = []
     for tid, record in fold(rows).items():
         state = record["state"]
@@ -582,7 +595,43 @@ def republish(*, channel: str, project_dir=None):
             claims.append({**sorted(picks, key=_fold_key)[-1], "state": state,
                            "kind": record["kind"],
                            "value_key": record["value_key"]})
-    return store.publish_quarantine(claims, project_dir=project_dir)
+    return claims
+
+
+class Unpublished(NamedTuple):
+    """What `daimon team status` reports for one project (#1175): `active`
+    is the number of active quarantines whose latest activating row at least
+    one routed clone does not hold; `per_remote` is that number per routed
+    clone slug; `unknown` is a `store.PublishFailure` per routed ledger whose
+    read proves nothing; `routed` is False when the project routes to no
+    clone; `ledger` is the local trust ledger's `jsonl.Health` value."""
+
+    project: str
+    active: int
+    per_remote: dict
+    unknown: tuple
+    routed: bool
+    ledger: str
+
+
+def unpublished(project_dir=None) -> Unpublished:
+    """The active quarantines of this project not yet published to the clones
+    it routes to, by `event_id` through the publisher's own presence test.
+    Reads only; writes nothing. Not gated on the team being enabled: a
+    quarantine made before the team was turned on is unpublished either
+    way, and that is one of the cases the line exists for."""
+    path = _path(project_dir)
+    read = jsonl.read(path) if path is not None else jsonl.Read(
+        jsonl.Health.ABSENT, [])
+    claims = [c for c in standing_claims(project_dir=project_dir, read=read)
+              if c["state"] == "active"]
+    got = store.unpublished_quarantines(claims, project_dir=project_dir)
+    per_remote = {store._remote_of(p): len(ids) for p, ids in got.missing.items()}
+    union: set = set()
+    for ids in got.missing.values():
+        union |= ids
+    return Unpublished(store.project_bucket(project_dir) or "", len(union),
+                       per_remote, got.unknown, got.routed, read.health.value)
 
 
 def plaintext_values(row: dict) -> list[str]:

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import config, recall, render, store, surfaces, teamsync
+from .. import config, recall, render, store, surfaces, teamsync, trust
 
 
 def _cmd_team_init(args) -> int:
@@ -131,6 +131,17 @@ def _cmd_team_status(args) -> int:
             "no team remote configured — run `daimon team init <remote-url>`",
         ] + armed_lines)
         return 0
+    # #1175: the active quarantines of THIS project whose latest activating
+    # row the routed clones do not hold. Status is machine-level while routing
+    # needs a project directory, so the one project `team status` resolves is
+    # the one checked, from its local ledger, through the publisher's own
+    # presence test. The same count rides each routed remote's JSON row.
+    project = _cli._resolve_project(getattr(args, "project", None))
+    unpublished = trust.unpublished(project_dir=project)
+    for row in rows:
+        if row["slug"] in unpublished.per_remote:
+            row["unpublished_quarantines"] = {
+                unpublished.project: unpublished.per_remote[row["slug"]]}
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
@@ -178,15 +189,36 @@ def _cmd_team_status(args) -> int:
     # #387: where the CURRENT project's checkpoints route — the one place a
     # misconfigured toml is visible BEFORE a session's checkpoint quietly
     # stays in the local mirror.
-    dests = store._team_write_slugs(_cli._resolve_project(getattr(args, "project", None)))
+    dests = store._team_write_slugs(project)
     line = "this project writes to: " + ", ".join(dests)
     if dests == [store._TEAM_LOCAL_REMOTE]:
         line += ("  (no remote grants it membership — add its repo URL to a "
                  "sidecar's daimon-team.toml [scope] repos)")
     lines.append(line)
+    lines.extend(_unpublished_lines(unpublished))
     lines.extend(armed_lines)
     render.render_team_status(lines)
     return 0
+
+
+def _unpublished_lines(report) -> list[str]:
+    """#1175: one line for the routed project when its local ledger holds an
+    active quarantine the routed clones lack, in the issue's format, plus one
+    line per read that proves nothing (a clone ledger that cannot be read, or
+    a local ledger that cannot). A read that failed is never printed as zero.
+    Counts and health words only, never a value or an id."""
+    if not report.routed:
+        return []
+    if report.ledger in ("transient", "unreadable"):
+        return [f"{report.project}: trust ledger is {report.ledger}; cannot "
+                "tell which quarantines are published"]
+    out = [f"{report.project}: cannot tell whether its quarantines reached "
+           f"{failure.remote}: {failure.reason}"
+           for failure in report.unknown]
+    if report.active:
+        out.append(f"{report.project}: {report.active} active quarantine(s) "
+                   "not yet published; run daimon trust republish")
+    return out
 
 
 def register(sub, fmt) -> None:
