@@ -151,6 +151,19 @@ def _cmd_team_status(args) -> int:
         # write path — status is the one place the parse error surfaces.
         if row.get("config_warning"):
             lines.append(f"  warning: {row['config_warning']}")
+        # #1174: without the merge=union rule a pull that lands two appends
+        # to one published ledger conflicts, and the reader then skips the
+        # author as a torn tail. Named here because `team init` refuses an
+        # existing clone, so an old clone gets the rule by hand or from the
+        # commit the next `team init` on the team pushes.
+        missing = row.get("union_rules_missing") or []
+        if missing:
+            lines.append(
+                f"  warning: {teamsync.ATTRIBUTES_NAME} lacks merge=union for "
+                f"{len(missing)} published ledger glob(s); add the lines "
+                f"`daimon team init` writes to "
+                f"{config.team_dir() / row['slug'] / teamsync.ATTRIBUTES_NAME}"
+                ", or a pull that lands two appends to one ledger conflicts")
         # #279: scope is default-closed — an empty allowlist means the remote
         # receives nothing, which must be visible, not a silent surprise.
         scope = row.get("scope") or []

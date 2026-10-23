@@ -606,6 +606,10 @@ SURFACES: tuple[Surface, ...] = (
             False, "exempt-no-plaintext", "none"),
     Surface("team/{remote}/daimon-team.toml", "teamsync.init",
             False, "exempt-no-plaintext", "none"),
+    # #1174: the merge=union rules for the published ledgers. Fixed content
+    # from teamsync.LEDGER_UNION_GLOBS; no item text can reach it.
+    Surface("team/{remote}/.gitattributes", "teamsync.init",
+            False, "exempt-no-plaintext", "none"),
     # #600 slice B: the published tombstone ledger — {ts, key, author}, the
     # canonical hash and never the text (#321), the same posture
     # forget-hits.jsonl takes locally. Deliberately BEFORE the json entry

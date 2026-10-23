@@ -65,6 +65,65 @@ class TeamError(Exception):
     failure. Everything else in sync degrades gracefully to rc 0."""
 
 
+# #1174: the published ledgers merge by union. Both ledgers are append-only
+# and every author writes only their own file, so the one conflict two
+# machines of ONE author can produce is an end-of-file one: both appended a
+# line after the same base. git's default driver marks that as a conflict and
+# leaves `<<<<<<<` markers in the file, which the reader classifies as a torn
+# tail and skips the author. `merge=union` keeps both lines, which is the
+# fold's own semantics (per id, latest wins by order). The rule lives in the
+# clone, not in the reader, because the conflict happens inside the merge
+# `team sync` runs. Both layout eras (#200).
+LEDGER_UNION_GLOBS = (
+    "authors/*/tombstones.jsonl",
+    "authors/*/quarantines.jsonl",
+    "projects/**/authors/*/tombstones.jsonl",
+    "projects/**/authors/*/quarantines.jsonl",
+)
+ATTRIBUTES_NAME = ".gitattributes"
+_UNION_ATTR = "merge=union"
+
+
+def missing_union_rules(sidecar) -> list[str]:
+    """The ledger globs whose `merge=union` rule the clone's `.gitattributes`
+    lacks, in `LEDGER_UNION_GLOBS` order; [] when every rule is there. The
+    one definition of "has the rule": `init` appends exactly these and
+    `team status` reports exactly these. A rule is a non-comment line whose
+    pattern is the glob and whose attributes include `merge=union`. A missing
+    or unreadable file lacks every rule. Never raises."""
+    try:
+        text = (Path(sidecar) / ATTRIBUTES_NAME).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    have = set()
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and not parts[0].startswith("#") \
+                and _UNION_ATTR in parts[1:]:
+            have.add(parts[0])
+    return [glob for glob in LEDGER_UNION_GLOBS if glob not in have]
+
+
+def _ensure_union_rules(sidecar) -> bool:
+    """Append the missing `merge=union` rules to the clone's `.gitattributes`,
+    leaving every existing line alone; True when the file changed. Idempotent
+    by construction: a second run finds nothing missing. Raises OSError when
+    the file cannot be written; the caller decides how loud that is."""
+    missing = missing_union_rules(sidecar)
+    if not missing:
+        return False
+    path = Path(sidecar) / ATTRIBUTES_NAME
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing = ""
+    lead = "" if not existing or existing.endswith("\n") else "\n"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(lead + "".join(f"{glob} {_UNION_ATTR}\n"
+                                    for glob in missing))
+    return True
+
+
 def _run_git(argv, timeout) -> subprocess.CompletedProcess:
     """Run a git argv NON-INTERACTIVELY and never raise, whatever git does.
 
@@ -236,13 +295,28 @@ def init(url: str, project_dir=None) -> Path:
     proc = _run_git(["git", "clone", "--", url, str(dest)], NET_TIMEOUT)
     if proc.returncode != 0:
         raise TeamError(f"git clone failed: {_last_line(proc.stderr)}")
-    if _head(dest) is None:  # unborn branch: the remote was empty
+    unborn = _head(dest) is None
+    # #1174: the merge=union rules for the published ledgers, written before
+    # the seed commit so a fresh remote carries them to every later clone.
+    # Repo furniture with fixed content, not config: joining an established
+    # remote appends only the lines it lacks (the architect's own lines stay)
+    # and commits them, so the next sync hands the rule to the whole team.
+    # A clone that cannot take the file still works; `team status` names it.
+    try:
+        rules_changed = _ensure_union_rules(dest)
+    except OSError as exc:
+        rules_changed = False
+        print(f"daimon team: could not write {ATTRIBUTES_NAME} ({exc}); "
+              "`daimon team status` reports the missing merge=union rules")
+    if unborn:  # unborn branch: the remote was empty
         (dest / "README.md").write_text(_STUB_README, encoding="utf-8")
         seeds = ["README.md"]
         if not (dest / teamproject.CONFIG_NAME).exists():
             (dest / teamproject.CONFIG_NAME).write_text(
                 _seed_scope_toml(project_dir), encoding="utf-8")
             seeds.append(teamproject.CONFIG_NAME)
+        if rules_changed:
+            seeds.append(ATTRIBUTES_NAME)
         _git(dest, "add", "--", *seeds)
         cp = _commit(dest, "sync: initialize team memory sidecar", seeds)
         if cp.returncode != 0:
@@ -253,6 +327,18 @@ def init(url: str, project_dir=None) -> Path:
             # offline-ish: the next sync will push it. Not a user error.
             print(f"daimon team: seed push failed ({_last_line(push.stderr)}) — "
                   "the next `daimon team sync` will retry")
+    elif rules_changed:
+        # Pathspec-scoped like every commit here: nothing else pre-staged in
+        # the clone rides along. Not a user error when it fails: the working
+        # tree file already governs this clone's merges, and the next
+        # `team init` on the team retries the commit.
+        _git(dest, "add", "--", ATTRIBUTES_NAME)
+        cp = _commit(dest, "sync: merge the published ledgers by union",
+                     [ATTRIBUTES_NAME])
+        if cp.returncode != 0:
+            print(f"daimon team: could not commit {ATTRIBUTES_NAME} "
+                  f"({_last_line(cp.stderr or cp.stdout)}); the rule still "
+                  "applies to this clone")
     return dest
 
 
@@ -611,6 +697,10 @@ def team_status() -> list[dict]:
             # #279: the membership allowlist — which repos may sync here.
             # Empty = default-closed: the remote receives no checkpoints.
             "scope": teamproject.scope_entries(sidecar),
+            # #1174: the published-ledger globs whose merge=union rule this
+            # clone's .gitattributes lacks; a pull that lands two appends to
+            # one ledger conflicts there.
+            "union_rules_missing": missing_union_rules(sidecar),
         })
     return rows
 
