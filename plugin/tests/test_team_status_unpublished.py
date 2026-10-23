@@ -234,7 +234,8 @@ def test_cli_prints_nothing_for_an_unrouted_project(tmp_checkpoint_dir,
     assert "this project writes to: local" in out
 
 
-def test_json_carries_the_count_per_project(tmp_checkpoint_dir, capsys):
+def test_json_carries_the_count_for_the_current_project(tmp_checkpoint_dir,
+                                                        capsys):
     _propose()
     _clone()
     assert _status("--json") == 0
