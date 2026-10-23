@@ -5,6 +5,28 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.59.2](https://github.com/Daily-Nerd/daimon/compare/v0.59.1...v0.59.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **cli:** one owner decides whether a CLI read leaves the project's own bucket ([398ac1d](https://github.com/Daily-Nerd/daimon/commit/398ac1d66c8110c0952895581e7e99c4b02c0cf1))
+* **hooks:** the session-start hooks print the label the CLI gives them and decide no scope ([1ae739b](https://github.com/Daily-Nerd/daimon/commit/1ae739bb96065373ab37fb11b34e730bbf909f3f))
+* **mcp:** the host grants cross-project reads, the model never chooses a scope ([ece15a4](https://github.com/Daily-Nerd/daimon/commit/ece15a4f7406a0e35c1d41209cdbf0fb5623b0c8)), closes [#1223](https://github.com/Daily-Nerd/daimon/issues/1223)
+* **mcp:** the host grants cross-project reads, the model never chooses a scope ([#1226](https://github.com/Daily-Nerd/daimon/issues/1226)) ([d7b4b57](https://github.com/Daily-Nerd/daimon/commit/d7b4b57077f627d3f3d5cd78077f184cfd3737c3))
+* **scope:** one owner decides every read scope and an unknown project reads nothing ([6a14b12](https://github.com/Daily-Nerd/daimon/commit/6a14b12ee508b7e9ec1a419c3c293be4e176b3c7))
+* **scope:** one owner decides every read scope and an unknown project reads nothing ([#1224](https://github.com/Daily-Nerd/daimon/issues/1224)) ([c601e16](https://github.com/Daily-Nerd/daimon/commit/c601e16f2dcf1a2f12ce4eccc6201bcd1987cbed))
+* **scope:** the CLI and the host hooks read through one scope owner ([#1227](https://github.com/Daily-Nerd/daimon/issues/1227)) ([3fb2e8f](https://github.com/Daily-Nerd/daimon/commit/3fb2e8f5708c747181f363ff1cc923d39df0f9ad))
+* **store:** a project with no identity reads nothing and the persist read is its own ([4d91b48](https://github.com/Daily-Nerd/daimon/commit/4d91b487bc6ddeb34f500d72a242d36f0d4687e5))
+
+
+### Documentation
+
+* **config:** describe tenant-scoped CLI refusals and the identity-less read ([c73e537](https://github.com/Daily-Nerd/daimon/commit/c73e5372202e0b0a7d3b396873ebc5caa539a6ef))
+* **hosts:** the CLI picks the briefing checkpoint, the hooks print its label ([98050a8](https://github.com/Daily-Nerd/daimon/commit/98050a8bdd1ac7832d54a04bd5c69e1ee29660b6))
+* **mcp:** document DAIMON_MODEL_CROSS_PROJECT and the model-surface refusal ([5e8ad5c](https://github.com/Daily-Nerd/daimon/commit/5e8ad5c3ebf2bb4251e2be096d75559e5dd9741b)), closes [#1223](https://github.com/Daily-Nerd/daimon/issues/1223)
+* **skill:** teach that cross-project reads over MCP need the host's grant ([d972b9f](https://github.com/Daily-Nerd/daimon/commit/d972b9f4ac87f21f5262726f5b199abd96ee1e91))
+
 ## [0.59.1](https://github.com/Daily-Nerd/daimon/compare/v0.59.0...v0.59.1) (2026-10-21)
 
 
