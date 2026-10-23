@@ -38,11 +38,17 @@ its merge, and the only actor present in every clone before every merge is
 the sync itself. `team init` cannot do it for old clones: it refuses an
 existing directory.
 
-The write is safe for the same reason the ledgers are: the content is fixed
-(`LEDGER_UNION_GLOBS`), so two clones committing it concurrently produce an
-identical add or an identical appended hunk, which git merges clean. A
-hand-written copy with DIFFERENT lines still conflicts on the file itself and
-surfaces as the existing "merge failed" warning. Keep the commit
+The write is safe because the attributes file union-merges ITSELF:
+`UNION_RULE_GLOBS` ends with `/.gitattributes merge=union`. Without that
+line, an old clone's hand-written copy (a comment, another line order) and a
+teammate's committed plain copy are an add/add conflict on the attributes
+file; the markers land in it, git then parses them as attributes
+("refs/remotes/origin/main is not a valid attribute name: .gitattributes:12")
+and every later pass ends "push still rejected after 3 attempts", 1 ahead and
+1 behind, for good. With it, union keeps both sides' lines (a duplicate rule
+is harmless to git) and the next pass has nothing left to push
+(test_sync_converges_when_the_attributes_file_itself_differs). Keep that
+self-rule in the same tuple the writer and the checker read. Keep the commit
 pathspec-scoped and never let `_commit_own` sweep it: that function must stay
 own-author only, or an unrelated pre-staged file in the clone would ride the
 team branch (#144).

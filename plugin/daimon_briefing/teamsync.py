@@ -12,7 +12,10 @@ Layout (extends the #111 team dir):
 The multi-writer git spike verdict is LAW here:
   1. Only immutable per-author files are synced — NO mutable pointers ever land
      in the sidecar. Disjoint append-only paths make merges conflict-free by
-     construction.
+     construction. The one exception is the clone-root `.gitattributes`
+     (#1174): sync also writes and commits the fixed `merge=union` rules
+     there, for the published ledgers and for the attributes file itself, so
+     two appends to one ledger (or two copies of the rules) merge clean.
   2. The sidecar is a separate private repo, one directory per remote slug —
      never the user's project repo. Every git call runs with cwd (-C) pinned to
      the sidecar.
@@ -82,15 +85,24 @@ LEDGER_UNION_GLOBS = (
 )
 ATTRIBUTES_NAME = ".gitattributes"
 _UNION_ATTR = "merge=union"
+# The attributes file union-merges ITSELF. Two clones that each committed
+# their own copy (an old clone's hand-written file with a comment or another
+# line order, a teammate's plain one) are an add/add conflict on this file;
+# without a rule the markers land in it, git then parses them as attributes
+# ("refs/remotes/origin/main is not a valid attribute name") and every later
+# pass ends "push still rejected". Union keeps both sides' lines; a duplicate
+# rule is harmless to git. The leading slash anchors it to the clone root.
+UNION_RULE_GLOBS = (*LEDGER_UNION_GLOBS, "/" + ATTRIBUTES_NAME)
 
 
 def missing_union_rules(sidecar) -> list[str]:
-    """The ledger globs whose `merge=union` rule the clone's `.gitattributes`
-    lacks, in `LEDGER_UNION_GLOBS` order; [] when every rule is there. The
-    one definition of "has the rule": `init` appends exactly these and
-    `team status` reports exactly these. A rule is a non-comment line whose
-    pattern is the glob and whose attributes include `merge=union`. A missing
-    or unreadable file lacks every rule. Never raises."""
+    """The globs whose `merge=union` rule the clone's `.gitattributes` lacks,
+    in `UNION_RULE_GLOBS` order (the four ledgers, then the attributes file
+    itself); [] when every rule is there. The one definition of "has the
+    rule": `init` and `sync` append exactly these and `team status` reports
+    exactly these. A rule is a non-comment line whose pattern is the glob and
+    whose attributes include `merge=union`. A missing or unreadable file
+    lacks every rule. Never raises."""
     try:
         text = (Path(sidecar) / ATTRIBUTES_NAME).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -101,7 +113,7 @@ def missing_union_rules(sidecar) -> list[str]:
         if len(parts) >= 2 and not parts[0].startswith("#") \
                 and _UNION_ATTR in parts[1:]:
             have.add(parts[0])
-    return [glob for glob in LEDGER_UNION_GLOBS if glob not in have]
+    return [glob for glob in UNION_RULE_GLOBS if glob not in have]
 
 
 def _ensure_union_rules(sidecar) -> bool:
