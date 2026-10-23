@@ -64,7 +64,8 @@ an error, not a re-clone.
 
 `team init` also writes a `.gitattributes` at the root of the clone with a
 `merge=union` rule for the published ledgers (`authors/*/tombstones.jsonl`,
-`authors/*/quarantines.jsonl` and their `projects/**/` forms). Both ledgers are
+`authors/*/quarantines.jsonl` and their `projects/**/` forms, plus one for the
+attributes file itself, so two clones' copies of the rules merge clean). Both ledgers are
 append-only and each author writes only their own file, so the one conflict two
 machines of one author can produce is both appending a line after the same
 base; the rule keeps both lines instead of leaving conflict markers that make
@@ -93,9 +94,13 @@ spawn is gated on a team remote actually existing, so machines that never ran
 
 A sync pass does three things, in order:
 
-- **Commits and pushes your own author directory only.** It stages and commits
-  new files under `authors/<your-author-slug>/`, nothing else — never another
-  author's files, never anything you happened to leave staged in the sidecar.
+- **Commits and pushes your own author directory, plus the merge rules.** It
+  stages and commits new files under `authors/<your-author-slug>/`: never
+  another author's files, never anything you happened to leave staged in the
+  sidecar. The one other path it commits is the clone-root `.gitattributes`,
+  when the `merge=union` rules for the published ledgers (and for the
+  attributes file itself) are missing from it; the content of those lines is
+  fixed, so two clones committing them merge clean.
 - **Fetches teammates' updates**, but only when the remote actually changed. A
   refs-only `ls-remote` probe compares hashes first; objects transfer only on a
   mismatch, so a no-op sync costs one lightweight network round-trip.

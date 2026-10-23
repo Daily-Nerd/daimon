@@ -75,7 +75,9 @@ ya existe es un error, no un re-clon.
 
 `team init` también escribe un `.gitattributes` en la raíz del clon con una
 regla `merge=union` para los ledgers publicados (`authors/*/tombstones.jsonl`,
-`authors/*/quarantines.jsonl` y sus formas bajo `projects/**/`). Ambos ledgers
+`authors/*/quarantines.jsonl` y sus formas bajo `projects/**/`, más una para el
+propio archivo de atributos, así que las copias de las reglas de dos clones
+mergean limpio). Ambos ledgers
 son de solo agregar y cada autor escribe únicamente su propio archivo, así que
 el único conflicto que dos máquinas de un mismo autor pueden producir es que
 ambas agreguen una línea después de la misma base; la regla conserva ambas
@@ -107,10 +109,14 @@ remoto de equipo, así que las máquinas que nunca corrieron
 
 Una pasada de sync hace tres cosas, en orden:
 
-- **Commitea y pushea solo tu propio directorio de autor.** Prepara y
-  commitea archivos nuevos bajo `authors/<your-author-slug>/`, nada más —
-  nunca archivos de otro autor, nunca algo que hayas dejado staged en el
-  sidecar.
+- **Commitea y pushea tu propio directorio de autor, más las reglas de
+  merge.** Prepara y commitea archivos nuevos bajo
+  `authors/<your-author-slug>/`: nunca archivos de otro autor, nunca algo que
+  hayas dejado staged en el sidecar. La única otra ruta que commitea es el
+  `.gitattributes` de la raíz del clon, cuando le faltan las reglas
+  `merge=union` para los ledgers publicados (y para el propio archivo de
+  atributos); el contenido de esas líneas es fijo, así que dos clones que las
+  commitean mergean limpio.
 - **Trae las actualizaciones de tus compañeros**, pero solo cuando el remoto
   realmente cambió. Un probe `ls-remote` de solo-refs compara hashes primero;
   los objetos se transfieren solo ante una discrepancia, así un sync sin
