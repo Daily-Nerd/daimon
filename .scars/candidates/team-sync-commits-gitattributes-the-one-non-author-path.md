@@ -11,7 +11,8 @@ anchors:
   - pattern: "_commit_union_rules"
 evidence:
   - commit: aa45bd7
-  - commit: 7f61720
+  - commit: 98fe567
+  - commit: de20e79
   - note: tests/test_teamsync.py::test_sync_adopts_a_hand_written_untracked_attributes_file
   - note: tests/test_teamsync.py::test_sync_gives_an_old_clone_the_rules_and_appends_then_merge_by_union
 expires:
