@@ -11,11 +11,18 @@ sampled question's haystack through daimon's real pipeline, answers via recall, 
 writes a machine-readable JSON result with a full, reproducible config stamp. The
 LLM backend/model are read from daimon's own config and RECORDED — the number is
 meaningless without them. See benchmark/README.md for the reporting policy.
+
+A run where too many sessions failed to serialize (#344, failed over every
+session that reached the serializer, past SERIALIZE_FAILURE_RATIO_MAX) exits
+EXIT_SERIALIZE_FAILURES and writes no result:
+a results file implies the pipeline ran. `--force-score` writes it anyway,
+marked `forced_score`.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import subprocess
@@ -30,6 +37,74 @@ from tests.bench import adapter, cache as cache_mod
 from tests.bench import dataset, metrics
 
 HARNESS_VERSION = "1.0.0"
+
+# #344: the serialize-failure sanity gate. The adapter turns every per-call
+# failure into a `failed` tally and keeps going (one bad session must not kill
+# a 500-question run), so the runner, the only layer that sees the whole run,
+# refuses to score when `failed / (failed + serialized + cached)` exceeds this
+# ratio. The denominator is every session that reached the serializer, so the
+# ratio is the share of the scored SAMPLE that is missing: a cached session is
+# present in the sample exactly like a fresh one, while a too-short session
+# never reached the serializer and a #343 error row carries no tally at all.
+# A warm re-run with 190 cached, 2 fresh and 1 failed is 1/193 missing, not
+# 1/3 of the fresh calls; a cold all-fail run is 1.0 either way. The number
+# is a judgment call between two observed points: the committed baseline
+# (benchmark/results/longmemeval-s-baseline.json) failed 0 of its 243
+# sessions, and the incident behind #344 failed every one (a gateway 401).
+# Past one in ten the sample is no longer the sample: every failed session is
+# a gold candidate that can only score as a miss. Deliberately NOT a CLI
+# flag: a tunable threshold invites "raise it until it passes", which is the
+# exact failure the gate exists to stop. `--force-score` is the escape hatch,
+# and it marks the report. A run where nothing reached the serializer has no
+# ratio and never trips.
+SERIALIZE_FAILURE_RATIO_MAX = 0.10
+# Distinct from argparse's usage error (2) and SystemExit(str)'s 1, so a
+# workflow can tell "the gate fired" from "the dataset is missing".
+EXIT_SERIALIZE_FAILURES = 3
+
+
+class SerializeFailuresExceeded(RuntimeError):
+    """#344: the run's serialize-failure ratio is past the gate; nothing was
+    written. str() names the counts, the ratio, the threshold and the way out."""
+
+    def __init__(self, gate: "SerializeFailureGate"):
+        self.gate = gate
+        super().__init__(
+            f"aborting: {gate.failed} of {gate.sessions} sessions failed to "
+            f"serialize (ratio {gate.ratio or 0.0:.2f} > "
+            f"{SERIALIZE_FAILURE_RATIO_MAX:.2f}); the pipeline did not run, so "
+            f"no results file was written. Fix the backend, or re-run with "
+            f"--force-score to write a report marked forced_score"
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class SerializeFailureGate:
+    failed: int
+    sessions: int  # failed + serialized + cached: reached the serializer
+
+    @property
+    def ratio(self) -> float | None:
+        """failed / sessions, or None when no session reached the serializer
+        (every one too short): honest absence, never 0.0 read as a clean pass."""
+        if self.sessions == 0:
+            return None
+        return self.failed / self.sessions
+
+    @property
+    def exceeded(self) -> bool:
+        ratio = self.ratio
+        return ratio is not None and ratio > SERIALIZE_FAILURE_RATIO_MAX
+
+
+def serialize_failure_gate(per_question: list[dict]) -> SerializeFailureGate:
+    """Tally the sessions that reached the serializer across the run (#344):
+    failed, serialized and cached. Too-short sessions never reached it; rows
+    without a `serialize` block (#343 error rows) carry no tally to count."""
+    tallies = [r["serialize"] for r in per_question if "serialize" in r]
+    failed = sum(t["failed"] for t in tallies)
+    sessions = failed + sum(t["serialized"] + t["cached"] for t in tallies)
+    return SerializeFailureGate(failed=failed, sessions=sessions)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _BENCH_DIR = _REPO_ROOT / "benchmark"
@@ -207,6 +282,23 @@ def run(args) -> dict:
         print(f"WARNING: {agg['questions_error']} question(s) failed loudly on "
               f"served-model mismatch (#343) — recorded as error rows, not "
               f"scored; run pin={cache.pinned_served!r}")
+    # #344: the sanity gate sits BEFORE the write. A results file implies the
+    # pipeline ran; a run that mostly failed to serialize exits nonzero with
+    # nothing on disk, unless --force-score, which writes the report AND marks
+    # it so the number can never pass as clean. The tallies are recorded on
+    # every report (clean ones too), so a reader can always see the ratio.
+    gate = serialize_failure_gate(per_question)
+    agg["serialize_failed"] = gate.failed
+    agg["serialize_sessions"] = gate.sessions
+    agg["serialize_failure_ratio"] = gate.ratio
+    if gate.exceeded:
+        if not args.force_score:
+            raise SerializeFailuresExceeded(gate)
+        agg["forced_score"] = True
+        print(f"WARNING: {gate.failed} of {gate.sessions} sessions failed to "
+              f"serialize (ratio {gate.ratio or 0.0:.2f} > "
+              f"{SERIALIZE_FAILURE_RATIO_MAX:.2f}); scoring under --force-score, "
+              f"the report is marked forced_score (#344)")
     total_serialized = sum(r["serialize"]["serialized"] for r in per_question
                            if "serialize" in r)
     report = {
@@ -231,7 +323,8 @@ def run(args) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print("\n=== result ===")
+    print("\n=== result ===" + (" (FORCED: serialize-failure gate overridden, "
+                                 "#344)" if agg.get("forced_score") else ""))
     print(f"Recall@{args.k}: {_fmt(agg['recall_at_5'])}   "
           f"Hit@{args.k}: {_fmt(agg['hit_at_5'])}   MRR: {_fmt(agg['mrr'])}")
     print(f"avg injected tokens/q (est): {_fmt(agg['avg_injected_tokens'])}")
@@ -249,7 +342,8 @@ def run(args) -> dict:
     for line in _format_by_question_type(agg.get("by_question_type") or {}, args.k):
         print(line)
     print(f"scored={agg['questions_scored']} abstention={agg['questions_abstention']} "
-          f"serialize_calls={total_serialized} cache_hits={cache.hits}")
+          f"serialize_calls={total_serialized} serialize_failed={gate.failed} "
+          f"cache_hits={cache.hits}")
     print(f"wrote {out}")
     return report
 
@@ -324,12 +418,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work-dir", default=str(_BENCH_DIR / ".work"),
                    help="per-question isolated store + index scratch")
     p.add_argument("--out", help="result JSON path (default benchmark/results/...)")
+    p.add_argument("--force-score", action="store_true",
+                   help="write a scored report even when more than "
+                        f"{SERIALIZE_FAILURE_RATIO_MAX:.0%} of the sessions "
+                        "that reached the serializer failed (#344). The report carries "
+                        "metrics.forced_score=true; without this flag such a "
+                        f"run exits {EXIT_SERIALIZE_FAILURES} and writes nothing")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    run(args)
+    try:
+        run(args)
+    except SerializeFailuresExceeded as e:
+        print(str(e), file=sys.stderr)
+        return EXIT_SERIALIZE_FAILURES
     return 0
 
 
