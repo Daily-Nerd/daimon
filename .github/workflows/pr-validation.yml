@@ -143,6 +143,16 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # Both ends of the range must be in the checkout before git log runs:
+          # a missing commit would fail inside the process substitution below,
+          # where the error is swallowed and the empty result would be blamed
+          # on the branch instead of on the fetch.
+          for ref in "$BASE_SHA" "$HEAD_SHA"; do
+            if ! git cat-file -e "$ref^{commit}" 2>/dev/null; then
+              echo "::error::commit $ref is not in this checkout, so the gates cannot walk $BASE_SHA..$HEAD_SHA. The cause is missing history, not the branch: the checkout step needs fetch-depth: 0, and a shallow or stale fetch leaves the base commit out."
+              exit 1
+            fi
+          done
           d="$RUNNER_TEMP/commits"; rm -rf "$d"; mkdir -p "$d"
           n=0
           while IFS= read -r -d '' record; do
