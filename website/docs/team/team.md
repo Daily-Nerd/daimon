@@ -66,6 +66,17 @@ An empty remote is fine — the first machine to init seeds a root commit and
 pushes it. Running init a second time against a directory that already exists is
 an error, not a re-clone.
 
+`team init` also writes a `.gitattributes` at the root of the clone with a
+`merge=union` rule for the published ledgers (`authors/*/tombstones.jsonl`,
+`authors/*/quarantines.jsonl` and their `projects/**/` forms). Both ledgers are
+append-only and each author writes only their own file, so the one conflict two
+machines of one author can produce is both appending a line after the same
+base; the rule keeps both lines instead of leaving conflict markers that make
+the reader skip the author. On an existing file only the missing lines are
+appended, and on an established remote the lines are committed so the next
+sync carries them to the team. `daimon team status` names a clone whose file
+lacks the rule.
+
 **4. Verify** on each machine:
 
 ```sh
@@ -208,8 +219,9 @@ receives no checkpoints`. If foreign project trees already accumulated under
 - **`daimon recall <query>`** — full-text (SQLite FTS5) search over your local
   history *and* the team's.
 - **`daimon team status`** — per-remote freshness, your own unpushed checkpoint
-  count, the authors seen in the sidecar, and the scope allowlist (which
-  repos may sync into each remote).
+  count, the authors seen in the sidecar, the scope allowlist (which repos may
+  sync into each remote), and a warning when the clone's `.gitattributes` lacks
+  the `merge=union` rule for the published ledgers.
 
 Teammates' checkpoints are shown within a read-time age window controlled by
 `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0` means keep everything). Aging out

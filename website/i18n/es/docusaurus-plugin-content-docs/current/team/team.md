@@ -73,6 +73,18 @@ Un remoto vacío está bien — la primera máquina en hacer init siembra un
 commit raíz y lo pushea. Correr init una segunda vez contra un directorio que
 ya existe es un error, no un re-clon.
 
+`team init` también escribe un `.gitattributes` en la raíz del clon con una
+regla `merge=union` para los ledgers publicados (`authors/*/tombstones.jsonl`,
+`authors/*/quarantines.jsonl` y sus formas bajo `projects/**/`). Ambos ledgers
+son de solo agregar y cada autor escribe únicamente su propio archivo, así que
+el único conflicto que dos máquinas de un mismo autor pueden producir es que
+ambas agreguen una línea después de la misma base; la regla conserva ambas
+líneas en vez de dejar marcadores de conflicto que hacen que el lector omita al
+autor. Sobre un archivo existente solo se agregan las líneas que faltan, y en
+un remoto ya establecido las líneas se commitean para que el siguiente sync
+las lleve al equipo. `daimon team status` nombra un clon cuyo archivo carece de
+la regla.
+
 **4. Verifica** en cada máquina:
 
 ```sh
@@ -246,8 +258,10 @@ ella los archivos permanecen en la historia de git).
 - **`daimon recall <query>`** — búsqueda de texto completo (SQLite FTS5)
   sobre tu historia local *y* la del equipo.
 - **`daimon team status`** — frescura por remoto, tu propio conteo de
-  checkpoints sin pushear, los autores vistos en el sidecar, y la allowlist
-  de alcance (qué repos pueden sincronizar a cada remoto).
+  checkpoints sin pushear, los autores vistos en el sidecar, la allowlist
+  de alcance (qué repos pueden sincronizar a cada remoto), y una advertencia
+  cuando el `.gitattributes` del clon carece de la regla `merge=union` para
+  los ledgers publicados.
 
 Los checkpoints de compañeros se muestran dentro de una ventana de edad de
 lectura controlada por `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0`
