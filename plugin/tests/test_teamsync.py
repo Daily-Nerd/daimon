@@ -1265,9 +1265,16 @@ def test_init_appends_only_the_missing_rules_to_an_existing_file(
         f"{g} merge=union\n" for g in teamsync.LEDGER_UNION_GLOBS
         if g != "authors/*/tombstones.jsonl")
     assert teamsync.missing_union_rules(dest) == []
-    # the established path commits the rules so the next sync carries them
+    # init only writes (the architect's file is tracked, so this is a
+    # modification); `team sync` owns the commit, so the clone converges
+    # with the team on its next pass and the file reaches the remote
+    assert _git(dest, "status", "--porcelain").stdout.strip() == "M .gitattributes"
+    report = teamsync.sync_remote(dest)
+    assert report["warnings"] == [] and report["pushed"] is True
+    assert "committed the merge=union rules for the published ledgers" in report["notes"]
     assert _git(dest, "status", "--porcelain").stdout.strip() == ""
-    assert teamsync._unpushed_count(dest, teamsync._branch(dest)) == 1
+    assert ".gitattributes" in _bare_files(bare_remote)
+    assert teamsync.sync_remote(dest)["notes"] == []  # nothing to commit twice
 
 
 def test_init_on_a_remote_that_already_has_the_rules_writes_nothing(
@@ -1324,7 +1331,8 @@ def test_cli_team_status_reports_a_clone_without_the_rule(
     assert cli.main(["team", "status"]) == 0
     out = capsys.readouterr().out
     assert "warning: .gitattributes lacks merge=union for 3" in out
-    assert str(sidecar / ".gitattributes") in out
+    assert "run `daimon team sync`" in out
+    assert "by hand" not in out and str(sidecar / ".gitattributes") not in out
 
 
 def test_sync_of_two_machines_of_one_author_keeps_both_rows(
@@ -1366,9 +1374,10 @@ def test_init_survives_an_unwritable_attributes_file(bare_remote, monkeypatch,
     assert "daimon team status" in out
 
 
-def test_init_on_an_established_remote_degrades_when_the_commit_fails(
-        bare_remote, tmp_path, monkeypatch, capsys):
+def test_sync_warns_when_the_union_rules_commit_fails(bare_remote, tmp_path,
+                                                      monkeypatch):
     _seed_remote(bare_remote, tmp_path)
+    dest = teamsync.init(str(bare_remote))
     real_commit = teamsync._commit
 
     def failing_commit(sidecar, message, pathspecs):
@@ -1377,6 +1386,84 @@ def test_init_on_an_established_remote_degrades_when_the_commit_fails(
                 ["git"], 1, stdout="", stderr="fatal: no identity")
         return real_commit(sidecar, message, pathspecs)
     monkeypatch.setattr(teamsync, "_commit", failing_commit)
-    dest = teamsync.init(str(bare_remote))
+    report = teamsync.sync_remote(dest)
+    assert any("could not commit .gitattributes" in w for w in report["warnings"])
     assert teamsync.missing_union_rules(dest) == []  # the file still governs
-    assert "could not commit .gitattributes" in capsys.readouterr().out
+
+
+def test_sync_warns_when_the_union_rules_cannot_be_written(
+        bare_remote, tmp_path, monkeypatch):
+    _seed_remote(bare_remote, tmp_path)
+    dest = teamsync.init(str(bare_remote))
+
+    def refuse(_sidecar):
+        raise OSError(13, "Permission denied")
+    monkeypatch.setattr(teamsync, "_ensure_union_rules", refuse)
+    report = teamsync.sync_remote(dest)
+    assert any("could not write .gitattributes" in w for w in report["warnings"])
+
+
+# ---- the commit owner is `team sync`: old clones converge on their next pass --
+
+
+def _old_clone(bare, tmp_path, monkeypatch, dirname):
+    """A clone made before the rule existed: a raw `git clone` of the seeded
+    remote, placed where list_remotes finds it. No .gitattributes anywhere."""
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / dirname))
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    dest = config.team_dir() / teamsync.remote_slug(str(bare))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", str(bare), str(dest)],
+                   check=True, capture_output=True, timeout=30)
+    return dest
+
+
+def test_sync_adopts_a_hand_written_untracked_attributes_file(
+        bare_remote, tmp_path, monkeypatch):
+    """The reviewer's repro: a teammate's `team init` plus sync committed
+    .gitattributes to the remote; an old clone where the owner added the
+    same lines by hand holds an UNTRACKED copy, and a plain merge refuses
+    with 'untracked working tree files would be overwritten'. Sync adopts
+    the copy (add + commit) before it merges, so the pass is clean."""
+    _seed_remote(bare_remote, tmp_path)
+    old = _old_clone(bare_remote, tmp_path, monkeypatch, "old-machine")
+    new = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "new-machine")
+    assert teamsync.sync_remote(new)["pushed"] is True
+    assert ".gitattributes" in _bare_files(bare_remote)
+
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / "old-machine"))
+    (old / ".gitattributes").write_text(
+        "".join(f"{g} merge=union\n" for g in teamsync.LEDGER_UNION_GLOBS),
+        encoding="utf-8")
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [], report
+    assert report["fetched"] is True
+    assert _git(old, "status", "--porcelain").stdout.strip() == ""
+    assert teamsync.missing_union_rules(old) == []
+
+
+def test_sync_gives_an_old_clone_the_rules_and_appends_then_merge_by_union(
+        bare_remote, tmp_path, monkeypatch):
+    _seed_remote(bare_remote, tmp_path)
+    rel = "authors/Ada/quarantines.jsonl"
+    old = _old_clone(bare_remote, tmp_path, monkeypatch, "old-machine")
+    assert teamsync.missing_union_rules(old) == list(teamsync.LEDGER_UNION_GLOBS)
+    _plant_by(old, "Ada", rel, b'{"event_id": "base"}\n')
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [] and report["pushed"] is True
+    assert teamsync.missing_union_rules(old) == []
+    assert ".gitattributes" in _bare_files(bare_remote)
+
+    other = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "other-machine")
+    assert (other / rel).exists() and teamsync.missing_union_rules(other) == []
+    _plant_by(other, "Ada", rel, b'{"event_id": "from-other"}\n')
+    assert teamsync.sync_remote(other)["pushed"] is True
+
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / "old-machine"))
+    _plant_by(old, "Ada", rel, b'{"event_id": "from-old"}\n')
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [] and report["pushed"] is True
+    text = (old / rel).read_text(encoding="utf-8")
+    assert "<<<<<<<" not in text
+    assert sorted(json.loads(ln)["event_id"] for ln in text.splitlines()
+                  if ln) == ["base", "from-old", "from-other"]

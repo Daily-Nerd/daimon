@@ -300,7 +300,7 @@ def init(url: str, project_dir=None) -> Path:
     # the seed commit so a fresh remote carries them to every later clone.
     # Repo furniture with fixed content, not config: joining an established
     # remote appends only the lines it lacks (the architect's own lines stay)
-    # and commits them, so the next sync hands the rule to the whole team.
+    # and leaves the commit to `sync_remote`, the one owner of that commit.
     # A clone that cannot take the file still works; `team status` names it.
     try:
         rules_changed = _ensure_union_rules(dest)
@@ -327,19 +327,40 @@ def init(url: str, project_dir=None) -> Path:
             # offline-ish: the next sync will push it. Not a user error.
             print(f"daimon team: seed push failed ({_last_line(push.stderr)}) — "
                   "the next `daimon team sync` will retry")
-    elif rules_changed:
-        # Pathspec-scoped like every commit here: nothing else pre-staged in
-        # the clone rides along. Not a user error when it fails: the working
-        # tree file already governs this clone's merges, and the next
-        # `team init` on the team retries the commit.
-        _git(dest, "add", "--", ATTRIBUTES_NAME)
-        cp = _commit(dest, "sync: merge the published ledgers by union",
-                     [ATTRIBUTES_NAME])
-        if cp.returncode != 0:
-            print(f"daimon team: could not commit {ATTRIBUTES_NAME} "
-                  f"({_last_line(cp.stderr or cp.stdout)}); the rule still "
-                  "applies to this clone")
     return dest
+
+
+def _commit_union_rules(sidecar, report) -> None:
+    """Make the clone's `.gitattributes` carry the merge=union rules and be
+    TRACKED before any merge of this pass (#1174). The one owner of that
+    commit: `init` only writes the file, a human may have added the lines by
+    hand, and a clone made before the rule existed has nothing. An untracked
+    copy is the trap: once a teammate's clone committed the file, a plain
+    merge refuses with "untracked working tree files would be overwritten",
+    byte-identical content included. So: append what is missing, `git add`
+    the file (which adopts a hand-written copy), commit only when the index
+    changed. Pathspec-scoped like every commit here (#144). Never raises; a
+    failure is a warning and the merge below says the rest."""
+    try:
+        _ensure_union_rules(sidecar)
+    except OSError as exc:
+        report["warnings"].append(
+            f"could not write {ATTRIBUTES_NAME} ({exc}); a pull that lands "
+            "two appends to one ledger conflicts in this clone")
+        return
+    _git(sidecar, "add", "--", ATTRIBUTES_NAME)
+    staged = _git(sidecar, "diff", "--cached", "--quiet", "--", ATTRIBUTES_NAME)
+    if staged.returncode == 0:
+        return  # tracked and unchanged (or the add failed): nothing to commit
+    cp = _commit(sidecar, "sync: merge the published ledgers by union",
+                 [ATTRIBUTES_NAME])
+    if cp.returncode == 0:
+        report["notes"].append(
+            "committed the merge=union rules for the published ledgers")
+    else:
+        report["warnings"].append(
+            f"could not commit {ATTRIBUTES_NAME}: "
+            f"{_last_line(cp.stderr or cp.stdout)}")
 
 
 # ---- sync ----
@@ -580,7 +601,8 @@ def sync_remote(sidecar: Path) -> dict:
     """One remote's full sync pass. Never raises; every outcome lands in the
     report: {slug, committed, pushed, fetched, warnings[], notes[]}.
 
-    Order: recover wedged state -> commit own files -> ls-remote freshness gate
+    Order: recover wedged state -> commit own files -> commit the merge=union
+    rules (#1174) -> ls-remote freshness gate
     (fetch+merge only on HEAD-hash mismatch) -> push, with a bounded
     reject->integrate->push retry loop (rejects are benign: another author won
     the race)."""
@@ -589,6 +611,7 @@ def sync_remote(sidecar: Path) -> dict:
     if not _recover_wedge(sidecar, report):
         return report
     _commit_own(sidecar, report)
+    _commit_union_rules(sidecar, report)  # before any merge of this pass
     branch = _branch(sidecar)
     state, remote_hash = _ls_remote(sidecar, branch)
     if state == "offline":
