@@ -1164,3 +1164,341 @@ def test_a_non_ascii_ledger_path_is_still_checked(bare_remote, tmp_path,
     r = teamsync.sync_remote(bob)
     assert any("Mallory" in w and "Ädä" in w for w in r["warnings"]), \
         r["warnings"]
+
+
+# ---- #1174: the published ledgers merge by union ----------------------------
+#
+# Both ledgers are append-only and every author writes only their own file, so
+# the one conflict two machines of ONE author can produce is an end-of-file
+# one: both appended a line after the same base. git's default driver marks
+# that as a conflict and leaves `<<<<<<<` markers, which the reader classifies
+# as a torn tail and skips the author. `merge=union` keeps both lines, the
+# fold's own semantics. The rule lives in the clone because the conflict
+# happens inside the merge `team sync` runs.
+
+_LEDGER = "authors/ada/quarantines.jsonl"
+
+
+def _raw_clone(bare, path):
+    subprocess.run(["git", "clone", "-q", str(bare), str(path)],
+                   check=True, capture_output=True, timeout=30)
+    return path
+
+
+def _append_and_commit(clone, rel, line, who="ada"):
+    path = clone / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(line)
+    _git(clone, "add", "--", rel)
+    _git(clone, "-c", f"user.name={who}", "-c", "user.email=a@x",
+         "commit", "-q", "-m", f"append {rel}")
+
+
+@pytest.mark.parametrize("with_rule", [True, False])
+def test_two_appends_after_one_base_merge_cleanly_only_with_union(
+        bare_remote, tmp_path, with_rule):
+    """The mechanism, not the file: two clones of one bare remote each append
+    one line to the same ledger after the same base. With the rule the merge
+    keeps both lines and no markers; without it git reports a conflict (the
+    control arm proves the rule is what makes the difference)."""
+    seed = _raw_clone(bare_remote, tmp_path / "seed")
+    (seed / "README.md").write_text("seeded\n", encoding="utf-8")
+    seeds = ["README.md"]
+    if with_rule:
+        (seed / ".gitattributes").write_text(
+            "".join(f"{g} merge=union\n" for g in teamsync.LEDGER_UNION_GLOBS),
+            encoding="utf-8")
+        seeds.append(".gitattributes")
+    _append_and_commit(seed, _LEDGER, '{"event_id": "base"}\n')
+    _git(seed, "add", "--", *seeds)
+    _git(seed, "-c", "user.name=Seed", "-c", "user.email=s@x",
+         "commit", "-q", "-m", "seed")
+    _git(seed, "push", "-q", "origin", "HEAD")
+
+    a = _raw_clone(bare_remote, tmp_path / "machine-a")
+    b = _raw_clone(bare_remote, tmp_path / "machine-b")
+    _append_and_commit(a, _LEDGER, '{"event_id": "from-a"}\n')
+    _git(a, "push", "-q", "origin", "HEAD")
+    _append_and_commit(b, _LEDGER, '{"event_id": "from-b"}\n')
+    _git(b, "fetch", "-q", "origin")
+    merge = subprocess.run(
+        ["git", "-C", str(b), "-c", "user.name=b", "-c", "user.email=b@x",
+         "merge", "--no-edit", "origin/main"],
+        capture_output=True, text=True, timeout=30)
+    text = (b / _LEDGER).read_text(encoding="utf-8")
+    if with_rule:
+        assert merge.returncode == 0, merge.stdout + merge.stderr
+        assert "<<<<<<<" not in text
+        assert sorted(json.loads(ln)["event_id"]
+                      for ln in text.splitlines() if ln) == [
+            "base", "from-a", "from-b"]
+    else:
+        assert merge.returncode != 0
+        assert "<<<<<<<" in text
+
+
+def test_init_writes_the_union_rules_and_seeds_them(bare_remote):
+    dest = teamsync.init(str(bare_remote))
+    text = (dest / ".gitattributes").read_text(encoding="utf-8")
+    assert text == "".join(
+        f"{g} merge=union\n" for g in teamsync.UNION_RULE_GLOBS)
+    assert text.endswith("/.gitattributes merge=union\n")  # the file itself
+    assert teamsync.missing_union_rules(dest) == []
+    assert ".gitattributes" in _bare_files(bare_remote)  # rode the seed push
+
+
+def test_init_appends_only_the_missing_rules_to_an_existing_file(
+        bare_remote, tmp_path):
+    seed = _raw_clone(bare_remote, tmp_path / "seed")
+    kept = ("# architect's rules\n*.json text eol=lf\n"
+            "authors/*/tombstones.jsonl merge=union\n")
+    (seed / ".gitattributes").write_text(kept, encoding="utf-8")
+    (seed / "README.md").write_text("seeded\n", encoding="utf-8")
+    _git(seed, "add", "--", ".gitattributes", "README.md")
+    _git(seed, "-c", "user.name=Seed", "-c", "user.email=s@x",
+         "commit", "-q", "-m", "seed")
+    _git(seed, "push", "-q", "origin", "HEAD")
+    dest = teamsync.init(str(bare_remote))
+    text = (dest / ".gitattributes").read_text(encoding="utf-8")
+    assert text.startswith(kept)
+    assert text == kept + "".join(
+        f"{g} merge=union\n" for g in teamsync.UNION_RULE_GLOBS
+        if g != "authors/*/tombstones.jsonl")
+    assert teamsync.missing_union_rules(dest) == []
+    # init only writes (the architect's file is tracked, so this is a
+    # modification); `team sync` owns the commit, so the clone converges
+    # with the team on its next pass and the file reaches the remote
+    assert _git(dest, "status", "--porcelain").stdout.strip() == "M .gitattributes"
+    report = teamsync.sync_remote(dest)
+    assert report["warnings"] == [] and report["pushed"] is True
+    assert "committed the merge=union rules for the published ledgers" in report["notes"]
+    assert _git(dest, "status", "--porcelain").stdout.strip() == ""
+    assert ".gitattributes" in _bare_files(bare_remote)
+    assert teamsync.sync_remote(dest)["notes"] == []  # nothing to commit twice
+
+
+def test_init_on_a_remote_that_already_has_the_rules_writes_nothing(
+        bare_remote, tmp_path):
+    first = teamsync.init(str(bare_remote))
+    head = _head_of(first)
+    second_dir = tmp_path / "second-team"
+    os.environ["DAIMON_TEAM_DIR"] = str(second_dir)
+    try:
+        dest = teamsync.init(str(bare_remote))
+    finally:
+        del os.environ["DAIMON_TEAM_DIR"]
+    assert teamsync.missing_union_rules(dest) == []
+    assert _head_of(dest) == head
+    assert _git(dest, "status", "--porcelain").stdout.strip() == ""
+
+
+def _head_of(clone):
+    return _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+
+def test_missing_union_rules_reads_the_file_not_a_memory(tmp_path):
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    assert teamsync.missing_union_rules(clone) == list(
+        teamsync.UNION_RULE_GLOBS)
+    (clone / ".gitattributes").write_text(
+        "# comment authors/*/quarantines.jsonl merge=union\n"
+        "authors/*/quarantines.jsonl  diff=json   merge=union\n"
+        "authors/*/tombstones.jsonl merge=ours\n"
+        "/.gitattributes merge=union\n", encoding="utf-8")
+    assert teamsync.missing_union_rules(clone) == [
+        "authors/*/tombstones.jsonl",
+        "projects/**/authors/*/tombstones.jsonl",
+        "projects/**/authors/*/quarantines.jsonl"]
+
+
+def test_team_status_row_names_the_missing_rules(bare_remote, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    assert teamsync.team_status()[0]["union_rules_missing"] == []
+    (sidecar / ".gitattributes").unlink()
+    assert teamsync.team_status()[0]["union_rules_missing"] == list(
+        teamsync.UNION_RULE_GLOBS)
+
+
+def test_cli_team_status_reports_a_clone_without_the_rule(
+        bare_remote, monkeypatch, capsys):
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    sidecar = teamsync.init(str(bare_remote))
+    assert cli.main(["team", "status"]) == 0
+    assert "merge=union" not in capsys.readouterr().out
+    (sidecar / ".gitattributes").write_text(
+        "authors/*/tombstones.jsonl merge=union\n", encoding="utf-8")
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "warning: .gitattributes lacks merge=union for 4" in out
+    assert "run `daimon team sync`" in out
+    assert "by hand" not in out and str(sidecar / ".gitattributes") not in out
+
+
+def test_sync_of_two_machines_of_one_author_keeps_both_rows(
+        bare_remote, tmp_path, monkeypatch):
+    """The real path: `team init` on two machines of the same author, one
+    row appended to the author's ledger on each after the same base, the
+    second sync's push is rejected, integrates by union and pushes."""
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    rel = "authors/Ada/quarantines.jsonl"
+    home = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "home")
+    _plant_by(home, "Ada", rel, b'{"event_id": "base"}\n')
+    assert teamsync.sync_remote(home)["pushed"] is True
+    work = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "work")
+    assert (work / rel).read_text(encoding="utf-8") == '{"event_id": "base"}\n'
+
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "home")
+    _plant_by(home, "Ada", rel, b'{"event_id": "from-home"}\n')
+    assert teamsync.sync_remote(home)["pushed"] is True
+    _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "work")
+    _plant_by(work, "Ada", rel, b'{"event_id": "from-work"}\n')
+    report = teamsync.sync_remote(work)
+    assert report["warnings"] == [] and report["pushed"] is True
+    text = (work / rel).read_text(encoding="utf-8")
+    assert "<<<<<<<" not in text
+    assert sorted(json.loads(ln)["event_id"] for ln in text.splitlines()
+                  if ln) == ["base", "from-home", "from-work"]
+
+
+def test_init_survives_an_unwritable_attributes_file(bare_remote, monkeypatch,
+                                                     capsys):
+    def refuse(_sidecar):
+        raise OSError(13, "Permission denied")
+    monkeypatch.setattr(teamsync, "_ensure_union_rules", refuse)
+    dest = teamsync.init(str(bare_remote))
+    assert dest.exists() and (dest / "README.md").exists()
+    assert ".gitattributes" not in _bare_files(bare_remote)
+    out = capsys.readouterr().out
+    assert "could not write .gitattributes" in out
+    assert "daimon team status" in out
+
+
+def test_sync_warns_when_the_union_rules_commit_fails(bare_remote, tmp_path,
+                                                      monkeypatch):
+    _seed_remote(bare_remote, tmp_path)
+    dest = teamsync.init(str(bare_remote))
+    real_commit = teamsync._commit
+
+    def failing_commit(sidecar, message, pathspecs):
+        if "union" in message:
+            return subprocess.CompletedProcess(
+                ["git"], 1, stdout="", stderr="fatal: no identity")
+        return real_commit(sidecar, message, pathspecs)
+    monkeypatch.setattr(teamsync, "_commit", failing_commit)
+    report = teamsync.sync_remote(dest)
+    assert any("could not commit .gitattributes" in w for w in report["warnings"])
+    assert teamsync.missing_union_rules(dest) == []  # the file still governs
+
+
+def test_sync_warns_when_the_union_rules_cannot_be_written(
+        bare_remote, tmp_path, monkeypatch):
+    _seed_remote(bare_remote, tmp_path)
+    dest = teamsync.init(str(bare_remote))
+
+    def refuse(_sidecar):
+        raise OSError(13, "Permission denied")
+    monkeypatch.setattr(teamsync, "_ensure_union_rules", refuse)
+    report = teamsync.sync_remote(dest)
+    assert any("could not write .gitattributes" in w for w in report["warnings"])
+
+
+# ---- the commit owner is `team sync`: old clones converge on their next pass --
+
+
+def _old_clone(bare, tmp_path, monkeypatch, dirname):
+    """A clone made before the rule existed: a raw `git clone` of the seeded
+    remote, placed where list_remotes finds it. No .gitattributes anywhere."""
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / dirname))
+    monkeypatch.setenv("DAIMON_AUTHOR", "Ada")
+    dest = config.team_dir() / teamsync.remote_slug(str(bare))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", str(bare), str(dest)],
+                   check=True, capture_output=True, timeout=30)
+    return dest
+
+
+def test_sync_adopts_a_hand_written_untracked_attributes_file(
+        bare_remote, tmp_path, monkeypatch):
+    """The reviewer's repro: a teammate's `team init` plus sync committed
+    .gitattributes to the remote; an old clone where the owner added the
+    same lines by hand holds an UNTRACKED copy, and a plain merge refuses
+    with 'untracked working tree files would be overwritten'. Sync adopts
+    the copy (add + commit) before it merges, so the pass is clean."""
+    _seed_remote(bare_remote, tmp_path)
+    old = _old_clone(bare_remote, tmp_path, monkeypatch, "old-machine")
+    new = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "new-machine")
+    assert teamsync.sync_remote(new)["pushed"] is True
+    assert ".gitattributes" in _bare_files(bare_remote)
+
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / "old-machine"))
+    (old / ".gitattributes").write_text(
+        "".join(f"{g} merge=union\n" for g in teamsync.LEDGER_UNION_GLOBS),
+        encoding="utf-8")
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [], report
+    assert report["fetched"] is True
+    assert _git(old, "status", "--porcelain").stdout.strip() == ""
+    assert teamsync.missing_union_rules(old) == []
+
+
+def test_sync_converges_when_the_attributes_file_itself_differs(
+        bare_remote, tmp_path, monkeypatch):
+    """The residual wedge: an old clone's hand-written .gitattributes (a
+    comment, the rules in another order) and the remote's committed plain
+    file are an add/add conflict on the attributes file itself. Without a
+    rule for that file the markers land in it, git then parses them as
+    attributes, and every later pass ends "push still rejected". The file
+    union-merges itself: both sides' lines survive, no markers, and the next
+    pass has nothing left to push."""
+    _seed_remote(bare_remote, tmp_path)
+    old = _old_clone(bare_remote, tmp_path, monkeypatch, "old-machine")
+    new = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "new-machine")
+    assert teamsync.sync_remote(new)["pushed"] is True
+
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / "old-machine"))
+    (old / ".gitattributes").write_text(
+        "# my note\n" + "".join(
+            f"{g} merge=union\n" for g in reversed(teamsync.LEDGER_UNION_GLOBS)),
+        encoding="utf-8")
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [], report
+    assert report["pushed"] is True
+    text = (old / ".gitattributes").read_text(encoding="utf-8")
+    assert "<<<<<<<" not in text and "# my note" in text
+    assert teamsync.missing_union_rules(old) == []
+    assert _git(old, "status", "--porcelain").stdout.strip() == ""
+    again = teamsync.sync_remote(old)
+    assert again["warnings"] == [] and again["notes"] == []
+    assert teamsync._unpushed_count(old, teamsync._branch(old)) == 0
+    assert _git(old, "check-attr", "merge", "--", ".gitattributes").stdout.strip() \
+        == ".gitattributes: merge: union"
+
+
+def test_sync_gives_an_old_clone_the_rules_and_appends_then_merge_by_union(
+        bare_remote, tmp_path, monkeypatch):
+    _seed_remote(bare_remote, tmp_path)
+    rel = "authors/Ada/quarantines.jsonl"
+    old = _old_clone(bare_remote, tmp_path, monkeypatch, "old-machine")
+    assert teamsync.missing_union_rules(old) == list(teamsync.UNION_RULE_GLOBS)
+    _plant_by(old, "Ada", rel, b'{"event_id": "base"}\n')
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [] and report["pushed"] is True
+    assert teamsync.missing_union_rules(old) == []
+    assert ".gitattributes" in _bare_files(bare_remote)
+
+    other = _author_sidecar(bare_remote, tmp_path, monkeypatch, "Ada", "other-machine")
+    assert (other / rel).exists() and teamsync.missing_union_rules(other) == []
+    _plant_by(other, "Ada", rel, b'{"event_id": "from-other"}\n')
+    assert teamsync.sync_remote(other)["pushed"] is True
+
+    monkeypatch.setenv("DAIMON_TEAM_DIR", str(tmp_path / "old-machine"))
+    _plant_by(old, "Ada", rel, b'{"event_id": "from-old"}\n')
+    report = teamsync.sync_remote(old)
+    assert report["warnings"] == [] and report["pushed"] is True
+    text = (old / rel).read_text(encoding="utf-8")
+    assert "<<<<<<<" not in text
+    assert sorted(json.loads(ln)["event_id"] for ln in text.splitlines()
+                  if ln) == ["base", "from-old", "from-other"]

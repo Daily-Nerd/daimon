@@ -73,6 +73,22 @@ Un remoto vacío está bien — la primera máquina en hacer init siembra un
 commit raíz y lo pushea. Correr init una segunda vez contra un directorio que
 ya existe es un error, no un re-clon.
 
+`team init` también escribe un `.gitattributes` en la raíz del clon con una
+regla `merge=union` para los ledgers publicados (`authors/*/tombstones.jsonl`,
+`authors/*/quarantines.jsonl` y sus formas bajo `projects/**/`, más una para el
+propio archivo de atributos, así que las copias de las reglas de dos clones
+mergean limpio). Ambos ledgers
+son de solo agregar y cada autor escribe únicamente su propio archivo, así que
+el único conflicto que dos máquinas de un mismo autor pueden producir es que
+ambas agreguen una línea después de la misma base; la regla conserva ambas
+líneas en vez de dejar marcadores de conflicto que hacen que el lector omita al
+autor. Sobre un archivo existente solo se agregan las líneas que faltan.
+`daimon team sync` escribe y commitea la regla antes de mergear, así que un
+clon creado antes de que la regla existiera la recibe en su siguiente sync y
+los clones del equipo convergen; no agregues las líneas a mano, una copia sin
+trackear bloquea el merge que trae la copia commiteada de un compañero.
+`daimon team status` nombra un clon cuyo archivo carece de la regla.
+
 **4. Verifica** en cada máquina:
 
 ```sh
@@ -93,10 +109,14 @@ remoto de equipo, así que las máquinas que nunca corrieron
 
 Una pasada de sync hace tres cosas, en orden:
 
-- **Commitea y pushea solo tu propio directorio de autor.** Prepara y
-  commitea archivos nuevos bajo `authors/<your-author-slug>/`, nada más —
-  nunca archivos de otro autor, nunca algo que hayas dejado staged en el
-  sidecar.
+- **Commitea y pushea tu propio directorio de autor, más las reglas de
+  merge.** Prepara y commitea archivos nuevos bajo
+  `authors/<your-author-slug>/`: nunca archivos de otro autor, nunca algo que
+  hayas dejado staged en el sidecar. La única otra ruta que commitea es el
+  `.gitattributes` de la raíz del clon, cuando le faltan las reglas
+  `merge=union` para los ledgers publicados (y para el propio archivo de
+  atributos); el contenido de esas líneas es fijo, así que dos clones que las
+  commitean mergean limpio.
 - **Trae las actualizaciones de tus compañeros**, pero solo cuando el remoto
   realmente cambió. Un probe `ls-remote` de solo-refs compara hashes primero;
   los objetos se transfieren solo ante una discrepancia, así un sync sin
@@ -246,8 +266,12 @@ ella los archivos permanecen en la historia de git).
 - **`daimon recall <query>`** — búsqueda de texto completo (SQLite FTS5)
   sobre tu historia local *y* la del equipo.
 - **`daimon team status`** — frescura por remoto, tu propio conteo de
-  checkpoints sin pushear, los autores vistos en el sidecar, y la allowlist
-  de alcance (qué repos pueden sincronizar a cada remoto).
+  checkpoints sin pushear, los autores vistos en el sidecar, la allowlist
+  de alcance (qué repos pueden sincronizar a cada remoto), una advertencia
+  cuando el `.gitattributes` del clon carece de la regla `merge=union` para
+  los ledgers publicados, y una línea para el proyecto actual cuando sus
+  cuarentenas activas aún no están publicadas (ver "Las cuarentenas también
+  viajan" abajo).
 
 Los checkpoints de compañeros se muestran dentro de una ventana de edad de
 lectura controlada por `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0`
@@ -286,6 +310,15 @@ lo enrute o no el proyecto ahora.
   acceso a un sidecar, o tras `daimon ledger repair trust`. Varios autores se
   combinan por unión: la liberación de un compañero solo levanta su propia
   afirmación.
+- **Ver lo que sigue local.** `daimon team status` termina con una línea para
+  el proyecto desde el que lo corres cuando su ledger tiene una cuarentena
+  activa cuya última fila falta en un clon al que el proyecto rutea:
+  `<project>: 2 active quarantine(s) not yet published; run daimon trust
+  republish`. La presencia se verifica por el id de la fila, igual que lo hace
+  el publicador, y el comando no escribe nada. Una cuarentena liberada nunca
+  cuenta. Cuando el ledger de un clon no se puede leer, la línea lo dice en vez
+  de reportar cero. Con `--json` la fila de cada remoto ruteado lleva el mismo
+  conteo bajo `unpublished_quarantines`.
 - **Autoridad.** El acceso de escritura al sidecar es la frontera de confianza,
   igual que para checkpoints y tombstones. Las filas publicadas son
   afirmaciones declaradas, no autenticadas. Un miembro con acceso de escritura

@@ -107,6 +107,9 @@ KNOWN_BYPASSES = frozenset({
     # checkpoint content can reach either file.
     ("team init", "team/{remote}/README.md"),
     ("team init", "team/{remote}/daimon-team.toml"),
+    # #1174: the merge=union rules for the published ledgers, fixed content
+    # from teamsync.LEDGER_UNION_GLOBS. Same furniture as the two above.
+    ("team init", "team/{remote}/.gitattributes"),
     # buckets.migrate (#963): a one-shot MOVE of bytes that already passed the
     # seam when they were first written. Nothing new is admitted here — the
     # merge appends legacy ledger lines the target does not already hold, and

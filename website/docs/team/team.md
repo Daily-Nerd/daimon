@@ -66,6 +66,20 @@ An empty remote is fine — the first machine to init seeds a root commit and
 pushes it. Running init a second time against a directory that already exists is
 an error, not a re-clone.
 
+`team init` also writes a `.gitattributes` at the root of the clone with a
+`merge=union` rule for the published ledgers (`authors/*/tombstones.jsonl`,
+`authors/*/quarantines.jsonl` and their `projects/**/` forms, plus one for the
+attributes file itself, so two clones' copies of the rules merge clean). Both ledgers are
+append-only and each author writes only their own file, so the one conflict two
+machines of one author can produce is both appending a line after the same
+base; the rule keeps both lines instead of leaving conflict markers that make
+the reader skip the author. On an existing file only the missing lines are
+appended. `daimon team sync` writes and commits the rule before it merges, so
+a clone made before the rule existed receives it on its next sync and the
+team's clones converge; do not add the lines by hand, an untracked copy blocks
+the merge that brings a teammate's committed copy in. `daimon team status`
+names a clone whose file lacks the rule.
+
 **4. Verify** on each machine:
 
 ```sh
@@ -84,9 +98,13 @@ spawn is gated on a team remote actually existing, so machines that never ran
 
 A sync pass does three things, in order:
 
-- **Commits and pushes your own author directory only.** It stages and commits
-  new files under `authors/<your-author-slug>/`, nothing else — never another
-  author's files, never anything you happened to leave staged in the sidecar.
+- **Commits and pushes your own author directory, plus the merge rules.** It
+  stages and commits new files under `authors/<your-author-slug>/`: never
+  another author's files, never anything you happened to leave staged in the
+  sidecar. The one other path it commits is the clone-root `.gitattributes`,
+  when the `merge=union` rules for the published ledgers (and for the
+  attributes file itself) are missing from it; the content of those lines is
+  fixed, so two clones committing them merge clean.
 - **Fetches teammates' updates**, but only when the remote actually changed. A
   refs-only `ls-remote` probe compares hashes first; objects transfer only on a
   mismatch, so a no-op sync costs one lightweight network round-trip.
@@ -208,8 +226,14 @@ receives no checkpoints`. If foreign project trees already accumulated under
 - **`daimon recall <query>`** — full-text (SQLite FTS5) search over your local
   history *and* the team's.
 - **`daimon team status`** — per-remote freshness, your own unpushed checkpoint
-  count, the authors seen in the sidecar, and the scope allowlist (which
-  repos may sync into each remote).
+  count, the authors seen in the sidecar, the scope allowlist (which repos may
+  sync into each remote), a warning when the clone's `.gitattributes` lacks
+  the `merge=union` rule for the published ledgers, and one line for the
+  current project when its active quarantines are not yet published
+  (`<project>: 2 active quarantine(s) not yet published; run daimon trust
+  republish`). Presence is checked by the row's id, the way the publisher
+  checks it, and the command writes nothing; when a clone's ledger cannot be
+  read the line says so instead of reporting zero.
 
 Teammates' checkpoints are shown within a read-time age window controlled by
 `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0` means keep everything). Aging out

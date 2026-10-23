@@ -11,7 +11,7 @@ from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import config, recall, render, store, surfaces, teamsync
+from .. import config, recall, render, store, surfaces, teamsync, trust
 
 
 def _cmd_team_init(args) -> int:
@@ -131,6 +131,21 @@ def _cmd_team_status(args) -> int:
             "no team remote configured — run `daimon team init <remote-url>`",
         ] + armed_lines)
         return 0
+    # #1175 (stage 1): the active quarantines of THIS project whose latest
+    # activating row the routed clones do not hold. Status is machine-level
+    # while routing needs a project directory, so the one project `team
+    # status` resolves is the one checked, from its local ledger, through the
+    # publisher's own presence test. Each routed remote's JSON row carries the
+    # count proven for it, or null plus the reason when nothing is proven.
+    project = _cli._resolve_project(getattr(args, "project", None))
+    unpublished = trust.unpublished(project_dir=project)
+    by_remote = _unpublished_by_remote(unpublished)
+    for row in rows:
+        if row["slug"] in by_remote:
+            count, reason = by_remote[row["slug"]]
+            row["unpublished_quarantines"] = {unpublished.project: count}
+            if reason is not None:
+                row["unpublished_unknown"] = {unpublished.project: reason}
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
@@ -151,6 +166,19 @@ def _cmd_team_status(args) -> int:
         # write path — status is the one place the parse error surfaces.
         if row.get("config_warning"):
             lines.append(f"  warning: {row['config_warning']}")
+        # #1174: without the merge=union rule a pull that lands two appends
+        # to one published ledger conflicts, and the reader then skips the
+        # author as a torn tail. `team sync` writes AND commits the rule
+        # before it merges (the one owner of that commit); a hand-added copy
+        # is the wrong cure, because an untracked file blocks the merge that
+        # brings a teammate's committed copy in.
+        missing = row.get("union_rules_missing") or []
+        if missing:
+            lines.append(
+                f"  warning: {teamsync.ATTRIBUTES_NAME} lacks merge=union for "
+                f"{len(missing)} published ledger glob(s); run `daimon team "
+                "sync`, which writes and commits them, or a pull that lands "
+                "two appends to one ledger conflicts")
         # #279: scope is default-closed — an empty allowlist means the remote
         # receives nothing, which must be visible, not a silent surprise.
         scope = row.get("scope") or []
@@ -165,15 +193,68 @@ def _cmd_team_status(args) -> int:
     # #387: where the CURRENT project's checkpoints route — the one place a
     # misconfigured toml is visible BEFORE a session's checkpoint quietly
     # stays in the local mirror.
-    dests = store._team_write_slugs(_cli._resolve_project(getattr(args, "project", None)))
+    dests = store._team_write_slugs(project)
     line = "this project writes to: " + ", ".join(dests)
     if dests == [store._TEAM_LOCAL_REMOTE]:
         line += ("  (no remote grants it membership — add its repo URL to a "
                  "sidecar's daimon-team.toml [scope] repos)")
     lines.append(line)
+    lines.extend(_unpublished_lines(unpublished))
     lines.extend(armed_lines)
     render.render_team_status(lines)
     return 0
+
+
+_UNPROVEN = ("transient", "unreadable")
+
+
+def _local_unproven_reason(report) -> str | None:
+    """The reason nothing can be proven for ANY routed remote: the local
+    trust ledger itself was not (fully) read. None when it was."""
+    if report.ledger in _UNPROVEN:
+        return (f"trust ledger is {report.ledger}; cannot tell which "
+                "quarantines are published")
+    return None
+
+
+def _unpublished_by_remote(report) -> dict:
+    """`{remote slug: (count, reason)}` for every remote the project routes
+    to: `(n, None)` when the read proved the count, `(None, why)` when it
+    proved nothing. The one classification the text lines and the JSON rows
+    share, so "cannot tell" never collapses into a number in either. An
+    unrouted remote is absent, which is how a reader tells it from one that
+    could not be read."""
+    if not report.routed:
+        return {}
+    local = _local_unproven_reason(report)
+    out = {}
+    for slug, count in report.per_remote.items():
+        out[slug] = (None, local) if local else (count, None)
+    for failure in report.unknown:
+        out[failure.remote] = (None, local or failure.reason)
+    return out
+
+
+def _unpublished_lines(report) -> list[str]:
+    """#1175: one line for the routed project when its local ledger holds an
+    active quarantine the routed clones lack, in the issue's format, plus one
+    line per read that proves nothing (a clone ledger that cannot be read, or
+    the local ledger that cannot). A read that failed is never printed as
+    zero. Counts and health words only, never a value or an id."""
+    if not report.routed:
+        return []
+    local = _local_unproven_reason(report)
+    if local:
+        return [f"{report.project}: {local}"]
+    out = [f"{report.project}: cannot tell whether its quarantines reached "
+           f"{slug}: {reason}"
+           for slug, (_count, reason) in sorted(
+               _unpublished_by_remote(report).items())
+           if reason is not None]
+    if report.active:
+        out.append(f"{report.project}: {report.active} active quarantine(s) "
+                   "not yet published; run daimon trust republish")
+    return out
 
 
 def register(sub, fmt) -> None:
