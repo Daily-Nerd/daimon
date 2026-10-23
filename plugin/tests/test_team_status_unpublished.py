@@ -243,6 +243,53 @@ def test_json_carries_the_count_per_project(tmp_checkpoint_dir, capsys):
     assert row["unpublished_quarantines"] == {_slug(): 1}
 
 
+def test_json_says_cannot_tell_for_an_unreadable_clone_ledger(
+        tmp_checkpoint_dir, capsys):
+    _propose()
+    _clone()
+    _file().mkdir(parents=True)
+    assert _status("--json") == 0
+    [row] = json.loads(capsys.readouterr().out)
+    assert row["unpublished_quarantines"] == {_slug(): None}
+    assert row["unpublished_unknown"] == {
+        _slug(): "its quarantine ledger is unreadable"}
+
+
+def test_json_says_cannot_tell_for_an_unproven_local_ledger(
+        tmp_checkpoint_dir, capsys):
+    _propose()
+    _clone()
+    path = config.checkpoint_dir() / _slug() / "trust.jsonl"
+    path.write_text(path.read_text(encoding="utf-8") + "not json\n",
+                    encoding="utf-8")
+    assert _status("--json") == 0
+    [row] = json.loads(capsys.readouterr().out)
+    assert row["unpublished_quarantines"] == {_slug(): None}
+    assert row["unpublished_unknown"] == {
+        _slug(): "trust ledger is unreadable; cannot tell which quarantines "
+                 "are published"}
+
+
+def test_json_proven_row_carries_no_unknown_key(tmp_checkpoint_dir, capsys):
+    _propose()
+    _clone()
+    assert _status("--json") == 0
+    [row] = json.loads(capsys.readouterr().out)
+    assert row["unpublished_quarantines"] == {_slug(): 1}
+    assert "unpublished_unknown" not in row
+
+
+def test_json_unrouted_remote_carries_neither_key(tmp_checkpoint_dir,
+                                                  monkeypatch, capsys):
+    _propose()
+    _clone()
+    monkeypatch.delenv("DAIMON_TEAM_PROJECT")
+    assert _status("--json") == 0
+    [row] = json.loads(capsys.readouterr().out)
+    assert "unpublished_quarantines" not in row
+    assert "unpublished_unknown" not in row
+
+
 def test_status_writes_nothing(tmp_checkpoint_dir, capsys):
     _propose()
     _clone()
@@ -276,6 +323,9 @@ def test_each_routed_remote_is_checked_on_its_own(tmp_checkpoint_dir,
         (_clone(name) / teamproject.CONFIG_NAME).write_text(
             '[scope]\nrepos = ["https://github.com/org/alpha"]\n',
             encoding="utf-8")
+    (_clone("r3") / teamproject.CONFIG_NAME).write_text(
+        '[scope]\nrepos = ["https://github.com/org/other"]\n',
+        encoding="utf-8")
     trust.propose(text="the alpha runbook step was fabricated",
                   kind="decision", reason="no such PR",
                   evidence=["issue:1175"], channel="cli-tty",
@@ -291,6 +341,7 @@ def test_each_routed_remote_is_checked_on_its_own(tmp_checkpoint_dir,
     slug = store.project_bucket(str(proj))
     assert rows["r1"]["unpublished_quarantines"] == {slug: 0}
     assert rows["r2"]["unpublished_quarantines"] == {slug: 1}
+    assert "unpublished_quarantines" not in rows["r3"]  # not routed there
     assert _status() == 0
     assert f"{slug}: 1 active quarantine(s) not yet published" in \
         capsys.readouterr().out

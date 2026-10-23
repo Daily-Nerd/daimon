@@ -131,17 +131,21 @@ def _cmd_team_status(args) -> int:
             "no team remote configured — run `daimon team init <remote-url>`",
         ] + armed_lines)
         return 0
-    # #1175: the active quarantines of THIS project whose latest activating
-    # row the routed clones do not hold. Status is machine-level while routing
-    # needs a project directory, so the one project `team status` resolves is
-    # the one checked, from its local ledger, through the publisher's own
-    # presence test. The same count rides each routed remote's JSON row.
+    # #1175 (stage 1): the active quarantines of THIS project whose latest
+    # activating row the routed clones do not hold. Status is machine-level
+    # while routing needs a project directory, so the one project `team
+    # status` resolves is the one checked, from its local ledger, through the
+    # publisher's own presence test. Each routed remote's JSON row carries the
+    # count proven for it, or null plus the reason when nothing is proven.
     project = _cli._resolve_project(getattr(args, "project", None))
     unpublished = trust.unpublished(project_dir=project)
+    by_remote = _unpublished_by_remote(unpublished)
     for row in rows:
-        if row["slug"] in unpublished.per_remote:
-            row["unpublished_quarantines"] = {
-                unpublished.project: unpublished.per_remote[row["slug"]]}
+        if row["slug"] in by_remote:
+            count, reason = by_remote[row["slug"]]
+            row["unpublished_quarantines"] = {unpublished.project: count}
+            if reason is not None:
+                row["unpublished_unknown"] = {unpublished.project: reason}
     if args.json:
         print(json.dumps(rows, indent=2))
         return 0
@@ -201,20 +205,52 @@ def _cmd_team_status(args) -> int:
     return 0
 
 
+_UNPROVEN = ("transient", "unreadable")
+
+
+def _local_unproven_reason(report) -> str | None:
+    """The reason nothing can be proven for ANY routed remote: the local
+    trust ledger itself was not (fully) read. None when it was."""
+    if report.ledger in _UNPROVEN:
+        return (f"trust ledger is {report.ledger}; cannot tell which "
+                "quarantines are published")
+    return None
+
+
+def _unpublished_by_remote(report) -> dict:
+    """`{remote slug: (count, reason)}` for every remote the project routes
+    to: `(n, None)` when the read proved the count, `(None, why)` when it
+    proved nothing. The one classification the text lines and the JSON rows
+    share, so "cannot tell" never collapses into a number in either. An
+    unrouted remote is absent, which is how a reader tells it from one that
+    could not be read."""
+    if not report.routed:
+        return {}
+    local = _local_unproven_reason(report)
+    out = {}
+    for slug, count in report.per_remote.items():
+        out[slug] = (None, local) if local else (count, None)
+    for failure in report.unknown:
+        out[failure.remote] = (None, local or failure.reason)
+    return out
+
+
 def _unpublished_lines(report) -> list[str]:
     """#1175: one line for the routed project when its local ledger holds an
     active quarantine the routed clones lack, in the issue's format, plus one
     line per read that proves nothing (a clone ledger that cannot be read, or
-    a local ledger that cannot). A read that failed is never printed as zero.
-    Counts and health words only, never a value or an id."""
+    the local ledger that cannot). A read that failed is never printed as
+    zero. Counts and health words only, never a value or an id."""
     if not report.routed:
         return []
-    if report.ledger in ("transient", "unreadable"):
-        return [f"{report.project}: trust ledger is {report.ledger}; cannot "
-                "tell which quarantines are published"]
+    local = _local_unproven_reason(report)
+    if local:
+        return [f"{report.project}: {local}"]
     out = [f"{report.project}: cannot tell whether its quarantines reached "
-           f"{failure.remote}: {failure.reason}"
-           for failure in report.unknown]
+           f"{slug}: {reason}"
+           for slug, (_count, reason) in sorted(
+               _unpublished_by_remote(report).items())
+           if reason is not None]
     if report.active:
         out.append(f"{report.project}: {report.active} active quarantine(s) "
                    "not yet published; run daimon trust republish")
