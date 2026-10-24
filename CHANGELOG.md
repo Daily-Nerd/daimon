@@ -11,13 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 * **team:** team init writes a .gitattributes that merges the published ledgers by union ([aa45bd7](https://github.com/Daily-Nerd/daimon/commit/aa45bd7193a74449b029c27ae1d09646fa248c72)), closes [#1174](https://github.com/Daily-Nerd/daimon/issues/1174)
-* **team:** team init writes the union-merge rules and team status reports quarantines not yet published ([#1230](https://github.com/Daily-Nerd/daimon/issues/1230)) ([168dc40](https://github.com/Daily-Nerd/daimon/commit/168dc40bad408f2b52221d66fa32f78b8ca82347))
 * **team:** team status reports the current project's quarantines not yet published ([73425bd](https://github.com/Daily-Nerd/daimon/commit/73425bdacab5524829b92b3193f960c04eee6172)), closes [#1175](https://github.com/Daily-Nerd/daimon/issues/1175)
 
 
 ### Bug Fixes
 
-* **bench:** abort with nothing written when too many sessions that reached the serializer fail ([#1229](https://github.com/Daily-Nerd/daimon/issues/1229)) ([7bdc2a4](https://github.com/Daily-Nerd/daimon/commit/7bdc2a44ec43d78494756cc2acf51348ffdd0946))
 * **bench:** abort with nothing written when too many sessions that reached the serializer fail, and the workflow uploads only its own run ([6bf7b33](https://github.com/Daily-Nerd/daimon/commit/6bf7b336d0ef3aea2f02f4609864f09cd0f5735d)), closes [#344](https://github.com/Daily-Nerd/daimon/issues/344)
 * **team:** team status --json says null plus a reason when nothing is proven ([f3bd65a](https://github.com/Daily-Nerd/daimon/commit/f3bd65a63afdc9c5225477c17bea9d0120fee2de)), closes [#1175](https://github.com/Daily-Nerd/daimon/issues/1175)
 * **team:** team sync writes and commits the merge=union rules before it merges ([98fe567](https://github.com/Daily-Nerd/daimon/commit/98fe567989e47c8d10eb4901245772546d96ec1a)), closes [#1174](https://github.com/Daily-Nerd/daimon/issues/1174)
