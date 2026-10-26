@@ -77,6 +77,7 @@ def _reset_llm_module_state():
     from daimon_briefing import llm
     llm.reset_fallback()
     llm.reset_served_models()
+    llm.reset_usage()  # #1235: the per-call spend collector, same contract
 
 
 # ---- fake vitni CLI (#204 receipts, #439 worldcheck receipt-validity) -------

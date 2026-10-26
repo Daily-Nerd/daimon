@@ -347,8 +347,11 @@ def test_flatten_messages():
 
 
 def test_extract_output_text_and_json():
-    assert llm._extract_output("  hi \n", "text") == "hi"
-    assert llm._extract_output('{"result":"ok","x":1}', "json:result") == "ok"
+    # #1235: the parsed object rides along with the text so usage can be read
+    # beside the answer; a text spec has no object to offer.
+    assert llm._extract_output("  hi \n", "text") == ("hi", None)
+    assert llm._extract_output('{"result":"ok","x":1}', "json:result") == (
+        "ok", {"result": "ok", "x": 1})
 
 
 def test_resolve_command_prefers_explicit(monkeypatch):
@@ -2076,3 +2079,197 @@ def test_rescue_not_attempted_when_fallback_binary_is_missing(monkeypatch, caplo
     assert not any(r.getMessage().startswith("llm.fallback backend=command")
                    for r in caplog.records)
     assert llm.fallback_used() is False
+
+
+# ---- #1235: record what each call cost. The command path keeps `usage` ----
+#
+# chat() keeps its `-> str` contract (every injectable-chat seam consumes it),
+# so per-call spend travels the same way the #28 flag and the #458 served-model
+# receipts do: a module-sticky collector, reset per unit of work, folded by the
+# serializer into the checkpoint's `capture_cost` stamp.
+
+
+def _claude_json_payload(result="CKPT"):
+    # The shape `claude -p --output-format json` printed on 2026-10-26 (claude
+    # 2.1.309), trimmed to the keys that matter: Anthropic-dialect usage (the
+    # input side split three ways by cache state), a dollar cost, and the
+    # served model under modelUsage. There is no prompt_tokens/total_tokens.
+    return json.dumps({
+        "type": "result", "subtype": "success", "is_error": False,
+        "result": result,
+        "usage": {"input_tokens": 2, "cache_creation_input_tokens": 30879,
+                  "cache_read_input_tokens": 11568, "output_tokens": 4,
+                  "service_tier": "standard"},
+        "total_cost_usd": 0.00629368,
+        "modelUsage": {"claude-haiku-5-5": {"inputTokens": 2, "outputTokens": 4}},
+    })
+
+
+_NOTHING = {"model": None, "prompt_tokens": None, "completion_tokens": None,
+            "total_tokens": None, "cost_usd": None}
+
+
+def _command_env(monkeypatch, output="json:result"):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_OUTPUT", output)
+
+
+def test_command_json_spec_records_anthropic_dialect_usage(monkeypatch):
+    _command_env(monkeypatch)
+    monkeypatch.setattr(llm, "_run_command",
+                        lambda argv, stdin_text, timeout, env, cwd:
+                        (0, _claude_json_payload(), ""))
+    assert llm._chat_command([{"role": "user", "content": "hi"}], deadline=None) == "CKPT"
+    assert llm.usage_records() == [{
+        "backend": "command", "model": "claude-haiku-5-5",
+        # Anthropic input = uncached + cache written + cache read. Reading
+        # input_tokens alone would say 2 for a 42k-token prompt.
+        "prompt_tokens": 2 + 30879 + 11568, "completion_tokens": 4,
+        "total_tokens": 2 + 30879 + 11568 + 4, "cost_usd": 0.00629368,
+    }]
+
+
+def test_command_json_spec_without_usage_records_null_counts(monkeypatch):
+    _command_env(monkeypatch)
+    monkeypatch.setattr(llm, "_run_command", lambda *a: (0, '{"result":"CKPT"}', ""))
+    llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert llm.usage_records() == [{"backend": "command", **_NOTHING}]
+
+
+def test_command_text_spec_records_a_call_that_reported_nothing(monkeypatch):
+    _command_env(monkeypatch, output="text")
+    monkeypatch.setattr(llm, "_run_command", lambda *a: (0, "CKPT", ""))
+    assert llm._chat_command([{"role": "user", "content": "hi"}], deadline=None) == "CKPT"
+    assert llm.usage_records() == [{"backend": "command", **_NOTHING}]
+
+
+def test_command_failure_records_no_call(monkeypatch):
+    _command_env(monkeypatch)
+    monkeypatch.setattr(llm, "_run_command", lambda *a: (1, "", "boom"))
+    with pytest.raises(llm.ChatError):
+        llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert llm.usage_records() == []
+
+
+def test_claude_cli_preset_records_under_its_own_backend_name(monkeypatch):
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    monkeypatch.setattr(llm.shutil, "which", lambda name: "/usr/bin/claude")
+    monkeypatch.setattr(llm, "_run_command", lambda *a: (0, _claude_json_payload(), ""))
+    llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
+    assert llm.usage_records()[0]["backend"] == "claude-cli"
+
+
+def test_http_path_records_openai_dialect_usage(llm_env, monkeypatch):
+    def fake_urlopen(req, timeout=None):
+        body = json.dumps({"model": "provider/served",
+                           "choices": [{"message": {"content": "ok"}}],
+                           "usage": {"prompt_tokens": 30, "completion_tokens": 12,
+                                     "total_tokens": 42}}).encode()
+        return io.BytesIO(body)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert llm.usage_records() == [{
+        "backend": "litellm", "model": "provider/served", "prompt_tokens": 30,
+        "completion_tokens": 12, "total_tokens": 42, "cost_usd": None}]
+
+
+def test_http_path_without_usage_records_null_counts(llm_env, monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda req, timeout=None: _ok_response("ok"))
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert llm.usage_records() == [{"backend": "litellm", **_NOTHING}]
+
+
+def test_rescue_records_under_the_fallback_label(llm_env, monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "rescue-cli")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK_OUTPUT", "json:result")
+
+    def boom(*a, **k):
+        raise llm.ChatError("down")
+
+    monkeypatch.setattr(llm, "_chat_litellm", boom)
+    monkeypatch.setattr(llm, "_missing_binary", lambda c: None)
+    monkeypatch.setattr(llm, "_run_command", lambda *a: (0, _claude_json_payload(), ""))
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "CKPT"
+    assert [r["backend"] for r in llm.usage_records()] == ["fallback"]
+
+
+@pytest.mark.parametrize("usage, expected", [
+    ({"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}, (5, 7, 12)),
+    # total is arithmetic over the two parts, not a guess
+    ({"prompt_tokens": 5, "completion_tokens": 7}, (5, 7, 12)),
+    # no cache fields: nothing was cached
+    ({"input_tokens": 2, "output_tokens": 4}, (2, 4, 6)),
+    ({"input_tokens": 2, "cache_creation_input_tokens": 10,
+      "cache_read_input_tokens": 20, "output_tokens": 4}, (32, 4, 36)),
+    # a gateway in front of Anthropic carries both dialects; OpenAI keys win
+    ({"prompt_tokens": 50, "completion_tokens": 4, "total_tokens": 54,
+      "cache_read_input_tokens": 20}, (50, 4, 54)),
+])
+def test_normalize_usage_reads_both_dialects(usage, expected):
+    assert llm._normalize_usage(usage) == dict(
+        zip(("prompt_tokens", "completion_tokens", "total_tokens"), expected))
+
+
+@pytest.mark.parametrize("usage", [
+    {}, {"service_tier": "standard"},
+    {"prompt_tokens": "5", "completion_tokens": 7},
+    {"prompt_tokens": True, "completion_tokens": 7},
+    {"input_tokens": 2.5, "output_tokens": 4},
+    {"input_tokens": 2}, {"completion_tokens": 4},
+    "not a dict", None,
+])
+def test_normalize_usage_never_guesses(usage):
+    assert llm._normalize_usage(usage) is None
+
+
+def _tokens(p, c):
+    return {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}
+
+
+def test_capture_cost_sums_when_every_call_reported():
+    llm._note_call_usage("litellm", "m", _tokens(10, 1), None)
+    llm._note_call_usage("litellm", "m", _tokens(20, 2), None)
+    assert llm.capture_cost() == {
+        "prompt_tokens": 30, "completion_tokens": 3, "total_tokens": 33,
+        "cost_usd": None, "backend": "litellm", "model": "m"}
+
+
+def test_capture_cost_withholds_counts_when_one_call_reported_nothing(caplog):
+    # A sum over 1 of 2 calls is a floor wearing a total's clothes.
+    llm._note_call_usage("command", "m", _tokens(10, 1), 0.5)
+    llm._note_call_usage("command", None, None, None)
+    with caplog.at_level(logging.WARNING, logger="daimon_briefing.llm"):
+        cost = llm.capture_cost()
+    assert cost == {"prompt_tokens": None, "completion_tokens": None,
+                    "total_tokens": None, "cost_usd": None,
+                    "backend": "command", "model": "m"}
+    assert any("1 of 2" in r.getMessage() for r in caplog.records)
+
+
+def test_capture_cost_sums_dollars_only_when_every_call_was_priced():
+    llm._note_call_usage("claude-cli", "h", _tokens(1, 1), 0.25)
+    llm._note_call_usage("claude-cli", "h", _tokens(1, 1), 0.5)
+    assert llm.capture_cost()["cost_usd"] == 0.75
+    llm._note_call_usage("fallback", "h", _tokens(1, 1), None)
+    cost = llm.capture_cost()
+    assert cost["cost_usd"] is None
+    assert cost["total_tokens"] == 6
+    assert cost["backend"] == ["claude-cli", "fallback"]
+
+
+def test_capture_cost_with_no_calls_is_zero_spend_and_no_backend():
+    # Nothing went over the wire in this process (full chunk-cache replay, or
+    # an injected chat): zero is the measured spend, not an estimate.
+    assert llm.capture_cost() == {
+        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+        "cost_usd": 0.0, "backend": None, "model": None}
+
+
+def test_reset_usage_clears_records():
+    llm._note_call_usage("litellm", None, None, None)
+    llm.reset_usage()
+    assert llm.usage_records() == []
