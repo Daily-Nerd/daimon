@@ -3608,3 +3608,62 @@ def test_validate_tolerates_served_field_presence_and_absence(fake_chat_factory)
     mixed = json.loads(_valid_checkpoint_json("S-mixed"))
     mixed["llm_model_served"] = ["a-model", "z-model"]
     assert serializer.validate(mixed)
+
+
+# ---- #1235: capture_cost, what this serialize charged, stamped from the wire ----
+
+
+def _cost(**kv):
+    base = {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None,
+            "cost_usd": None, "backend": None, "model": None}
+    base.update(kv)
+    return base
+
+
+def test_serialize_stamps_capture_cost_from_the_collector(fake_chat_factory, monkeypatch):
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    cost = _cost(prompt_tokens=30, completion_tokens=3, total_tokens=33,
+                 backend="litellm", model="provider/served")
+    monkeypatch.setattr(llm, "capture_cost", lambda: dict(cost))
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["capture_cost"] == cost
+
+
+def test_serialize_discards_a_model_authored_capture_cost(fake_chat_factory, monkeypatch):
+    # A model naming the key is a self-issued bill. Stripped like
+    # extraction_version (#514), then stamped from the collector.
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "capture_cost", lambda: _cost(backend="litellm"))
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    spoofed["capture_cost"] = {"total_tokens": 1, "backend": "litellm"}
+    chat = fake_chat_factory(json.dumps(spoofed))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert ckpt["capture_cost"] == _cost(backend="litellm")
+    assert "capture_cost" in serializer._CODE_OWNED_KEYS
+
+
+def test_serialize_capture_cost_collector_raising_leaves_key_absent(
+        fake_chat_factory, monkeypatch):
+    # Fail-open, and independent of the other provenance stamps.
+    from daimon_briefing import llm
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "capture_cost",
+                        lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    chat = fake_chat_factory(_valid_checkpoint_json("S1"))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "capture_cost" not in ckpt
+    assert ckpt["llm_backend"] == "litellm"
+
+
+def test_validate_accepts_checkpoints_with_and_without_capture_cost():
+    stamped = json.loads(_valid_checkpoint_json("S-cost"))
+    stamped["capture_cost"] = _cost(prompt_tokens=1, completion_tokens=1,
+                                    total_tokens=2, backend="command")
+    assert serializer.validate(stamped)
+    assert serializer.validate(json.loads(_valid_checkpoint_json("S-bare")))
