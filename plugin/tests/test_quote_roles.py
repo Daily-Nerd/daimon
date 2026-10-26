@@ -294,6 +294,49 @@ def test_a_transcript_less_verification_carries_no_roles():
         "mode": "transcript-scan", "message_ids": []}
 
 
+def test_a_fragment_that_only_matches_across_a_line_seam_yields_no_roles(
+        tmp_path):
+    """The fourth outcome of _scan_roles: the scan matched the joined
+    haystack, but no row holds even one fragment on its own, so there is
+    no channel to name. The quote straddles the seam between two rendered
+    lines, role label included. The bytes were witnessed (quote_verified
+    stays true) and the receipt stays roles-less: absent, never an empty
+    list, and the stats fold reports it as unbound beside the mix."""
+    p = tmp_path / "chat.md"
+    p.write_text("user: the alpha premise stands\n"
+                 "assistant: firm and final\n", encoding="utf-8")
+    messages = transcript.from_file(p)
+    item = _verify("premise stands assistant: firm and", messages)
+    assert item["quote_verified"] is True
+    receipt = item["quote_provenance"]
+    assert receipt["binding"] == {"mode": "transcript-scan", "message_ids": []}
+    assert provenance.binding_roles(receipt) is None
+
+
+def test_one_message_holding_the_whole_quote_wins_over_a_channel_join(
+        tmp_path):
+    """Narrowest first. The user said the whole quote in one message; the
+    assistant said it in two turns whose join also holds every fragment.
+    Step 1 answers and step 2 is never asked, so the roles name the user
+    channel alone, not both."""
+    p = tmp_path / "chat.md"
+    p.write_text("user: the alpha premise stands firm\n"
+                 "assistant: the alpha premise\n"
+                 "assistant: stands firm\n", encoding="utf-8")
+    messages = transcript.from_file(p)
+    quote = "the alpha premise ... stands firm"
+    # Both levels would match: pin that the assistant join holds every
+    # fragment in order, so the single-channel answer below is a choice the
+    # code made, not an accident of the fixture.
+    fragments = serializer._quote_fragments(quote)
+    _per_message, role_joins = serializer._attribution_views(
+        [(m["role"], serializer._render_line(i, m, m["content"]))
+         for i, m in enumerate(messages)])
+    assert serializer._fragments_in_order(fragments, role_joins["assistant"])
+    item = _verify(quote, messages)
+    assert item["quote_provenance"]["binding"]["roles"] == ["user"]
+
+
 # ---- the receipt builder and the validator ---------------------------------
 
 
