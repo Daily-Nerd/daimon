@@ -346,14 +346,21 @@ def _stats_stitching(project_dir) -> dict:
     return out
 
 
-def _verified_receipts(project_dir):
+def _verified_receipts(project_dir, *, fresh_only: bool = False):
     """(item, receipt) for every VERIFIED quote receipt stored for this
     project, one per stable item id, in the order the store lists sessions.
     The one walk behind the per-receipt stats folds (stitching, quote
     roles): the project scoping, the once-per-id dedup and the skip-unreadable
     posture are decided here, so a second fold cannot drift from the first
     on any of the three. A dict with no `id` yields as its own occurrence,
-    the conservative reading _stats_stitching documents."""
+    the conservative reading _stats_stitching documents.
+
+    `fresh_only` drops carried copies (`carried_from`, the marker carry
+    stamps on a plain-carried item) BEFORE the once-per-id rule sees them.
+    Session files sort by session id, not by time, so a carried copy can be
+    walked before the fresh item it was copied from; a fold that filtered
+    the copy AFTER this walk had marked its id seen would count the fresh
+    quote zero times. The filter belongs to the walk for that reason."""
     want_slug = store.project_slug(project_dir)
     try:
         files = store._session_files(config.checkpoint_dir())
@@ -373,6 +380,8 @@ def _verified_receipts(project_dir):
             receipt = item.get("quote_provenance")
             if (not isinstance(receipt, dict)
                     or receipt.get("outcome") != "verified"):
+                continue
+            if fresh_only and item.get("carried_from"):
                 continue
             item_id = item.get("id")
             if isinstance(item_id, str) and item_id:
@@ -422,7 +431,9 @@ def _stats_roles(project_dir) -> dict:
     FRESH means not a carried copy: an item with `carried_from` rode in from
     an earlier session and its receipt was minted there, so counting it here
     would weigh that session's words once per session they survived. The
-    walk's once-per-id rule backs that up for a copy that lost the marker.
+    walk drops those copies before its once-per-id rule (see
+    _verified_receipts for why the order matters), and that rule backs the
+    marker up for a copy that lost it.
     Same two-populations rule as the stitching fold (#477): the shares are
     over receipts that CARRY a role list (`measured`), and the receipts
     that cannot answer, `unbound` and `pre_field`, are counted beside the
@@ -430,9 +441,7 @@ def _stats_roles(project_dir) -> dict:
     out: dict = {"verified": 0, "measured": 0}
     out.update({bucket: 0 for bucket in _ROLE_BUCKETS})
     out.update({"unbound": 0, "pre_field": 0, "shares_pct": None})
-    for item, receipt in _verified_receipts(project_dir):
-        if item.get("carried_from"):
-            continue
+    for _item, receipt in _verified_receipts(project_dir, fresh_only=True):
         out["verified"] += 1
         bucket = _role_bucket(receipt.get("binding"))
         out[bucket] += 1
