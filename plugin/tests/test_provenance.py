@@ -190,8 +190,9 @@ def test_verify_quotes_stamps_receipt_and_compatibility_mirrors():
     assert item["quote_verified"] is True
     assert item["last_verified"] == item["quote_provenance"]["checked_at"]
     assert item["quote_provenance"]["outcome"] == "verified"
+    # #1237: a message-ids binding also names the roles behind its ids.
     assert item["quote_provenance"]["binding"] == {
-        "mode": "message-ids", "message_ids": ["u-1"]}
+        "mode": "message-ids", "message_ids": ["u-1"], "roles": ["user"]}
 
 
 def test_verify_quotes_miss_keeps_complete_negative_receipt():

@@ -1334,6 +1334,16 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
         return _attribution_views(
             [(role, text) for _mid, role, text, _line in rows])
 
+    def _binding_roles(ids):
+        # #1237: the roles behind a message-ids binding, read off the SAME
+        # views the scoped check matched against, so the receipt's roles and
+        # its message_ids describe one set of messages. Sorted and
+        # de-duplicated here, once, at the only place the ids resolve; stats
+        # reads the receipt and never re-opens a transcript. Role is the
+        # message channel (user, assistant, tool), not a human identity.
+        return sorted({views[view_at[mid]][1] for mid in ids
+                       if mid in view_at})
+
     def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
         # #831 finding 10: stitching is derived HERE, keyed on the outcome,
         # fully self-contained — the fragments are re-parsed from the item's
@@ -1350,10 +1360,12 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
                 _scoped_attribution(message_ids)
                 if binding_mode == "message-ids" else _scan_attribution())
             stitching = _stitching_flags(fragments, per_message, role_joins)
+        roles = (_binding_roles(message_ids)
+                 if binding_mode == "message-ids" else None)
         receipt = provenance.quote_receipt(
             source_ref, digest, outcome=outcome, checked_at=checked_at,
             binding_mode=binding_mode, message_ids=message_ids,
-            stitching=stitching)
+            stitching=stitching, roles=roles)
         if receipt is not None:
             item["quote_provenance"] = receipt
         # #974: rule 17 says a verbatim quote is ONE contiguous span of ONE

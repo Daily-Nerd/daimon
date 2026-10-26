@@ -470,7 +470,8 @@ def test_the_demotion_leaves_the_text_the_quote_and_the_receipt_intact():
     receipt = item["quote_provenance"]
     assert receipt["outcome"] == "verified"
     assert receipt["binding"] == {"mode": "message-ids",
-                                  "message_ids": ["u-1", "a-2"]}
+                                  "message_ids": ["u-1", "a-2"],
+                                  "roles": ["assistant", "user"]}
     assert provenance.valid_quote_receipt(receipt)
 
 

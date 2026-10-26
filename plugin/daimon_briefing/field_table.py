@@ -222,7 +222,18 @@ ITEM_RULES: tuple[FieldRule, ...] = (
                   "outcome: enum[verified, not-verified]",
                   "checked_at: string (" + _TIMESTAMP + ")",
                   "binding: object {mode: enum[message-ids, "
-                  "transcript-scan], message_ids: array of string}",
+                  "transcript-scan], message_ids: array of string, "
+                  "roles?: array of string} (#1237) roles is the sorted, "
+                  "de-duplicated list of transcript roles (user, "
+                  "assistant, tool) of the messages message_ids names, "
+                  "derived at verification from the same per-message "
+                  "views the quote was checked against; only on a "
+                  "message-ids binding with ids, never on transcript-scan; "
+                  "absent = the receipt predates the field. Role is the "
+                  "message channel, never a person: stated_by names the "
+                  "human, and `daimon serialize <file>` makes any file one "
+                  "user-role message. Read by `daimon stats` (quote roles "
+                  "section); no briefing surface renders it",
                   "stitching?: object {cross_message: boolean, cross_role: "
                   "boolean} — exists since format_version D-019 (#829); "
                   "verified receipts only, when per-message attribution "
