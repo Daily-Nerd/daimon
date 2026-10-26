@@ -2656,6 +2656,13 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     """
     if chat is None:
         chat = llm.chat
+    # #1235: this call is the unit of work every capture door shares, so it
+    # opens the per-run collectors here, not at each door. A long-lived host
+    # process serializes many times and renders briefings in between; the
+    # stamps written at the end of this call (_stamp_llm_provenance) must
+    # read only what THIS run put on the wire. Before the too-short gate:
+    # a skipped serialize must not leave an earlier run's state behind.
+    llm.reset_call_state()
     require_enough_messages(messages)
     # #342: first liveness stamp — from here on the child proves it is alive
     # via heartbeats (entry, every chunk/pass, every merge group), so hung

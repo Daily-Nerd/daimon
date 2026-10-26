@@ -3667,3 +3667,37 @@ def test_validate_accepts_checkpoints_with_and_without_capture_cost():
                                     total_tokens=2, backend="command")
     assert serializer.validate(stamped)
     assert serializer.validate(json.loads(_valid_checkpoint_json("S-bare")))
+
+
+def test_two_captures_in_one_process_each_bill_only_their_own_calls(
+        monkeypatch, tmp_checkpoint_dir):
+    # The in-process host hook and any long-lived caller serialize many times
+    # in one process, with briefing renders in between. The unit of work is
+    # one serialize: its stamp carries that run's calls and nothing earlier.
+    # Real llm.chat over the command path with a patched subprocess, and a
+    # stale record planted first, so no test-side reset is doing the work.
+    from daimon_briefing import llm
+
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "command")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "mycli -p")
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_OUTPUT", "json:result")
+    payload = json.dumps({
+        "result": _valid_checkpoint_json("S"),
+        "usage": {"input_tokens": 2, "cache_creation_input_tokens": 1000,
+                  "cache_read_input_tokens": 0, "output_tokens": 10},
+        "total_cost_usd": 0.01,
+    })
+    monkeypatch.setattr(llm, "_run_command", lambda *a, **k: (0, payload, ""))
+    llm._note_call_usage("command", "stale", {"prompt_tokens": 5, "completion_tokens": 5,
+                                              "total_tokens": 10}, 0.5)
+    llm.note_served("stale-model")
+
+    first = serializer.serialize("S-one", make_messages(20), chat=llm.chat)
+    second = serializer.serialize("S-two", make_messages(20), chat=llm.chat)
+
+    assert first is not None and second is not None
+    one_call = {"prompt_tokens": 1002, "completion_tokens": 10, "total_tokens": 1012,
+                "cost_usd": 0.01, "backend": "command", "model": None}
+    assert first["capture_cost"] == one_call
+    assert second["capture_cost"] == one_call
+    assert "llm_model_served" not in second  # the planted receipt is gone too
