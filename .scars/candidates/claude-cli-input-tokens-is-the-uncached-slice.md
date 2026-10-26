@@ -7,7 +7,7 @@ confidence: 0.9
 created: 2026-10-26
 authors: ["claude-code"]
 anchors:
-  - path: plugin/daimon_briefing/llm.py
+  - pattern: "cache_read_input_tokens"
 evidence:
   - note: "2026-10-26, measuring for #1235: `claude -p --model haiku --output-format json --strict-mcp-config \"say ok\"` (claude 2.1.309) printed usage.input_tokens=2 beside cache_creation_input_tokens=30879 and cache_read_input_tokens=11568, output_tokens=4, total_cost_usd=0.00629368. The prompt the model read was 42449 tokens; input_tokens alone said 2."
 expires:
