@@ -63,9 +63,10 @@ immediately. The ledger records why it ended. A candidate you turn down
 reads **rejected** and needs no `--evidence`: there is nothing to cite
 against a guard that was never in force. An active refutation reads
 **retired** and `--evidence` against it is required. Both end in the same
-state, `overturned`; the word is the label `refute show`, `refute list` and
-`daimon decide` print. Refutations ended before this label existed keep
-reading `overturned`.
+state, `overturned`; the word is the label `refute show` and `refute list`
+print. `daimon decide` lists only candidates and offers turning one down as
+`reject`; the command it gives is `refute overturn`. Refutations ended
+before this label existed keep reading `overturned`.
 
 ## Reading the ledger
 

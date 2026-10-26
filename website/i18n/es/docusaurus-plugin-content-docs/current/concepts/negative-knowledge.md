@@ -67,9 +67,10 @@ se lee como **rejected** y no necesita `--evidence`: no hay nada que citar
 contra una guardia que nunca estuvo en vigencia. Una refutación activa se
 lee como **retired** y la `--evidence` en su contra es obligatoria. Las dos
 terminan en el mismo estado, `overturned`; la palabra es la etiqueta que
-imprimen `refute show`, `refute list` y `daimon decide`. Las refutaciones
-terminadas antes de que existiera esta etiqueta se siguen leyendo como
-`overturned`.
+imprimen `refute show` y `refute list`. `daimon decide` lista solo
+candidatas y ofrece rechazar una como `reject`; el comando que da es
+`refute overturn`. Las refutaciones terminadas antes de que existiera esta
+etiqueta se siguen leyendo como `overturned`.
 
 ## Leer el ledger
 
