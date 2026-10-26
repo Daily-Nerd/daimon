@@ -2299,6 +2299,27 @@ def _generation_lines(s: dict) -> list[str]:
     return lines
 
 
+def _tokens_line(s: dict) -> tuple[str, str] | None:
+    """#1235: (label, value) for the tokens line, shared by the plain and
+    rich stats renderers; None when the store block carries no cost summary
+    (a caller-built dict). The dollar figure is appended only when the
+    aggregate was priced for every reporting capture, since a partial sum
+    would read as the total."""
+    c = s.get("cost")
+    if not c:
+        return None
+    label = f"tokens (last {c['window_days']}d)"
+    if not c["captures"]:
+        return label, "no captures in window"
+    value = (f"{c['total_tokens']} across {c['reported']} of {c['captures']} "
+             f"captures (prompt {c['prompt_tokens']}, completion "
+             f"{c['completion_tokens']}); reported nothing: {c['unreported']}, "
+             f"pre-stamp: {c['unstamped']}")
+    if c["cost_usd"] is not None:
+        value += f"; cost ${c['cost_usd']:.2f}"
+    return label, value
+
+
 def _receipts_line(r: dict) -> str:
     """#919: the one receipt-probe status line, shared by the plain and rich
     renderers, in the three wording states the issue's diagnosis needed told
@@ -2515,6 +2536,9 @@ def _plain_stats(data: dict) -> None:
             f"{k}: {n}" for k, n in sorted(s["items_by_kind"].items())))
     print(f"  trust: verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
           f"untagged {s['items_untagged']}  (carried: {s['items_carried']})")
+    tokens = _tokens_line(s)
+    if tokens:
+        print(f"  {tokens[0]}: {tokens[1]}")
     e = data.get("events")
     if e:
         print("events (this project):")
@@ -2721,6 +2745,9 @@ def _rich_stats(data: dict) -> None:
         f"verbatim {s['items_verbatim']}, inferred {s['items_inferred']}, "
         f"untagged {s['items_untagged']}  (carried: {s['items_carried']})",
     )
+    tokens = _tokens_line(s)
+    if tokens:
+        store_table.add_row(*tokens)
     console.print(store_table)
 
     e = data.get("events")
