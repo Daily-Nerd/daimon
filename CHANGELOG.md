@@ -5,6 +5,42 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.61.0](https://github.com/Daily-Nerd/daimon/compare/v0.60.0...v0.61.0) (2026-10-26)
+
+
+### Features
+
+* **llm:** record what each LLM call cost from the usage the backend printed ([30cd91d](https://github.com/Daily-Nerd/daimon/commit/30cd91da3264b21f8a8fb78bcdcfcf2563bcc17f)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
+* **provenance:** the quote receipt records the message roles behind its binding ([9b1dfbb](https://github.com/Daily-Nerd/daimon/commit/9b1dfbbc957f9ff011531ad2b3ab9ab2fdee10b5)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
+* **refutations:** a candidate turned down reads rejected, a retired record reads retired, and rejecting needs no evidence ([92cfddb](https://github.com/Daily-Nerd/daimon/commit/92cfddb562b3751fde4ce4bc644f0d70153f66e1))
+* **refutations:** overturn and retire record why a record ended, rejected or retired ([641c545](https://github.com/Daily-Nerd/daimon/commit/641c5456f9469ff6b41ea1517cf3a78600a0da93)), closes [#1238](https://github.com/Daily-Nerd/daimon/issues/1238)
+* **serialize:** every checkpoint records what its capture cost in tokens, and stats sums the window ([58c1fd7](https://github.com/Daily-Nerd/daimon/commit/58c1fd75cf0c3820870517f24573d79932abaf48))
+* **serialize:** stamp capture_cost on every checkpoint from the run's call records ([d52eb80](https://github.com/Daily-Nerd/daimon/commit/d52eb805efa3914b02e08ebf365a98c764266940)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
+* **stats:** daimon stats reports whose words the fresh verified quotes are, by role ([982851e](https://github.com/Daily-Nerd/daimon/commit/982851ec82d48b3617b5c8a9b420645e660b8d39)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
+* **stats:** one tokens line over the capture window, read from checkpoints only ([605540b](https://github.com/Daily-Nerd/daimon/commit/605540b208d4b1683b2ff2a7a60e0d74206d64f5)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
+
+
+### Bug Fixes
+
+* **hooks:** the hook library honours DAIMON_LOG_DIR for serialize.log, the heartbeats and the crash sink ([f8e4cbd](https://github.com/Daily-Nerd/daimon/commit/f8e4cbd95e5ae524623d72c98550cd776e7ecca8))
+* **hooks:** the hook library resolves serialize.log, the heartbeats and the crash sink through DAIMON_LOG_DIR the way the CLI does ([d737d48](https://github.com/Daily-Nerd/daimon/commit/d737d4854cc1882e7bee26b5b1083a03c2d1fc1f)), closes [#1234](https://github.com/Daily-Nerd/daimon/issues/1234)
+* **provenance:** a transcript-scan receipt records the channels that account for the quote ([1560514](https://github.com/Daily-Nerd/daimon/commit/1560514f5d6a0bf50c125438edcb296cd29729fe)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
+* **serialize:** open the per-run LLM collectors in the shared pipeline so each capture bills only its own calls ([1a1c864](https://github.com/Daily-Nerd/daimon/commit/1a1c8642df06fc1c385b8af41cafd970b333cdca)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
+* **stats:** the fresh-only quote walk drops carried copies before the once-per-id rule ([5d494a2](https://github.com/Daily-Nerd/daimon/commit/5d494a242d2d41b716b72262de1029212b577d99)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
+* **stats:** the tokens line prints no dollar figure until a capture reported one and tells write-checkpoint records from pre-stamp ones ([f36814c](https://github.com/Daily-Nerd/daimon/commit/f36814c638bc014d6e80cb4bf5769f8149f3830e)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
+
+
+### Documentation
+
+* **changelog:** list each 0.60.0 change once ([6b17ca8](https://github.com/Daily-Nerd/daimon/commit/6b17ca8837a61340e9beedcf9f6ef8ed5527b63d))
+* **config:** DAIMON_LOG_DIR moves the hooks' ledger and heartbeats together with the CLI's ([aadc601](https://github.com/Daily-Nerd/daimon/commit/aadc601408c4bec8462ccc82a9296c50d8920dde)), closes [#1234](https://github.com/Daily-Nerd/daimon/issues/1234)
+* **hooks:** the fallback breadcrumb docstrings say why their log directory stays a literal ([62a9e63](https://github.com/Daily-Nerd/daimon/commit/62a9e63d4527e4082a4ad020e49fbef0ef8d75f5)), closes [#1234](https://github.com/Daily-Nerd/daimon/issues/1234)
+* **scars:** scar 0043 records that paths get no exception and only the hung-after threshold stays process-env-only ([36fc685](https://github.com/Daily-Nerd/daimon/commit/36fc685b122c208610b9b2d7dd9d9d1c86a4fcb0)), closes [#1234](https://github.com/Daily-Nerd/daimon/issues/1234)
+* **website:** rulings and refutations pages name the rejected and retired labels and the evidence rule ([c3ad3a2](https://github.com/Daily-Nerd/daimon/commit/c3ad3a20fceb6ad138f9b177b386d23ab4141c3f)), closes [#1238](https://github.com/Daily-Nerd/daimon/issues/1238)
+* **website:** rulings and refutations pages say what daimon decide shows for a candidate ([5cb7623](https://github.com/Daily-Nerd/daimon/commit/5cb7623e9f89f1408ba92bdeba7feaf9abd70fc6)), closes [#1238](https://github.com/Daily-Nerd/daimon/issues/1238)
+* **website:** the daimon stats reference row reads without an em-dash in both languages ([6fe00ef](https://github.com/Daily-Nerd/daimon/commit/6fe00ef813c877233ec892eca7201a8e03a20df7)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
+* **website:** the stats reference says a quote both channels hold reads as mixed on a scan receipt ([910ad86](https://github.com/Daily-Nerd/daimon/commit/910ad86b0cd06dad5659d68839f29f9a76e99e10)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
+
 ## [0.60.0](https://github.com/Daily-Nerd/daimon/compare/v0.59.2...v0.60.0) (2026-10-23)
 
 
