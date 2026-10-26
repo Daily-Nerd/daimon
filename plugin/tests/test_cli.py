@@ -2246,13 +2246,25 @@ from tests.test_worldcheck import _signed_origin, _pubkey_dir  # noqa: E402
 
 
 @pytest.fixture
-def receipt_proj(tmp_path):
+def receipt_proj(tmp_path, monkeypatch):
     """A real, existing directory — the receipt-validity probe's vitni
     subprocess runs with `cwd=project_dir` (Popen(cwd=...) needs it to
     exist), same shape as test_worldcheck.py's own `proj` fixture. Given its
     own name rather than reusing that one: `proj` is this file's own common
     local variable name in dozens of unrelated tests, and importing it as a
-    module-level fixture collides with every one of them (ruff F811)."""
+    module-level fixture collides with every one of them (ruff F811).
+
+    Also pins the worldcheck budget the way test_worldcheck.py's #718 autouse
+    fixture does for its own module. Importing that module's helpers above
+    does not import its autouse fixture, so these tests ran against the real
+    0.8 s wall-clock budget: under a loaded host the fake vitni subprocess can
+    outlive it and `_run_probes` reaps the probe as `skipped-deadline`,
+    failing a counter assertion for a reason unrelated to what is under test
+    (seen once in a full-suite run at a 15-minute load average of 13 on 8
+    cores; reproduced on demand by shrinking the budget to 0.2 s). None of
+    these tests exercises the deadline contract itself."""
+    from daimon_briefing import worldcheck
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 300.0)
     d = tmp_path / "receipt-projroot"
     d.mkdir()
     return str(d)
