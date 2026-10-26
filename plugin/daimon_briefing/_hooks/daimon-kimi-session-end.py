@@ -45,8 +45,12 @@ TAG = "kimi-session-end"
 
 def _fallback_log(line: str) -> None:
     """Best-effort serialize.log write when the shared lib is unavailable
-    (stale/partial install). Mirrors lib.log so a broken install still leaves a
-    breadcrumb instead of a crash. Never raises."""
+    (stale/partial install), so a broken install still leaves a breadcrumb
+    instead of a crash. Never raises. The directory is a literal on purpose:
+    lib.log resolves it through DAIMON_LOG_DIR exactly as the CLI does
+    (#1234), but this path runs only when that library failed to import, and
+    a process-env-only copy here would be the half-mirror scar 0043 forbids.
+    It never writes a spawn line, so it cannot leave a phantom session."""
     try:
         log_dir = Path.home() / ".daimon" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
