@@ -377,6 +377,24 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "#514 extraction-semantics version, stamped only by paths that ran "
         "the extractor; introspection checkpoints stay absent = unknown."),
     FieldRule(
+        "envelope", "capture_cost", "object", True, False, "code", "strip",
+        _c(stripped_at_serialize=True,
+           shape=("prompt_tokens: integer | null",
+                  "completion_tokens: integer | null",
+                  "total_tokens: integer | null",
+                  "cost_usd: number | null",
+                  "backend: string | array | null",
+                  "model: string | array | null")),
+        "#1235 what this serialize charged, summed over every LLM call of the "
+        "run from what each backend reported on the wire. Every count is null "
+        "when any call reported no usage (never a partial sum); zero calls is "
+        "a measured zero. cost_usd only when every call was priced (the "
+        "claude CLI prints one; HTTP backends do not). backend is the label "
+        "of the call(s) that produced the counts (litellm, command, "
+        "claude-cli, or fallback for a rescue), model the served name the "
+        "backend itself reported; a list when a run mixed more than one. "
+        "Introspection checkpoints stay absent: no model ran."),
+    FieldRule(
         "envelope", "llm_backend", "string", True, False, "code", "pass",
         _c(),
         "#230 backend that produced this checkpoint; assignment always "

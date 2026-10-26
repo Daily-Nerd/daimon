@@ -2392,6 +2392,10 @@ _CODE_OWNED_KEYS = (
     # #514: the extractor dates its own run at serialize time; a model never
     # gets to claim one (and the introspection path stays absent = unknown).
     "extraction_version",
+    # #1235: what the capture cost is read off the wire by llm.py and stamped
+    # by _stamp_llm_provenance; a model naming the key is writing its own
+    # bill. The introspection path ran no model and stays absent.
+    "capture_cost",
     # #268: origin binding is asserted by policy.bind_origin at the write
     # boundary. No code path reads a top-level copy, but a model naming the
     # key must not leave one lying beside the real per-item stamps.
@@ -2553,6 +2557,18 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
     # (same discipline as strip_code_owned_keys, #292, but local: this key's
     # legitimate value is only ever computed right here).
     checkpoint.pop("llm_model_served", None)
+    # #1235: what this serialize charged, folded by llm.capture_cost() from
+    # the per-call records of THIS process (chunks, merge, retries, and a
+    # rescue under its own "fallback" label). Stamped before the backend
+    # resolution below so the two cannot take each other down: a collector
+    # failure leaves only this key absent, and a resolver failure leaves
+    # only the backend/model keys absent. strip_code_owned_keys already
+    # removed any model-authored value on the fresh parse.
+    try:
+        checkpoint["capture_cost"] = llm.capture_cost()
+    except Exception:
+        log.warning("llm provenance stamp: capture_cost() raised, leaving "
+                    "capture_cost absent")
     try:
         backend = configure.resolved_backend()
     except Exception:
@@ -2640,6 +2656,13 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     """
     if chat is None:
         chat = llm.chat
+    # #1235: this call is the unit of work every capture door shares, so it
+    # opens the per-run collectors here, not at each door. A long-lived host
+    # process serializes many times and renders briefings in between; the
+    # stamps written at the end of this call (_stamp_llm_provenance) must
+    # read only what THIS run put on the wire. Before the too-short gate:
+    # a skipped serialize must not leave an earlier run's state behind.
+    llm.reset_call_state()
     require_enough_messages(messages)
     # #342: first liveness stamp — from here on the child proves it is alive
     # via heartbeats (entry, every chunk/pass, every merge group), so hung

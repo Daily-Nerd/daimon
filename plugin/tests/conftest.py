@@ -75,8 +75,11 @@ def _reset_llm_module_state():
     `pytest tests/test_llm.py tests/test_serializer.py` failed 7 tests
     while the full suite happened to dodge the ordering (#461)."""
     from daimon_briefing import llm
-    llm.reset_fallback()
-    llm.reset_served_models()
+    # #1235: production opens these collectors in serializer.serialize_strict
+    # (llm.reset_call_state). Tests still need this reset because many call
+    # llm.chat(), _chat_command() or _note_call_usage() directly, outside any
+    # serialize, and would otherwise read the previous test's records.
+    llm.reset_call_state()
 
 
 # ---- fake vitni CLI (#204 receipts, #439 worldcheck receipt-validity) -------

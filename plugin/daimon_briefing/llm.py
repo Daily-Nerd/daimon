@@ -253,13 +253,21 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
             # non-string field -> record nothing (honest absence, no guessing).
             if isinstance(served, str) and served.strip():
                 _served_models.append(served.strip())
-            # Surface token cost — the serializer discards the rest of the
-            # response, so this log line is the only record of per-call spend.
+            # Log the usage block as the wire sent it (raw keys, so an
+            # Anthropic-only block says prompt=None here). The RECORD of this
+            # call's spend is the normalized _note_call_usage entry below,
+            # which the serializer folds into the checkpoint (#1235).
             if usage:
                 log.info("LLM usage model=%s served=%s total_tokens=%s prompt=%s completion=%s provider_fields=%s",
                          mdl, served, usage.get("total_tokens"),
                          usage.get("prompt_tokens"), usage.get("completion_tokens"),
                          _provider_field_flags(usage))
+            # #1235: the record behind that log line. An HTTP backend never
+            # prices a call, so cost_usd is None here, not 0.
+            _note_call_usage(
+                "litellm",
+                served.strip() if isinstance(served, str) and served.strip() else None,
+                _normalize_usage(usage), None)
             return content
         except urllib.error.HTTPError as e:
             if 500 <= e.code < 600 and attempt < retries - 1:
@@ -338,6 +346,161 @@ def note_served(name) -> None:
     than guessing (scar 0032)."""
     if isinstance(name, str) and name.strip():
         _served_models.append(name.strip())
+
+
+# #1235: what each call cost. Same module-sticky shape as the two collectors
+# above, for the same reason: chat()'s `-> str` contract must not change.
+# One record per SUCCESSFUL call (content returned), on every backend path,
+# whether or not the backend reported usage, so the fold below can tell "every
+# call reported" from "some did": a sum over a subset is a floor dressed as a
+# total, and the stamp withholds counts rather than print one. A failed call
+# records nothing: no content reached the checkpoint, and a retry's own
+# successful call records its own spend. reset_usage() at the start of a unit
+# of work; capture_cost() when stamping.
+_usage_records: list[dict] = []
+
+
+def _int_or_none(value):
+    # bool is an int subclass; a usage field that says `true` is not a count.
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _normalize_usage(usage) -> dict | None:
+    """Fold a backend's `usage` object into {prompt, completion, total} or
+    None when it carries no complete count in either dialect.
+
+    Two dialects exist on the wire. OpenAI-style (every /v1/chat/completions
+    gateway): `prompt_tokens`, `completion_tokens`, `total_tokens`. Anthropic-
+    style (`claude -p --output-format json`, measured 2026-10-26): `input_tokens`
+    is the UNCACHED input only, beside `cache_creation_input_tokens` and
+    `cache_read_input_tokens`, with `output_tokens` for the completion. The
+    prompt is the documented sum of the three input parts; reading
+    `input_tokens` alone said 2 for a 42k-token prompt. A gateway in front of
+    Anthropic carries both dialects in one block (#535 keys on exactly that),
+    and the OpenAI base keys are authoritative there.
+
+    No guessing: a non-integer or missing count in the dialect's required
+    fields yields None for the whole block. `total_tokens` is the only derived
+    figure, and only as arithmetic over two present parts."""
+    if not isinstance(usage, dict):
+        return None
+    prompt = _int_or_none(usage.get("prompt_tokens"))
+    completion = _int_or_none(usage.get("completion_tokens"))
+    if prompt is not None and completion is not None:
+        total = _int_or_none(usage.get("total_tokens"))
+        if total is None:
+            total = prompt + completion
+        return {"prompt_tokens": prompt, "completion_tokens": completion,
+                "total_tokens": total}
+    uncached = _int_or_none(usage.get("input_tokens"))
+    output = _int_or_none(usage.get("output_tokens"))
+    if uncached is None or output is None:
+        return None
+    # Absent cache fields mean no cache activity on that call, not unknown:
+    # the dialect reports them whenever a cache was touched.
+    written = _int_or_none(usage.get("cache_creation_input_tokens")) or 0
+    read = _int_or_none(usage.get("cache_read_input_tokens")) or 0
+    prompt = uncached + written + read
+    return {"prompt_tokens": prompt, "completion_tokens": output,
+            "total_tokens": prompt + output}
+
+
+def _payload_model(payload) -> str | None:
+    """The model a command backend's JSON object names, or None. A top-level
+    `model` string first (OpenAI-shaped CLIs); else the single key of the
+    claude CLI's `modelUsage` map. Two or more keys mean two models served
+    one call, and no single name is honest."""
+    if not isinstance(payload, dict):
+        return None
+    name = payload.get("model")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    per_model = payload.get("modelUsage")
+    if isinstance(per_model, dict) and len(per_model) == 1:
+        (name,) = per_model
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
+def _payload_cost(payload) -> float | None:
+    """`total_cost_usd` as the claude CLI prints it, or None."""
+    if not isinstance(payload, dict):
+        return None
+    cost = payload.get("total_cost_usd")
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        return float(cost)
+    return None
+
+
+def _note_call_usage(backend, model, usage, cost_usd) -> None:
+    """Record one successful call. `usage` is a _normalize_usage() result or
+    None (the backend said nothing); `cost_usd` a float or None."""
+    record = {"backend": backend, "model": model, "prompt_tokens": None,
+              "completion_tokens": None, "total_tokens": None,
+              "cost_usd": cost_usd}
+    if usage is not None:
+        record.update(usage)
+    _usage_records.append(record)
+
+
+def usage_records() -> list:
+    """Copies of the per-call records since the last reset, in call order."""
+    return [dict(r) for r in _usage_records]
+
+
+def reset_usage() -> None:
+    # Clear in place: concurrent chunk threads hold the same list object.
+    del _usage_records[:]
+
+
+def reset_call_state() -> None:
+    """Open a unit of work: clear every per-run collector this module keeps
+    (the #28 fallback flag, the #458 served-model receipts, the #1235 spend
+    records) in one call, so a fourth collector cannot be forgotten by one
+    door. Called by serializer.serialize_strict, the one place every capture
+    door (the CLI, the in-process host hook, heal) passes through, right
+    before the first LLM call of that serialize; the stamps at the end of the
+    same call read what this run put on the wire and nothing earlier."""
+    reset_fallback()
+    reset_served_models()
+    reset_usage()
+
+
+def capture_cost() -> dict:
+    """Fold this unit of work's call records into the `capture_cost` stamp.
+
+    Counts are the sum over every call, and only when every call reported;
+    one silent call withholds all three (None) and logs which share went
+    unreported. `cost_usd` likewise sums only when every call was priced.
+    Zero calls is a measured zero (a full chunk-cache replay, or an injected
+    chat), not an unknown, so the counts are 0 and cost 0.0 with no backend
+    and no model to name. `backend` and `model` follow the llm_model_served
+    convention: one distinct value is a string, more than one a sorted
+    list, none at all is None."""
+    records = list(_usage_records)
+    cost: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                  "cost_usd": 0.0, "backend": None, "model": None}
+    backends = sorted({r["backend"] for r in records if r["backend"]})
+    models = sorted({r["model"] for r in records if r["model"]})
+    if backends:
+        cost["backend"] = backends[0] if len(backends) == 1 else backends
+    if models:
+        cost["model"] = models[0] if len(models) == 1 else models
+    silent = sum(1 for r in records if r["total_tokens"] is None)
+    if silent:
+        log.warning("capture cost withheld: %d of %d LLM calls reported no usage",
+                    silent, len(records))
+        cost.update(prompt_tokens=None, completion_tokens=None,
+                    total_tokens=None, cost_usd=None)
+        return cost
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        cost[key] = sum(r[key] for r in records)
+    if all(r["cost_usd"] is not None for r in records):
+        cost["cost_usd"] = float(sum(r["cost_usd"] for r in records))
+    else:
+        cost["cost_usd"] = None
+    return cost
 
 
 def resolve_backend() -> dict:
@@ -608,17 +771,26 @@ class _Resolved(tuple):
     """A resolved (command, output_spec, input_spec) triple that also carries
     the variable that chose its input mode, so the arg-cap error and the
     doctor name the setting actually in effect without inferring it from the
-    caller (#1220). Still an ordinary 3-tuple everywhere it is unpacked."""
+    caller (#1220), and the label its spend is recorded under (#1235): the
+    resolver that picked the triple is the one owner of that name. Still an
+    ordinary 3-tuple everywhere it is unpacked."""
     input_setting: str
+    label: str
 
-    def __new__(cls, triple, input_setting):
+    def __new__(cls, triple, input_setting, label):
         obj = super().__new__(cls, triple)
         obj.input_setting = input_setting
+        obj.label = label
         return obj
 
 
 def _setting_of(resolved) -> str:
     return getattr(resolved, "input_setting", "DAIMON_LLM_COMMAND_INPUT")
+
+
+def _label_of(resolved) -> str:
+    # A plain tuple (a test's monkeypatched resolver) is an explicit command.
+    return getattr(resolved, "label", "command")
 
 
 def _resolve_command():
@@ -646,9 +818,10 @@ def _resolve_command():
     if cmd:
         return _Resolved((cmd, (config.llm_command_output() or "text"),
                           config.llm_command_input()),
-                         "DAIMON_LLM_COMMAND_INPUT")
+                         "DAIMON_LLM_COMMAND_INPUT", "command")
     if config.llm_backend().strip() == "claude-cli" and shutil.which("claude"):
-        return _Resolved((*_CLAUDE_PRESET, "stdin"), "DAIMON_LLM_COMMAND_INPUT")
+        return _Resolved((*_CLAUDE_PRESET, "stdin"), "DAIMON_LLM_COMMAND_INPUT",
+                         "claude-cli")
     return None
 
 
@@ -671,9 +844,14 @@ def _resolve_fallback_command():
         return _Resolved((cmd,
                           (config.llm_command_fallback_output() or "text"),
                           config.llm_command_fallback_input()),
-                         "DAIMON_LLM_COMMAND_FALLBACK_INPUT")
+                         "DAIMON_LLM_COMMAND_FALLBACK_INPUT", "fallback")
     if resolve_backend()["backend"] not in ("command", "claude-cli"):
-        return _resolve_command()
+        primary = _resolve_command()
+        if primary is None:
+            return None
+        # The shim runs the primary's triple AS the rescue: same command,
+        # same input setting, recorded under the rescue's label (#1235).
+        return _Resolved(tuple(primary), _setting_of(primary), "fallback")
     return None
 
 
@@ -772,17 +950,19 @@ def rescue_prompt_limit():
 
 
 def _extract_output(stdout, output_spec):
-    """Extract the LLM response from command output.
+    """Extract the LLM response from command output as (text, payload).
 
     output_spec format:
-    - "text": return stripped stdout
-    - "json:<key>": parse stdout as JSON and extract [key]
+    - "text": (stripped stdout, None); a bare string can carry no usage
+    - "json:<key>": (obj[key], obj); the whole object travels with the text
+      so the caller can read `usage` and the claude CLI's cost beside the
+      answer (#1235) without parsing stdout twice
     """
     if output_spec.startswith("json:"):
         key = output_spec[len("json:"):]
         obj = json.loads(stdout)
-        return obj[key]
-    return stdout.strip()
+        return obj[key], obj
+    return stdout.strip(), None
 
 
 # Conservative byte ceiling for arg-mode prompts. Linux caps a single argv
@@ -950,7 +1130,7 @@ def _chat_command(messages, deadline, resolved=None):
                 out=out)
             raise ChatError(f"command backend exited {rc} ({hint})")
         try:
-            text = _extract_output(out, output_spec)
+            text, payload = _extract_output(out, output_spec)
         except (json.JSONDecodeError, KeyError, TypeError):
             raise ChatError("command backend output unparseable (body suppressed)")
         if not text or not text.strip():
@@ -964,6 +1144,12 @@ def _chat_command(messages, deadline, resolved=None):
                 out=out)
             raise EmptyOutputError(f"command backend returned empty output ({hint})")
         log.info("LLM command backend ok argv0=%s", argv[0])
+        # #1235: a `json:<key>` object may carry `usage` (and, from the claude
+        # CLI, a dollar cost and the served model); `text` carries nothing and
+        # records a call that said nothing, never a guessed count.
+        usage = _normalize_usage(payload.get("usage")) if isinstance(payload, dict) else None
+        _note_call_usage(_label_of(resolved), _payload_model(payload), usage,
+                         _payload_cost(payload))
         return text
     finally:
         shutil.rmtree(cwd, ignore_errors=True)

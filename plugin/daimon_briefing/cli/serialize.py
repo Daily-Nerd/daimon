@@ -201,11 +201,9 @@ def _run_serialize(transcript_path: Path, project: str | None,
 
     # Elapsed time lands in serialize.log — checkpoint generation runs 4-25 min
     # in production and was invisible before this.
-    llm.reset_fallback()  # #28: detect a silent backend downgrade during THIS run
-    # #458: same unit-of-work contract for the served-model collector — the
-    # provenance stamp must report what the wire said during THIS serialize,
-    # not receipts left over from an earlier run in a long-lived process.
-    llm.reset_served_models()
+    # The per-run llm collectors (#28 fallback flag, #458 served models, #1235
+    # spend) are opened by serializer.serialize_strict itself, the unit of
+    # work every door shares, so this door no longer resets them here.
     start = time.monotonic()
     # Same total budget as the hook path (hooks.py:73) — this entry point had
     # none at all, so a manual `daimon serialize` had no bound even in

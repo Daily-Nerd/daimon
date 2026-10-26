@@ -2246,13 +2246,25 @@ from tests.test_worldcheck import _signed_origin, _pubkey_dir  # noqa: E402
 
 
 @pytest.fixture
-def receipt_proj(tmp_path):
+def receipt_proj(tmp_path, monkeypatch):
     """A real, existing directory — the receipt-validity probe's vitni
     subprocess runs with `cwd=project_dir` (Popen(cwd=...) needs it to
     exist), same shape as test_worldcheck.py's own `proj` fixture. Given its
     own name rather than reusing that one: `proj` is this file's own common
     local variable name in dozens of unrelated tests, and importing it as a
-    module-level fixture collides with every one of them (ruff F811)."""
+    module-level fixture collides with every one of them (ruff F811).
+
+    Also pins the worldcheck budget the way test_worldcheck.py's #718 autouse
+    fixture does for its own module. Importing that module's helpers above
+    does not import its autouse fixture, so these tests ran against the real
+    0.8 s wall-clock budget: under a loaded host the fake vitni subprocess can
+    outlive it and `_run_probes` reaps the probe as `skipped-deadline`,
+    failing a counter assertion for a reason unrelated to what is under test
+    (seen once in a full-suite run at a 15-minute load average of 13 on 8
+    cores; reproduced on demand by shrinking the budget to 0.2 s). None of
+    these tests exercises the deadline contract itself."""
+    from daimon_briefing import worldcheck
+    monkeypatch.setattr(worldcheck, "BUDGET_SECONDS", 300.0)
     d = tmp_path / "receipt-projroot"
     d.mkdir()
     return str(d)
@@ -2727,6 +2739,118 @@ def test_stats_store_counts_version_generations(tmp_checkpoint_dir):
     assert s["format_versions"]["unknown"] == 1
     assert s["extraction_versions"]["2"] == 1
     assert s["extraction_versions"]["unknown"] == 1
+
+
+# ---- #1235: tokens over the window, from checkpoints only ----
+
+
+def _cost_stamp(prompt=None, completion=None, cost_usd=None, backend="litellm"):
+    total = None if prompt is None else prompt + completion
+    return {"prompt_tokens": prompt, "completion_tokens": completion,
+            "total_tokens": total, "cost_usd": cost_usd, "backend": backend,
+            "model": None}
+
+
+def _write_costed(sid, days_ago, cost, now, extracted=True):
+    from datetime import timedelta
+
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json(sid))
+    cp["created"] = (now - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if extracted:
+        cp["extraction_version"] = 2  # #514: an extractor ran
+    if cost is not None:
+        cp["capture_cost"] = cost
+    store.write_checkpoint(sid, cp, project_dir=f"/p/{sid}", writer=Writer.HUMAN)
+
+
+_EMPTY_COST = {"window_days": 14, "captures": 0, "reported": 0, "unreported": 0,
+               "unstamped": 0, "no_model": 0, "prompt_tokens": 0,
+               "completion_tokens": 0, "total_tokens": 0, "cost_usd": None}
+
+
+def test_stats_store_sums_capture_cost_over_the_window(tmp_checkpoint_dir):
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 26, 12, 0, 0, tzinfo=timezone.utc)
+    _write_costed("S-a", 1, _cost_stamp(100, 10, cost_usd=0.5), now)
+    _write_costed("S-b", 2, _cost_stamp(200, 20), now)
+    _write_costed("S-c", 3, _cost_stamp(backend="command"), now)  # said nothing
+    _write_costed("S-d", 4, None, now)                             # pre-stamp
+    _write_costed("S-e", 40, _cost_stamp(9999, 9999), now)         # outside
+    _write_costed("S-f", 5, None, now, extracted=False)            # write-checkpoint
+
+    s = cli._stats_store(now=now)
+
+    assert s["checkpoints"] == 6
+    assert s["cost"] == {
+        "window_days": 14, "captures": 4, "reported": 2, "unreported": 1,
+        "unstamped": 1, "no_model": 1,
+        "prompt_tokens": 300, "completion_tokens": 30, "total_tokens": 330,
+        # S-b carries no dollar figure, so a sum would be a floor: withheld.
+        "cost_usd": None,
+    }
+
+
+def test_stats_store_sums_dollars_when_every_reporting_capture_is_priced(
+        tmp_checkpoint_dir):
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 26, 12, 0, 0, tzinfo=timezone.utc)
+    _write_costed("S-a", 1, _cost_stamp(1, 1, cost_usd=0.25, backend="claude-cli"), now)
+    _write_costed("S-b", 2, _cost_stamp(1, 1, cost_usd=0.5, backend="claude-cli"), now)
+    s = cli._stats_store(now=now)
+    assert s["cost"]["cost_usd"] == 0.75
+    assert s["cost"]["reported"] == 2
+
+
+def test_stats_store_cost_with_an_empty_window(tmp_checkpoint_dir):
+    assert cli._stats_store()["cost"] == _EMPTY_COST
+
+
+def test_stats_store_all_unstamped_window_has_no_dollar_figure(tmp_checkpoint_dir):
+    # The first `daimon stats` after upgrading: every capture predates the
+    # stamp. Zero priced captures is unknown, not zero dollars.
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 26, 12, 0, 0, tzinfo=timezone.utc)
+    _write_costed("S-a", 1, None, now)
+    _write_costed("S-b", 2, None, now)
+    s = cli._stats_store(now=now)
+    assert s["cost"] == {**_EMPTY_COST, "captures": 2, "unstamped": 2}
+    assert s["cost"]["cost_usd"] is None
+
+
+def test_stats_store_write_checkpoint_records_are_not_pre_stamp(tmp_checkpoint_dir,
+                                                                 monkeypatch, capsys):
+    # A /daimon-end record written today through the real door: no extractor
+    # ran (#514 leaves extraction_version absent), so it is "no model ran",
+    # never "pre-stamp", and never in the captures denominator.
+    from datetime import datetime, timezone
+
+    _stdin(monkeypatch, _valid_json("S-intro"))
+    assert cli.main(["write-checkpoint", "--project", "/p/A"]) == 0
+    capsys.readouterr()
+    s = cli._stats_store(now=datetime.now(timezone.utc))
+    assert s["cost"] == {**_EMPTY_COST, "no_model": 1}
+
+
+def test_cli_write_checkpoint_strips_a_model_authored_capture_cost(
+        tmp_checkpoint_dir, monkeypatch):
+    # #1235: no model ran on the introspection path, so there is no bill to
+    # record and a model-emitted one is a self-issued figure, stripped like
+    # extraction_version.
+    from daimon_briefing import store
+
+    cp = json.loads(_valid_json("S-intro"))
+    cp["capture_cost"] = {"total_tokens": 1}
+    _stdin(monkeypatch, json.dumps(cp))
+    rc = cli.main(["write-checkpoint", "--project", "/p/A"])
+    assert rc == 0
+    ck = store.read_latest_body(project_dir="/p/A", route=store.Route.OWN_ELSE_GLOBAL,
+                                admit=store.Admit.ANY)
+    assert "capture_cost" not in ck
 
 
 # ---- #523: daimon handoff — the baton verb ----
