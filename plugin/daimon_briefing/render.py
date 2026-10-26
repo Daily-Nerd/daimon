@@ -2398,9 +2398,10 @@ def _stitching_line(s: dict) -> str:
 def _roles_line(r: dict) -> str:
     """#1237: the one quote-roles line, shared by the plain and rich stats
     renderers, in the same three states as the stitching line. Nothing
-    verified yet is not a mix. A corpus whose receipts all predate the field
-    or are all bound by transcript scan has no mix to report either, and
-    says which of the two it is instead of printing zeros. Only the third
+    verified yet is not a mix. A corpus whose receipts carry no role list
+    (written before the field, or stamped with no per-message transcript)
+    has no mix to report either, and says how many of each shape it holds
+    instead of printing zeros. Only the third
     state prints counts and shares, over the receipts that carry a role
     list, with the two unanswerable populations named beside them (#477).
     "role" throughout, never "speaker": the field is the message channel."""

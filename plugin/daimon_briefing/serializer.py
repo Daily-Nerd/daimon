@@ -1068,6 +1068,53 @@ def _stitching_flags(fragments, per_message, role_joins) -> dict | None:
     return {"cross_message": cross_message, "cross_role": cross_role}
 
 
+def _scan_roles(fragments, per_message, role_joins) -> list | None:
+    """The message roles behind a transcript-scan verified quote (#1237), or
+    None when attribution is impossible (the same None _stitching_flags
+    returns: no usable fragments, or no per-message text survived
+    stripping).
+
+    A flat scan names no row, so the row it "matched" is ambiguous by
+    construction (see _stitching_flags). What is not ambiguous is which
+    channels can account for the quote, and that is what is recorded, at
+    the narrowest level that accounts for every fragment, in the same order
+    the stitching verdict asks its questions:
+
+    1. every role with ONE message that holds the whole quote (the quote
+       was said in that channel; two channels here means both said it, an
+       echo across channels, and the stats fold reads it as mixed);
+    2. failing that, every role whose messages joined in transcript order
+       hold the whole quote (a quote stitched across turns of one channel);
+    3. failing that, a quote stitched across channels: every role with a
+       message that holds at least one fragment, the channels the pieces
+       came from. The item is demoted by #974 in this case; the roles say
+       where the pieces were found.
+
+    None, never an empty list, when no row holds even one fragment on its
+    own (a fragment that only matched across a line seam): the receipt
+    stays roles-less and the stats fold reports it beside the mix.
+
+    This is why a quote of tool output can report `tool` at all: every
+    shipped parser flags its tool rows `tool_result`, #359 keeps those ids
+    out of quote bindings, so such a quote always verifies by scan. The
+    same path is what gives `daimon serialize <file>` quotes a role, since
+    file transcripts carry no message ids."""
+    usable = [(role, norm) for role, norm in per_message if norm]
+    if not fragments or not usable:
+        return None
+    singles = {role for role, norm in usable
+               if _fragments_in_order(fragments, norm)}
+    if singles:
+        return sorted(singles)
+    joins = {role for role, join in role_joins.items()
+             if join and _fragments_in_order(fragments, join)}
+    if joins:
+        return sorted(joins)
+    touched = {role for role, norm in usable
+               if any(frag in norm for frag in fragments)}
+    return sorted(touched) if touched else None
+
+
 # ---- #440: daimon's own injected output is not a witness ----
 #
 # The recall hook (`daimon recall: prior work — ...`) and the SessionStart
@@ -1341,8 +1388,15 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
         # de-duplicated here, once, at the only place the ids resolve; stats
         # reads the receipt and never re-opens a transcript. Role is the
         # message channel (user, assistant, tool), not a human identity.
-        return sorted({views[view_at[mid]][1] for mid in ids
-                       if mid in view_at})
+        #
+        # Indexed, not filtered: a message-ids binding is stamped only after
+        # scoped_haystack resolved EVERY cited id in texts_by_id, and
+        # texts_by_id and view_at are built from the same views with the same
+        # `mid is not None` rule, so an id that fails to resolve here is a
+        # broken invariant and raises, rather than silently shrinking the
+        # list to one the validator then refuses (which would drop the whole
+        # receipt from a quote_verified item without a word in the log).
+        return sorted({views[view_at[mid]][1] for mid in ids})
 
     def stamp_receipt(item, outcome, checked_at, binding_mode, message_ids=()):
         # #831 finding 10: stitching is derived HERE, keyed on the outcome,
@@ -1352,16 +1406,25 @@ def verify_quotes(checkpoint, transcript_text: str, messages=None, *,
         # denominator by forgetting an argument. The re-parse is a few regex
         # splits on one short quote, once per verified receipt; the costly
         # haystack normalization is what the attribution caches hold.
+        #
+        # #1237: the roles ride the same two branches. A message-ids binding
+        # reads them off its ids; a transcript-scan binding, which names no
+        # message, reads them off the scan's own attribution views, the
+        # necessity semantics _stitching_flags already applies (see
+        # _scan_roles). Without `messages` there is no per-message view and
+        # the receipt stays roles-less: absent = cannot tell.
         nonlocal stitched
         stitching = None
+        roles = None
         if outcome == "verified" and messages:
             fragments = _quote_fragments(item.get("quote") or "")
-            per_message, role_joins = (
-                _scoped_attribution(message_ids)
-                if binding_mode == "message-ids" else _scan_attribution())
+            if binding_mode == "message-ids":
+                per_message, role_joins = _scoped_attribution(message_ids)
+                roles = _binding_roles(message_ids)
+            else:
+                per_message, role_joins = _scan_attribution()
+                roles = _scan_roles(fragments, per_message, role_joins)
             stitching = _stitching_flags(fragments, per_message, role_joins)
-        roles = (_binding_roles(message_ids)
-                 if binding_mode == "message-ids" else None)
         receipt = provenance.quote_receipt(
             source_ref, digest, outcome=outcome, checked_at=checked_at,
             binding_mode=binding_mode, message_ids=message_ids,

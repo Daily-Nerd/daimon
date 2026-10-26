@@ -219,15 +219,17 @@ def quote_receipt(source_ref, digest, *, outcome: str, checked_at: str,
     Additive under version 1: the field is optional, so every pre-#829
     receipt stays valid.
 
-    `roles` (#1237, optional): the sorted, de-duplicated transcript roles of
-    the messages `message_ids` names, derived by the serializer from the
-    same per-message views verification matched against. Stored under
-    `binding.roles`, only for a message-ids binding that carries ids: a
-    transcript-scan binding names no message, so it has no roles to name.
-    Absent means the receipt predates the field, never "no role". Role is
-    the message channel (user, assistant, tool), never a human identity:
-    `daimon serialize <file>` turns any file into one user-role message,
-    and `stated_by` is the field that names a person."""
+    `roles` (#1237, optional): the sorted, de-duplicated transcript roles
+    behind a verified quote, derived by the serializer from the same
+    per-message views verification matched against: for a message-ids
+    binding, the roles of the messages `message_ids` names; for a
+    transcript-scan binding, the channels that can account for the quote
+    (serializer._scan_roles). Stored under `binding.roles`. Absent means
+    the receipt predates the field or was stamped with no per-message
+    transcript to read, never "no role". Role is the message channel (user,
+    assistant, tool), never a human identity: `daimon serialize <file>`
+    turns any file into one user-role message, and `stated_by` is the
+    field that names a person."""
     if not valid_source_ref(source_ref) or outcome not in _OUTCOMES:
         return None
     if binding_mode not in _BINDING_MODES:
@@ -310,15 +312,16 @@ def valid_quote_receipt(value) -> TypeGuard[dict]:
     if len(ids) != len(set(ids)):
         return False
     if "roles" in binding:
-        # #1237: optional (absent = pre-field), but present means exactly
-        # what the serializer derives: a message-ids binding with ids, a
-        # non-empty list of distinct non-empty strings in sorted order, and
-        # never more roles than messages, since every role comes from one of
-        # the bound messages. Explicit null is NOT "absent".
+        # #1237: optional (absent = pre-field or transcript-less), but
+        # present means exactly what the serializer derives: a non-empty
+        # list of distinct non-empty strings in sorted order, on either
+        # binding mode, and on a message-ids binding never more roles than
+        # messages, since every role there comes from one of the bound
+        # messages. Explicit null is NOT "absent".
         roles = binding["roles"]
-        if binding["mode"] != "message-ids" or not ids:
+        if not isinstance(roles, list) or not roles:
             return False
-        if not isinstance(roles, list) or not roles or len(roles) > len(ids):
+        if binding["mode"] == "message-ids" and len(roles) > len(ids):
             return False
         if any(not isinstance(r, str) or not r or len(r) > 64 for r in roles):
             return False
@@ -351,13 +354,14 @@ def binding_message_ids(receipt) -> list[str]:
 
 
 def binding_roles(receipt) -> list[str] | None:
-    """The roles behind a valid receipt's message binding (#1237), or None
-    when the receipt is invalid, unbound, or predates the field. None is
-    "daimon cannot tell you", never an empty role list."""
+    """The roles behind a valid receipt's quote (#1237), or None when the
+    receipt is invalid or carries no role list (it predates the field, or
+    was stamped with no per-message transcript). None is "daimon cannot
+    tell you", never an empty role list."""
     if not valid_quote_receipt(receipt):
         return None
     binding = receipt["binding"]
-    if binding["mode"] != "message-ids" or "roles" not in binding:
+    if "roles" not in binding:
         return None
     return list(binding["roles"])
 

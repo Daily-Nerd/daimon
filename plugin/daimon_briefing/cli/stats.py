@@ -397,22 +397,26 @@ _ROLE_BUCKETS = ("user_only", "assistant_only", "tool", "mixed", "other")
 def _role_bucket(binding) -> str:
     """Which quote-roles bucket a verified receipt's binding falls in (#1237).
 
-    `unbound`: the binding names no message (transcript-scan), so there is
-    no role to read. `pre_field`: it names messages but carries no `roles`
-    list, a receipt written before the field existed. The rest read the
-    list the serializer derived: `tool` whenever a tool row is among the
-    bound messages, whatever else is there; `user_only` and `assistant_only`
-    for a single channel; `mixed` for two or more channels with no tool
-    row; `other` for a single channel that is none of the three (a host
-    that emits its own role names). Named, not folded into `mixed`, because
-    one channel is not a mix and a guessed bucket is what the stats line
-    exists to replace."""
-    if (not isinstance(binding, dict) or binding.get("mode") != "message-ids"
-            or not binding.get("message_ids")):
+    A receipt with a `roles` list is bucketed by it, whichever way it was
+    bound: `tool` whenever a tool row is among the roles, whatever else is
+    there; `user_only` and `assistant_only` for a single channel; `mixed`
+    for two or more channels with no tool row; `other` for a single channel
+    that is none of the three (a host that emits its own role names).
+    Named, not folded into `mixed`, because one channel is not a mix and a
+    guessed bucket is what the stats line exists to replace.
+
+    Two shapes carry no list. `pre_field`: a message-ids binding without
+    one, which only a receipt written before the field can be (the
+    message-ids path has always had the per-message views the roles are
+    read from). `unbound`: a transcript-scan binding without one, which
+    names no message and could read no role: a scan receipt written before
+    the field, or one stamped with no per-message transcript at all."""
+    if not isinstance(binding, dict):
         return "unbound"
     roles = binding.get("roles")
     if not isinstance(roles, list) or not roles:
-        return "pre_field"
+        return ("pre_field" if binding.get("mode") == "message-ids"
+                else "unbound")
     if "tool" in roles:
         return "tool"
     if roles == ["user"]:
