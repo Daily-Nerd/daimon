@@ -41,3 +41,15 @@ def test_lane_state_marker_is_the_cli_word(srv):
     src = js.split("REFUTATION_MARKS", 1)[1].split("}", 1)[0]
     for pair in ('active: "✗"', 'overturned: "×"', 'candidate: "?"'):
         assert pair in src, pair
+
+
+def test_refutation_marker_reads_the_overturn_reason_and_falls_back_to_overturned(srv):
+    # #1238: a candidate turned down reads "rejected"; a row written before
+    # the reason existed keeps "overturned".
+    _, _, body = _get(srv + "/static/render.js")
+    js = body.decode()
+    marker = js.split("function refutationMarker", 1)[1].split("function render", 1)[0]
+    assert "overturn_reason" in marker
+    # The fallback EXPRESSION, not the bare word: `state === "overturned"`
+    # already carries the word, so the word alone cannot fail.
+    assert '|| "overturned")' in marker

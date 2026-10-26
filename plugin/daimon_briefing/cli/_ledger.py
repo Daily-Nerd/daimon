@@ -205,13 +205,26 @@ def _refutation_json(record) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
+def _shown_state(record: dict, *, closed: str) -> str:
+    """#1238: an overturned record reads the reason its row recorded:
+    "rejected" for a candidate turned down, "retired" for an active record
+    that stopped applying. A row written before the reason existed folds to
+    None and keeps the label this printer always used (`closed`); the
+    reason is never inferred at render time."""
+    state = record.get("state") or "candidate"
+    if state != "overturned":
+        return state
+    return record.get("overturn_reason") or closed
+
+
 def _refutation_lines(record: dict, *, detailed: bool = False,
                       tag: bool = False) -> list:
     state = record.get("state") or "candidate"
+    shown_state = _shown_state(record, closed="overturned")
     activation = record.get("activation") or f"{record.get('asserted_by', '?')}-proposed"
     mark = "✗" if state == "active" else ("×" if state == "overturned" else "?")
     word = "refutation " if tag else ""
-    lines = [f"[{word}{mark} {state} · {activation}] {record['refutation_id']}  "
+    lines = [f"[{word}{mark} {shown_state} · {activation}] {record['refutation_id']}  "
              f"{record.get('subject', '')}"]
     if not detailed:
         return lines
@@ -417,11 +430,13 @@ def _policy_ceremony_lines(request_policy: dict, *, verb: str,
 def _ruling_lines(record: dict, *, detailed: bool = False,
                   tag: bool = False, firing=None) -> list:
     """#693: a ruling renders its VERDICT (the rule text) and never the
-    refutation's ✗ glyph; an overturned ruling reads "retired" (label only,
-    the state vocabulary is unchanged); and text authored by a non-human
-    channel is labeled as such even after human ratification."""
+    refutation's ✗ glyph; an overturned ruling reads the reason its row
+    recorded, "rejected" or "retired", and "retired" when the row predates
+    the reason (#1238; label only, the state vocabulary is unchanged); and
+    text authored by a non-human channel is labeled as such even after
+    human ratification."""
     state = record.get("state") or "candidate"
-    shown_state = "retired" if state == "overturned" else state
+    shown_state = _shown_state(record, closed="retired")
     activation = (record.get("activation")
                   or f"{record.get('asserted_by', '?')}-proposed")
     authored = record.get("text_authored_by")

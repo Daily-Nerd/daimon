@@ -325,12 +325,12 @@ Examples: daimon decide daimon decide --project .
 usage: daimon refute [-h] {add,ratify,revise,overturn,show,list,search,guard} ... positional
 arguments: {add,ratify,revise,overturn,show,list,search,guard} add assert a scoped refutation; agent
 assertions stay candidates ratify explicitly activate a candidate as a human decision revise append
-a new evidence-cited version; inactive until ratified overturn cite evidence against the verdict;
-agent calls propose, humans deactivate show show one refutation and its trust signals list list
-project refutations search search the complete ledger without age decay guard check active
-refutations by exact anchor or subject phrase options: -h, --help show this help message and exit
-Examples: daimon refute list daimon refute search receipt verification daimon refute guard 'should
-we revisit #502?'
+a new evidence-cited version; inactive until ratified overturn end a refutation: a candidate as
+rejected, an active one as retired; agent calls propose, humans deactivate show show one refutation
+and its trust signals list list project refutations search search the complete ledger without age
+decay guard check active refutations by exact anchor or subject phrase options: -h, --help show this
+help message and exit Examples: daimon refute list daimon refute search receipt verification daimon
+refute guard 'should we revisit #502?'
 
 === refute add ===
 usage: daimon refute add [-h] --subject SUBJECT --verdict VERDICT --scope SCOPE --evidence SOURCE
@@ -368,13 +368,14 @@ immediately; valid only on the human path, which is an interactive terminal with
 PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === refute overturn ===
-usage: daimon refute overturn [-h] --evidence SOURCE [--note NOTE] [--by {agent}] [--project
+usage: daimon refute overturn [-h] [--evidence SOURCE] [--note NOTE] [--by {agent}] [--project
 PROJECT] [--slug SLUG] [--json] refutation_id positional arguments: refutation_id exact r-… id
 options: -h, --help show this help message and exit --evidence SOURCE evidence cited against the
-active verdict; recorded, not verified; repeatable --note NOTE optional explanation --by {agent}
---project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to
-another project's bucket by its slug, written --slug=<slug> (a slug starts with '-'); routing only,
-the channel gate is unchanged (#766) --json machine-readable output
+verdict; required for an active refutation, not for a candidate; recorded, not verified; repeatable
+--note NOTE optional explanation --by {agent} --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by its slug, written
+--slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766) --json
+machine-readable output
 
 === refute show ===
 usage: daimon refute show [-h] [--project PROJECT] [--json] refutation_id positional arguments:
@@ -406,13 +407,13 @@ usage: daimon ruling [-h] {propose,ratify,revise,retire,check,checks,list,show} 
 arguments: {propose,ratify,revise,retire,check,checks,list,show} propose propose a standing ruling;
 agent proposals stay candidates until a human ratifies ratify activate a candidate ruling; prints
 the full text and confirms before the append revise revise a ruling; on an active ruling an agent
-call records a proposal and the text stands retire end a ruling; agent calls propose, humans retire
-directly; evidence optional check the check a ruling carries (#943): try it before a human arms it
-checks what this project has armed, the mode each host gives it, and whether it ever fired (#943)
-list list project rulings show show one ruling, including pending proposals options: -h, --help show
-this help message and exit Examples: daimon ruling propose --subject 'public posts' --verdict
-'internal numbers never appear in public posts' --scope publishing --evidence issue:693 --by agent
-daimon ruling ratify r-1a2b3c4d5e6f
+call records a proposal and the text stands retire end a ruling: a candidate as rejected, an active
+one as retired; agent calls propose, humans retire directly; evidence optional check the check a
+ruling carries (#943): try it before a human arms it checks what this project has armed, the mode
+each host gives it, and whether it ever fired (#943) list list project rulings show show one ruling,
+including pending proposals options: -h, --help show this help message and exit Examples: daimon
+ruling propose --subject 'public posts' --verdict 'internal numbers never appear in public posts'
+--scope publishing --evidence issue:693 --by agent daimon ruling ratify r-1a2b3c4d5e6f
 
 === ruling propose ===
 usage: daimon ruling propose [-h] --subject SUBJECT --verdict VERDICT --scope SCOPE --evidence

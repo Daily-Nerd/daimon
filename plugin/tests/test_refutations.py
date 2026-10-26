@@ -1077,3 +1077,87 @@ def test_evidence_refusal_names_the_receipt_kind(tmp_checkpoint_dir):
 def test_assert_ruling_records_bucket_root_on_first_write(tmp_checkpoint_dir):
     _assert()
     assert store.bucket_root(PROJECT) == PROJECT
+
+
+# ---- #1238: a candidate turned down reads rejected, not overturned ---------
+
+
+def _row_for(ref_id, event):
+    rows = [row for row in refutations.events(project_dir=PROJECT)
+            if row.get("refutation_id") == ref_id and row.get("event") == event]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_human_overturn_of_a_candidate_records_rejected_and_needs_no_evidence(
+        tmp_checkpoint_dir):
+    ref_id = _assert()
+    event = refutations.overturn(ref_id, channel="cli-tty", evidence=(),
+                                 project_dir=PROJECT)
+    assert event == "overturned"
+    assert _row_for(ref_id, "overturned")["reason"] == "rejected"
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["state"] == "overturned"
+    assert record["overturn_reason"] == "rejected"
+
+
+def test_human_overturn_of_an_active_refutation_records_retired_and_needs_evidence(
+        tmp_checkpoint_dir):
+    ref_id = _assert(channel="cli-tty", ratified=True)
+    with pytest.raises(refutations.RefutationError, match="evidence"):
+        refutations.overturn(ref_id, channel="cli-tty", evidence=(),
+                             project_dir=PROJECT)
+    assert refutations.get(ref_id, project_dir=PROJECT)["state"] == "active"
+    refutations.overturn(ref_id, channel="cli-tty",
+                         evidence=["measurement:rerun"], project_dir=PROJECT)
+    assert _row_for(ref_id, "overturned")["reason"] == "retired"
+    assert refutations.get(ref_id, project_dir=PROJECT)["overturn_reason"] == "retired"
+
+
+def test_agent_overturn_proposal_row_carries_the_reason_too(tmp_checkpoint_dir):
+    active = _assert(channel="cli-tty", ratified=True)
+    refutations.overturn(active, channel="cli-agent",
+                         evidence=["measurement:new corpus"], project_dir=PROJECT)
+    assert _row_for(active, "overturn-proposed")["reason"] == "retired"
+    candidate = _assert(subject="another candidate", scope="elsewhere")
+    refutations.overturn(candidate, channel="cli-agent", evidence=(),
+                         project_dir=PROJECT)
+    assert _row_for(candidate, "overturn-proposed")["reason"] == "rejected"
+
+
+def test_an_overturned_row_without_a_reason_folds_to_none_and_reads_as_before(
+        tmp_checkpoint_dir, capsys):
+    # Rows written before #1238 carry no `reason`; nothing is fabricated for
+    # them and the label stays the one every reader already knew.
+    ref_id = _assert(channel="cli-tty", ratified=True)
+    row = refutations._stamp("overturned", ref_id, "cli-tty")
+    row["evidence"] = ["measurement:old"]
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
+    record = refutations.get(ref_id, project_dir=PROJECT)
+    assert record["state"] == "overturned"
+    assert record["overturn_reason"] is None
+    assert cli.main(["refute", "show", ref_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "× overturned" in out
+    assert "rejected" not in out and "retired" not in out
+
+
+def test_cli_overturn_prints_the_reason_as_the_label(tmp_checkpoint_dir, capsys):
+    candidate = _assert()
+    assert cli.main(["refute", "overturn", candidate, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "× rejected" in out
+    assert "overturned" not in out
+    active = _assert(subject="an active one", scope="elsewhere",
+                     channel="cli-tty", ratified=True)
+    assert cli.main(["refute", "overturn", active, "--project", PROJECT]) == 1
+    assert "evidence" in capsys.readouterr().out
+    assert cli.main(["refute", "overturn", active, "--evidence",
+                     "measurement:rerun", "--project", PROJECT]) == 0
+    assert "× retired" in capsys.readouterr().out
+    assert cli.main(["refute", "list", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "× rejected" in out and "× retired" in out
+    assert cli.main(["refute", "show", candidate, "--json",
+                     "--project", PROJECT]) == 0
+    assert json.loads(capsys.readouterr().out)["overturn_reason"] == "rejected"

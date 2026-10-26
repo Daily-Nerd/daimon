@@ -48,6 +48,14 @@ itself; see the [CLI reference](../reference/cli.md) for the exact syntax.)
 - **`retire`** ends it. A human retires directly; an agent's retire is
   recorded as a proposal and the ruling stands. Evidence is optional here,
   because a rule that simply stopped applying often has no citation to give.
+  The ledger records why the ruling ended: a candidate that never earned
+  ratification reads **rejected**, an active ruling that stopped applying
+  reads **retired**. Both end in the same state, `overturned`; the word is
+  the label `ruling show` and `ruling list` print, so months later you can
+  tell a proposal you turned down from a rule you used and then dropped.
+  `daimon decide` lists only candidates and offers turning one down as
+  `reject`; the command it gives is `ruling retire`. Rulings ended before
+  this label existed keep reading `retired`.
 
 ## Authority channels
 

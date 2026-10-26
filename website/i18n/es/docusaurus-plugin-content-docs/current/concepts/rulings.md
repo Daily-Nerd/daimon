@@ -53,6 +53,15 @@ exacta.)
   agente queda registrado como propuesta y la regla sigue en pie. La
   evidencia es opcional acá, porque una regla que simplemente dejó de
   aplicar muchas veces no tiene nada que citar.
+  El ledger registra por qué terminó: una candidata que nunca fue
+  ratificada se lee como **rejected**, una regla activa que dejó de aplicar
+  se lee como **retired**. Las dos terminan en el mismo estado,
+  `overturned`; la palabra es la etiqueta que imprimen `ruling show` y
+  `ruling list`, así meses después podés distinguir una propuesta que
+  rechazaste de una regla que usaste y después dejaste. `daimon decide`
+  lista solo candidatas y ofrece rechazar una como `reject`; el comando que
+  da es `ruling retire`. Las reglas terminadas antes de que existiera esta
+  etiqueta se siguen leyendo como `retired`.
 
 ## Canales de autoridad
 

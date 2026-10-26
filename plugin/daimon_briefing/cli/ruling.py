@@ -921,7 +921,8 @@ def register(sub, fmt) -> None:
     rl_revise.set_defaults(func=_cli._cmd_ruling_revise)
 
     rl_retire = ruling_sub.add_parser(
-        "retire", help="end a ruling; agent calls propose, humans retire "
+        "retire", help="end a ruling: a candidate as rejected, an active one "
+                       "as retired; agent calls propose, humans retire "
                        "directly; evidence optional")
     rl_retire.add_argument("ruling_id", help="exact r-… id")
     rl_retire.add_argument(

@@ -90,6 +90,28 @@ def test_candidate_refutation_waits_and_carries_its_own_verb(project):
     assert not any("ruling ratify" in c for c in _commands(row))
 
 
+def test_a_candidate_is_offered_reject_not_retire_or_overturn(project):
+    # #1238: turning a candidate down writes reason "rejected", so the card
+    # names that outcome; the command itself is still the polarity's verb.
+    ruling_id = refutations.assert_ruling(
+        subject="release", verdict="never bump to 1.0 without a human call",
+        scope="repo", evidence=["issue:766"], channel="cli-agent",
+        project_dir=project)
+    ref_id = refutations.assert_refutation(
+        subject="idf recall", verdict="does not improve recall",
+        scope="repo", evidence=["measurement:n=50"], channel="cli-agent",
+        project_dir=project)
+    by_id = {row["id"]: row
+             for row in pending.queue(project_dir=project)["rows"]}
+    assert ("reject", f"daimon ruling retire {ruling_id}") in by_id[
+        ruling_id]["commands"]
+    assert ("reject", f"daimon refute overturn {ref_id}") in by_id[
+        ref_id]["commands"]
+    labels = {label for row in by_id.values()
+              for label, _ in row["commands"]}
+    assert labels == {"ratify", "reject"}
+
+
 # --- trust quarantines (#1109 Slice 1) ----------------------------------------
 
 

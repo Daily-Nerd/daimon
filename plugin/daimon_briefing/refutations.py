@@ -47,6 +47,13 @@ EVENTS = frozenset({
     "ruled", "revision-proposed",
 })
 STATES = frozenset({"candidate", "active", "overturned"})
+# #1238: why a record left its state, stamped on the `overturned` and
+# `overturn-proposed` rows. "rejected" = it was a candidate that never earned
+# ratification; "retired" = it was active and stopped applying. A label, not
+# a state: STATES is unchanged because every consumer gates on those three
+# values, and the fold reaches `overturned` either way. Derived from the
+# record at write time by `_close_reason`, never accepted from a caller.
+OVERTURN_REASONS = frozenset({"rejected", "retired"})
 AUTHORITIES = frozenset({"agent", "human", "mechanical"})
 # Authority is a property of the WRITE PATH, never a caller's claim about
 # itself. `--by human` was a flag whose only function was to let the caller
@@ -1255,6 +1262,13 @@ def _fold_row(out: dict, row: dict) -> None:
             current["overturned_author"] = row.get("author")
             current["overturn_evidence"] = list(row.get("evidence") or [])
             current["overturn_note"] = str(row.get("note") or "")
+            # #1238: rows written before the reason existed fold to None;
+            # the printers then show the label they always showed. Nothing
+            # is inferred for them: the state the row closed is not in the
+            # row, and guessing it from neighbouring rows would be a claim.
+            reason = row.get("reason")
+            current["overturn_reason"] = (
+                reason if reason in OVERTURN_REASONS else None)
             current.pop("overturn_proposed", None)
 
 
@@ -1956,12 +1970,24 @@ def sync_armed_checks(*, project_dir=None) -> "jsonl.Reached":
     return jsonl.Reached((), reached=False, detail=detail)
 
 
+def _close_reason(current: dict) -> str:
+    """#1238: the one place the reason on an `overturned` /
+    `overturn-proposed` row is decided. It is read off the record's state at
+    write time, so a caller cannot label a rejection a retirement or the
+    other way round. Both verbs refuse an already-overturned record before
+    reaching here, so the lookup is total over the states that remain."""
+    return {"candidate": "rejected", "active": "retired"}[current["state"]]
+
+
 def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
            project_dir=None) -> str:
-    """#693: end an active ruling. Human channels retire directly; an agent
-    channel gets a proposal and the ruling stands. Evidence is OPTIONAL —
-    a rule that simply stopped applying has no citation, and requiring one
-    manufactures fake evidence."""
+    """#693: end a ruling. A candidate ends as `rejected` (it never earned
+    ratification); an active ruling ends as `retired` (it applied for a
+    while and stopped). The row records which (#1238). Human channels
+    retire directly; an agent channel gets a proposal and the ruling
+    stands. Evidence is OPTIONAL in both cases: a rule that simply stopped
+    applying has no citation, and requiring one manufactures fake
+    evidence."""
     current = get(ruling_id, project_dir=project_dir)
     if current is None:
         _guard_layer_only_id(ruling_id, project_dir)  # #1094
@@ -1976,6 +2002,7 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
     if event == "overturn-proposed":
         _guard_open_proposals(ruling_id, event, project_dir=project_dir)
     row = _stamp(event, ruling_id, channel)
+    row["reason"] = _close_reason(current)
     row["evidence"] = _evidence(evidence, required=False)
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir,
@@ -2190,8 +2217,16 @@ def revise(refutation_id: str, *, channel: str, evidence,
                  writer=Writer.HUMAN)
 
 
-def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
+def overturn(refutation_id: str, *, channel: str, evidence=(), note: str = "",
              project_dir=None) -> str:
+    """End a refutation. A candidate ends as `rejected` (it never earned
+    ratification) and needs no evidence: there is nothing to cite against a
+    verdict that was never in force, and requiring a source would
+    manufacture one. An active refutation ends as `retired` and evidence
+    against it is REQUIRED. The row records which (#1238). Human channels
+    overturn directly; an agent channel gets a proposal and the guard
+    stands. Enforced here, not in the CLI: in-process writers reach this
+    function directly."""
     current = get(refutation_id, project_dir=project_dir)
     if current is None:
         raise RefutationError(f"unknown refutation: {refutation_id}")
@@ -2206,7 +2241,8 @@ def overturn(refutation_id: str, *, channel: str, evidence, note: str = "",
     event = ("overturned" if CHANNEL_AUTHORITY.get(channel) == "human"
              else "overturn-proposed")
     row = _stamp(event, refutation_id, channel)
-    row["evidence"] = _evidence(evidence)
+    row["reason"] = _close_reason(current)
+    row["evidence"] = _evidence(evidence, required=row["reason"] == "retired")
     row["note"] = _text("note", note, required=False)
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):

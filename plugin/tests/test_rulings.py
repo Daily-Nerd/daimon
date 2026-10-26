@@ -3261,3 +3261,72 @@ def test_cli_ratify_pending_revision_loud_when_replaced_mid_confirmation(
     record = refutations.get(ruling_id, project_dir=PROJECT)
     assert record["verdict"] == "internal numbers never appear in public posts"
     assert record["revision_proposed"]["verdict"] == "second proposal text"
+
+
+# ---- #1238: a candidate turned down reads rejected, not retired ------------
+
+
+def _row_for(ruling_id, event):
+    rows = [row for row in refutations.events(project_dir=PROJECT)
+            if row.get("refutation_id") == ruling_id
+            and row.get("event") == event]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_retire_records_rejected_for_a_candidate_and_retired_for_an_active_ruling(
+        tmp_checkpoint_dir):
+    candidate = _rule()
+    refutations.retire(candidate, channel="cli-tty", project_dir=PROJECT)
+    assert _row_for(candidate, "overturned")["reason"] == "rejected"
+    assert refutations.get(candidate, project_dir=PROJECT)["overturn_reason"] == "rejected"
+    active = _rule(subject="second area", verdict="second rule",
+                   scope="second-scope", channel="cli-tty", ratified=True)
+    refutations.retire(active, channel="cli-tty", project_dir=PROJECT)
+    assert _row_for(active, "overturned")["reason"] == "retired"
+    assert refutations.get(active, project_dir=PROJECT)["overturn_reason"] == "retired"
+
+
+def test_agent_retire_proposal_row_carries_the_reason(tmp_checkpoint_dir):
+    active = _rule(channel="cli-tty", ratified=True)
+    refutations.retire(active, channel="cli-agent", project_dir=PROJECT)
+    assert _row_for(active, "overturn-proposed")["reason"] == "retired"
+    candidate = _rule(subject="second area", verdict="second rule",
+                      scope="second-scope")
+    refutations.retire(candidate, channel="cli-agent", project_dir=PROJECT)
+    assert _row_for(candidate, "overturn-proposed")["reason"] == "rejected"
+
+
+def test_a_retired_row_without_a_reason_still_reads_retired(
+        tmp_checkpoint_dir, _tty, capsys):
+    # Rows written before #1238 carry no `reason`; the ruling printer keeps
+    # the label it always used and fabricates nothing.
+    ruling_id = _rule(channel="cli-tty", ratified=True)
+    row = refutations._stamp("overturned", ruling_id, "cli-tty")
+    row["evidence"] = []
+    assert refutations.append(row, project_dir=PROJECT, writer=Writer.HUMAN)
+    record = refutations.get(ruling_id, project_dir=PROJECT)
+    assert record["state"] == "overturned"
+    assert record["overturn_reason"] is None
+    assert cli.main(["ruling", "show", ruling_id, "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "× retired" in out
+    assert "rejected" not in out
+
+
+def test_cli_retire_prints_the_reason_as_the_label(tmp_checkpoint_dir, _tty,
+                                                   capsys):
+    candidate = _rule()
+    assert cli.main(["ruling", "retire", candidate, "--project", PROJECT]) == 0
+    assert "× rejected" in capsys.readouterr().out
+    active = _rule(subject="second area", verdict="second rule",
+                   scope="second-scope", channel="cli-tty", ratified=True)
+    assert cli.main(["ruling", "retire", active, "--project", PROJECT]) == 0
+    assert "× retired" in capsys.readouterr().out
+    assert cli.main(["ruling", "list", "--project", PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert "× rejected" in out and "× retired" in out
+    assert "overturned" not in out
+    assert cli.main(["ruling", "show", candidate, "--json",
+                     "--project", PROJECT]) == 0
+    assert json.loads(capsys.readouterr().out)["overturn_reason"] == "rejected"

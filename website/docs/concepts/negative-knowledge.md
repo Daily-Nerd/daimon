@@ -57,9 +57,16 @@ in force, and never rendered as an active guard until a human ratifies it.
 The human path is `ratify` from an interactive terminal; there is no way for
 an agent to self-promote a candidate. `revise` appends a new,
 evidence-cited version, which itself needs ratifying before it takes over.
-`overturn` cites evidence against an active refutation: an agent's overturn
-is recorded as a proposal and the guard stays in force; a human's overturn
-deactivates it immediately.
+`overturn` ends a refutation: an agent's overturn is recorded as a proposal
+and the guard stays in force; a human's overturn deactivates it
+immediately. The ledger records why it ended. A candidate you turn down
+reads **rejected** and needs no `--evidence`: there is nothing to cite
+against a guard that was never in force. An active refutation reads
+**retired** and `--evidence` against it is required. Both end in the same
+state, `overturned`; the word is the label `refute show` and `refute list`
+print. `daimon decide` lists only candidates and offers turning one down as
+`reject`; the command it gives is `refute overturn`. Refutations ended
+before this label existed keep reading `overturned`.
 
 ## Reading the ledger
 
