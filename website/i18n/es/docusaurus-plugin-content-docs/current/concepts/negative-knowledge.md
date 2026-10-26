@@ -59,10 +59,17 @@ todavía no en vigencia, y nunca se renderiza como guardia activa hasta que
 un humano la ratifica. La vía humana es `ratify` desde una terminal
 interactiva; no hay forma de que un agente se autopromueva de candidata.
 `revise` agrega una versión nueva, citada con evidencia, que a su vez
-necesita ratificarse antes de reemplazar a la anterior. `overturn` cita
-evidencia contra una refutación activa: el overturn de un agente queda
-registrado como propuesta y la guardia sigue en vigencia; el overturn de un
-humano la desactiva de inmediato.
+necesita ratificarse antes de reemplazar a la anterior. `overturn` termina
+una refutación: el overturn de un agente queda registrado como propuesta y
+la guardia sigue en vigencia; el overturn de un humano la desactiva de
+inmediato. El ledger registra por qué terminó. Una candidata que rechazás
+se lee como **rejected** y no necesita `--evidence`: no hay nada que citar
+contra una guardia que nunca estuvo en vigencia. Una refutación activa se
+lee como **retired** y la `--evidence` en su contra es obligatoria. Las dos
+terminan en el mismo estado, `overturned`; la palabra es la etiqueta que
+imprimen `refute show`, `refute list` y `daimon decide`. Las refutaciones
+terminadas antes de que existiera esta etiqueta se siguen leyendo como
+`overturned`.
 
 ## Leer el ledger
 
