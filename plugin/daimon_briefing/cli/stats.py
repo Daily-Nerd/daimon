@@ -326,14 +326,39 @@ def _stats_stitching(project_dir) -> dict:
 
     Never raises: an unreadable checkpoint is skipped, the same posture the
     other stats folds take."""
-    want_slug = store.project_slug(project_dir)
     out: dict = {"verified": 0, "measured": 0, "stitched": 0,
                  "cross_message": 0, "cross_role": 0, "unmeasured": 0,
                  "rate_pct": None}
+    for _item, receipt in _verified_receipts(project_dir):
+        out["verified"] += 1
+        stitching = receipt.get("stitching")
+        if not isinstance(stitching, dict):
+            out["unmeasured"] += 1
+            continue
+        out["measured"] += 1
+        cross_message = stitching.get("cross_message") is True
+        cross_role = stitching.get("cross_role") is True
+        out["cross_message"] += int(cross_message)
+        out["cross_role"] += int(cross_role)
+        out["stitched"] += int(cross_message or cross_role)
+    if out["measured"]:
+        out["rate_pct"] = round(100.0 * out["stitched"] / out["measured"], 1)
+    return out
+
+
+def _verified_receipts(project_dir):
+    """(item, receipt) for every VERIFIED quote receipt stored for this
+    project, one per stable item id, in the order the store lists sessions.
+    The one walk behind the per-receipt stats folds (stitching, quote
+    roles): the project scoping, the once-per-id dedup and the skip-unreadable
+    posture are decided here, so a second fold cannot drift from the first
+    on any of the three. A dict with no `id` yields as its own occurrence,
+    the conservative reading _stats_stitching documents."""
+    want_slug = store.project_slug(project_dir)
     try:
         files = store._session_files(config.checkpoint_dir())
     except OSError:
-        return out
+        return
     seen: set = set()
     for f in sorted(files):
         try:
@@ -354,19 +379,69 @@ def _stats_stitching(project_dir) -> dict:
                 if item_id in seen:
                     continue
                 seen.add(item_id)
-            out["verified"] += 1
-            stitching = receipt.get("stitching")
-            if not isinstance(stitching, dict):
-                out["unmeasured"] += 1
-                continue
+            yield item, receipt
+
+
+_ROLE_BUCKETS = ("user_only", "assistant_only", "tool", "mixed", "other")
+
+
+def _role_bucket(binding) -> str:
+    """Which quote-roles bucket a verified receipt's binding falls in (#1237).
+
+    `unbound`: the binding names no message (transcript-scan), so there is
+    no role to read. `pre_field`: it names messages but carries no `roles`
+    list, a receipt written before the field existed. The rest read the
+    list the serializer derived: `tool` whenever a tool row is among the
+    bound messages, whatever else is there; `user_only` and `assistant_only`
+    for a single channel; `mixed` for two or more channels with no tool
+    row; `other` for a single channel that is none of the three (a host
+    that emits its own role names). Named, not folded into `mixed`, because
+    one channel is not a mix and a guessed bucket is what the stats line
+    exists to replace."""
+    if (not isinstance(binding, dict) or binding.get("mode") != "message-ids"
+            or not binding.get("message_ids")):
+        return "unbound"
+    roles = binding.get("roles")
+    if not isinstance(roles, list) or not roles:
+        return "pre_field"
+    if "tool" in roles:
+        return "tool"
+    if roles == ["user"]:
+        return "user_only"
+    if roles == ["assistant"]:
+        return "assistant_only"
+    return "mixed" if len(roles) > 1 else "other"
+
+
+def _stats_roles(project_dir) -> dict:
+    """Role mix of this project's FRESH verified quotes (#1237): whose words
+    the verbatim items are, by message channel, read off
+    `quote_provenance.binding.roles`. Stats never opens a transcript; the
+    serializer wrote the roles beside the ids at verification.
+
+    FRESH means not a carried copy: an item with `carried_from` rode in from
+    an earlier session and its receipt was minted there, so counting it here
+    would weigh that session's words once per session they survived. The
+    walk's once-per-id rule backs that up for a copy that lost the marker.
+    Same two-populations rule as the stitching fold (#477): the shares are
+    over receipts that CARRY a role list (`measured`), and the receipts
+    that cannot answer, `unbound` and `pre_field`, are counted beside the
+    rate rather than folded into it as a confident bucket."""
+    out: dict = {"verified": 0, "measured": 0}
+    out.update({bucket: 0 for bucket in _ROLE_BUCKETS})
+    out.update({"unbound": 0, "pre_field": 0, "shares_pct": None})
+    for item, receipt in _verified_receipts(project_dir):
+        if item.get("carried_from"):
+            continue
+        out["verified"] += 1
+        bucket = _role_bucket(receipt.get("binding"))
+        out[bucket] += 1
+        if bucket in _ROLE_BUCKETS:
             out["measured"] += 1
-            cross_message = stitching.get("cross_message") is True
-            cross_role = stitching.get("cross_role") is True
-            out["cross_message"] += int(cross_message)
-            out["cross_role"] += int(cross_role)
-            out["stitched"] += int(cross_message or cross_role)
     if out["measured"]:
-        out["rate_pct"] = round(100.0 * out["stitched"] / out["measured"], 1)
+        out["shares_pct"] = {
+            bucket: round(100.0 * out[bucket] / out["measured"], 1)
+            for bucket in _ROLE_BUCKETS}
     return out
 
 
@@ -672,7 +747,9 @@ def _cmd_stats(args) -> int:
             # #974 step 1: same rule, same tail.
             "stitching": _stats_stitching(project),
             # #1184: same rule, same tail.
-            "worldcheck": _stats_worldcheck(project)}
+            "worldcheck": _stats_worldcheck(project),
+            # #1237: same rule, same tail.
+            "roles": _stats_roles(project)}
     if args.json:
         print(json.dumps(data, indent=2))
         return 0

@@ -2395,6 +2395,38 @@ def _stitching_line(s: dict) -> str:
     return line
 
 
+def _roles_line(r: dict) -> str:
+    """#1237: the one quote-roles line, shared by the plain and rich stats
+    renderers, in the same three states as the stitching line. Nothing
+    verified yet is not a mix. A corpus whose receipts all predate the field
+    or are all bound by transcript scan has no mix to report either, and
+    says which of the two it is instead of printing zeros. Only the third
+    state prints counts and shares, over the receipts that carry a role
+    list, with the two unanswerable populations named beside them (#477).
+    "role" throughout, never "speaker": the field is the message channel."""
+    if not r.get("verified"):
+        return "quote roles: no verified quotes yet"
+    if not r.get("measured"):
+        return (f"quote roles: none of {r['verified']} fresh verified quotes "
+                f"carry a role list ({r['unbound']} unbound, "
+                f"{r['pre_field']} pre-field)")
+    pct = r["shares_pct"]
+    parts = [f"user only {r['user_only']} ({pct['user_only']}%)",
+             f"assistant only {r['assistant_only']} ({pct['assistant_only']}%)",
+             f"tool involved {r['tool']} ({pct['tool']}%)",
+             f"mixed {r['mixed']} ({pct['mixed']}%)"]
+    if r.get("other"):
+        parts.append(f"other role {r['other']} ({pct['other']}%)")
+    line = (f"quote roles: {r['measured']} fresh verified quotes by message "
+            f"role: " + ", ".join(parts))
+    rest = [f"{r[key]} {label}" for key, label in (("unbound", "unbound"),
+                                                   ("pre_field", "pre-field"))
+            if r.get(key)]
+    if rest:
+        line += "; " + ", ".join(rest)
+    return line
+
+
 def _worldcheck_lines(w: dict) -> list[str]:
     """#1184: the worldcheck per-note section, shared by the plain and rich
     stats renderers. Units are in the words: NOTES are this project's unique
@@ -2573,6 +2605,12 @@ def _plain_stats(data: dict) -> None:
         # no visible measurement is how #829's record sat unread.
         print("stitching (this project):")
         print(f"  {_stitching_line(stitch)}")
+    roles = data.get("roles")
+    if roles:
+        # #1237: always shown, same rule again: "no verified quotes yet" and
+        # "no receipt carries a role list" are each an answer.
+        print("quote roles (this project):")
+        print(f"  {_roles_line(roles)}")
     wc = data.get("worldcheck")
     if wc:
         # #1184: always shown, same rule again: "none recorded" is an answer.
@@ -2806,6 +2844,17 @@ def _rich_stats(data: dict) -> None:
         stitch_table.add_column("value")
         stitch_table.add_row("status", _stitching_line(stitch))
         console.print(stitch_table)
+
+    roles = data.get("roles")
+    if roles:
+        # #1237: mirrors the plain renderer, same always-shown rule.
+        roles_table = Table(title="quote roles (this project)",
+                            title_justify="left", show_header=True,
+                            header_style="bold")
+        roles_table.add_column("metric")
+        roles_table.add_column("value")
+        roles_table.add_row("status", _roles_line(roles))
+        console.print(roles_table)
 
     wc = data.get("worldcheck")
     if wc:

@@ -254,8 +254,9 @@ def test_one_item_carried_across_sessions_counts_once(project, capsys):
 def test_stats_json_carries_stitching_at_the_tail(project, capsys):
     """Key order is part of the --json contract, so a new fact is appended."""
     payload = _stats_json(capsys)
-    # #1184 appended `worldcheck` behind it under the same rule.
-    assert list(payload)[-3:] == ["checks", "stitching", "worldcheck"]
+    # #1184 appended `worldcheck` behind it under the same rule, and #1237
+    # appended `roles` behind that.
+    assert list(payload)[-4:] == ["checks", "stitching", "worldcheck", "roles"]
     assert list(payload["stitching"]) == [
         "verified", "measured", "stitched", "cross_message", "cross_role",
         "unmeasured", "rate_pct"]

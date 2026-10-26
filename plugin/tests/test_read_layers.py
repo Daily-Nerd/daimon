@@ -168,8 +168,9 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "forget's pool builder reads the live checkpoint to splice it; the registry in PR 12",
     ("daimon_briefing/cli/stats.py", "_stats_resolutions", "jsonl.read"):
         "counts events rows for the stats credit rollup, no content shown",
-    ("daimon_briefing/cli/stats.py", "_stats_stitching", "json.loads"):
-        "aggregate counters over stored checkpoints, no item text shown",
+    ("daimon_briefing/cli/stats.py", "_verified_receipts", "json.loads"):
+        "the one walk behind the per-receipt stats folds (stitching, quote "
+        "roles): aggregate counters over stored checkpoints, no item text shown",
     ("daimon_briefing/cli/stats.py", "_stats_store", "json.loads"):
         "aggregate counters over stored checkpoints, no item text shown",
     ("daimon_briefing/cli/status.py", "_checkpoint_info", "json.loads"):
