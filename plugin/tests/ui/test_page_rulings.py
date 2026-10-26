@@ -76,4 +76,6 @@ def test_ruling_marker_reads_the_overturn_reason_and_falls_back_to_retired(srv):
     js = body.decode()
     marker = js.split("function rulingMarker", 1)[1].split("export function", 1)[0]
     assert "overturn_reason" in marker
-    assert '"retired"' in marker
+    # The fallback EXPRESSION, not the bare word: the state comparison a few
+    # lines up already mentions the state, so the word alone cannot fail.
+    assert '|| "retired")' in marker

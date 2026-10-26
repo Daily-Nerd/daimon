@@ -50,4 +50,6 @@ def test_refutation_marker_reads_the_overturn_reason_and_falls_back_to_overturne
     js = body.decode()
     marker = js.split("function refutationMarker", 1)[1].split("function render", 1)[0]
     assert "overturn_reason" in marker
-    assert '"overturned"' in marker
+    # The fallback EXPRESSION, not the bare word: `state === "overturned"`
+    # already carries the word, so the word alone cannot fail.
+    assert '|| "overturned")' in marker
