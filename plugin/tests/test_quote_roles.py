@@ -337,6 +337,20 @@ def test_one_message_holding_the_whole_quote_wins_over_a_channel_join(
     assert item["quote_provenance"]["binding"]["roles"] == ["user"]
 
 
+def test_scan_roles_is_none_when_attribution_is_impossible():
+    """The same None contract _stitching_flags has (its own test pins it the
+    same way): no usable fragments, or no per-message text survived
+    stripping, is "cannot tell", never an empty list. verify_quotes cannot
+    reach this through a verified scan (a verified scan always has a
+    fragment and a non-empty haystack), so the function's contract is
+    pinned directly, as the sibling's is."""
+    fragments = serializer._quote_fragments("the alpha premise stands firm")
+    assert serializer._scan_roles([], [("user", "the alpha premise")],
+                                  {"user": "the alpha premise"}) is None
+    assert serializer._scan_roles(fragments, [("user", ""), ("tool", "")],
+                                  {"user": "", "tool": ""}) is None
+
+
 # ---- the receipt builder and the validator ---------------------------------
 
 

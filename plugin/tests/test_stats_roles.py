@@ -373,6 +373,28 @@ def test_stats_json_carries_roles_at_the_tail(project, capsys):
         "mixed", "other", "unbound", "pre_field", "shares_pct"]
 
 
+def test_a_verified_receipt_with_no_binding_object_reads_as_unbound(
+        project, messages, capsys):
+    """Stats reads stored receipts raw and never raises on one it did not
+    write. A receipt that says verified but carries no binding object names
+    no message and no role, so it is counted as unbound beside the mix,
+    and the fresh quote next to it still lands in its bucket."""
+    broken = {"text": "half a receipt", "trust": "verbatim", "quote": _USER[0],
+              "quote_verified": True,
+              "quote_provenance": {"outcome": "verified"}}
+    cp = _checkpoint("S1", [broken])
+    policy.stamp_item_ids(cp)
+    assert store.write_checkpoint("S1", cp, project_dir=project,
+                                  writer=Writer.HUMAN)
+    _write("S2", [_item("user words", _USER)], project, messages)
+
+    r = _stats_json(capsys)["roles"]
+    assert r["verified"] == 2
+    assert r["unbound"] == 1
+    assert r["user_only"] == 1
+    assert "; 1 unbound" in _stats_text(capsys)
+
+
 @pytest.mark.parametrize("junk", ["{not json", "[1, 2, 3]"])
 def test_an_unreadable_checkpoint_never_takes_stats_down(junk, project,
                                                          messages, capsys):
