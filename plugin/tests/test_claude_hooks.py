@@ -567,7 +567,7 @@ def _age(path: Path, seconds: float) -> None:
 
 def test_sweep_orphans_spawns_for_uncaptured_transcript(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")  # a spawn also logs a breadcrumb
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))  # a spawn also logs a breadcrumb
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -590,7 +590,7 @@ def test_sweep_orphans_skips_a_transcript_whose_serialize_is_in_flight(tmp_path,
     # serialize has not written one yet, so the guard cannot fire. The second
     # run then overwrote the first's checkpoint with a worse one.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -615,7 +615,7 @@ def test_sweep_orphans_still_spawns_when_the_heartbeat_is_stale(tmp_path, monkey
     # strictly worse than the double-spawn this fixes. Same liveness bar the
     # package uses.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -641,7 +641,7 @@ def test_sweep_orphans_in_flight_check_is_per_session_not_per_project(tmp_path, 
     # sibling. The heartbeat FILENAME is the session id, so the filter is
     # per-candidate rather than the project-level question `daimon brief` asks.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -667,7 +667,7 @@ def test_sweep_orphans_survives_a_missing_heartbeat_dir(tmp_path, monkeypatch):
     # Fail-open, same rule as _failed_session_stems: no heartbeat dir must
     # never block the genuine #185/#188 recovery sweep.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -729,7 +729,7 @@ def test_project_env_extra_kwargs_compose_with_cwd_and_host():
 
 def test_sweep_orphans_spawns_only_the_newest_candidate(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")  # a spawn also logs a breadcrumb
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))  # a spawn also logs a breadcrumb
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -802,7 +802,7 @@ def test_sweep_orphans_skips_transcript_with_recorded_failure(tmp_path, monkeypa
     # re-spawn it just because no checkpoint landed.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
     log_dir = tmp_path / "logs"
-    monkeypatch.setattr(lib, "LOG_DIR", log_dir)
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -831,7 +831,7 @@ def test_sweep_orphans_still_sweeps_transcript_absent_from_ledger(tmp_path, monk
     # log has unrelated entries for other sessions.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
     log_dir = tmp_path / "logs"
-    monkeypatch.setattr(lib, "LOG_DIR", log_dir)
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -859,7 +859,7 @@ def test_sweep_orphans_still_sweeps_when_ledger_read_raises(tmp_path, monkeypatc
     # disable the genuine #185/#188 recovery path.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
     log_dir = tmp_path / "logs"
-    monkeypatch.setattr(lib, "LOG_DIR", log_dir)
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -935,8 +935,7 @@ def test_failed_session_stems_matches_real_serialize_failure_output(
     from daimon_briefing import cli, ledger
 
     log_dir = tmp_path / ".daimon" / "logs"
-    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))
-    monkeypatch.setattr(lib, "LOG_DIR", log_dir)  # hook lib's LOG_DIR has no env seam
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(log_dir))  # one seam for the CLI and the hook lib
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
     monkeypatch.setattr(cli, "_chat", fake_chat_factory("prose, definitely not JSON"))
 
@@ -954,10 +953,9 @@ def test_failed_session_stems_matches_real_serialize_failure_output(
 
 def test_sweep_orphans_logs_breadcrumb_on_spawn(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    # _daimon_hook_lib.LOG_DIR is a module-level constant (Path.home()-derived,
-    # not env-driven — these are standalone scripts, no DAIMON_LOG_DIR seam),
-    # so it's monkeypatched directly rather than via env var.
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    # The hook lib resolves its log dir per call through DAIMON_LOG_DIR, the
+    # same seam config.log_dir() reads (#1234), so the env var is the switch.
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -981,7 +979,7 @@ def test_sweep_orphans_logs_breadcrumb_on_spawn(tmp_path, monkeypatch):
 def test_sweep_orphans_spawn_line_project_unknown_placeholder(tmp_path, monkeypatch):
     # No cwd known -> the project group logs '?' exactly like daimon-session-end.py.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -1112,7 +1110,7 @@ def test_sweep_orphans_never_raises_when_spawn_serialize_explodes(tmp_path, monk
     # Fail-open (#185): a sweep error must never propagate into the hook —
     # the briefing has already printed by the time this runs.
     monkeypatch.setenv("DAIMON_CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcripts = tmp_path / "proj"
     transcripts.mkdir()
     current = transcripts / "S-new.jsonl"
@@ -1662,7 +1660,7 @@ def test_spawn_serialize_skips_when_that_transcript_is_already_in_flight(
     (_in_flight_stems) but wired it to sweep_orphans alone, so the two hook
     spawn paths never consult it. Putting it in spawn_serialize means every
     caller inherits it instead of each one remembering."""
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcript = tmp_path / "S-live.jsonl"
     transcript.write_text("{}\n")
 
@@ -1690,7 +1688,7 @@ def test_spawn_serialize_keys_the_guard_on_the_transcript_stem(
 
     Key the check on the payload id and it matches no heartbeat, ever, and the
     guard is a silent no-op that still looks implemented."""
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcript = tmp_path / "rollout-2026-08-28T22-41-50-01a04bd2.jsonl"
     transcript.write_text("{}\n")
 
@@ -1714,7 +1712,7 @@ def test_spawn_serialize_still_spawns_when_the_heartbeat_is_stale(
     in-flight would make that session permanently un-serializable, which is
     strictly worse than the double spawn. Same liveness bar #545 set for the
     sweep."""
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcript = tmp_path / "S-stale.jsonl"
     transcript.write_text("{}\n")
 
@@ -1732,7 +1730,7 @@ def test_spawn_serialize_still_spawns_when_the_heartbeat_is_stale(
 
 def test_spawn_serialize_spawns_when_nothing_is_in_flight(tmp_path, monkeypatch):
     """The liveness control: the guard must not swallow the ordinary case."""
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "logs"))
     transcript = tmp_path / "S-quiet.jsonl"
     transcript.write_text("{}\n")
 

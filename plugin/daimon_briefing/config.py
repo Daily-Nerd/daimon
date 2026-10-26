@@ -756,9 +756,12 @@ def log_dir_override(path: Path) -> Iterator[None]:
 
 
 def log_dir() -> Path:
-    """Where the session-end hook writes serialize.log. The hook hardcodes
-    ~/.daimon/logs; this override exists so the CLI (and tests) can point
-    `status` somewhere else."""
+    """Where serialize.log, the heartbeats and the crash sink live. The hook
+    library resolves the same directory the same way (`log_dir()` in
+    `_daimon_hook_lib.py`, locked to this function by test), so a redirect
+    moves what the hooks write and read together with what the CLI reads
+    (#1234). The override exists so the sandbox (and tests) can point
+    `status` somewhere else per context."""
     override = _LOG_DIR_OVERRIDE.get()
     if override is not None:
         return override

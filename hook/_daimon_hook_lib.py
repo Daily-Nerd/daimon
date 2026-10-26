@@ -32,8 +32,6 @@ FALLBACKS = [
     Path.home() / ".local" / "bin" / "daimon-briefing",
 ]
 
-LOG_DIR = Path.home() / ".daimon" / "logs"
-
 # #605: the crash sink grows only on crashes, but it grew FOREVER — nothing
 # reaped it and, until forget started purging it, nothing deleted it either.
 # The cap bounds the plaintext that can accumulate between two forgets. Trim
@@ -190,11 +188,16 @@ def project_env(cwd, host=None, **extra):
 
 def log(line: str) -> None:
     """Append a UTC-timestamped line to serialize.log. Never raises — logging
-    must not break a hook. The caller supplies the host tag as part of `line`."""
+    must not break a hook. The caller supplies the host tag as part of `line`.
+
+    The directory is resolved per call through log_dir(), the same way the
+    CLI resolves the ledger it reads (#1234): a spawn line written anywhere
+    else is a session `daimon status` reports as started and never finished."""
     try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        logs = log_dir()
+        logs.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with (LOG_DIR / "serialize.log").open("a", encoding="utf-8") as f:
+        with (logs / "serialize.log").open("a", encoding="utf-8") as f:
             f.write(f"{stamp} {line}\n")
     except OSError:
         pass
@@ -283,12 +286,13 @@ def hung_after_seconds() -> int:
     the package; tests lock the two to behavioral equality.
 
     Reads the PROCESS env only. The package form also consults ~/.daimon/env,
-    so a DAIMON_HUNG_AFTER set only in that file is invisible here — the same
-    documented boundary as LOG_DIR, which the hooks hardcode for serialize.log
-    while the CLI honors DAIMON_LOG_DIR. A disagreement costs at most a
-    delayed or an extra sweep, never a lost transcript. crash_log_path() is
-    the one exception: that file is inside the deletion contract (#605), so
-    the writer must at least read the process env the deleter reads."""
+    so a DAIMON_HUNG_AFTER set only in that file is invisible here. That is a
+    tolerable boundary for a THRESHOLD: a disagreement costs at most a
+    delayed or an extra sweep, never a lost transcript. It is not tolerable
+    for a PATH, which is why log_dir() and crash_log_path() reproduce the
+    package accessor exactly, env file included: a writer and a reader that
+    disagree on where the ledger is never notice, they just stop seeing each
+    other (#605, #1234)."""
     try:
         return int(os.environ.get("DAIMON_HUNG_AFTER") or "1800")
     except ValueError:
@@ -325,7 +329,7 @@ def _in_flight_stems() -> set:
     try:
         ceiling = hung_after_seconds()
         now = time.time()
-        for p in (LOG_DIR / "heartbeats").iterdir():
+        for p in (log_dir() / "heartbeats").iterdir():
             try:
                 if now - p.stat().st_mtime <= ceiling:
                     stems.add(p.name)
@@ -501,7 +505,7 @@ def _failed_session_stems() -> set:
     the sweep unable to tell 'failed' from 'never attempted', which is exactly
     today's behavior without this check."""
     try:
-        text = (LOG_DIR / "serialize.log").read_text(encoding="utf-8")
+        text = (log_dir() / "serialize.log").read_text(encoding="utf-8")
         state = {}
         for line in text.splitlines()[-200:]:  # tail is plenty; matches ledger.py
             line = line.strip()
@@ -662,28 +666,42 @@ def _config_flag(name: str) -> bool:
     return _config_get(name).strip() in ("1", "true", "yes", "on")
 
 
-def crash_log_path() -> Path:
-    """The crash sink, resolved the way the DELETER resolves it.
+def log_dir() -> Path:
+    """The log directory, resolved the way the CLI resolves it.
 
-    serialize-crash.log is inside the deletion contract (#605): `daimon
-    forget` purges it through config.log_dir(). A path resolved any other way
-    here has the child filling one directory while the purge reports cleanly
-    on another — silently, since a one-file purge reporting zero is
-    indistinguishable from an empty log dir. That is the #607 writer/deleter
-    split, one directory over.
+    Everything under it is shared with the package side. serialize-crash.log
+    is inside the deletion contract (#605): `daimon forget` purges it through
+    config.log_dir(). serialize.log and heartbeats/ are read by `daimon
+    status`, `daimon heal` and the ledger fold through the same accessor,
+    while the hooks write the spawn line and read both back for the catch-up
+    sweep and the in-flight guard. A path resolved any other way here splits
+    a writer from its reader SILENTLY: the purge reports a clean zero on an
+    empty directory, and `status` lists a session as spawned and never
+    finished because its result line landed in the other ledger (#607 one
+    directory over; #1234 for serialize.log, where every such phantom came
+    from a host or test run with DAIMON_LOG_DIR redirected).
 
     So this reproduces config.log_dir() EXACTLY, including the parts that
-    look like bugs: no strip (config does not strip, so "   " is a relative
-    directory named three spaces and the writer must agree), and the env-file
-    fallback, which is the channel a GUI-launched host actually uses — shell
-    exports never reach it. Resolved per call, like config's, so a moved HOME
-    cannot split the two.
-
-    serialize.log keeps the hardcoded LOG_DIR: nothing deletes it, so nothing
-    has to agree about where it is (hung_after_seconds' documented boundary)."""
+    look like bugs (scar 0043): no strip (config does not strip, so "   " is
+    a relative directory named three spaces and the writer must agree), and
+    the env-file fallback, which is the channel a GUI-launched host actually
+    uses, since shell exports never reach it. Resolved per call, like
+    config's, so a moved HOME cannot split the two. There is deliberately no
+    module-level constant: a value computed at import is a second answer to
+    "where", frozen at whatever env the import saw, and a new site reaching
+    for it would reopen the split. Tests lock this to config.log_dir() over
+    a probe table of process-env values and env-file line forms."""
     raw = _config_get("DAIMON_LOG_DIR")
-    base = Path(raw).expanduser() if raw else Path.home() / ".daimon" / "logs"
-    return base / "serialize-crash.log"
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".daimon" / "logs"
+
+
+def crash_log_path() -> Path:
+    """The crash sink, under log_dir() like everything else the hooks write.
+    Derived rather than resolved a second time, so the writer and the
+    deleter (#605) can only ever disagree if log_dir() itself drifts."""
+    return log_dir() / "serialize-crash.log"
 
 
 def trim_crash_log(path) -> None:
