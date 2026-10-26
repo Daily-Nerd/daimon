@@ -18,10 +18,33 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from daimon_briefing import config, ledger
 
 SPAWN = ("session-start: spawned serialize for S-1 "
          "(reason: catch-up-orphan, project: /p/x) (transcript: /t/S-1.jsonl)")
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch, _isolate_daimon_home) -> Path:
+    """A sandbox HOME, armed BEFORE anything in this file imports or calls
+    the library. These tests exist to prove that nothing lands under the
+    default directory, which means they set DAIMON_LOG_DIR deliberately or
+    leave it unset, so the suite-wide redirect in conftest is not what
+    keeps them off the maintainer's real ~/.daimon/logs: HOME is. Without
+    this, a library that still computed its path at import, or a test that
+    never patched home, appended spawn lines to the real ledger, which is
+    the exact class this file guards against. Ordered after conftest's
+    isolation so the unset of DAIMON_LOG_DIR here is the final word."""
+    sandbox = tmp_path / "home"
+    sandbox.mkdir()
+    monkeypatch.setenv("HOME", str(sandbox))
+    monkeypatch.delenv("DAIMON_LOG_DIR", raising=False)
+    monkeypatch.setenv("DAIMON_CHECKPOINT_DIR",
+                       str(sandbox / ".daimon" / "checkpoints"))
+    assert Path.home() == sandbox, "HOME did not take; refusing to touch disk"
+    return sandbox
 
 
 def _lib():
@@ -54,10 +77,8 @@ def _exercise_every_hook_site(lib, logs: Path) -> None:
 
 
 def test_the_process_env_moves_every_hook_site_and_leaves_the_default_alone(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, home):
     lib = _lib()
-    home = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: home)
     redirected = tmp_path / "redirected-logs"
     monkeypatch.setenv("DAIMON_LOG_DIR", str(redirected))
     assert config.log_dir() == redirected, "fixture never configured the CLI"
@@ -66,14 +87,11 @@ def test_the_process_env_moves_every_hook_site_and_leaves_the_default_alone(
         "a hook site still wrote under the default while redirected"
 
 
-def test_the_env_file_alone_moves_every_hook_site(tmp_path, monkeypatch):
+def test_the_env_file_alone_moves_every_hook_site(tmp_path, monkeypatch, home):
     """The channel a GUI-launched host actually uses: no shell export reaches
     it, only ~/.daimon/env does (scar 0036). Set there and nowhere else the
     CLI moves, so the hooks must move with it."""
     lib = _lib()
-    home = tmp_path / "home"
-    monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.delenv("DAIMON_LOG_DIR", raising=False)
     custom = tmp_path / "custom-logs"
     env_file = Path(os.environ["DAIMON_ENV_FILE"])
     env_file.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +103,7 @@ def test_the_env_file_alone_moves_every_hook_site(tmp_path, monkeypatch):
 
 
 def test_the_cli_ledger_folds_the_spawn_line_the_hook_wrote(tmp_path,
-                                                            monkeypatch):
+                                                            monkeypatch, home):
     """The symptom, end to end: the line the hook appends is the line the
     CLI's ledger fold reads, under the same redirect."""
     lib = _lib()
@@ -93,6 +111,7 @@ def test_the_cli_ledger_folds_the_spawn_line_the_hook_wrote(tmp_path,
     lib.log(SPAWN)
     text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
     assert "S-1" in ledger._session_ledger(text, time.time())
+    assert not (home / ".daimon").exists()
 
 
 def test_hook_and_cli_agree_over_the_whole_probe_table(tmp_path, monkeypatch):
