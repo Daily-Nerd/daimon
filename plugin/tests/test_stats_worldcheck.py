@@ -144,7 +144,8 @@ def test_the_text_names_its_units_and_its_window(proj, capsys):
 
 def test_stats_json_carries_worldcheck_at_the_tail(proj, capsys):
     payload = json.loads(_stats(capsys, "--json"))
-    assert list(payload)[-3:] == ["checks", "stitching", "worldcheck"]
+    # #1237 appended `roles` behind it under the same rule.
+    assert list(payload)[-4:] == ["checks", "stitching", "worldcheck", "roles"]
 
 
 def test_the_window_closes_at_now_so_a_future_stamp_is_outside_it(proj, capsys):

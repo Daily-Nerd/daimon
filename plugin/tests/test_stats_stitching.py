@@ -251,11 +251,37 @@ def test_one_item_carried_across_sessions_counts_once(project, capsys):
 # ---- the --json contract --------------------------------------------------
 
 
+@pytest.mark.parametrize("fresh, later", [("S1", "S2"), ("S9", "S2")])
+def test_the_count_does_not_depend_on_which_session_file_sorts_first(
+        fresh, later, project, capsys):
+    """Session files sort by id, not by time, so a carried copy can be
+    walked before the fresh item it was copied from (#1237 round 2 found a
+    fold that lost the fresh quote that way). The carry shape keeps the id
+    and the frozen receipt and stamps carried_from; whichever copy the walk
+    yields first, the verdict it reads is the same one, so the rate is
+    order-independent here by construction. Pinned so the shared walk
+    cannot regress either fold."""
+    first = _write(fresh, [_item("stitched claim", _STITCHED_QUOTE)], project)
+    carried = json.loads(json.dumps(
+        first["working_context"]["open_questions"][0]))
+    carried["carried_from"] = fresh
+    second = _checkpoint(later, [carried])
+    assert store.write_checkpoint(later, second, project_dir=project,
+                                  writer=Writer.HUMAN)
+
+    s = _stats_json(capsys)["stitching"]
+    assert s["verified"] == 1
+    assert s["measured"] == 1
+    assert s["stitched"] == 1
+    assert s["rate_pct"] == 100.0
+
+
 def test_stats_json_carries_stitching_at_the_tail(project, capsys):
     """Key order is part of the --json contract, so a new fact is appended."""
     payload = _stats_json(capsys)
-    # #1184 appended `worldcheck` behind it under the same rule.
-    assert list(payload)[-3:] == ["checks", "stitching", "worldcheck"]
+    # #1184 appended `worldcheck` behind it under the same rule, and #1237
+    # appended `roles` behind that.
+    assert list(payload)[-4:] == ["checks", "stitching", "worldcheck", "roles"]
     assert list(payload["stitching"]) == [
         "verified", "measured", "stitched", "cross_message", "cross_role",
         "unmeasured", "rate_pct"]
