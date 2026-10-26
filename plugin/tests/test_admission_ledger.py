@@ -103,7 +103,7 @@ def test_the_hook_library_fold_records_both_the_stem_and_the_group_key(
     log.write_text("\n".join([
         _spawn("kimi-real", "/k/kimi-real/wire.jsonl", host="kimi-stop"),
         _refusal("/k/kimi-real/wire.jsonl", session="kimi-real")]) + "\n")
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path)
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path))
     assert lib._failed_session_stems() == {"wire", "kimi-real"}
 
 
@@ -112,7 +112,7 @@ def test_the_hook_library_still_reads_an_ordinary_error_line(tmp_path,
     lib = _hook_lib()
     (tmp_path / "serialize.log").write_text(
         "error: boom (transcript: /t/s-9.jsonl) after 3s\n")
-    monkeypatch.setattr(lib, "LOG_DIR", tmp_path)
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path))
     assert lib._failed_session_stems() == {"s-9"}
 
 

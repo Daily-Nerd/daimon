@@ -291,7 +291,7 @@ become default.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Log directory. `serialize-crash.log` honors this on both sides — the hooks that spawn the serialize child read it (process env and this file) exactly as the CLI does, because `daimon forget` deletes that file and writer and deleter must agree on where it is. `serialize.log` is the exception: the hooks still write it to `~/.daimon/logs` unconditionally, and this override only moves where the CLI (and tests) look for it. |
+| `DAIMON_LOG_DIR` | `~/.daimon/logs` | Log directory. The hooks resolve it exactly as the CLI does (process env, then this file), so `serialize.log`, the heartbeats and `serialize-crash.log` move together: what a hook writes under a redirected directory is what `daimon status`, `daimon heal` and `daimon forget` read and purge there, and nothing lands under the default. |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where host transcripts live (`<slug>/<session>.jsonl`). Read-only — the quote-reverification audit reads them to re-check stored quotes against their source. |
 
 ## LLM backend

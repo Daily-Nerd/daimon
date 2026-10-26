@@ -33,11 +33,20 @@ VENV_BIN = Path(sys.executable).parent
 SESSION = "session_8a1593d9-376b-43d3-abc9-5796eb848fa3"
 
 
+def _home_env(home: Path) -> dict:
+    """HOME for the script under test, paired with the log dir the hooks
+    resolve through DAIMON_LOG_DIR exactly as the CLI does (#1234). The
+    suite-wide isolation points that variable under tmp_path, which is not
+    this HOME, so an inherited value alone would send the hook's ledger
+    where `_log(home)` never looks."""
+    return {"HOME": str(home), "DAIMON_LOG_DIR": str(home / ".daimon" / "logs")}
+
+
 def _run(script: Path, payload, home, extra_env=None):
     env = {
         **os.environ,
         "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
-        "HOME": str(home),
+        **_home_env(home),
     }
     env.pop("KIMI_CODE_HOME", None)
     if extra_env:
@@ -433,7 +442,7 @@ def _run_argv(script: Path, argv, payload, home, extra_env=None):
     env = {
         **os.environ,
         "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}",
-        "HOME": str(home),
+        **_home_env(home),
     }
     env.pop("KIMI_CODE_HOME", None)
     if extra_env:
@@ -532,7 +541,7 @@ def _run_under_wrapper(home, wrapper, argv_tail, payload, extra_env=None):
     env = {
         **os.environ,
         "PATH": f"{home / 'fakebin'}{os.pathsep}{os.environ.get('PATH', '')}",
-        "HOME": str(home),
+        **_home_env(home),
         "KIMI_HOOK_UNDER_TEST": str(PROMPT_HOOK),
     }
     env.pop("KIMI_CODE_HOME", None)
