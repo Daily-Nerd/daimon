@@ -1484,8 +1484,8 @@ def test_render_stats_plain_omits_events_when_absent(capsys):
 
 def _cost_block(**kv):
     base = {"window_days": 14, "captures": 4, "reported": 2, "unreported": 1,
-            "unstamped": 1, "prompt_tokens": 300, "completion_tokens": 30,
-            "total_tokens": 330, "cost_usd": None}
+            "unstamped": 1, "no_model": 1, "prompt_tokens": 300,
+            "completion_tokens": 30, "total_tokens": 330, "cost_usd": None}
     base.update(kv)
     return base
 
@@ -1496,7 +1496,8 @@ def test_render_stats_plain_tokens_line(capsys):
     render.render_stats(data)
     out = capsys.readouterr().out
     assert ("  tokens (last 14d): 330 across 2 of 4 captures "
-            "(prompt 300, completion 30); reported nothing: 1, pre-stamp: 1\n") in out
+            "(prompt 300, completion 30); reported nothing: 1, pre-stamp: 1, "
+            "no model ran: 1\n") in out
 
 
 def test_render_stats_plain_tokens_line_names_dollars_when_every_capture_priced(capsys):
@@ -1504,15 +1505,29 @@ def test_render_stats_plain_tokens_line_names_dollars_when_every_capture_priced(
     data["store"]["cost"] = _cost_block(cost_usd=0.75)
     render.render_stats(data)
     out = capsys.readouterr().out
-    assert "reported nothing: 1, pre-stamp: 1; cost $0.75\n" in out
+    assert "pre-stamp: 1, no model ran: 1; cost $0.75\n" in out
+
+
+def test_render_stats_plain_tokens_line_all_unstamped_prints_no_dollars(capsys):
+    # The first stats after upgrading: nobody reported a cost, so no figure.
+    data = _stats_sample()
+    data["store"]["cost"] = _cost_block(captures=3, reported=0, unreported=0,
+                                        unstamped=3, no_model=0, prompt_tokens=0,
+                                        completion_tokens=0, total_tokens=0,
+                                        cost_usd=None)
+    render.render_stats(data)
+    out = capsys.readouterr().out
+    assert ("  tokens (last 14d): 0 across 0 of 3 captures (prompt 0, completion 0); "
+            "reported nothing: 0, pre-stamp: 3, no model ran: 0\n") in out
+    assert "cost $" not in out
 
 
 def test_render_stats_plain_tokens_line_with_no_captures_in_window(capsys):
     data = _stats_empty()
     data["store"]["cost"] = _cost_block(captures=0, reported=0, unreported=0,
-                                        unstamped=0, prompt_tokens=0,
+                                        unstamped=0, no_model=0, prompt_tokens=0,
                                         completion_tokens=0, total_tokens=0,
-                                        cost_usd=0.0)
+                                        cost_usd=None)
     render.render_stats(data)
     out = capsys.readouterr().out
     assert "  tokens (last 14d): no captures in window\n" in out

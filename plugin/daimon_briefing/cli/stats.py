@@ -61,20 +61,26 @@ def _stats_store(now=None) -> dict:
 
     #1235: the same pass sums `capture_cost` over the checkpoints created in
     the last _CAPTURE_WINDOW_DAYS (the capture line's own window), from the
-    checkpoints only. Three honest buckets inside the window: `reported`
+    checkpoints only. Four honest buckets inside the window: `reported`
     (counts present), `unreported` (the stamp is there and every count is
-    null, the backend said nothing), `unstamped` (no stamp at all, written
-    before #1235). Token sums cover the reported captures; `cost_usd` sums
-    only when every reported capture was priced, else None, because a
-    partial dollar sum is a floor wearing a total's clothes."""
+    null, the backend said nothing), `unstamped` (an extractor ran, since
+    the record carries `extraction_version` (#514), but no stamp: written
+    before #1235, or the stamp failed open), and `no_model` (no
+    `extraction_version` and no stamp: a `write-checkpoint` record, where no
+    daimon model call happened and nothing was measured). `captures` counts
+    the first three, the extractor runs. Token sums cover the reported
+    captures; `cost_usd` is None until at least one capture reported a
+    dollar figure, and None again if any reporting capture lacks one,
+    because a partial dollar sum is a floor wearing a total's clothes."""
     out: dict = {"checkpoints": 0, "project_buckets": 0, "items_by_kind": {},
                  "items_verbatim": 0, "items_inferred": 0,
                  "items_untagged": 0, "items_carried": 0,
                  "format_versions": {}, "extraction_versions": {},
                  "cost": {"window_days": _CAPTURE_WINDOW_DAYS, "captures": 0,
                           "reported": 0, "unreported": 0, "unstamped": 0,
+                          "no_model": 0,
                           "prompt_tokens": 0, "completion_tokens": 0,
-                          "total_tokens": 0, "cost_usd": 0.0}}
+                          "total_tokens": 0, "cost_usd": None}}
     cutoff = ((now or datetime.now(timezone.utc))
               - timedelta(days=_CAPTURE_WINDOW_DAYS))
     priced = True
@@ -95,19 +101,24 @@ def _stats_store(now=None) -> dict:
         created = _parse_stamp(str(cp.get("created") or ""))
         if created is not None and created >= cutoff:
             cost = out["cost"]
-            cost["captures"] += 1
             stamp = cp.get("capture_cost")
             if not isinstance(stamp, dict):
-                cost["unstamped"] += 1
+                if cp.get("extraction_version") is None:
+                    cost["no_model"] += 1
+                else:
+                    cost["captures"] += 1
+                    cost["unstamped"] += 1
             elif not isinstance(stamp.get("total_tokens"), int):
+                cost["captures"] += 1
                 cost["unreported"] += 1
             else:
+                cost["captures"] += 1
                 cost["reported"] += 1
                 for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                     cost[key] += stamp.get(key) or 0
                 usd = stamp.get("cost_usd")
                 if isinstance(usd, (int, float)) and not isinstance(usd, bool):
-                    cost["cost_usd"] += usd
+                    cost["cost_usd"] = (cost["cost_usd"] or 0.0) + usd
                 else:
                     priced = False
         # #514: corpus generation composition — absent stamps count as

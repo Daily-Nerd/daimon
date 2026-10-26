@@ -2302,19 +2302,20 @@ def _generation_lines(s: dict) -> list[str]:
 def _tokens_line(s: dict) -> tuple[str, str] | None:
     """#1235: (label, value) for the tokens line, shared by the plain and
     rich stats renderers; None when the store block carries no cost summary
-    (a caller-built dict). The dollar figure is appended only when the
-    aggregate was priced for every reporting capture, since a partial sum
-    would read as the total."""
+    (a caller-built dict). The dollar figure is appended only when the stats
+    fold could price the window: at least one capture reported a cost and
+    every reporting capture did (stats hands None otherwise), since a
+    partial sum, or a zero nobody reported, would read as the total."""
     c = s.get("cost")
     if not c:
         return None
     label = f"tokens (last {c['window_days']}d)"
-    if not c["captures"]:
+    if not c["captures"] and not c["no_model"]:
         return label, "no captures in window"
     value = (f"{c['total_tokens']} across {c['reported']} of {c['captures']} "
              f"captures (prompt {c['prompt_tokens']}, completion "
              f"{c['completion_tokens']}); reported nothing: {c['unreported']}, "
-             f"pre-stamp: {c['unstamped']}")
+             f"pre-stamp: {c['unstamped']}, no model ran: {c['no_model']}")
     if c["cost_usd"] is not None:
         value += f"; cost ${c['cost_usd']:.2f}"
     return label, value
