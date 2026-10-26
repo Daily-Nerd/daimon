@@ -281,7 +281,10 @@ def _ledger_rows(project_dir, slug, *, masked=True, snap=None) -> list:
             waiting_since=record.get("created_at") or "",
             commands=[
                 ("ratify", f"daimon {family} ratify {rid}"),
-                ("retire" if ruling else "overturn",
+                # #1238: the label names the outcome, not the verb. Every
+                # record here is a candidate, so turning it down writes
+                # reason "rejected" whichever polarity's verb does it.
+                ("reject",
                  f"daimon {family} "
                  f"{'retire' if ruling else 'overturn'} {rid}"),
             ]),

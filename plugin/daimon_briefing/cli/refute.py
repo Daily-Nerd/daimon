@@ -149,7 +149,7 @@ def _cmd_refute_overturn(args) -> int:
     try:
         event = refutations.overturn(
             args.refutation_id, channel=_refute_channel(args),
-            evidence=args.evidence,
+            evidence=args.evidence or (),
             note=args.note or "", project_dir=project)
     except refutations.RefutationError as exc:
         print(_refusal_message("refutation not overturned", exc))
@@ -350,12 +350,17 @@ def register(sub, fmt) -> None:
 
     pr_overturn = refute_sub.add_parser(
         "overturn",
-        help="cite evidence against the verdict; agent calls propose, humans deactivate")
+        help="end a refutation: a candidate as rejected, an active one as "
+             "retired; agent calls propose, humans deactivate")
     pr_overturn.add_argument("refutation_id", help="exact r-… id")
+    # #1238: the module decides whether evidence is owed (an active verdict
+    # needs a source against it, a candidate does not); the flag is optional
+    # here so the CLI cannot demand a citation the write path does not.
     pr_overturn.add_argument(
-        "--evidence", action="append", required=True, metavar="SOURCE",
-        help="evidence cited against the active verdict; recorded, not "
-             "verified; repeatable")
+        "--evidence", action="append", default=None, metavar="SOURCE",
+        help="evidence cited against the verdict; required for an active "
+             "refutation, not for a candidate; recorded, not verified; "
+             "repeatable")
     pr_overturn.add_argument("--note", help="optional explanation")
     pr_overturn.add_argument("--by", choices=["agent"], default=None)
     pr_overturn.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")

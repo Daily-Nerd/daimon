@@ -67,3 +67,13 @@ def test_ruling_row_badges_a_withheld_enforcement_value(srv):
     row = js.split("renderRulingRow", 1)[1].split("renderRefutationsView", 1)[0]
     assert "as_ratified === false" in row
     assert "not as ratified" in row
+
+
+def test_ruling_marker_reads_the_overturn_reason_and_falls_back_to_retired(srv):
+    # #1238: a candidate turned down reads "rejected"; a row written before
+    # the reason existed keeps "retired".
+    _, _, body = _get(srv + "/static/render.js")
+    js = body.decode()
+    marker = js.split("function rulingMarker", 1)[1].split("export function", 1)[0]
+    assert "overturn_reason" in marker
+    assert '"retired"' in marker

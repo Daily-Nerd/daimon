@@ -826,15 +826,20 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   // The marker glyphs are the CLI's own (cli.py _print_refutation): ✗ active,
   // × overturned, ? candidate. The lane renders refute list; it must not
   // invent a second vocabulary, so the whole bracket reads exactly as the CLI
-  // prints it: [? candidate · agent-proposed].
+  // prints it: [? candidate · agent-proposed]. An overturned record reads
+  // the reason its row recorded (#1238): "rejected" for a candidate turned
+  // down, "retired" for an active one that stopped applying; a row written
+  // before the reason existed keeps "overturned".
   export const REFUTATION_MARKS = { active: "✗", overturned: "×", candidate: "?" };
   export function refutationMarker(r) {
     var state = (r && r.state) || "candidate";
     var mark = Object.prototype.hasOwnProperty.call(REFUTATION_MARKS, state)
       ? REFUTATION_MARKS[state] : "?";
+    var shown = state === "overturned"
+      ? ((r && r.overturn_reason) || "overturned") : state;
     var activation = (r && r.activation) ||
       ((r && r.asserted_by) || "?") + "-proposed";
-    return "[" + mark + " " + state + " · " + activation + "]";
+    return "[" + mark + " " + shown + " · " + activation + "]";
   }
   function renderRefutationAnchors(anchors) {
     if (!anchors || !anchors.length) return "";
@@ -858,8 +863,10 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
   }
   // ---- rulings lane (#693 PR 2): the ledger's positive polarity ----
   // Same bracket shape as the refutations lane, the CLI's own vocabulary
-  // (cli.py _print_ruling): § active, × overturned — shown as "retired" —
-  // ? candidate; agent-authored text stays labeled after human ratification.
+  // (cli.py _print_ruling): § active, × overturned, ? candidate. An
+  // overturned ruling is shown as the reason the row recorded, "rejected"
+  // or "retired", and as "retired" when the row predates the reason
+  // (#1238); agent-authored text stays labeled after human ratification.
   // The row renders the VERDICT (the rule text), never the subject: a ruling
   // shown under a refutation's wording is the exact inversion #693 prevents.
   export const RULING_MARKS = { active: "§", overturned: "×", candidate: "?" };
@@ -867,7 +874,8 @@ export const ACT_ITEM_ID_RE = /^[a-z]-[0-9a-f]{6,40}(-\d+)?$/;   // mirror of re
     var state = (r && r.state) || "candidate";
     var mark = Object.prototype.hasOwnProperty.call(RULING_MARKS, state)
       ? RULING_MARKS[state] : "?";
-    var shown = state === "overturned" ? "retired" : state;
+    var shown = state === "overturned"
+      ? ((r && r.overturn_reason) || "retired") : state;
     var activation = (r && r.activation) ||
       ((r && r.asserted_by) || "?") + "-proposed";
     var authored = r && r.text_authored_by;
