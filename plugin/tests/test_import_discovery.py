@@ -342,6 +342,34 @@ def test_a_rollout_moved_to_archived_sessions_plans_once_not_as_a_refusal(
     assert importer.discover(PROJECT, resolver).paths == [live]
 
 
+# ---- an undecodable transcript inside the window is a named skip -----------------
+
+
+def test_an_undecodable_transcript_in_the_window_is_a_named_skip_not_a_traceback(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    """The cwd reader streams and stops before the damage, so the file is
+    discovered; the planner then names it as unreadable, beside a missing
+    or permission-denied file, and the other sessions run."""
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    _claude(home, "S-fine", STAMPS[0])
+    cut = _slug_dir(home) / "S-cut.jsonl"
+    rows = "\n".join(json.dumps(r) for r in _rows(STAMPS[1], 4))
+    cut.write_bytes(rows.encode() + b"\n" + b'{"cwd": "/p/y\xe2\x80')
+    os.utime(cut, (OLD, OLD))
+    assert cli.main(_argv()) == 0
+    out = capsys.readouterr().out
+    assert "skipped S-cut: transcript unreadable" in out
+    assert _planned(out) == ["S-fine"]
+    assert "imported 1 of 1" in out
+    assert len(chat.calls) == 1
+    # Path-given, the same file is the same named skip.
+    capsys.readouterr()
+    assert cli.main(_argv("--transcript", str(cut), "--plan")) == 0
+    assert "skipped S-cut: transcript unreadable" in capsys.readouterr().out
+
+
 # ---- the flags ---------------------------------------------------------------------------
 
 

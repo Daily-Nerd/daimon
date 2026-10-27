@@ -326,9 +326,12 @@ def plan_import(
             continue
         try:
             detailed = transcript.from_file_detailed(path)
-        except OSError:
-            # Stat succeeded, the read did not: permissions, or a file gone
-            # between the two. Named, and nothing was spent.
+        except (OSError, UnicodeDecodeError):
+            # Stat succeeded, the read did not: permissions, a file gone
+            # between the two, or bytes that are not UTF-8 (a tail cut
+            # mid-character by a crashed host). The capture reader stays
+            # strict on purpose; here the file is one more named skip, and
+            # nothing was spent.
             skipped.append(Skipped(sid, path, "transcript unreadable"))
             continue
         messages = detailed["messages"]
