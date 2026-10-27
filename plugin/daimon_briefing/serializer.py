@@ -531,6 +531,38 @@ def chunk_transcript(text: str, chunk_lines: int, overlap_lines: int) -> list[st
     return chunks
 
 
+def merge_calls(n_partials: int, k: int) -> int:
+    """The model calls `_merge_partials` makes to fold `n_partials` into one
+    when every group holds `k`: at each level the partials are grouped in
+    consecutive runs of `k`, every group of two or more is one call, and a
+    trailing singleton passes through free. The same arithmetic `_plan_waves`
+    uses to size the deadline (#314), kept as a count here because the plan
+    `daimon import` prints (#1236) needs calls, not waves. The #1220 budget
+    rule can shrink a group below `k` on a chain with a tight prompt limit,
+    which adds levels; that is why the plan says "about"."""
+    calls = 0
+    m = n_partials
+    while m > 1:
+        n_groups = (m + k - 1) // k
+        calls += n_groups - (1 if m % k == 1 else 0)
+        m = n_groups
+    return calls
+
+
+def planned_calls(messages) -> int:
+    """How many model calls a serialize of `messages` makes when every call
+    succeeds (#1236): one per chunk of the rendered transcript plus the merge
+    calls that fold the chunks. Renders the same text and reads the same
+    knobs `serialize_strict` does, so the count `daimon import` prints before
+    any spend is the pipeline's own, not a second estimate. A validation
+    retry (#118), a rescue on the fallback backend (#475) and a chunk-cache
+    hit (#48) each move the real number by a call or more; none is
+    predictable before the run."""
+    text = _render_transcript(extraction_messages(messages))
+    n = len(chunk_transcript(text, config.chunk_lines(), config.chunk_overlap()))
+    return n + merge_calls(n, config.merge_group_size())
+
+
 def _message_text(m) -> str:
     content = m.get("content", "")
     if isinstance(content, list):  # tool/multipart content -> flatten text parts
