@@ -274,6 +274,39 @@ def test_the_note_sits_after_the_degrade_note(monkeypatch, capsys):
     assert out.index("RECEIPT UNVERIFIED") < out.index("Imported history")
 
 
+# ---- an imported body with nothing to show gets no note, on every surface ---
+
+
+def _empty_import(sid="S-imp-empty"):
+    return {
+        "session_id": sid, "created": NEWEST, "schema_version": 3,
+        "capture_door": "import",
+        "working_context": {"active_topic": {"text": "", "trust": "inferred"},
+                            "open_questions": [], "recent_decisions": []},
+        "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": [],
+                               "contradictions_flagged": []},
+    }
+
+
+def test_an_empty_imported_body_gets_no_note_on_any_surface(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import hooks
+    _write(_empty_import())
+    got = _brief()
+    assert got.state == "empty"
+    assert got.notes == ()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    monkeypatch.setattr("time.time", lambda: NOW)
+    assert cli.main(["brief"]) == 0
+    out = capsys.readouterr().out
+    assert "No checkpoint yet" in out
+    assert "Imported history" not in out
+    ctx = hooks.pre_llm_call(session_id="S-n", user_message="hi",
+                             conversation_history=[], is_first_turn=True,
+                             model="m", platform="cli")
+    assert "Imported history" not in (ctx or {}).get("context", "")
+
+
 # ---- the qualifier comes from the code-owned read only ----------------------
 
 

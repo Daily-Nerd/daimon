@@ -901,7 +901,10 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         checkpoint = {k: v for k, v in checkpoint.items()
                       if k != _IMPORT_AGE_KEY}
         imported = view.imported(opened) if stamps else None
-        if imported is not None:
+        if imported is not None and build(checkpoint, now) is not None:
+            # A body with nothing worth surfacing renders the no-checkpoint
+            # orientation on every surface; the note describes a body the
+            # reader is shown, so it is set only once `build` has one.
             # The view said the body is imported history. The age is read
             # once here, on the clock the stale marks use, stamped for the
             # active topic qualifier, and worded into `import_note`, which
