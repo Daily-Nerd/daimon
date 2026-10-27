@@ -67,6 +67,6 @@ No es solo elogio. El mismo resumen nombra la mitad débil: "The retrieval half 
    hasta cerrarse, y envejecen a la vista en lugar de mentir para siempre.
 
 **Empieza por el [Inicio rápido](getting-started/quickstart.md)** — de la
-instalación al primer briefing en cinco pasos. La configuración por host vive
+instalación al primer briefing en seis pasos. La configuración por host vive
 en [Hosts](hosts/index.md); el sistema de confianza se explica en
 [Clases de confianza](concepts/trust-classes.md).
