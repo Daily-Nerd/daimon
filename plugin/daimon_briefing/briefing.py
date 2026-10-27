@@ -893,6 +893,13 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
     notes = snap.notes()
     note: str | None = None
     if isinstance(checkpoint, dict):
+        # #1236: the age stamp is a renderer mark this function owns. A copy
+        # planted on disk under the same name is dropped here, for every
+        # body, so the qualifier can only come from the view's own reading
+        # of the code-owned door (the serializer applies the same rule to
+        # `capture_door` itself).
+        checkpoint = {k: v for k, v in checkpoint.items()
+                      if k != _IMPORT_AGE_KEY}
         imported = view.imported(opened) if stamps else None
         if imported is not None:
             # The view said the body is imported history. The age is read

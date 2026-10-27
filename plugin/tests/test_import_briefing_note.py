@@ -274,6 +274,18 @@ def test_the_note_sits_after_the_degrade_note(monkeypatch, capsys):
     assert out.index("RECEIPT UNVERIFIED") < out.index("Imported history")
 
 
+# ---- the qualifier comes from the code-owned read only ----------------------
+
+
+def test_a_planted_age_key_on_disk_turns_nothing_on(tmp_checkpoint_dir):
+    live = _checkpoint("S-live", NEWEST)
+    live["_import_age_days"] = 3.0
+    _write(live)
+    text = _brief().text
+    assert "Imported history" not in text
+    assert "Active topic: the release cadence" in text
+
+
 # ---- the CLI renders, plain and rich ----------------------------------------
 
 
