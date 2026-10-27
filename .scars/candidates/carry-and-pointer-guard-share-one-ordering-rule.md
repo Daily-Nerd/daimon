@@ -24,7 +24,7 @@ status: candidate
 `store.write_checkpoint` guards each `latest` pointer with `_pointer_regresses`
 (#123): a checkpoint whose `created` is older than the pointer's writes its
 per-session file and leaves `latest` alone. `capture.carry_forward` runs BEFORE
-that write and reads the same latest as its carry source. Until fe64094 it had
+that write and reads the same latest as its carry source. Until aabb447 it had
 no ordering check at all, so the guard and the carry disagreed about the same
 checkpoint: the guard said "this is history, keep it off latest" while carry
 folded the newer latest into it, gave it items with a `first_seen` after its
