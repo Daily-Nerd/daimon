@@ -1023,6 +1023,13 @@ def _outstanding_lines(outstanding) -> list:
                     f"  - {f['sid']}  spawned {age} ago, no result "
                     f"(hung/killed) — run `daimon heal`"
                 )
+            elif f["class"] == "import":
+                # #1236: an import attempt that never reported. Its resume
+                # is `daimon import`, never heal.
+                lines.append(
+                    f"  - {f['sid']}  import started {age} ago, no result "
+                    f"(hung/killed) — re-run `daimon import` to resume"
+                )
             else:
                 lines.append(
                     f"  - {f['sid']}  spawned {age} ago, no result "
@@ -1044,6 +1051,12 @@ def _outstanding_lines(outstanding) -> list:
             lines.append(f"  - {f['sid']}  error {age} ago — project unknown, "
                          "heal will not route it to the global dir "
                          "(`daimon serialize <transcript> --project <dir>`)")
+        elif f["class"] == "import":
+            # #1236: a failed import attempt. heal never retries it; the
+            # import's own resume skips done sessions and retries this one.
+            lines.append(f"  - {f['sid']}  import failed {age} ago — "
+                         "re-run `daimon import` to resume (heal never "
+                         "retries an import)")
         elif f["class"] == "admission-refused":
             # D10.4: heal holds this back until the ledger reads again, so
             # "run heal" alone would send the reader in a circle.

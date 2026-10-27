@@ -34,8 +34,9 @@ the notes are prose. A successful Hermes capture writes no log line, so pass
 Heal (`heal_plan`, `heal_all`, #1179). `heal_plan` is a pure read: the sessions
 a heal would repair and the ones it cannot, each skip with a stable `reason`
 (`retry-exhausted`, `unrecoverable`, `hung`, `admission-refused`, `repairing`,
-`project-unknown`),
-the same codes `daimon status` reports. It never writes and never reaps. The
+`project-unknown`, `import`),
+the same codes `daimon status` reports. An `import` skip is an attempt that
+`daimon import` opened; heal never retries one, that command's own resume does. It never writes and never reaps. The
 scope is the project of `project_dir`; `sessions=[...]` narrows it (any name a
 session goes by works, as for `serializes`); `everywhere=True` is machine-wide.
 A call that names none of the three plans nothing and says so.

@@ -54,7 +54,7 @@ class HealTarget(NamedTuple):
 
 class HealSkip(NamedTuple):
     session_id: str
-    reason: str   # "retry-exhausted" | "unrecoverable" | "hung" | "admission-refused" | "repairing" | "project-unknown"
+    reason: str   # "retry-exhausted" | "unrecoverable" | "hung" | "admission-refused" | "repairing" | "project-unknown" | "import"
     detail: str   # the human wording `daimon heal` prints
     age_str: str = ""
 

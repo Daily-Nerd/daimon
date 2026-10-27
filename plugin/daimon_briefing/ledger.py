@@ -82,20 +82,58 @@ def _append_retry_log(session_id: str, prior: str, project: str | None,
         pass
 
 
+# #1236: the spawn-line reason of an import attempt. `daimon import` writes it
+# through write_import_marker, the fold reads it back as `reason`, and the
+# classifier keeps any attempt carrying it away from heal.
+IMPORT_REASON = "import"
+
+
+def write_import_marker(session_id: str, project: str | None,
+                        transcript: str) -> None:
+    """Mark an import attempt in serialize.log BEFORE its serialize (#1236).
+
+    The line is a timestamped spawn-style marker in the shape every hook
+    spawn line and the heal retry marker share (`project` in the first
+    parens, `(transcript: <path>)` last), so an import that is killed or
+    hangs shows up in `daimon status` like any other attempt, and a resume
+    can tell an attempted session from one never tried. The reason is what
+    sets it apart: the classifier never hands an attempt with `reason:
+    import` to heal. Resume belongs to `daimon import`, which re-reads its
+    own plan; the one-retry heal that every session start spawns would
+    otherwise spend a model call the user never bounded.
+
+    Best-effort like the retry marker: an unwritable log never fails the
+    import, it only loses the marker."""
+    try:
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} import: started serialize for {session_id} "
+                    f"(reason: {IMPORT_REASON}, project: {project or '?'}) "
+                    f"(transcript: {transcript})\n")
+    except OSError:
+        pass
+
+
 # Hook spawn line: `<iso-stamp> <hook>: spawned serialize for <id> (...)`,
 # where <hook> is `session-end` (Claude), `codex-stop` (Codex), or
 # `gemini-session-end` (Gemini — must be listed BEFORE a bare `session-end`
 # would substring-match it; the alternation is exact so order only matters for
 # readability). The #26 heal retry marker (`<iso> session-start: retry
 # serialize for <id> (...)`) is also a spawn for status purposes, so both the
-# host and the verb are alternations. A new host adapter MUST add its prefix
-# here or its serializes are invisible to status/hung detection/heal.
+# host and the verb are alternations, and so is the #1236 import marker
+# (`<iso> import: started serialize for <id> (...)`, write_import_marker).
+# A new host adapter MUST add its prefix here or its serializes are invisible
+# to status/hung detection/heal. There is no twin of this regex in
+# hook/_daimon_hook_lib.py: the hook library writes spawn lines and reads
+# only result lines (_failed_session_stems), so this is the one reader.
 _SPAWN_RE = re.compile(
     r"^(\S+) (?:gemini-session-end|codex-session-end|kimi-session-end|"
     r"session-end|codex-stop|kimi-stop|"
     r"windsurf-cascade|"
-    r"windsurf-finalizer|session-start): "
-    r"(?:spawned|retry) serialize for (\S+)"
+    r"windsurf-finalizer|session-start|import): "
+    r"(?:spawned|retry|started) serialize for (\S+)"
 )
 # Child stdout/stderr land in the log RAW (no timestamp): the serialize
 # success/error lines printed by _cmd_serialize above.
@@ -178,6 +216,13 @@ _LEDGER_SKIP_RE = re.compile(r"^skipped serialize for (\S+):")
 # host-declared speaker line; summed lifetime by _stats_capture.
 _SPEAKER_LINE_RE = re.compile(r"speaker line: (\d+) user row\(s\) attributed")
 _LEDGER_PROJECT_RE = re.compile(r"project: (.*?)\)")
+# #1236: the reason a spawn-style line opens its attempt with: `exit` and the
+# like from the hooks, `heal-retry` from the retry marker, `catch-up-orphan`
+# from the sweep, `import` from write_import_marker. Read as a routing fact
+# because the classifier needs it for the same reason it needs `project`: it
+# decides who may repair the attempt. Lines without the group (the Windsurf
+# adapters) answer None, which classifies exactly as before.
+_LEDGER_REASON_RE = re.compile(r"\(reason: (.*?), project: ")
 # #28: hooks stamp the transcript path on the spawn line as a TRAILING group —
 # `... (reason: r, project: p) (transcript: <path>)` — so a child that crashes
 # before writing any result line still leaves a healable trail. Trailing-only
@@ -221,8 +266,9 @@ def _has_checkpoint(sid: str) -> bool:
 
 def _spawn_routing(line: str) -> dict:
     """The routing facts a spawn-style line carries: `project` (None for the
-    hooks' `?`) and `transcript`, each present only when the line has its group.
-    One reader for the fold and for the long-window pass that feeds it."""
+    hooks' `?`), `transcript` and `reason` (#1236), each present only when
+    the line has its group. One reader for the fold and for the long-window
+    pass that feeds it."""
     facts: dict = {}
     pm = _LEDGER_PROJECT_RE.search(line)
     if pm:
@@ -231,6 +277,9 @@ def _spawn_routing(line: str) -> dict:
     tm = _LEDGER_SPAWN_TRANSCRIPT_RE.search(line)
     if tm:
         facts["transcript"] = tm.group(1)
+    rm = _LEDGER_REASON_RE.search(line)
+    if rm:
+        facts["reason"] = rm.group(1).strip() or None
     return facts
 
 
@@ -274,7 +323,8 @@ def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
         return sessions.setdefault(sid, {
             "spawned": False, "spawn_ts": None, "spawn_age": None,
             "project": None, "result_kind": None, "result_line": None,
-            "transcript": None, "retried": False, **earlier.get(sid, {}),
+            "transcript": None, "retried": False, "reason": None,
+            **earlier.get(sid, {}),
         })
 
     for line in lines if tail is None else lines[-tail:]:
@@ -427,6 +477,23 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
         return (project_bound is None or e["project"] is not None
                 or not project_bound(e["transcript"]))
 
+    def settle(cls: str, e) -> str:
+        """The two reasons a `healable` verdict is withdrawn, applied in one
+        place for the error and the hung paths alike. `project-unknown`
+        (#1213): heal would file the checkpoint in the global dir.
+        `import` (#1236): the attempt was opened by `daimon import`, whose
+        own resume re-reads the plan; heal never spends a call on it, and
+        `force` does not change that, since force overrides the retry cap
+        and this is not a retry question. The fakes the classifier tests
+        build carry no `reason` key, hence the .get."""
+        if cls != "healable":
+            return cls
+        if e.get("reason") == IMPORT_REASON:
+            return "import"
+        if not routable(e):
+            return "project-unknown"
+        return cls
+
     out = []
     for sid, e in ledger.items():
         if e["result_kind"] in ("success", "skipped"):
@@ -459,8 +526,7 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                 cls = "healable"
             else:
                 cls = "unrecoverable"
-            if cls == "healable" and not routable(e):
-                cls = "project-unknown"
+            cls = settle(cls, e)
             item = {"sid": sid, "kind": "error", "class": cls, "age": age,
                     "age_str": _format_age(age) if age is not None else "unknown",
                     "transcript": e["transcript"], "project": e["project"],
@@ -499,11 +565,9 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             # one-retry-ever policy (#26) applies unchanged via `retried`,
             # unless `force` (#15) overrides it.
             t = e["transcript"]
-            cls = ("healable"
-                   if t and transcript_exists(t) and (not e["retried"] or force)
-                   else "hung")
-            if cls == "healable" and not routable(e):
-                cls = "project-unknown"
+            cls = settle("healable"
+                         if t and transcript_exists(t) and (not e["retried"] or force)
+                         else "hung", e)
             out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
                         "age_str": _format_age(age), "transcript": t,
                         "project": e["project"], "spawned": True, "line": None,
@@ -696,6 +760,8 @@ _HEAL_SKIP_REASON = {
     "project-unknown": ("project unknown for a transcript filed under a project "
                         "— would be checkpointed to the global dir; re-run "
                         "'daimon serialize <transcript> --project <dir>'"),
+    "import": ("an import attempt; heal never retries one. Re-run "
+               "'daimon import' to resume, done sessions are skipped for free"),
 }
 
 
