@@ -22,8 +22,9 @@ the bounded first fill in
 [Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions).
 An `automatic` host is discovered from `--project` alone. A `path-given` host
 goes in by `--transcript`, because nothing in its file names the project. An
-`unsupported` host has no transcript file daimon can read; Hermes, which has
-no page here, sits on that side with Gemini CLI.
+`unsupported` host has no transcript root daimon registers, so import reaches
+it neither way; Hermes, which has no page here, sits on that side with Gemini
+CLI.
 
 ## Three moving parts
 

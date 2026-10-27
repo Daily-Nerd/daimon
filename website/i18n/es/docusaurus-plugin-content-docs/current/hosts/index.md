@@ -20,10 +20,11 @@ profundidad del soporte varía según los eventos de hook que cada host expone.
 La columna Importación es lo que `daimon import` hace con las sesiones pasadas
 de un host, el primer llenado acotado de
 [Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas).
-Un host `automática` se descubre solo con `--project`. Un host `por ruta`
-entra por `--transcript`, porque nada en su archivo nombra el proyecto. Un host
-`no soportada` no tiene archivo de transcripción que daimon pueda leer; Hermes,
-que no tiene página acá, está de ese lado junto con Gemini CLI.
+Un host marcado «automática» se descubre solo con `--project`. Uno marcado
+«por ruta» entra por `--transcript`, porque nada en su archivo nombra el
+proyecto. Uno marcado «no soportada» no tiene una raíz de transcripciones que
+daimon registre, así que la importación no llega por ninguna vía; Hermes, que
+no tiene página acá, está de ese lado junto con Gemini CLI.
 
 ## Tres piezas móviles
 
