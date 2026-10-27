@@ -33,8 +33,15 @@ session that would still land behind the bucket's live latest is named in
 the plan as history only: the store keeps `latest` where it is and carries
 nothing for it (slice 1), and the user is told before spending.
 
-Discovery (which transcripts to consider when none are given) is the next
-slice and lands beside `plan_import` here, not in the CLI.
+Discovery (`discover`, slice 3) answers the question before that one: which
+transcripts to consider when none are given. It walks the automatic hosts'
+roots through the one lister over them (`provenance.SourceResolver.
+transcripts`), keeps the files whose recorded working directory resolves to
+the project, and returns them newest first by session end. The CLI cuts
+that list to `--sessions` and hands the window to `plan_import`, which
+applies every skip above INSIDE it: a skipped session stays in the window
+and nothing older takes its place, so the same command rebuilds the same
+plan (design 4(d)) and the user can read off which files a run touches.
 """
 
 import os
@@ -48,7 +55,90 @@ from . import capture, config, ledger, provenance, serializer, store, transcript
 # live capture for the same session id (design 4(a)).
 LIVE_WINDOW_SECONDS = 600
 
+# How many of the project's newest transcripts a discovery run considers
+# when `--sessions` is not given (design 4(a), maintainer decision 10-26).
+DEFAULT_SESSIONS = 5
+
 HISTORY_NOTE = "older than the latest capture, history only, nothing carried"
+
+
+class Capability(NamedTuple):
+    """One host's row in the import capability table (design section 7)."""
+
+    host: str
+    mode: str  # "automatic" | "path-given" | "unsupported"
+    reason: str  # "" for automatic; printed in the plan for the others
+
+
+def _capabilities() -> tuple:
+    """The table, derived from the two facts provenance already owns so it
+    cannot drift from them: a host with no registered root (`SourceResolver.
+    _roots` answers None: Gemini, Hermes) has no transcript file to find; a
+    host whose files record no project (`HOSTS_RECORDING_NO_PROJECT`:
+    Windsurf, and Kimi until a cwd field is measured in wire.jsonl) can only
+    be imported path-given, since nothing in the file ties it to a project;
+    every other host is discovered. The row order is the public host order.
+    `manual` is not a host a transcript comes from, so it has no row. This
+    is the single source for the plan's "not discovered" line and for the
+    docs capability table."""
+    nowhere = Path("/nonexistent")
+    probe = provenance.SourceResolver(
+        home=nowhere, codex_home=nowhere, claude_projects=nowhere, kimi_home=nowhere
+    )
+    rows = []
+    for host in ("claude-code", "codex", "windsurf", "kimi", "gemini", "hermes"):
+        if probe._roots(host) is None:
+            rows.append(Capability(host, "unsupported", "no transcript file"))
+        elif host in provenance.HOSTS_RECORDING_NO_PROJECT:
+            rows.append(
+                Capability(host, "path-given", "records no project, pass --transcript")
+            )
+        else:
+            rows.append(Capability(host, "automatic", ""))
+    return tuple(rows)
+
+
+CAPABILITIES = _capabilities()
+DISCOVERED_HOSTS = tuple(c.host for c in CAPABILITIES if c.mode == "automatic")
+
+
+def not_discovered_line() -> str:
+    """The one plan line naming the hosts discovery does not reach and why,
+    grouped by reason in table order."""
+    groups: dict = {}
+    for c in CAPABILITIES:
+        if c.mode != "automatic":
+            groups.setdefault(c.reason, []).append(c.host)
+    parts = [f"{', '.join(hosts)} ({reason})" for reason, hosts in groups.items()]
+    return "  not discovered: " + "; ".join(parts)
+
+
+def discover(project: str, resolver: provenance.SourceResolver) -> list:
+    """Every transcript of `project` under the automatic hosts' roots,
+    newest first by session end (`capture.session_end_stamp`: the last row
+    stamp, the mtime for a stamp-free file), ties by path.
+
+    The match is the working directory the transcript itself recorded
+    (`transcript.recorded_cwd`), resolved through the one project resolver
+    the CLI applied to `--project` (`config.resolve_project_dir`), and only
+    that: the Claude Code directory name is a lossy slug (a session run
+    from a subdirectory lands in another slug directory and still records
+    this project; two directories can share a slug), so it is never
+    consulted. A file that records no directory is not this project's as
+    far as discovery can tell and is left out. Reads nothing but the files
+    under the roots; spends nothing; never raises on a file it cannot read."""
+    found = []
+    for host in DISCOVERED_HOSTS:
+        for path in resolver.transcripts(host):
+            cwd = transcript.recorded_cwd(path)
+            if cwd is None:
+                continue
+            if config.resolve_project_dir(cwd, allow_slug=False) != project:
+                continue
+            found.append((capture.session_end_stamp(path), path))
+    found.sort(key=lambda pair: str(pair[1]))
+    found.sort(key=lambda pair: pair[0], reverse=True)  # stable: ties keep path order
+    return [path for _ended, path in found]
 
 
 class ImportRefused(Exception):
