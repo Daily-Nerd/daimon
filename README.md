@@ -81,7 +81,7 @@ npx skills add Daily-Nerd/daimon
 
 **Other hosts** (Windsurf, Codex, Kimi Code, Gemini CLI): per-host guides at [daily-nerd.github.io/daimon/docs/hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
 
-That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status`, which reports capture health honestly, including failures, skips, and crashes. A failed capture self-heals on the next start.
+That's it. End a session → a checkpoint is written; start the next → the briefing appears. Check state anytime with `daimon status`, which reports capture health honestly, including failures, skips, and crashes. A failed capture gets one automatic retry: the next session start (Claude Code, Codex, Gemini CLI; Kimi Code on the first prompt) launches `daimon heal` in the background, which re-serializes the newest failed session whose transcript is still on disk. One automatic retry per session. A session that fails twice stays listed in `daimon status` as "retry attempted, still failing" until you run `daimon heal --force` (`--session <id>` to pick one); `daimon heal --all` works through every healable session on the machine, and `daimon heal --project <dir>` through one project's.
 
 ## Beyond the briefing
 
@@ -92,7 +92,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 - **Code anchors:** `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
 - **Item lifecycle:** `daimon resolve` closes loops, `daimon forget` removes an item with a tombstone event. Supersession is tracked, not silently overwritten.
 - **Negative-knowledge ledger:** `daimon refute` records scoped, evidence-cited rejected approaches outside checkpoint decay. Agents propose candidates, humans ratify active guards, and overturns remain auditable.
-- **[Team memory](https://daily-nerd.github.io/daimon/docs/team/) (opt-in):** checkpoints mirrored through a private git remote. Teammates' topics and decisions appear clearly attributed, never merged into yours.
+- **[Team memory](https://daily-nerd.github.io/daimon/docs/team/) (opt-in):** checkpoints mirrored through a private git remote. Teammates' topics and decisions appear clearly attributed, never merged into yours. Attribution is declared, not authenticated: the author name is `DAIMON_AUTHOR`, else `git config user.name`, else the OS login name, on the writing machine, and any member of the repo can write under any name. daimon compares the name stamped in each newly arrived checkpoint with the git author of the commit that added it and reports a mismatch as a warning; nothing blocks it. Access to the repo is the membership boundary.
 - **Signed receipts (opt-in):** `DAIMON_RECEIPTS=1` pairs each checkpoint with an offline [vitni](https://github.com/Daily-Nerd/vitni) signature binding its exact bytes to its source transcript. Verify with `daimon verify-receipt`.
 - **Scar harvest (opt-in):** `DAIMON_SCAR_HARVEST=1` drafts negative-knowledge *candidates* (dead ends, intentional-looking weirdness, non-obvious couplings) from each session into `.scars/candidates/` for human review. Zero-LLM, path-anchored, active only in repos that already have a `.scars/` directory. Review and promotion tooling lives in [Scar](https://github.com/Daily-Nerd/Scar).
 
@@ -100,7 +100,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 
 - **Trust-classed, quote-pinned memory:** every briefing item is marked verbatim (exact quote, immutable everywhere) or inferred (allowed to evolve), with provenance and supersession tracked extractively. No embeddings, no graph database, and no required daemon: per-project JSON plus a derived SQLite FTS5 index, stdlib-first and offline-first.
 - **The briefing UX:** memory that arrives as a session-*start* artifact you can skim in 30 seconds, ordered by what to verify first.
-- **Host-agnostic hooks:** Claude Code (live-validated daily), Windsurf (live-validated), Codex (live-validated capture since 2026-08-06), Kimi Code (briefing and capture; the briefing arrives with the first prompt, since that host has no session-start injection channel). Other hosts are reachable via the same thin adapter shape.
+- **Host-agnostic hooks:** Claude Code (live-validated daily), Windsurf (live-validated capture only: the hook records the turn and returns nothing on `pre_user_prompt`, so no briefing is injected; with the skill installed (`daimon skill install windsurf`) the agent runs `daimon brief --team` itself, or calls `daimon_brief` over MCP), Codex (live-validated capture since 2026-08-06), Kimi Code (briefing and capture; the briefing arrives with the first prompt, since that host has no session-start injection channel). Other hosts are reachable via the same thin adapter shape.
 
 ## An independent reading
 
@@ -116,7 +116,7 @@ It is not praise alone. The same summary names the weak half: "The retrieval hal
 |---------|-------|
 | Claude Code plugin + hooks | live-validated daily |
 | CLI (`brief`, `status`, `recall`, `why`, `projects`, `heal`, `anchor`, `forget`, `configure`, `hooks`, `skill`) | stable, on PyPI |
-| Windsurf adapter | live-validated |
+| Windsurf adapter | live-validated capture; no briefing injection, the agent runs `daimon brief --team` |
 | Codex adapter | live-validated capture (real sessions serialized since 2026-08-06) |
 | Kimi Code adapter | briefing and capture, probe-measured; no ruling checks yet |
 | Gemini host hooks | briefing ships; capture unverified (upstream `transcript_path` stub fixed in gemini-cli v0.21.0, no real session run through serialize yet) |

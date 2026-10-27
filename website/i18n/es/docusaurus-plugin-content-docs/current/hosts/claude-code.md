@@ -213,6 +213,10 @@ daimon status
 ```
 
 `daimon status` reporta la salud de captura con honestidad, incluidas fallas,
-omisiones y crashes; una captura fallida se auto-repara en el siguiente
-inicio. Termina una sesión -> se escribe un checkpoint; inicia la siguiente ->
-aparece el briefing.
+omisiones y crashes. Una captura fallida recibe un único reintento
+automático: el siguiente inicio de sesión lanza `daimon heal` en segundo
+plano, que re-serializa la sesión fallida más reciente cuya transcripción
+sigue en disco, una sola vez por sesión. Una segunda falla queda listada en
+`daimon status` como "retry attempted, still failing" hasta que ejecutes
+`daimon heal --force`. Termina una sesión -> se escribe un checkpoint;
+inicia la siguiente -> aparece el briefing.
