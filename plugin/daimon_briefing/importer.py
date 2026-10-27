@@ -71,23 +71,27 @@ class Capability(NamedTuple):
 
 
 def _capabilities() -> tuple:
-    """The table, derived from the two facts provenance already owns so it
-    cannot drift from them: a host with no registered root (`SourceResolver.
-    _roots` answers None: Gemini, Hermes) has no transcript file to find; a
-    host whose files record no project (`HOSTS_RECORDING_NO_PROJECT`:
-    Windsurf, and Kimi until a cwd field is measured in wire.jsonl) can only
-    be imported path-given, since nothing in the file ties it to a project;
-    every other host is discovered. The row order is the public host order.
-    `manual` is not a host a transcript comes from, so it has no row. This
-    is the single source for the plan's "not discovered" line and for the
-    docs capability table."""
+    """The table, one row per host in `provenance.HOSTS` except `manual`
+    (the name for a file outside every root, not a host a transcript comes
+    from), derived from the two facts provenance owns so it cannot drift
+    from them: a host with no registered root (`SourceResolver.roots`
+    answers None: Gemini, Hermes) has no transcript file to find; a host
+    whose files record no project (`HOSTS_RECORDING_NO_PROJECT`: Windsurf,
+    and Kimi until a cwd field is measured in wire.jsonl) can only be
+    imported path-given, since nothing in the file ties it to a project;
+    every other host is discovered. The roots are asked of a resolver over
+    paths that do not exist, since only the shape of the table matters
+    here. This is the single source for the plan's "not discovered" line;
+    the docs capability table is written by hand from the same rows."""
     nowhere = Path("/nonexistent")
     probe = provenance.SourceResolver(
         home=nowhere, codex_home=nowhere, claude_projects=nowhere, kimi_home=nowhere
     )
     rows = []
-    for host in ("claude-code", "codex", "windsurf", "kimi", "gemini", "hermes"):
-        if probe._roots(host) is None:
+    for host in provenance.HOSTS:
+        if host == "manual":
+            continue
+        if probe.roots(host) is None:
             rows.append(Capability(host, "unsupported", "no transcript file"))
         elif host in provenance.HOSTS_RECORDING_NO_PROJECT:
             rows.append(
@@ -129,7 +133,7 @@ def discover(project: str, resolver: provenance.SourceResolver) -> list:
     under the roots; spends nothing; never raises on a file it cannot read."""
     found = []
     for host in DISCOVERED_HOSTS:
-        for path in resolver.transcripts(host):
+        for path in resolver.transcripts(host).files:
             cwd = transcript.recorded_cwd(path)
             if cwd is None:
                 continue

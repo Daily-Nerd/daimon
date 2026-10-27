@@ -92,6 +92,10 @@ def test_the_capability_table_names_every_host_once():
         "gemini": ("unsupported", "no transcript file"),
         "hermes": ("unsupported", "no transcript file"),
     }
+    assert [c.host for c in importer.CAPABILITIES] == [
+        h for h in provenance.HOSTS if h != "manual"
+    ]
+    assert set(rows) == set(provenance.HOSTS) - {"manual"}
     assert importer.DISCOVERED_HOSTS == ("claude-code", "codex")
     assert importer.not_discovered_line() == (
         "  not discovered: windsurf, kimi (records no project, pass "

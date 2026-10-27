@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TypeGuard
+from typing import NamedTuple, TypeGuard
 
 
 SOURCE_REF_VERSION = 1
@@ -25,8 +25,12 @@ QUOTE_PROVENANCE_VERSION = 1
 QUOTE_VERIFIER_ID = "tier-f"
 QUOTE_VERIFIER_VERSION = 1
 
-_HOSTS = frozenset((
-    "claude-code", "codex", "windsurf", "gemini", "hermes", "manual", "kimi"))
+# The public host enumeration, in the order public surfaces list hosts (the
+# import capability table, the plan's "not discovered" line). `manual` is
+# not a host a transcript comes from: it names a file outside every
+# registered root. `_HOSTS` is the same set for membership tests.
+HOSTS = ("claude-code", "codex", "windsurf", "kimi", "gemini", "hermes", "manual")
+_HOSTS = frozenset(HOSTS)
 # #1064: Kimi was captured for several releases before it was a registered
 # host here, so every checkpoint it produced was stamped host "manual",
 # locator "unsupported". This module resolves a source ref at READ time and
@@ -394,6 +398,32 @@ def binding_roles(receipt) -> list[str] | None:
     return list(binding["roles"])
 
 
+# One glob per root, index-aligned with `SourceResolver.roots(host)`: the
+# on-disk layout `_candidates` always matched. Claude Code `<projects>/
+# <slug>/<session>.jsonl` (one level, never a loose file at the root); Codex
+# any `.jsonl` anywhere below `sessions` and `archived_sessions` (the date
+# directories between are not part of the contract); Windsurf `<id>.jsonl`
+# in its own root and `<id>.md` in daimon's; Kimi the wire log under every
+# workspace and session directory (scar 0061: the file is always
+# `wire.jsonl`, the session is the directory). A host with roots and no
+# entry here, or with a pattern count that differs from its root count, is
+# refused by `transcripts` rather than listed as empty.
+_LISTINGS: dict[str, tuple[str, ...]] = {
+    "claude-code": ("*/*.jsonl",),
+    "codex": ("**/*.jsonl", "**/*.jsonl"),
+    "windsurf": ("*.jsonl", "*.md"),
+    "kimi": ("*/*/agents/main/wire.jsonl",),
+}
+
+
+class Listing(NamedTuple):
+    """What `SourceResolver.transcripts` found: the files, sorted, and the
+    roots it could not list."""
+
+    files: list[Path]
+    unreadable: tuple[Path, ...]
+
+
 class SourceResolver:
     """Strict resolver over registered host roots; never guesses or falls back."""
 
@@ -410,7 +440,13 @@ class SourceResolver:
         self.current_author = current_author
         self._indexes: dict[str, dict[str, list[Path]]] = {}
 
-    def _roots(self, host: str) -> tuple[Path, ...] | None:
+    def roots(self, host: str) -> tuple[Path, ...] | None:
+        """The registered transcript roots of `host`, or None for a host
+        that writes no transcript file (gemini, hermes) and for `manual`.
+        The one table of per-host roots: `infer_host` reads the same
+        directories, `transcripts` lists them, `resolve` confines a
+        candidate to them, and the import capability table asks this to
+        tell "no transcript file" from "path-given"."""
         if host == "claude-code":
             return (self.claude_projects,)
         if host == "codex":
@@ -423,43 +459,33 @@ class SourceResolver:
             return (self.kimi_home / "sessions",)
         return None
 
-    def transcripts(self, host: str) -> list[Path]:
-        """Every transcript file under `host`'s registered roots, sorted, or
-        [] for a host with no root (gemini, hermes, manual) (#1236).
+    def transcripts(self, host: str) -> Listing:
+        """Every transcript file under `host`'s registered roots, sorted,
+        beside the roots that could not be listed; an empty listing for a
+        host with no root (#1236).
 
-        The one lister over `_roots`: `daimon import` discovers a project's
+        The one lister over `roots`: `daimon import` discovers a project's
         sessions through it, and `_candidates` builds its stem index from
-        the same list for the two hosts it indexes, so the files the import
-        can find and the files a receipt can resolve to are one set. The
-        patterns are the on-disk layouts `_candidates` always matched:
-        Claude Code `<projects>/<slug>/<session>.jsonl` (one level, never a
-        loose file at the root); Codex any `.jsonl` anywhere below
-        `sessions` and `archived_sessions` (the date directories between
-        are not part of the contract); Windsurf `<id>.jsonl` in its own
-        root and `<id>.md` in daimon's; Kimi the wire log under every
-        workspace and session directory (scar 0061: the file is always
-        `wire.jsonl`, the session is the directory). A root that is missing,
-        a file, or a directory this user cannot list contributes nothing:
-        `Path.glob` and `rglob` return an empty iterator for all three
-        rather than raising (the same fact `ledger.has_checkpoint` leans
-        on, verified on 3.10 and 3.13), which is why there is no `exists`
-        probe and no OSError guard here; `exists` is the one call that can
-        raise on a denied parent."""
-        roots = self._roots(host)
+        the same files for the two hosts it indexes, so the files the
+        import can find and the files a receipt can resolve to are one set.
+        The pattern per root is `_LISTINGS`; a host with roots and no
+        pattern raises `LookupError`, so a host added to `roots` cannot
+        read as "nothing on disk". A missing root and a root that is a
+        file list as empty (`Path.glob` returns nothing for both)."""
+        roots = self.roots(host)
         if roots is None:
-            return []
-        found: list[Path] = []
-        if host == "claude-code":
-            found.extend(self.claude_projects.glob("*/*.jsonl"))
-        elif host == "codex":
-            for root in roots:
-                found.extend(root.rglob("*.jsonl"))
-        elif host == "windsurf":
-            found.extend(roots[0].glob("*.jsonl"))
-            found.extend(roots[1].glob("*.md"))
-        elif host == "kimi":
-            found.extend(roots[0].glob("*/*/agents/main/wire.jsonl"))
-        return sorted(found)
+            return Listing([], ())
+        patterns = _LISTINGS.get(host)
+        if patterns is None or len(patterns) != len(roots):
+            raise LookupError(
+                f"host {host} has {len(roots)} transcript root(s) and "
+                f"{0 if patterns is None else len(patterns)} listing pattern(s)"
+            )
+        files: list[Path] = []
+        unreadable: list[Path] = []
+        for root, pattern in zip(roots, patterns):
+            files.extend(root.glob(pattern))
+        return Listing(sorted(files), tuple(unreadable))
 
     def _candidates(self, source: dict) -> list[Path] | None:
         host = source["host"]
@@ -468,7 +494,7 @@ class SourceResolver:
             if host in ("claude-code", "codex"):
                 if host not in self._indexes:
                     self._indexes[host] = self._build_index(
-                        self.transcripts(host))
+                        self.transcripts(host).files)
                 return list(self._indexes[host].get(sid, ()))
             if host == "windsurf":
                 return [
@@ -507,7 +533,7 @@ class SourceResolver:
         candidates = self._candidates(source)
         if candidates is None:
             return SourceResolution("unsupported")
-        roots = self._roots(source["host"]) or ()
+        roots = self.roots(source["host"]) or ()
         existing = []
         seen = set()
         for path in candidates:
