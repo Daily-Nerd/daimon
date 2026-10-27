@@ -27,7 +27,7 @@ from typing import Any, NamedTuple
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
 from . import (capture, checks_host, checks_runtime, config, display, ledger,
-               llm, pending, receipts, refutations, requests, schema,
+               llm, marks, pending, receipts, refutations, requests, schema,
                scoring, store)
 # Imported as constants, not as the module.
 from .amendments import CHANGES as _AMEND_CHANGES
@@ -379,6 +379,10 @@ def build(checkpoint, now=None) -> dict | None:
         "uncertainties": uncertainties,
         "contradictions": contradictions,
         "now": now,
+        # #1236: set by `prepare` when the view said the body is imported
+        # history; the active topic label carries the qualifier from it.
+        "imported": _IMPORT_AGE_KEY in checkpoint,
+        "import_age_days": checkpoint.get(_IMPORT_AGE_KEY),
     }
 
 
@@ -747,8 +751,9 @@ class Annotated(NamedTuple):
     `events` the resolution fold, `suppressed` the loops a resolution closed
     and `quarantined` the items a human quarantine removed (a forgotten item
     is counted nowhere: it must read as absent). `snapshot` is the reader's
-    own, whichever body was served, and `notes` its health lines, each
-    starting with a warning sign."""
+    own, whichever body was served, and `notes` its health lines plus the
+    #1236 imported-history note when the body is one, each starting with a
+    warning sign."""
     checkpoint: Any
     withheld: Any
     events: Any
@@ -767,6 +772,59 @@ class Annotated(NamedTuple):
     # #1181: "<class>:skipped-<reason>" per claim worldcheck skipped, for the
     # CALLER to record beside the counters; () when it did not run.
     worldcheck_skips: tuple = ()
+
+
+# ---- #1236: the head note for an imported latest ----
+
+# The transient envelope stamp `prepare` writes when the view says the body
+# is imported history: the age in days of the newest imported session, on
+# the briefing's own clock (`now`, the one the stale marks use). `build`
+# copies it into the sections dict and the renderers word the active topic
+# qualifier from it. Never persisted: a renderer mark, like `_stale_carried_days`.
+_IMPORT_AGE_KEY = "_import_age_days"
+
+
+def import_age_days(created, now) -> float | None:
+    """Days from the checkpoint `created` stamp to `now`, None when the stamp
+    is absent or malformed (a hand-planted file; capture always stamps)."""
+    epoch = store._created_epoch(created)
+    if epoch is None:
+        return None
+    return max(0.0, (now - epoch) / 86400.0)
+
+
+def _import_age_label(days: float | None) -> str:
+    """`12d ago` for a whole day or more, `today` under one, `on an unknown
+    date` when the stamp could not be read."""
+    if days is None:
+        return "on an unknown date"
+    if days < 1.0:
+        return "today"
+    return f"{int(days)}d ago"
+
+
+def import_note(count: int, days: float | None, created) -> str:
+    """The one head line for an imported latest (#1236 design 4c): how many
+    past sessions the import wrote, when the newest ended (age on the
+    briefing's clock, the date off the `created` stamp), and that none of it
+    was captured live. One line, so a machine reader keeps it whole as one
+    warning (`api.parse_briefing` drops a continuation line)."""
+    when = _import_age_label(days)
+    if isinstance(created, str) and store._created_epoch(created) is not None:
+        when += f" ({created[:10]})"
+    if count == 1:
+        sessions = f"1 past session, which ended {when}"
+    else:
+        sessions = f"{count} past sessions, the newest ended {when}"
+    return marks.warning(
+        f"Imported history: {sessions}, before daimon captured anything "
+        "live here. Check it before acting on it.")
+
+
+def topic_qualifier(days: float | None, *, imported: bool) -> str:
+    """` (imported, 12d ago)` after the active topic label of an imported
+    latest, "" for a live one. Shared by the plain and the rich render."""
+    return f" (imported, {_import_age_label(days)})" if imported else ""
 
 
 def prepare(project, now, *, live: bool = True, worldcheck_project=None,
@@ -798,6 +856,20 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
     stale_items: list = []
     if stamps and isinstance(checkpoint, dict):
         checkpoint, _candidates, stale_items = stamp(checkpoint, snap, now)
+    notes = snap.notes()
+    imported = opened.imported
+    if imported is not None and isinstance(checkpoint, dict):
+        # #1236: the view said the body is imported history. The age is read
+        # once here, on the clock the stale marks use, stamped for the
+        # active topic qualifier, and worded into the first head note. The
+        # note rides with the ledger-health notes so one accounting charges
+        # it to the head: never a drop candidate, a warning to a machine
+        # reader. A live capture that becomes latest has no `imported`, so
+        # all of this ends with it and nothing is left to clean up.
+        age = import_age_days(imported.created, now)
+        checkpoint = {**checkpoint, _IMPORT_AGE_KEY: age}
+        notes = display.merge_notes(
+            (import_note(imported.count, age, imported.created),), notes)
     wc_stats = None
     ledger_rows: list = []
     skips: list = []
@@ -812,7 +884,6 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             wc_stats = None
             ledger_rows = []
             skips = []
-    notes = snap.notes()
     # D10.4: sessions of THIS project that were refused for an unproven events
     # ledger and are waiting on a repair. Own bucket only; silent once the
     # ledger reads again, when they are ordinary healable failures.
@@ -1831,7 +1902,8 @@ class RenderedBriefing(NamedTuple):
     notes and rulings, no items), `no-checkpoint` (orientation only), `empty`
     (a checkpoint with nothing worth surfacing) or `unavailable` (the text is
     empty and `notes` names the exception type). `notes` are the ledger-health
-    lines the text already carries, each starting with the warning mark."""
+    lines and the #1236 imported-history note the text already carries, each
+    starting with the warning mark."""
     text: str
     state: str
     notes: tuple
@@ -1925,8 +1997,9 @@ def briefing_text(project_dir=None, *, now=None) -> str:
 
 
 def _head_lines(degraded: bool, rulings, notes=()) -> list[str]:
-    """The greeting, the #204 degrade note, the ledger-health notes (#1132
-    PR 7a: each already starts with a warning sign) and the standing rulings
+    """The greeting, the #204 degrade note, the notes (#1132 PR 7a: the
+    ledger-health lines, and since #1236 the imported-history note first;
+    each already starts with a warning sign) and the standing rulings
     block:
     the portion of the render that comes before decision/request/verdict/owed
     panels and the cognitive body. #1044's byte ceiling protects exactly this
@@ -2114,9 +2187,13 @@ class Selection:
                  overage, now, panel_names=(), reserved=0,
                  teammate_blocks=(), teammate_header="", kept_teammates=(),
                  collapsed=False, loops_pointer=True, full_quotes=False,
-                 notes=(), cards=None):
+                 notes=(), cards=None, imported=False, import_age_days=None):
         self.kept = kept
         self.notes = tuple(notes)
+        # #1236: the body is imported history, and how old its newest
+        # session is; the active topic label says so on both renders.
+        self.imported = imported
+        self.import_age_days = import_age_days
         self.dropped = dropped
         self.reasons = reasons
         self.order = order
@@ -2351,7 +2428,9 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                         teammate_header=teammate_header,
                         kept_teammates=kept_team, collapsed=collapse,
                         loops_pointer=loops_pointer, full_quotes=full_quotes,
-                        notes=notes, cards=cards)
+                        notes=notes, cards=cards,
+                        imported=bool(b.get("imported")),
+                        import_age_days=b.get("import_age_days"))
         sel._lines = line_cache  # the search below re-renders many times
         return sel
 
@@ -2473,12 +2552,21 @@ def _sel_line(sel: Selection, section: str, item) -> str:
     return line
 
 
+def active_topic_label(sel: Selection) -> str:
+    """`Active topic`, with the #1236 ` (imported, 12d ago)` qualifier when
+    the body is imported history. The plain line and the rich panel title
+    share it, so the two renders cannot drift on the one line that names
+    the latest session's topic."""
+    return "Active topic" + topic_qualifier(sel.import_age_days,
+                                            imported=sel.imported)
+
+
 def render_selection(sel: Selection) -> str:
     """The deterministic briefing text for a Selection. The head (greeting,
-    degrade note, rulings) comes first, then the decision count and the
-    panels, then the sections in `SECTION_ORDER`, each followed by its note
-    when it lost items; a final marker line when the protected set alone was
-    over budget."""
+    degrade note, notes, rulings) comes first, then the decision count and
+    the panels, then the sections in `SECTION_ORDER`, each followed by its
+    note when it lost items; a final marker line when the protected set
+    alone was over budget."""
     parts = _head_lines(sel.degraded, sel.rulings, sel.notes)
     if sel.count_line:
         parts.append("")
@@ -2490,7 +2578,7 @@ def render_selection(sel: Selection) -> str:
         if section == "active_topic":
             if sel.kept.get("active_topic"):
                 parts.append("")
-                parts.append("Active topic: "
+                parts.append(active_topic_label(sel) + ": "
                              + sel.kept["active_topic"].get("text", "").strip())
             continue
         items = sel.kept.get(section) or []
