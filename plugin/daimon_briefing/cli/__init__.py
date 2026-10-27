@@ -553,6 +553,7 @@ from . import (  # noqa: E402
     handoff,
     history,
     hooks,
+    import_cmd,
     inject,
     ledger_cmd,
     lifecycle,
@@ -635,6 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serialize.register(sub, fmt)
 
+    import_cmd.register(sub, fmt)
 
     brief.register(sub, fmt)
 
