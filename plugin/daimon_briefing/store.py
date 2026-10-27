@@ -358,7 +358,16 @@ def _stamp_first_seen(checkpoint: dict, prev: dict | None) -> None:
     reworded items are stamped with THIS checkpoint's `created`. Idempotent: an
     item already carrying first_seen is never re-stamped, so rotation/re-writes
     and heal keep original birth stamps. Deliberately exact-match only — fuzzy
-    item identity is the ACB scope-creep graveyard."""
+    item identity is the ACB scope-creep graveyard.
+
+    A birth stamp never runs backward (#1236): when `prev` is NEWER than this
+    checkpoint (an import, a heal or the sweep landing behind a live latest)
+    an inherited stamp that postdates this session's own `created` is not
+    this item's birth, it is the newer session's, so the item is stamped
+    with this checkpoint's `created` instead. A stamp that predates it (the
+    item was born earlier still and carried into the newer latest) is kept.
+    The rule is `_created_regresses`, the same one the pointer guard and
+    carry read; this is its third reader, not a third copy."""
     born = {}
     if isinstance(prev, dict):
         prev_created = prev.get("created")
@@ -367,28 +376,66 @@ def _stamp_first_seen(checkpoint: dict, prev: dict | None) -> None:
             if isinstance(text, str) and text:
                 born[text] = item.get("first_seen") or prev_created
     created = checkpoint.get("created")
+    created_epoch = _created_epoch(created)
     for item in serializer.iter_items(checkpoint):
         if item.get("first_seen"):
             continue
-        stamp = born.get(item.get("text")) or created
+        stamp = born.get(item.get("text"))
+        if stamp and _created_regresses(stamp, created_epoch):
+            stamp = None  # born after this session ended: not its birth
+        stamp = stamp or created
         if stamp:
             item["first_seen"] = stamp
+
+
+def _created_regresses(prior_created, new_epoch: float | None) -> bool:
+    """The ONE ordering rule between a checkpoint already at `latest` and an
+    incoming one: True when the incoming checkpoint, created at `new_epoch`,
+    is PROVABLY older than the prior's `created` stamp. False on any doubt
+    (no prior, a torn or legacy prior without a `created`, an unstamped
+    incoming checkpoint): last-write-wins stays the default.
+
+    Three readers, deliberately the same predicate (#123, #1236): the
+    pointer guard below refuses to move `latest` backward for such a
+    checkpoint, `capture.carry_forward` refuses to fold that newer latest
+    INTO it, and `_stamp_first_seen` refuses to give it a birth stamp newer
+    than its own session. None of them re-derives the rule, so they cannot
+    disagree in the harmful direction. Carry asks before the write and the
+    guard asks inside the pointer lock; a newer write landing between the
+    two can only make carry fold an OLDER prev forward, which is the
+    ordinary case, never a newer one backward."""
+    if new_epoch is None:
+        return False
+    prior = _created_epoch(prior_created)
+    return prior is not None and prior > new_epoch
+
+
+def regresses_latest(prior: dict | None, checkpoint: dict) -> bool:
+    """Would `checkpoint` regress session time against `prior`, the body
+    already at the stream's latest? The carry side of _created_regresses
+    (#1236): `capture.carry_forward` asks this of the prev it is about to
+    fold, with the same answer the pointer guard gives on write. None prior
+    (a first serialize) and every unstamped case answer False, exactly as
+    the guard does."""
+    if prior is None:
+        return False
+    return _created_regresses(prior.get("created"),
+                              _created_epoch(checkpoint.get("created")))
 
 
 def _pointer_regresses(d: Path, new_epoch: float | None) -> bool:
     """True when overwriting `d`'s latest pointer with a checkpoint created at
     `new_epoch` would move "latest" BACKWARD in session time (#123) — the heal /
-    re-serialize-an-old-transcript case. False on any doubt (no pointer yet,
-    torn/legacy pointer without a `created`, unstamped incoming checkpoint):
-    last-write-wins stays the default; only a provable regression is blocked."""
+    re-serialize-an-old-transcript case. The rule is _created_regresses; this
+    reads the pointer it is applied to, and an unreadable pointer is a doubt
+    (False), so only a provable regression is blocked."""
     if new_epoch is None:
         return False
     try:
         existing = json.loads((d / _LATEST).read_text(encoding="utf-8")).get("created")
     except (OSError, json.JSONDecodeError, AttributeError):
         return False
-    prior = _created_epoch(existing)
-    return prior is not None and prior > new_epoch
+    return _created_regresses(existing, new_epoch)
 
 
 def _session_files(d: Path) -> list[Path]:

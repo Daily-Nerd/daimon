@@ -413,6 +413,19 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "backend itself reported; a list when a run mixed more than one. "
         "Introspection checkpoints stay absent: no model ran."),
     FieldRule(
+        "envelope", "capture_door", "string", True, False, "code", "strip",
+        _c(stripped_at_serialize=True, values=("import",)),
+        "#1236 which door the capture came through when it was not a live "
+        "one. \"import\" is stamped by capture.run for any caller passing "
+        "door=\"import\" (the bounded first fill): the record is a past "
+        "session serialized after the fact, not where the user left off. "
+        "Stamped only; no reader consumes it yet. Every live door (the "
+        "SessionEnd hooks, `daimon serialize` by hand, heal, the orphan "
+        "sweep) and the introspection path leave the key absent, so absent "
+        "reads as a live capture, the same reading an old checkpoint "
+        "already has. Never nullable: the only persisted value is "
+        "\"import\"."),
+    FieldRule(
         "envelope", "llm_backend", "string", True, False, "code", "pass",
         _c(),
         "#230 backend that produced this checkpoint; assignment always "
@@ -795,6 +808,8 @@ def schema_document(format_version: str) -> dict:
             "shape": "shape of the object's sub-fields (documentation)",
             "link_types": "link `type` values the producer emits "
                           "(documentation)",
+            "values": "the only values the code ever stamps for this field "
+                      "(documentation, not a runtime check)",
         },
         "envelope": [_row_document(r) for r in ENVELOPE_RULES],
         "item": [_row_document(r) for r in ITEM_RULES],

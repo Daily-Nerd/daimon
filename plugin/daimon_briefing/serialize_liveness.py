@@ -94,9 +94,9 @@ def serialize_rows_core(text, now, *, slug=None, sessions=None, since=None,
       3. latest result success               succeeded  result
       4. latest result skip                  skipped    result
       5. refused admission still held        held       admission-refused
-      6. latest result error                 failed     healable | retry-exhausted | unrecoverable
+      6. latest result error                 failed     healable | retry-exhausted | unrecoverable | import
       7. spawn, no result, within ceiling    starting (repairing if retried)  spawned
-      8. spawn, no result, past ceiling      hung       healable | hung
+      8. spawn, no result, past ceiling      hung       healable | hung | import
       9. no line, checkpoint created >= since  succeeded  checkpoint
      10. no line, a checkpoint but no proof    unknown    checkpoint-without-run
      11. nothing                               unknown    not-found | outside-window | log-unreadable

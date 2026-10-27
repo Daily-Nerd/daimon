@@ -130,7 +130,8 @@ def _print_error(msg: str) -> None:
 
 
 def _run_serialize(transcript_path: Path, project: str | None,
-                   escalate: bool = False, session: str | None = None) -> int:
+                   escalate: bool = False, session: str | None = None,
+                   door: str | None = None) -> int:
     """Serialize one transcript to a checkpoint routed to `project` (used AS-IS;
     None => global pointer only, NO cwd fallback). The caller decides routing —
     this never calls _resolve_project, so `heal` can route to the FAILED
@@ -140,6 +141,11 @@ def _run_serialize(transcript_path: Path, project: str | None,
     extraction instead of the default single shape. Only `heal` may pass True
     (behind DAIMON_HEAL_ESCALATION); the hook/`serialize` command paths never
     do, so escalation cost scales with failure, not usage.
+
+    `door` (#1236): forwarded to capture.run. "import" is the bounded first
+    fill: the checkpoint carries `capture_door: "import"` and the success
+    line ends with ` [import]`, so `status` and `stats` can tell an import
+    from a live capture. None (every live caller) changes nothing.
 
     Every result line is built once into `msg`, printed, AND logged via
     _append_serialize_log — the logged string is byte-identical to the printed
@@ -234,7 +240,8 @@ def _run_serialize(transcript_path: Path, project: str | None,
                               chat=_cli._chat, deadline=deadline,
                               transcript_path=path,
                               transcript_sha=transcript_sha,
-                              escalate=escalate, coverage=coverage)
+                              escalate=escalate, coverage=coverage,
+                              door=door)
         except serializer.TooShortError as exc:
             msg = f"skipped serialize for {session_id}: {exc}"
             print(msg)
@@ -279,6 +286,12 @@ def _run_serialize(transcript_path: Path, project: str | None,
             # downgraded. Suffix-safe: _RESULT_OK_RE/_LEDGER_OK_RE are
             # prefix-anchored.
             msg += " [fallback backend]"
+        if door == capture.DOOR_IMPORT:
+            # #1236: the import marker, last. Every reader of the success
+            # line is prefix-anchored or a substring test, so the two
+            # suffixes coexist: a rescued import reads
+            # `... [fallback backend] [import]` and both still count.
+            msg += " [import]"
         print(msg)
         _append_serialize_log(msg)
     # #246: the write above staled the recall index; freshen it HERE, where

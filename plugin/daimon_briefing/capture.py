@@ -39,16 +39,34 @@ from .surfaces import Writer
 log = logging.getLogger(__name__)
 
 
+DOOR_IMPORT = "import"
+# #1236: the doors a caller may name. None is every live door (the SessionEnd
+# hooks, `daimon serialize` by hand, heal's retry, the orphan sweep): they
+# stamp nothing, so an old checkpoint and a new live one read the same.
+# "import" is the bounded first fill, which stamps `capture_door` so the
+# briefing can say the record is history and not where the user left off.
+# A name outside this set is a caller bug and raises before any model call.
+_DOORS = frozenset({None, DOOR_IMPORT})
+
+
 def run(session_id: str, messages, *, project, chat, deadline,
         transcript_path=None, transcript_sha=None,
-        escalate: bool = False, capture_host=None, coverage=None) -> Path | None:
+        escalate: bool = False, capture_host=None, coverage=None,
+        door: str | None = None) -> Path | None:
     """Serialize `messages` into a checkpoint routed to `project` (used AS-IS;
     None => global pointer only — the caller decides routing, same contract
     as the old cli._run_serialize).
 
+    `door` (#1236) names the capture door when it is not a live one: "import"
+    stamps the code-owned `capture_door` on the checkpoint and changes
+    nothing else in the pipeline (tests/test_capture_parity.py pins that).
+    None, the default, stamps nothing. Any other value raises ValueError.
+
     Returns store.write_checkpoint's result: the checkpoint path, or None
     when the write boundary refused (kill switch, #421) — each caller renders
     its own skip/success line. Serializer failures propagate."""
+    if door not in _DOORS:
+        raise ValueError(f"unknown capture door: {door!r}")
     # D10.4: a session that is too short is a skip, whatever the ledger says;
     # then ONE read of this project's events ledger. An unproven one refuses
     # the admission HERE, before the model is called: the run would cost
@@ -87,6 +105,13 @@ def run(session_id: str, messages, *, project, chat, deadline,
         checkpoint["transcript_hash"] = transcript_sha
     if source_ref is not None:
         checkpoint["source_ref"] = source_ref
+    # #1236: the import door marks its record as history. Stamped here, with
+    # the other code-owned stamps and after strip_code_owned_keys ran on the
+    # fresh parse, so a model naming the key never gets to claim or deny it.
+    # Every live door leaves the key absent: absent means a live capture,
+    # the same reading an old checkpoint already has.
+    if door == DOOR_IMPORT:
+        checkpoint["capture_door"] = DOOR_IMPORT
     # #811: carry is part of writing a checkpoint, not a step capture happens
     # to perform. Shared with the introspection path via capture.carry_forward.
     checkpoint = carry_forward(checkpoint, project)
@@ -574,6 +599,24 @@ def carry_forward(checkpoint: dict, project) -> dict:
         # this project's bucket permanently. No prev -> no carry.
         prev = store.read_latest_body(project, route=store.Route.OWN,
                                       admit=store.Admit.ANY)
+        # #1236: carry runs forward in session time, never backward. When
+        # the stream's latest was created AFTER this checkpoint (an import
+        # of an old transcript, a heal of an old session, the orphan sweep
+        # catching up behind a live capture), the pointer guard in
+        # store.write_checkpoint will keep this checkpoint off `latest`, and
+        # by the same rule nothing of that newer latest may be folded into
+        # it: a carried item would be born after the session that carries
+        # it, and a corroboration from it would count the future as a
+        # witness. Same predicate as the guard, so the two cannot disagree
+        # in the harmful direction: this asks before the write and the
+        # guard asks inside the pointer lock, and a newer write landing in
+        # between can only make this fold an older prev forward.
+        if store.regresses_latest(prev, checkpoint):
+            log.info("carry: skipped for %s, the stream's latest (%s) is "
+                     "newer than this session; nothing is folded backward",
+                     checkpoint.get("session_id"),
+                     (prev or {}).get("session_id"))
+            return checkpoint
         now = store._created_epoch(checkpoint.get("created")) or time.time()
         events = store.resolutions(project_dir=project)
         resolved = frozenset(ref for ref, evt in events.items()
