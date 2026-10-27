@@ -49,9 +49,10 @@ CLI `daimon` en el `PATH` (`uv tool install 'daimon-briefing[pretty]'`).
 ## Importar sesiones pasadas
 
 `daimon import` no llega a Gemini CLI: daimon no registra ninguna raíz de
-transcripciones para este host, así que el descubrimiento no lista nada y el
-plan lo dice en su última línea, `gemini, hermes (no transcript file)`. El
-comando y los hosts que cubre están en
+transcripciones para este host, así que el descubrimiento no lista nada, un
+archivo de Gemini dado con `--transcript` se rechaza, y el plan lo dice en su
+última línea, `gemini, hermes (no transcript file)`. El comando y los hosts que
+cubre están en
 [Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas).
 
 ## MCP
