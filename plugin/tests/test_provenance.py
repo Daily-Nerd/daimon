@@ -386,7 +386,8 @@ def test_an_unlistable_root_is_named_and_the_other_root_still_lists(
     listing = resolver.transcripts("codex")
     assert listing.files == [keep]
     assert listing.unreadable == (sealed,)
-    # The receipt index behaves as before: the readable root still resolves.
+    # The receipt index builds from the roots the lister could read, so a
+    # session under the readable root resolves while the other root is sealed.
     found = resolver.resolve(_source("rollout-kept", host="codex"))
     assert found.state == "resolved" and found.path == keep
 
