@@ -400,7 +400,10 @@ def binding_roles(receipt) -> list[str] | None:
 
 # One glob per root, index-aligned with `SourceResolver.roots(host)`: the
 # on-disk layout `_candidates` always matched. Claude Code `<projects>/
-# <slug>/<session>.jsonl` (one level, never a loose file at the root); Codex
+# <slug>/<session>.jsonl`, exactly one directory deep: never a loose file
+# at the root, and never a sidechain log below a session directory
+# (`<slug>/<session>/subagents/agent-<id>.jsonl`), which is not a session
+# of its own; Codex
 # any `.jsonl` anywhere below `sessions` and `archived_sessions` (the date
 # directories between are not part of the contract); Windsurf `<id>.jsonl`
 # in its own root and `<id>.md` in daimon's; Kimi the wire log under every

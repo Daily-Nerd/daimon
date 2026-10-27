@@ -142,6 +142,18 @@ def test_discover_resolves_the_recorded_cwd_like_the_cli_resolves_project(
     assert importer.discover(PROJECT, resolver).paths == [b, a]
 
 
+def test_a_sidechain_log_below_a_session_directory_is_not_discovered(tmp_path, home):
+    """The Claude Code lister is exactly one directory deep: a subagent log
+    at <slug>/<session>/subagents/agent-<id>.jsonl records the project's cwd
+    and is still not a session of its own."""
+    top = _claude(home, "S-top", STAMPS[1])
+    side = _slug_dir(home) / "S-top" / "subagents"
+    _transcript(side, "agent-x", STAMPS[2])
+    resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
+    assert resolver.transcripts("claude-code").files == [top]
+    assert importer.discover(PROJECT, resolver).paths == [top]
+
+
 # ---- the window: newest N before the skips ----------------------------------------
 
 
