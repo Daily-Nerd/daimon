@@ -954,8 +954,9 @@ def recorded_cwd(path) -> str | None:
     row (Claude Code on every row, Codex on `session_meta`), so the usual
     cost is one line. The line split is the file's own (`\\n`, `\\r`), not
     `splitlines()`: a row holding a raw U+2028 inside a string parses here
-    where the whole-file readers drop it, which can only find a directory
-    they would have missed, never a different one."""
+    where the whole-file readers drop it. No host writes one unescaped,
+    and the only way it could change the answer is a first row that both
+    holds one and records a different directory from the rows after it."""
     p = Path(path)
     if p.suffix != ".jsonl":
         return None
