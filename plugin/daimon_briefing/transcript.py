@@ -853,32 +853,83 @@ def _kimi_epoch(stamp) -> float | None:
     return stamp / 1000.0
 
 
-def last_timestamp(path) -> str | None:
-    """Session-end stamp for a `.jsonl` transcript: the max top-level `timestamp`
-    across rows, normalized to the checkpoint `created` format (#123). The max —
-    not the last row — so out-of-order rows can't report an early end. None for
-    non-jsonl files, unreadable files, or stamp-free transcripts; callers fall
-    back (cli uses the file mtime)."""
-    p = Path(path)
-    if p.suffix != ".jsonl":
-        return None
-    try:
-        text = p.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        # A tail cut mid-character by a crashed host is still a transcript;
-        # the caller's mtime fallback stands in for the stamp (#1236).
-        return None
-    objects = _objects_of(text)
-    # #988: Kimi stamps every event with `time` in epoch MILLISECONDS and has
-    # no `timestamp` key at all, so without this branch every Kimi capture
-    # reports no session-end stamp and the ledger falls back to file mtime.
-    kimi = _is_kimi_wire(objects) or _is_kimi_wire_path(p)
+# How much of a transcript's end `last_timestamp` reads before it falls back
+# to the whole file. Discovery (`importer.discover`, #1236) asks the stamp
+# of every transcript of the project, so the cost per file must not grow
+# with the file: 64 KB holds hundreds of rows on every host, and the last
+# stamp is at the end by construction.
+STAMP_TAIL_BYTES = 64 * 1024
+
+
+def _head_and_tail(p: Path) -> tuple[str, str, bool]:
+    """(first row, the rows in the last `STAMP_TAIL_BYTES`, whole) of a
+    file, decoded strictly. `whole` is True when the file fit and the
+    second element is the entire text (the first is then empty: every row
+    is already in the second). For a larger file the first element is the
+    opening row, read on its own so a Kimi wire header is still seen (it
+    only selects a branch, so it decodes with replacement: a head that is
+    not UTF-8 is not a header), and the tail starts after the first newline
+    past the cut, so a row the cut split (and any multibyte character it
+    split) is dropped rather than decoded. The tail decodes strictly;
+    raises OSError and UnicodeDecodeError like `read_text`."""
+    size = p.stat().st_size
+    if size <= STAMP_TAIL_BYTES:
+        return "", p.read_text(encoding="utf-8"), True
+    with p.open("rb") as handle:
+        head = handle.readline()
+        handle.seek(size - STAMP_TAIL_BYTES)
+        handle.readline()
+        tail = handle.read()
+    return head.decode("utf-8", errors="replace"), tail.decode("utf-8"), False
+
+
+def _max_stamp(objects, kimi: bool) -> float | None:
     best = None
     for obj in objects:
         epoch = (_kimi_epoch(obj.get("time")) if kimi
                  else _stamp_epoch(obj.get("timestamp")))
         if epoch is not None and (best is None or epoch > best):
             best = epoch
+    return best
+
+
+def last_timestamp(path) -> str | None:
+    """Session-end stamp for a `.jsonl` transcript: the max top-level `timestamp`
+    across rows, normalized to the checkpoint `created` format (#123). The max —
+    not the last row — so out-of-order rows can't report an early end. None for
+    non-jsonl files, unreadable or undecodable files, or stamp-free
+    transcripts; callers fall back (`capture.session_end_stamp` uses the
+    file mtime).
+
+    Reads the last `STAMP_TAIL_BYTES` first and takes the max stamp among
+    those rows; only a tail with no stamp at all sends it back to the whole
+    file (#1236). The max over the tail is the max over the file whenever
+    the tail holds any stamp, since rows are appended in order: a session
+    cannot have ended before its last written rows. A file that fits in
+    the tail is read whole as before."""
+    p = Path(path)
+    if p.suffix != ".jsonl":
+        return None
+    try:
+        head, tail, whole = _head_and_tail(p)
+    except (OSError, UnicodeDecodeError):
+        # A tail cut mid-character by a crashed host is still a transcript;
+        # the caller's mtime fallback stands in for the stamp (#1236).
+        return None
+    # #988: Kimi stamps every event with `time` in epoch MILLISECONDS and has
+    # no `timestamp` key at all, so without this branch every Kimi capture
+    # reports no session-end stamp and the ledger falls back to file mtime.
+    # The header that selects the branch is the file's first row, read on
+    # its own when the file is larger than the tail.
+    objects = _objects_of(tail)
+    kimi = _is_kimi_wire(_objects_of(head) or objects) or _is_kimi_wire_path(p)
+    best = _max_stamp(objects, kimi)
+    if best is None and not whole:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        best = _max_stamp(_objects_of(text), kimi)
     if best is None:
         return None
     return datetime.fromtimestamp(best, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
