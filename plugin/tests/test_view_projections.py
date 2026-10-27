@@ -406,6 +406,15 @@ def test_open_does_not_walk_the_store_until_a_renderer_asks(
     assert len(calls) == 1
 
 
+def test_a_torn_session_file_in_the_store_is_skipped_by_the_walk(
+        tmp_checkpoint_dir):
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", NEWEST_IMPORT)
+    (tmp_checkpoint_dir / "torn.json").write_text("{not json", encoding="utf-8")
+    assert view.imported(view.open(PROJECT, live=True)) == view.Imported(
+        count=2, created=NEWEST_IMPORT, live_seen=False)
+
+
 def test_an_imported_body_with_no_slug_counts_only_itself():
     # Nothing to walk for: no bucket can be named, so the served body is the
     # whole count. No store is read.
