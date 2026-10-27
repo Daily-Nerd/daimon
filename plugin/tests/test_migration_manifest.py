@@ -26,6 +26,11 @@ LEGACY = {"read_latest", "read_latest_reportable"}
 MANIFEST = {
     ("capture.py", "carry_forward", "read_latest_body",
      "store.Route.OWN", "store.Admit.ANY"),
+    # #1236: the import plan asks, before any spend, the same prior
+    # carry_forward will compare the written checkpoint against, on the same
+    # terms, so the history note it prints is the answer the write will give.
+    ("importer.py", "plan_import", "read_latest_body",
+     "store.Route.OWN", "store.Admit.ANY"),
     ("cli/inject.py", "_cmd_recall_inject", "read_latest_body",
      "briefing.injection_read_route(project)", "store.Admit.ANY"),
     # #1031: the action surface excludes whatever the briefing carried on the
