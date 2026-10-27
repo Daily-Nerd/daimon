@@ -300,6 +300,63 @@ def test_an_unlistable_root_is_one_named_line_never_a_traceback(
     assert importer.discover(PROJECT, resolver).unreadable == (("codex", sealed),)
 
 
+def test_max_calls_bounds_a_discovered_run_the_same_way(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    chat = _reporting(fake_chat_factory, _valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    for i in range(3):
+        _claude(home, f"S-{i}", STAMPS[i])
+    assert cli.main(_argv("--max-calls", "2")) == 0
+    out = capsys.readouterr().out
+    assert len(chat.calls) == 2
+    assert store.read_checkpoint("S-0") is not None
+    assert store.read_checkpoint("S-1") is not None
+    assert store.read_checkpoint("S-2") is None
+    assert (
+        "stopped before [3/3] S-2: its 1 planned call would pass "
+        "--max-calls 2 (2 spent so far). 2 of 3 imported, 1 left."
+    ) in out
+    assert cli.import_cmd.RESUME_HINT in out
+
+
+def test_identical_end_stamps_break_the_tie_by_path_ascending(tmp_path, home):
+    same = STAMPS[4]
+    b = _claude(home, "S-b", same)
+    c = _codex(home, "ccc", same)
+    a = _claude(home, "S-a", same)
+    resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
+    found = importer.discover(PROJECT, resolver).paths
+    assert found == sorted([a, b, c], key=str)
+    # The window cut follows the same order, so `--sessions 2` is predictable.
+    assert found[:2] == sorted([a, b, c], key=str)[:2]
+
+
+def test_a_symlinked_project_resolves_to_the_directory_the_transcript_recorded(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    """`--project` through a symlink and a recorded cwd through the real
+    path name one project: both go through config.resolve_project_dir,
+    which collapses symlinks before comparing (scar 0023 is the other way
+    round: a slug computed from an unresolved path)."""
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    real = tmp_path / "real-project"
+    real.mkdir()
+    link = tmp_path / "link-project"
+    link.symlink_to(real)
+    resolved = os.path.realpath(real)
+    _claude(home, "S-real", STAMPS[0], cwd=resolved, slug_of=resolved)
+    _claude(home, "S-link", STAMPS[1], cwd=str(link), slug_of=str(link))
+    assert cli.main(_argv("--plan", project=str(link))) == 0
+    out = capsys.readouterr().out
+    assert _planned(out) == ["S-real", "S-link"]
+    assert chat.calls == []
+    assert cli.main(_argv(project=str(link))) == 0
+    assert store.read_checkpoint("S-real")["project_slug"] == store.project_slug(resolved)
+    assert store.read_checkpoint("S-link")["project_slug"] == store.project_slug(resolved)
+
+
 # ---- Codex: session_meta cwd in, rollout stem out -----------------------------------
 
 
