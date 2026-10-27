@@ -9,13 +9,21 @@ que uses: un hook de fin de sesión escribe un checkpoint, y un hook de inicio
 de sesión (o por prompt) convierte el último checkpoint en un briefing. La
 profundidad del soporte varía según los eventos de hook que cada host expone.
 
-| Host | Instalación | Captura | Inyección del briefing | Estado |
-|---|---|---|---|---|
-| [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) o manual `hook/daimon-hooks.py install` | El hook `SessionEnd` lanza `daimon serialize` en segundo plano | El hook `SessionStart` inyecta el briefing; el hook `UserPromptSubmit` agrega recall proactivo | validado en uso real a diario |
-| [Codex](./codex.md) | `daimon hooks install codex` | El hook `SessionEnd` serializa al cierre ordenado; el hook `Stop` con throttle cubre el resto | El hook `SessionStart` inyecta vía `additionalContext` | captura validada en uso real (desde 2026-08-06) |
-| [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (desde un clon) | El hook `SessionEnd` lanza `daimon serialize` cuando `transcript_path` no está vacío (gemini-cli v0.21.0 o posterior; el stub de `gemini-cli#14715` está corregido ahí) | El hook `SessionStart` inyecta vía `additionalContext` | captura no verificada: ninguna sesión real de Gemini pasó por serialize desde la corrección upstream |
-| [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Serialización con throttle en `pre_user_prompt` / `post_cascade_response(_with_transcript)` | Ninguna — Cascade no tiene evento equivalente a inicio de sesión; la skill instruye al agente a ejecutar `daimon brief --team` en la terminal al empezar | validado en uso real |
-| [Kimi Code](./kimi.md) | `daimon hooks install kimi` | El hook `SessionEnd` serializa al cerrar la sesión interactiva; el hook `Stop` con throttle es la única vía en modo print | El hook `UserPromptSubmit` inyecta con tu primer prompt (sin canal de inicio de sesión) | medido en una sola sesión en vivo (2026-09-09) |
+| Host | Instalación | Captura | Inyección del briefing | Importación | Estado |
+|---|---|---|---|---|---|
+| [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) o manual `hook/daimon-hooks.py install` | El hook `SessionEnd` lanza `daimon serialize` en segundo plano | El hook `SessionStart` inyecta el briefing; el hook `UserPromptSubmit` agrega recall proactivo | automática: `~/.claude/projects/<slug>/*.jsonl`, por el cwd registrado | validado en uso real a diario |
+| [Codex](./codex.md) | `daimon hooks install codex` | El hook `SessionEnd` serializa al cierre ordenado; el hook `Stop` con throttle cubre el resto | El hook `SessionStart` inyecta vía `additionalContext` | automática: `$CODEX_HOME/sessions` y `archived_sessions`, por el cwd de `session_meta` | captura validada en uso real (desde 2026-08-06) |
+| [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (desde un clon) | El hook `SessionEnd` lanza `daimon serialize` cuando `transcript_path` no está vacío (gemini-cli v0.21.0 o posterior; el stub de `gemini-cli#14715` está corregido ahí) | El hook `SessionStart` inyecta vía `additionalContext` | no soportada (sin archivo de transcripción) | captura no verificada: ninguna sesión real de Gemini pasó por serialize desde la corrección upstream |
+| [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Serialización con throttle en `pre_user_prompt` / `post_cascade_response(_with_transcript)` | Ninguna: Cascade no tiene evento equivalente a inicio de sesión; la skill instruye al agente a ejecutar `daimon brief --team` en la terminal al empezar | por ruta (no registra proyecto, pasa `--transcript`) | validado en uso real |
+| [Kimi Code](./kimi.md) | `daimon hooks install kimi` | El hook `SessionEnd` serializa al cerrar la sesión interactiva; el hook `Stop` con throttle es la única vía en modo print | El hook `UserPromptSubmit` inyecta con tu primer prompt (sin canal de inicio de sesión) | por ruta (no registra proyecto, pasa `--transcript`) | medido en una sola sesión en vivo (2026-09-09) |
+
+La columna Importación es lo que `daimon import` hace con las sesiones pasadas
+de un host, el primer llenado acotado de
+[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas).
+Un host `automática` se descubre solo con `--project`. Un host `por ruta`
+entra por `--transcript`, porque nada en su archivo nombra el proyecto. Un host
+`no soportada` no tiene archivo de transcripción que daimon pueda leer; Hermes,
+que no tiene página acá, está de ese lado junto con Gemini CLI.
 
 ## Tres piezas móviles
 
