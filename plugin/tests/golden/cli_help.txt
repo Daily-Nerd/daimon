@@ -110,31 +110,31 @@ write-checkpoint
 usage: daimon [-h] [--version] <command> ... Cognitive checkpoints — serialize sessions, brief on
 resume. positional arguments: <command> serialize serialize a transcript file into a checkpoint
 write-checkpoint store a checkpoint read as JSON on stdin (introspection path, #23) import serialize
-past transcripts of one project in one bounded run; prints the plan and the model-call count before
-spending brief render the briefing from the latest checkpoint anchor resolve a code symbol to an
-anchor block for a cognitive item recall search local + team checkpoint history (FTS5) why inspect
-the evidence and lifecycle receipt for one item diff what changed between two retained checkpoints
-of this project (#975) — added, restated, re-tagged, and every item the chain stopped carrying, with
-the reason the record gives blame how one item got here (#975) — the session that first stated it,
-every carry since, and every event that changed its state, in order serve serve the read-only local
-viewer (localhost only) projects list every project daimon has a checkpoint for bucket maintain the
-checkpoint bucket this project reads and writes slug print the checkpoint directory name daimon
-derives from a project path resolve mark a checkpoint item resolved — append-only event, folds at
-read so the item stops carrying (#102) forget remove ONE item from the live checkpoint and record a
-signed-state tombstone — content leaves disk and index; the event carries only a hash (#321)
-unforget lift a forget on this machine, from a terminal: the value is not restored, a new capture is
-admitted again reverify evidence-gated human reopen of a resolved item (#103) — requires an
-interactive terminal and refuses without proof loops list open, briefable loop items with ids for
-this project (#480) — the read counterpart to daimon resolve's write path decide list what is
-waiting on YOU with the command that closes each (#766) — the human-side mirror of daimon loops
-refute author and query evidence-cited negative knowledge (#573) ruling standing rulings:
-human-ratified records that never decay (#693) amend record an evidence-carrying state transition on
-a briefed item (#691) trust record or settle a human quarantine on a checkpoint value (#1109): an
-active one is withheld from every read, and is published to the team when one is enabled ledger look
-after a bucket ledger file (#1132) request ask another project for something, and answer what it
-asks (#694) relations inspect and decide typed item relations (#678, shadow mode) handoff leave an
-authored baton for the next session — renders above everything in its next briefing (#523) log
-append a freeform timeline event (zero-LLM) to this project's event log (#102) recall-inject
+past transcripts of one project in one bounded run; prints the plan and about how many model calls
+it costs before spending brief render the briefing from the latest checkpoint anchor resolve a code
+symbol to an anchor block for a cognitive item recall search local + team checkpoint history (FTS5)
+why inspect the evidence and lifecycle receipt for one item diff what changed between two retained
+checkpoints of this project (#975) — added, restated, re-tagged, and every item the chain stopped
+carrying, with the reason the record gives blame how one item got here (#975) — the session that
+first stated it, every carry since, and every event that changed its state, in order serve serve the
+read-only local viewer (localhost only) projects list every project daimon has a checkpoint for
+bucket maintain the checkpoint bucket this project reads and writes slug print the checkpoint
+directory name daimon derives from a project path resolve mark a checkpoint item resolved —
+append-only event, folds at read so the item stops carrying (#102) forget remove ONE item from the
+live checkpoint and record a signed-state tombstone — content leaves disk and index; the event
+carries only a hash (#321) unforget lift a forget on this machine, from a terminal: the value is not
+restored, a new capture is admitted again reverify evidence-gated human reopen of a resolved item
+(#103) — requires an interactive terminal and refuses without proof loops list open, briefable loop
+items with ids for this project (#480) — the read counterpart to daimon resolve's write path decide
+list what is waiting on YOU with the command that closes each (#766) — the human-side mirror of
+daimon loops refute author and query evidence-cited negative knowledge (#573) ruling standing
+rulings: human-ratified records that never decay (#693) amend record an evidence-carrying state
+transition on a briefed item (#691) trust record or settle a human quarantine on a checkpoint value
+(#1109): an active one is withheld from every read, and is published to the team when one is enabled
+ledger look after a bucket ledger file (#1132) request ask another project for something, and answer
+what it asks (#694) relations inspect and decide typed item relations (#678, shadow mode) handoff
+leave an authored baton for the next session — renders above everything in its next briefing (#523)
+log append a freeform timeline event (zero-LLM) to this project's event log (#102) recall-inject
 proactive-suggestion backend for the UserPromptSubmit hook (#125): prompt on stdin, prints 0-2
 prior-work lines, rc 0 always action-recall action-keyed recall backend for the PreToolUse hook
 (#1031): shell command on stdin, prints 0-1 prior-work lines, rc 0 always request-inject
@@ -174,9 +174,11 @@ corroborate itself. Omit only when the host has no way to tell the live session 
 === import ===
 usage: daimon import [-h] [--project PROJECT] --transcript PATH [--max-calls N] [--plan] options:
 -h, --help show this help message and exit --project PROJECT project directory the transcripts
-belong to (default: DAIMON_PROJECT_DIR, then cwd) --transcript PATH a transcript file to import
-(repeatable); each must record this project as its working directory --max-calls N stop before the
-session that would pass N model calls (default: the planned count) --plan print the plan and exit
+belong to (default: DAIMON_PROJECT_DIR, then cwd); a transcript that records no project (Windsurf,
+Kimi) is accepted only when this flag is given --transcript PATH a transcript file to import
+(repeatable); one that records a working directory must record this project's --max-calls N stop
+before the session whose planned calls would take the spent count past N (default: the planned
+total); a run passes N only by one session's own retries and rescue --plan print the plan and exit
 without a model call
 
 === brief ===

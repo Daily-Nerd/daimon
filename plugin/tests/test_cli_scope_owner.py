@@ -270,6 +270,11 @@ _PROJECT_READS_OUTSIDE_THE_OWNER = {
     ("ruling.py", "_cmd_ruling_list"),
     # heal echoes the value in an error line after `_resolve_project` took it
     ("serialize.py", "_heal_loop"),
+    # import asks only whether the flag was TYPED (`is not None`), after
+    # `_resolve_project` resolved it: a transcript that records no project
+    # (Windsurf, Kimi) is accepted on the user's word, never on an inferred
+    # default (#1236)
+    ("import_cmd.py", "_cmd_import"),
     # `request open --to` looks up a NAME in the tenant-filtered list
     ("request.py", "_cmd_request_open"),
 }

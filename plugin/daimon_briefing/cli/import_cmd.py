@@ -9,88 +9,72 @@ in serialize.log, so every result line stays byte-identical to a live
 capture's and `status`, `stats` and `heal` read an import as slice 1 taught
 them to.
 
-No silent spend (invariant 2): the plan prints the call count before the
-first model call, `--plan` stops there, and the run stops before the session
-that would pass `--max-calls` (default: the planned count, so a default run
-cannot exceed what it printed). The first failed serialize of any kind stops
-the run (design section 6); a resume is the same command again, and the
-plan skips done sessions for free (design 4(d)). Nothing here retries,
-sleeps or swallows: a refusal before spend is exit 2, a stop on failure is
-exit 1, everything imported or nothing to do is exit 0.
+No silent spend (invariant 2): the plan prints the planned call count
+before the first model call, `--plan` stops there, and the run stops before
+the session whose planned calls would take the SPENT count past
+`--max-calls` (default: the planned total). Spent is what the written
+checkpoint's `capture_cost.calls` stamp says the backends answered, so a
+validation resample, a parse retry or a rescue on the fallback backend all
+count; the plan cannot see them, which is why a default run can pass its
+printed number by at most one session's own retries and rescue, never by a
+whole session. The first failed serialize of any kind stops the run (design
+section 6); a resume is the same command again, and the plan skips done
+sessions for free (design 4(d)). The summary prints on every exit after the
+first serialize, with the spent calls beside the planned ones. Nothing here
+retries, sleeps or swallows: a refusal before spend is exit 2, a stop on
+failure is exit 1, a bounded stop and everything imported are exit 0.
 """
 
 import os
-import re
 import sys
 import time
 from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import capture, config, importer, ledger, llm, render, store
+from .. import capture, config, importer, ledger, llm, serializer, store
+from .. import render
 from .serialize import _read_serialize_log
 
 RESUME_HINT = (
     "run the same command again to resume; done sessions are skipped for free."
 )
 
-# The lines `serializer.verify_quotes` logs, routed into serialize.log by
-# the handler `_run_serialize` attaches. Counted over the bytes this run
-# appended, so the number is this session's own.
-_DOWNGRADE_RE = re.compile(
-    r"quote verification: (\d+) (?:verbatim|verified) item\(s\) downgraded"
-)
 
-
-def _log_path() -> Path:
-    return config.log_dir() / "serialize.log"
-
-
-def _log_size() -> int:
-    try:
-        return _log_path().stat().st_size
-    except OSError:
-        return 0
-
-
-def _downgrades_since(offset: int) -> int:
-    try:
-        with _log_path().open("rb") as f:
-            f.seek(offset)
-            tail = f.read().decode("utf-8", errors="replace")
-    except OSError:
-        return 0
-    return sum(int(m.group(1)) for m in _DOWNGRADE_RE.finditer(tail))
-
-
-def _tokens_of(checkpoint) -> int | None:
-    """`capture_cost.total_tokens` as the checkpoint stamped it (#1235), or
-    None when the stamp is absent or the backend reported nothing."""
-    if not isinstance(checkpoint, dict):
-        return None
-    cost = checkpoint.get("capture_cost")
+def _cost_of(checkpoint) -> tuple:
+    """(`total_tokens`, `calls`) as the checkpoint's `capture_cost` stamp
+    recorded them (#1235, #1236): tokens None when the stamp is absent or
+    the backend reported nothing, calls None when the stamp predates the
+    field."""
+    cost = checkpoint.get("capture_cost") if isinstance(checkpoint, dict) else None
     if not isinstance(cost, dict):
-        return None
-    total = cost.get("total_tokens")
-    return total if isinstance(total, int) and not isinstance(total, bool) else None
+        return None, None
+
+    def _int(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    return _int(cost.get("total_tokens")), _int(cost.get("calls"))
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'s' if n != 1 else ''}"
 
 
 def _print_plan(plan: importer.Plan) -> None:
     name = Path(plan.project).name or plan.project
     hosts = sorted({s.host for s in plan.sessions})
     where = f" ({'+'.join(hosts)})" if hosts else ""
-    n = len(plan.sessions)
     print(
-        f"import plan for {name}{where}: {n} session{'s' if n != 1 else ''}, "
-        f"about {plan.calls} model call{'s' if plan.calls != 1 else ''}"
+        f"import plan for {name}{where}: {_plural(len(plan.sessions), 'session')}, "
+        f"about {_plural(plan.calls, 'model call')}"
     )
     for i, s in enumerate(plan.sessions, 1):
         line = (
-            f"  {i}  {s.ended[:10]}  {s.messages} msgs  {s.calls} "
-            f"call{'s' if s.calls != 1 else ''}  {s.session_id}"
+            f"  {i}  {s.ended[:10]}  {s.messages} msgs  "
+            f"{_plural(s.calls, 'call')}  {s.session_id}"
         )
         if s.notes:
-            line += "  note: " + ", ".join(s.notes)
+            line += "  note: " + "; ".join(s.notes)
         print(line)
     for k in plan.skipped:
         print(f"  skipped {k.session_id}: {k.reason}")
@@ -117,8 +101,9 @@ def _cmd_import(args) -> int:
             now=time.time(),
             log_text=_read_serialize_log(),
             live_session_id=os.environ.get("CLAUDE_CODE_SESSION_ID"),
+            explicit_project=args.project is not None,
         )
-    except importer.ProjectMismatch as exc:
+    except importer.ImportRefused as exc:
         print(str(exc), file=sys.stderr)
         return 2
     _print_plan(plan)
@@ -130,61 +115,80 @@ def _cmd_import(args) -> int:
     bound = args.max_calls if args.max_calls is not None else plan.calls
     n = len(plan.sessions)
     imported = 0
-    calls = 0
+    planned = 0
+    spent = 0
     tokens = 0
     unreported = 0
+    history = 0
     rescued: list = []
+    rc = 0
     for i, s in enumerate(plan.sessions, 1):
-        if calls + s.calls > bound:
+        if spent + s.calls > bound:
             print(
-                f"stopped before [{i}/{n}] {s.session_id}: its {s.calls} "
-                f"call{'s' if s.calls != 1 else ''} would pass --max-calls "
-                f"{bound} ({calls} spent so far). {imported} of {n} "
+                f"stopped before [{i}/{n}] {s.session_id}: its "
+                f"{_plural(s.calls, 'planned call')} would pass --max-calls "
+                f"{bound} ({spent} spent so far). {imported} of {n} "
                 f"imported, {n - imported} left."
             )
             print(RESUME_HINT)
-            return 0
+            break
         ledger.write_import_marker(s.session_id, project, str(s.path))
-        offset = _log_size()
+        # The session id goes along only when it is not what the file's own
+        # name says (Kimi, #988), the rule heal applies for the same reason.
+        session = s.session_id if s.session_id != s.path.stem else None
         start = time.monotonic()
         with render.working(f"importing {s.session_id}"):
-            rc = _cli._run_serialize(s.path, project, door=capture.DOOR_IMPORT)
+            run_rc = _cli._run_serialize(
+                s.path, project, session=session, door=capture.DOOR_IMPORT
+            )
         took = int(time.monotonic() - start)
-        written = store.read_checkpoint(s.session_id) if rc == 0 else None
+        written = store.read_checkpoint(s.session_id) if run_rc == 0 else None
         if written is None:
-            print(f"[{i}/{n}] error after {took}s (the error line is above)")
+            print(
+                f"[{i}/{n}] {s.session_id}: error after {took}s (the error "
+                "line is above)"
+            )
             print(
                 f"stopped after the first failed session. {imported} of {n} "
                 f"imported, {n - imported} left."
             )
             print(RESUME_HINT)
-            return 1
+            rc = 1
+            break
         imported += 1
-        calls += s.calls
-        total = _tokens_of(written)
+        planned += s.calls
+        total, calls = _cost_of(written)
+        # A stamp without the calls field (none written by this code) would
+        # leave the bound blind; count the plan for it rather than nothing.
+        spent += calls if calls is not None else s.calls
         if total is None:
             unreported += 1
-            line = f"[{i}/{n}] wrote checkpoint (took {took}s) tokens unreported"
+            line = f"[{i}/{n}] {s.session_id}: tokens unreported"
         else:
             tokens += total
-            line = f"[{i}/{n}] wrote checkpoint (took {took}s) {total:,} tokens"
-        downgraded = _downgrades_since(offset)
+            line = f"[{i}/{n}] {s.session_id}: {total:,} tokens"
+        downgraded = serializer.quotes_downgraded()
         if downgraded:
-            line += f", {downgraded} quote{'s' if downgraded != 1 else ''} downgraded"
+            line += f", {_plural(downgraded, 'quote')} downgraded"
+        if s.history:
+            history += 1
+            line += ", history only"
         if llm.fallback_used():
             rescued.append(s.session_id)
             line += " [fallback backend]"
         print(line)
     summary = (
-        f"imported {imported} of {n}, {calls} call{'s' if calls != 1 else ''}, "
-        f"{tokens:,} tokens reported"
+        f"imported {imported} of {n}, {_plural(spent, 'call')} "
+        f"({planned} planned), {tokens:,} tokens reported"
     )
     if unreported:
-        summary += f", {unreported} session{'s' if unreported != 1 else ''} unreported"
+        summary += f", {_plural(unreported, 'session')} unreported"
+    if history:
+        summary += f", {history} history only"
     if rescued:
         summary += f", {len(rescued)} via fallback backend ({', '.join(rescued)})"
     print(summary)
-    return 0
+    return rc
 
 
 def _positive(raw: str) -> int:
@@ -204,28 +208,32 @@ def register(sub, fmt) -> None:
     p = sub.add_parser(
         "import",
         help="serialize past transcripts of one project in one bounded run; "
-        "prints the plan and the model-call count before spending",
+        "prints the plan and about how many model calls it costs "
+        "before spending",
     )
     p.add_argument(
         "--project",
-        help="project directory the transcripts belong to "
-        "(default: DAIMON_PROJECT_DIR, then cwd)",
+        help="project directory the transcripts belong to (default: "
+        "DAIMON_PROJECT_DIR, then cwd); a transcript that records no "
+        "project (Windsurf, Kimi) is accepted only when this flag is "
+        "given",
     )
     p.add_argument(
         "--transcript",
         action="append",
         required=True,
         metavar="PATH",
-        help="a transcript file to import (repeatable); each must record "
-        "this project as its working directory",
+        help="a transcript file to import (repeatable); one that records a "
+        "working directory must record this project's",
     )
     p.add_argument(
         "--max-calls",
         type=_positive,
         default=None,
         metavar="N",
-        help="stop before the session that would pass N model calls "
-        "(default: the planned count)",
+        help="stop before the session whose planned calls would take the "
+        "spent count past N (default: the planned total); a run passes "
+        "N only by one session's own retries and rescue",
     )
     p.add_argument(
         "--plan",
