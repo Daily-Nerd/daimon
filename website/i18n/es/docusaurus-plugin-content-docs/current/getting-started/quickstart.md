@@ -99,17 +99,21 @@ sesiones. Una sesión que ya tiene checkpoint, una más corta que
 `DAIMON_MIN_MESSAGES`, un archivo ausente, uno ilegible: cada uno es un salto
 con nombre, antes de gastar. Cuando toda la ventana ya está capturada y existen
 transcripciones más viejas, el plan dice `all N newest sessions already
-captured; raise --sessions to reach older history`. Windsurf y Kimi no
-registran proyecto en sus transcripciones, así que nunca se descubren: pasa
-`--transcript RUTA` con `--project <dir>` escrito en la línea de comandos.
-Gemini CLI y Hermes no tienen archivo de transcripción que daimon pueda leer.
+captured; raise --sessions to reach older history`. Una corrida sin `--plan`
+cuya ventana solo tiene saltos imprime `nothing to import` y sale con 0.
+Windsurf y Kimi no registran proyecto en sus transcripciones, así que nunca se
+descubren: pasa `--transcript RUTA` con `--project <dir>` escrito en la línea
+de comandos. Gemini CLI y Hermes no tienen una raíz de transcripciones que
+daimon registre, así que la importación no llega a ninguno, ni por
+descubrimiento ni por ruta.
 
 La cantidad de llamadas es un plan: una llamada por fragmento de la
 transcripción renderizada más las fusiones. La corrida se detiene antes de la
-sesión cuyas llamadas llevarían el gasto por encima de `--max-calls`. El valor
-por defecto es el total planificado, así que una corrida sin banderas no puede
-gastar más que el número que imprimió; un reintento o un rescate en el backend
-de respaldo dentro de una sesión es la única forma de pasarlo.
+sesión cuyas llamadas planificadas llevarían el gasto por encima de
+`--max-calls`. El valor por defecto es el total planificado, así que una
+corrida sin banderas no gasta más que el número que imprimió, salvo por los
+reintentos y el rescate de respaldo de una sola sesión, que el plan no puede
+ver.
 
 Ahora ejecútalo:
 
@@ -122,9 +126,9 @@ nueva, dos líneas por cada una, y un resumen cierra la corrida:
 
 ```
 wrote checkpoint: /Users/you/.daimon/checkpoints/8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e.json (took 231s) [import]
-[1/4] 8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e: 96,004 tokens, 2 quotes downgraded
+[1/4] 8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e: 96,004 tokens
 wrote checkpoint: /Users/you/.daimon/checkpoints/b71f0c3d-2e85-47a6-8c19-d4f6a0b2e715.json (took 80s) [import]
-[2/4] b71f0c3d-2e85-47a6-8c19-d4f6a0b2e715: 30,118 tokens
+[2/4] b71f0c3d-2e85-47a6-8c19-d4f6a0b2e715: 30,118 tokens, 2 quotes downgraded
 wrote checkpoint: /Users/you/.daimon/checkpoints/5a9e3d27-18f4-4c6b-a2d0-7e3b9c1f48a2.json (took 101s) [import]
 [3/4] 5a9e3d27-18f4-4c6b-a2d0-7e3b9c1f48a2: tokens unreported
 wrote checkpoint: /Users/you/.daimon/checkpoints/c4d81f6a-9b3e-4a27-8f05-1e6d2b7c93f4.json (took 44s) [import]
@@ -135,9 +139,10 @@ imported 4 of 4, 8 calls (8 planned), 145,024 tokens reported, 1 session unrepor
 Los tokens son lo que el backend reportó para esa sesión. `tokens unreported`
 significa que no reportó nada, y el resumen cuenta esas sesiones en lugar de
 adivinar. `quotes downgraded` cuenta las citas que la verificación no pudo
-encontrar en la transcripción, algo que pasa en una sesión que abre con un
-resumen de compactación (el `note:` del plan). Sin el extra `[pretty]`, o
-cuando stdout no es una terminal, se imprime una línea
+encontrar en la transcripción. El `note:` del plan es otro dato: esa sesión
+abre con un resumen de compactación, así que el modelo nunca vio lo que vino
+antes. Sin el extra `[pretty]`, cuando stdout no es una terminal, o con
+`NO_COLOR` o `DAIMON_PLAIN` definidos, se imprime una línea
 `importing <session id>...` antes de cada par.
 
 El primer serialize fallido de cualquier tipo detiene la corrida. Primero se
@@ -174,7 +179,7 @@ parar:
 
 La línea del tema activo dice `Active topic (imported, 12d ago): ...` por la
 misma razón. La nota cuenta los archivos importados que siguen en disco y
-fecha el más nuevo. Cuando ya existe una captura en vivo del proyecto, dice en
+da la fecha del más nuevo. Cuando ya existe una captura en vivo del proyecto, dice en
 cambio que la importación es `newer than daimon's last live capture here and
 serialized after the fact`; un briefing mostrado por el fallback global dice
 `in that project` en lugar de `here`. Tanto la nota como el calificador

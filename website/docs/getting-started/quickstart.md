@@ -96,16 +96,18 @@ sessions are planned. A session that already has a checkpoint, one shorter
 than `DAIMON_MIN_MESSAGES`, a missing file, an unreadable one: each is a named
 skip, before any spend. When the whole window is already captured and older
 transcripts exist, the plan says `all N newest sessions already captured;
-raise --sessions to reach older history`. Windsurf and Kimi record no project
-in their transcripts, so they are never discovered: pass `--transcript PATH`
-with `--project <dir>` typed on the command line. Gemini CLI and Hermes have
-no transcript file daimon can read.
+raise --sessions to reach older history`. A run without `--plan` whose window
+holds only skips prints `nothing to import` and exits 0. Windsurf and Kimi
+record no project in their transcripts, so they are never discovered: pass
+`--transcript PATH` with `--project <dir>` typed on the command line. Gemini
+CLI and Hermes have no transcript root daimon registers, so import reaches
+neither, by discovery or by path.
 
 The call count is a plan: one call per chunk of the rendered transcript plus
-the merges. The run stops before the session whose calls would take the spent
-count past `--max-calls`. The default is the planned total, so a plain run
-cannot spend more than the number it printed; a retry or a rescue on the
-fallback backend inside one session is the only way past it.
+the merges. The run stops before the session whose planned calls would take
+the spent count past `--max-calls`. The default is the planned total, so a
+plain run spends no more than the number it printed, except for the retries
+and the fallback rescue of one session, which the plan cannot see.
 
 Now run it:
 
@@ -118,9 +120,9 @@ summary closes the run:
 
 ```
 wrote checkpoint: /Users/you/.daimon/checkpoints/8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e.json (took 231s) [import]
-[1/4] 8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e: 96,004 tokens, 2 quotes downgraded
+[1/4] 8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e: 96,004 tokens
 wrote checkpoint: /Users/you/.daimon/checkpoints/b71f0c3d-2e85-47a6-8c19-d4f6a0b2e715.json (took 80s) [import]
-[2/4] b71f0c3d-2e85-47a6-8c19-d4f6a0b2e715: 30,118 tokens
+[2/4] b71f0c3d-2e85-47a6-8c19-d4f6a0b2e715: 30,118 tokens, 2 quotes downgraded
 wrote checkpoint: /Users/you/.daimon/checkpoints/5a9e3d27-18f4-4c6b-a2d0-7e3b9c1f48a2.json (took 101s) [import]
 [3/4] 5a9e3d27-18f4-4c6b-a2d0-7e3b9c1f48a2: tokens unreported
 wrote checkpoint: /Users/you/.daimon/checkpoints/c4d81f6a-9b3e-4a27-8f05-1e6d2b7c93f4.json (took 44s) [import]
@@ -131,10 +133,11 @@ imported 4 of 4, 8 calls (8 planned), 145,024 tokens reported, 1 session unrepor
 The tokens are what the backend reported for that session. `tokens unreported`
 means it reported nothing, and the summary counts those sessions instead of
 guessing. `quotes downgraded` counts the quotes the verification could not find
-in the transcript, which happens on a session that opens with a compaction
-summary (the `note:` in the plan). Without the `[pretty]` extra, or when
-stdout is not a terminal, an `importing <session id>...` line prints before
-each pair.
+in the transcript. The `note:` in the plan is a separate fact: that session
+opens with a compaction summary, so the model never saw what came before it.
+Without the `[pretty]` extra, when stdout is not a terminal, or with `NO_COLOR`
+or `DAIMON_PLAIN` set, an `importing <session id>...` line prints before each
+pair.
 
 The first failed serialize of any kind stops the run. The serializer's own
 `error: ...` line prints first, then:
