@@ -246,8 +246,11 @@ def _session_key(stem: str) -> str:
     return m.group(1) if m else stem
 
 
-def _has_checkpoint(sid: str) -> bool:
-    """Did this session's serialize land a checkpoint? A direct read covers
+def has_checkpoint(sid: str) -> bool:
+    """Did this session's serialize land a checkpoint? One answer for the
+    classifier (through `_compute_outstanding`) and for the done-set of
+    `daimon import` (#1236), so heal and the import never disagree about
+    whether a session is captured. A direct read covers
     every host whose checkpoint is named by session id; the scan covers Codex,
     whose file is on disk under the rollout name the bare id cannot address
     (#634). The glob pattern is a literal — `sid` never reaches it — so no
@@ -262,6 +265,25 @@ def _has_checkpoint(sid: str) -> bool:
         return True
     return any(_session_key(p.stem) == sid
                for p in config.checkpoint_dir().glob("rollout-*.json"))
+
+
+def imported_sessions(text: str) -> frozenset:
+    """Session keys with an ` [import]` success line anywhere in `text`
+    (#1236). The second half of the import's done-set, beside
+    `has_checkpoint`: the flat store keeps a bounded number of checkpoints
+    by recency and an import is old, so it is pruned first, and this line is
+    then the only record that the session was paid for. Reads every line,
+    never the fold's tail, for the reason the admission pass reads every
+    line: a resume must not pay again because the log scrolled. The marker
+    is the last thing on the line (after ` [fallback backend]` when a rescue
+    produced the checkpoint), so the test is a suffix test."""
+    out = set()
+    for line in text.splitlines():
+        line = line.strip()
+        m = _LEDGER_OK_RE.match(line)
+        if m and line.endswith(" [import]"):
+            out.add(_session_key(Path(m.group(1)).stem))
+    return frozenset(out)
 
 
 def _spawn_routing(line: str) -> dict:
@@ -622,7 +644,7 @@ def admission_notes(slug: str, *, text: str | None = None,
     if not long_fold:
         return ()
     held = [f for f in _outstanding_failures(
-                long_fold, t, _has_checkpoint, config.hung_after_seconds(),
+                long_fold, t, has_checkpoint, config.hung_after_seconds(),
                 lambda p: bool(p) and Path(p).exists(),
                 checkpoint_covers=checkpoint_covers,
                 admission_state=_memoized_admission_state())
@@ -654,7 +676,7 @@ def admission_waiting(slug: str, *, text: str | None = None,
         return 0
     return sum(
         1 for f in _outstanding_failures(
-            long_fold, t, _has_checkpoint, config.hung_after_seconds(),
+            long_fold, t, has_checkpoint, config.hung_after_seconds(),
             lambda p: bool(p) and Path(p).exists(),
             checkpoint_covers=checkpoint_covers,
             admission_state=_memoized_admission_state())
@@ -739,7 +761,7 @@ def _scan_outstanding(text: str, now: float, force: bool = False,
     the long fold replaces the same session's entry from the short one."""
     state_of = _memoized_admission_state()
     common = dict(
-        has_checkpoint=_has_checkpoint,
+        has_checkpoint=has_checkpoint,
         ceiling=config.hung_after_seconds(),
         transcript_exists=lambda p: bool(p) and Path(p).exists(),
         force=force,
