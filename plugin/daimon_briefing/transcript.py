@@ -864,7 +864,9 @@ def last_timestamp(path) -> str | None:
         return None
     try:
         text = p.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # A tail cut mid-character by a crashed host is still a transcript;
+        # the caller's mtime fallback stands in for the stamp (#1236).
         return None
     objects = _objects_of(text)
     # #988: Kimi stamps every event with `time` in epoch MILLISECONDS and has
@@ -891,22 +893,38 @@ def recorded_cwd(path) -> str | None:
     rows. `daimon import` checks it against `--project` before any spend,
     so a transcript of another repo is refused rather than filed into the
     wrong bucket. A host that records no directory (Windsurf, a markdown
-    export) answers None; so does a non-jsonl, unreadable or empty file.
-    Never raises."""
+    export) answers None; so does a non-jsonl, unreadable, undecodable or
+    empty file. Never raises.
+
+    Reads row by row and stops at the first answer, where `last_timestamp`
+    reads the whole file: discovery (`importer.discover`) asks this of
+    every transcript under every host root on the machine, most of which
+    belong to other projects, and both hosts put the directory on the first
+    row (Claude Code on every row, Codex on `session_meta`), so the usual
+    cost is one line. The line split is the file's own (`\\n`, `\\r`), not
+    `splitlines()`: a row holding a raw U+2028 inside a string parses here
+    where the whole-file readers drop it, which can only find a directory
+    they would have missed, never a different one."""
     p = Path(path)
     if p.suffix != ".jsonl":
         return None
     try:
-        text = p.read_text(encoding="utf-8")
-    except OSError:
+        with p.open(encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                for holder in (obj, obj.get("payload")):
+                    if not isinstance(holder, dict):
+                        continue
+                    raw = holder.get("cwd")
+                    if isinstance(raw, str) and raw.strip():
+                        return raw.strip()
+    except (OSError, UnicodeDecodeError):
         return None
-    for obj in _objects_of(text):
-        for holder in (obj, obj.get("payload")):
-            if not isinstance(holder, dict):
-                continue
-            raw = holder.get("cwd")
-            if isinstance(raw, str) and raw.strip():
-                return raw.strip()
     return None
 
 

@@ -16,6 +16,7 @@ import os
 import pytest
 
 from daimon_briefing import (
+    capture,
     cli,
     importer,
     ledger,
@@ -591,6 +592,26 @@ def test_recorded_cwd_reads_claude_rows_and_codex_meta(tmp_path):
     assert transcript.recorded_cwd(n) is None
     assert transcript.recorded_cwd(tmp_path / "missing.jsonl") is None
     assert transcript.recorded_cwd(tmp_path / "notes.md") is None
+
+
+def test_recorded_cwd_stops_at_the_first_row_and_never_raises(tmp_path):
+    row = json.dumps({"type": "user", "cwd": "/p/x", "timestamp": _STAMPS[0]})
+    cut = tmp_path / "S-cut.jsonl"
+    # A tail cut mid-character by a crashed host: invalid UTF-8 after row 1.
+    cut.write_bytes(row.encode() + b"\n" + b'{"cwd": "/p/y\xe2\x80')
+    assert transcript.recorded_cwd(cut) == "/p/x"
+    head = tmp_path / "S-head.jsonl"
+    head.write_bytes(b"\xff\xfe garbage\n" + row.encode())
+    assert transcript.recorded_cwd(head) is None
+    assert transcript.last_timestamp(cut) is None
+    os.utime(cut, (OLD, OLD))
+    assert capture.session_end_stamp(cut) == "2026-06-21T00:00:00Z"
+    loose = tmp_path / "S-loose.jsonl"
+    loose.write_text(
+        'not json\n[1, 2]\n{"payload": {"cwd": "  "}}\n{"payload": {"cwd": "/p/z"}}\n',
+        encoding="utf-8",
+    )
+    assert transcript.recorded_cwd(loose) == "/p/z"
 
 
 def test_the_kill_switch_refuses_before_spend(
