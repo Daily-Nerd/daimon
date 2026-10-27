@@ -327,6 +327,21 @@ def test_codex_rollouts_are_keyed_by_stem_and_done_by_the_bare_id(
     ).read_text(encoding="utf-8")
 
 
+def test_a_rollout_moved_to_archived_sessions_plans_once_not_as_a_refusal(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    live = _codex(home, "moved", STAMPS[2])
+    _codex(home, "moved", STAMPS[2], root="archived_sessions")
+    assert cli.main(_argv("--plan")) == 0
+    out = capsys.readouterr().out
+    assert _planned(out) == ["rollout-2026-10-01T10-00-00-moved"]
+    assert "refused" not in out
+    resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
+    assert importer.discover(PROJECT, resolver).paths == [live]
+
+
 # ---- the flags ---------------------------------------------------------------------------
 
 

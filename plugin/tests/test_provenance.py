@@ -391,6 +391,23 @@ def test_an_unlistable_root_is_named_and_the_other_root_still_lists(
     assert found.state == "resolved" and found.path == keep
 
 
+def test_a_codex_rollout_in_both_roots_lists_once_as_the_sessions_copy(
+    tmp_path, monkeypatch
+):
+    """Codex moves a rollout into archived_sessions; a copy in both roots is
+    one session, and the live root wins."""
+    resolver = _lister(tmp_path, monkeypatch)
+    live = tmp_path / ".codex" / "sessions" / "2026" / "10" / "rollout-moved.jsonl"
+    old = tmp_path / ".codex" / "archived_sessions" / "rollout-moved.jsonl"
+    only = tmp_path / ".codex" / "archived_sessions" / "rollout-only.jsonl"
+    for f in (live, old, only):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("{}\n", encoding="utf-8")
+    assert resolver.transcripts("codex").files == [only, live]
+    found = resolver.resolve(_source("rollout-moved", host="codex"))
+    assert found.state == "resolved" and found.path == live
+
+
 def test_resolver_supports_codex_recursive_sessions(tmp_path):
     codex = tmp_path / ".codex"
     target = codex / "sessions" / "2026" / "08" / "S-codex.jsonl"

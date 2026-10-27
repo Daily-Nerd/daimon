@@ -475,7 +475,14 @@ class SourceResolver:
         under a parent this user cannot read raises `PermissionError` out
         of `glob` on Python 3.10 (3.13 returns nothing), so each root is
         guarded on its own and named in `unreadable`, and the other roots
-        of the host still list."""
+        of the host still list.
+
+        Codex only: a rollout present under both `sessions` and
+        `archived_sessions` is one session that Codex moved (it archives
+        by moving the file), so the stem lists once, from `sessions`, the
+        root that comes first. For every other host each root is its own
+        writer (Windsurf's own log and daimon's hook log can both exist for
+        one session) and nothing is folded."""
         roots = self.roots(host)
         if roots is None:
             return Listing([], ())
@@ -487,11 +494,17 @@ class SourceResolver:
             )
         files: list[Path] = []
         unreadable: list[Path] = []
+        stems: set[str] = set()
         for root, pattern in zip(roots, patterns):
             try:
-                files.extend(root.glob(pattern))
+                found = sorted(root.glob(pattern))
             except OSError:
                 unreadable.append(root)
+                continue
+            if host == "codex":
+                found = [p for p in found if p.stem not in stems]
+                stems.update(p.stem for p in found)
+            files.extend(found)
         return Listing(sorted(files), tuple(unreadable))
 
     def _candidates(self, source: dict) -> list[Path] | None:
