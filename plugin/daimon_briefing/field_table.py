@@ -416,14 +416,15 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "envelope", "capture_door", "string", True, False, "code", "strip",
         _c(stripped_at_serialize=True, values=("import",)),
         "#1236 which door the capture came through when it was not a live "
-        "one. \"import\" is stamped by capture.run for the bounded first "
-        "fill (`daimon import`, or any caller passing door=\"import\"): the "
-        "record is history, older than the install, and the briefing says "
-        "so. Every live door (the SessionEnd hooks, `daimon serialize` by "
-        "hand, heal, the orphan sweep) and the introspection path leave the "
-        "key absent, so absent reads as a live capture, the same reading an "
-        "old checkpoint already has. Never nullable: the only persisted "
-        "value is \"import\"."),
+        "one. \"import\" is stamped by capture.run for any caller passing "
+        "door=\"import\" (the bounded first fill): the record is a past "
+        "session serialized after the fact, not where the user left off. "
+        "Stamped only; no reader consumes it yet. Every live door (the "
+        "SessionEnd hooks, `daimon serialize` by hand, heal, the orphan "
+        "sweep) and the introspection path leave the key absent, so absent "
+        "reads as a live capture, the same reading an old checkpoint "
+        "already has. Never nullable: the only persisted value is "
+        "\"import\"."),
     FieldRule(
         "envelope", "llm_backend", "string", True, False, "code", "pass",
         _c(),
