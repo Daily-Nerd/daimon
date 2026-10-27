@@ -27,7 +27,7 @@ BASES = {"time": {"time_ns", "time"},
 # Display and age arithmetic, file mtimes, cooldowns, backups and the
 # retention cutoff are about the real machine, never about a ledger row.
 ALLOWLIST: dict[tuple[str, str, str], str] = {
-    ("daimon_briefing/capture.py", "_session_end_stamp", "time.time"):
+    ("daimon_briefing/capture.py", "session_end_stamp", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp (falls back to the transcript mtime)",
     ("daimon_briefing/capture.py", "carry_forward", "time.time"):
