@@ -27,6 +27,7 @@ Discovery (which transcripts to consider when none are given) is the next
 slice and lands beside `plan_import` here, not in the CLI.
 """
 
+import os
 from pathlib import Path
 from typing import NamedTuple
 
@@ -86,10 +87,9 @@ def import_done(session_key: str, imported: frozenset) -> str | None:
 
 
 def _under(path: Path, root: Path) -> bool:
-    try:
-        return path.resolve().is_relative_to(root.resolve())
-    except (OSError, RuntimeError, ValueError):
-        return False
+    # os.path.realpath never raises (non-strict), unlike Path.resolve on a
+    # symlink loop, so the containment test needs no guard.
+    return Path(os.path.realpath(path)).is_relative_to(Path(os.path.realpath(root)))
 
 
 def check_project(path: Path, project: str, claude_projects: Path) -> None:
@@ -148,7 +148,9 @@ def plan_import(
         if path in seen:
             continue
         seen.add(path)
-        if not path.exists():
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
             skipped.append(Skipped(sid, path, "transcript missing"))
             continue
         check_project(path, project, roots)
@@ -161,11 +163,6 @@ def plan_import(
                 Skipped(sid, path, "the live session (CLAUDE_CODE_SESSION_ID)")
             )
             continue
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            skipped.append(Skipped(sid, path, "transcript missing"))
-            continue
         if now - mtime < LIVE_WINDOW_SECONDS:
             skipped.append(
                 Skipped(sid, path, "modified in the last 10 minutes, may be live")
@@ -173,8 +170,10 @@ def plan_import(
             continue
         try:
             detailed = transcript.from_file_detailed(path)
-        except FileNotFoundError:
-            skipped.append(Skipped(sid, path, "transcript missing"))
+        except OSError:
+            # Stat succeeded, the read did not: permissions, or a file gone
+            # between the two. Named, and nothing was spent.
+            skipped.append(Skipped(sid, path, "transcript unreadable"))
             continue
         messages = detailed["messages"]
         try:

@@ -160,12 +160,13 @@ def test_a_bounded_run_stops_before_the_session_that_would_pass_max_calls(
     assert "imported 2 of 3" not in out  # a bounded stop prints no summary line
 
 
-def test_max_calls_rejects_zero():
+def test_max_calls_rejects_zero(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(
             ["import", "--project", PROJECT, "--transcript", "x", "--max-calls", "0"]
         )
     assert exc.value.code == 2
+    assert "--max-calls needs a count of 1 or more" in capsys.readouterr().err
 
 
 # ---- the first failure stops the run ------------------------------------------
@@ -502,3 +503,88 @@ def test_import_done_agrees_with_the_heal_classifier_on_a_checkpoint(
         == "already imported (serialize.log)"
     )
     assert importer.import_done("S-no", frozenset()) is None
+
+
+# ---- the edges of the plan and the run --------------------------------------
+
+
+def test_a_path_given_twice_is_planned_once(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    p = _transcript(tmp_path / "t", "S-twice", _STAMPS[0])
+    assert cli.main(_argv([p, p], "--plan")) == 0
+    out = capsys.readouterr().out
+    assert "1 session, about 1 model call" in out
+    assert out.count("S-twice") == 1
+
+
+def test_a_compaction_note_is_shown_in_the_plan_before_spend(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    rows = [
+        {
+            "type": "user",
+            "cwd": PROJECT,
+            "isCompactSummary": True,
+            "message": {"role": "user", "content": "summary of earlier work"},
+            "timestamp": _STAMPS[0],
+            "uuid": "u-0",
+        }
+    ] + _rows(_STAMPS[0], n=4)
+    d = tmp_path / "t"
+    d.mkdir()
+    p = d / "S-compact.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    os.utime(p, (OLD, OLD))
+    assert cli.main(_argv([p], "--plan")) == 0
+    out = capsys.readouterr().out
+    assert "S-compact  note: compact-summary-only-context" in out
+    assert chat.calls == []
+
+
+def test_an_unreadable_transcript_is_a_named_skip(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    if os.geteuid() == 0:
+        pytest.skip("root reads every file")
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    root = home / ".claude" / "projects" / store.project_slug(PROJECT)
+    p = _transcript(root, "S-sealed", _STAMPS[0], cwd=None)
+    p.chmod(0o000)
+    try:
+        assert cli.main(_argv([p])) == 0
+        out = capsys.readouterr().out
+        assert "skipped S-sealed: transcript unreadable" in out
+        assert "nothing to import" in out
+        assert chat.calls == []
+    finally:
+        p.chmod(0o600)
+
+
+def test_max_calls_rejects_a_word(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            ["import", "--project", PROJECT, "--transcript", "x", "--max-calls", "two"]
+        )
+    assert exc.value.code == 2
+    assert "not a whole number: 'two'" in capsys.readouterr().err
+
+
+def test_tokens_of_reads_only_a_stamped_integer():
+    tokens_of = cli.import_cmd._tokens_of
+    assert tokens_of(None) is None
+    assert tokens_of({"capture_cost": "x"}) is None
+    assert tokens_of({"capture_cost": {"total_tokens": None}}) is None
+    assert tokens_of({"capture_cost": {"total_tokens": True}}) is None
+    assert tokens_of({"capture_cost": {"total_tokens": 12}}) == 12
+
+
+def test_the_log_readers_answer_zero_without_a_log(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_LOG_DIR", str(tmp_path / "no-such-dir"))
+    assert cli.import_cmd._log_size() == 0
+    assert cli.import_cmd._downgrades_since(0) == 0
