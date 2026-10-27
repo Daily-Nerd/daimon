@@ -104,6 +104,16 @@ not read a per-message id from Codex or Windsurf transcripts yet, so their
 disclosure still falls back. A Kimi checkpoint captured before this landed
 carries no message ids either and keeps falling back too.
 
+## Importing past sessions
+
+A Kimi transcript records no project daimon can read, so `daimon import`
+never discovers one: pass it by path,
+`daimon import --project <dir> --transcript ~/.kimi-code/sessions/<workspace>/<session id>/agents/main/wire.jsonl`,
+with `--project` typed on the command line; the session id is the directory,
+as everywhere else on this host. The plan, the bound and the resume are in
+[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions);
+every refusal is in the [`daimon import` row](../reference/cli#set-up).
+
 ## MCP
 
 `daimon hooks install kimi` registers the read-only [MCP server](../reference/mcp)
