@@ -12,9 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **llm:** record what each LLM call cost from the usage the backend printed ([30cd91d](https://github.com/Daily-Nerd/daimon/commit/30cd91da3264b21f8a8fb78bcdcfcf2563bcc17f)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
 * **provenance:** the quote receipt records the message roles behind its binding ([9b1dfbb](https://github.com/Daily-Nerd/daimon/commit/9b1dfbbc957f9ff011531ad2b3ab9ab2fdee10b5)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
-* **refutations:** a candidate turned down reads rejected, a retired record reads retired, and rejecting needs no evidence ([92cfddb](https://github.com/Daily-Nerd/daimon/commit/92cfddb562b3751fde4ce4bc644f0d70153f66e1))
 * **refutations:** overturn and retire record why a record ended, rejected or retired ([641c545](https://github.com/Daily-Nerd/daimon/commit/641c5456f9469ff6b41ea1517cf3a78600a0da93)), closes [#1238](https://github.com/Daily-Nerd/daimon/issues/1238)
-* **serialize:** every checkpoint records what its capture cost in tokens, and stats sums the window ([58c1fd7](https://github.com/Daily-Nerd/daimon/commit/58c1fd75cf0c3820870517f24573d79932abaf48))
 * **serialize:** stamp capture_cost on every checkpoint from the run's call records ([d52eb80](https://github.com/Daily-Nerd/daimon/commit/d52eb805efa3914b02e08ebf365a98c764266940)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
 * **stats:** daimon stats reports whose words the fresh verified quotes are, by role ([982851e](https://github.com/Daily-Nerd/daimon/commit/982851ec82d48b3617b5c8a9b420645e660b8d39)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
 * **stats:** one tokens line over the capture window, read from checkpoints only ([605540b](https://github.com/Daily-Nerd/daimon/commit/605540b208d4b1683b2ff2a7a60e0d74206d64f5)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
@@ -22,7 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
-* **hooks:** the hook library honours DAIMON_LOG_DIR for serialize.log, the heartbeats and the crash sink ([f8e4cbd](https://github.com/Daily-Nerd/daimon/commit/f8e4cbd95e5ae524623d72c98550cd776e7ecca8))
 * **hooks:** the hook library resolves serialize.log, the heartbeats and the crash sink through DAIMON_LOG_DIR the way the CLI does ([d737d48](https://github.com/Daily-Nerd/daimon/commit/d737d4854cc1882e7bee26b5b1083a03c2d1fc1f)), closes [#1234](https://github.com/Daily-Nerd/daimon/issues/1234)
 * **provenance:** a transcript-scan receipt records the channels that account for the quote ([1560514](https://github.com/Daily-Nerd/daimon/commit/1560514f5d6a0bf50c125438edcb296cd29729fe)), closes [#1237](https://github.com/Daily-Nerd/daimon/issues/1237)
 * **serialize:** open the per-run LLM collectors in the shared pipeline so each capture bills only its own calls ([1a1c864](https://github.com/Daily-Nerd/daimon/commit/1a1c8642df06fc1c385b8af41cafd970b333cdca)), closes [#1235](https://github.com/Daily-Nerd/daimon/issues/1235)
