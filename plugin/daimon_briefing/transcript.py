@@ -868,15 +868,18 @@ def _head_and_tail(p: Path) -> tuple[str, str, bool]:
     is already in the second). For a larger file the first element is the
     opening row, read on its own so a Kimi wire header is still seen (it
     only selects a branch, so it decodes with replacement: a head that is
-    not UTF-8 is not a header), and the tail starts after the first newline
-    past the cut, so a row the cut split (and any multibyte character it
-    split) is dropped rather than decoded. The tail decodes strictly;
-    raises OSError and UnicodeDecodeError like `read_text`."""
+    not UTF-8 is not a header, and it is read no further than
+    `STAMP_TAIL_BYTES`: a first row longer than that is not a header
+    either), and the tail starts after the first newline past the cut, so
+    a row the cut split (and any multibyte character it split) is dropped
+    rather than decoded. The tail decodes strictly; raises OSError and
+    UnicodeDecodeError like `read_text`. The read is bounded by twice
+    `STAMP_TAIL_BYTES` whatever the file holds."""
     size = p.stat().st_size
     if size <= STAMP_TAIL_BYTES:
         return "", p.read_text(encoding="utf-8"), True
     with p.open("rb") as handle:
-        head = handle.readline()
+        head = handle.readline(STAMP_TAIL_BYTES)
         handle.seek(size - STAMP_TAIL_BYTES)
         handle.readline()
         tail = handle.read()

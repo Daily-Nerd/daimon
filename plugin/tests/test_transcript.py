@@ -706,6 +706,59 @@ def test_last_timestamp_takes_the_max_inside_the_tail(tmp_path):
     assert transcript.last_timestamp(p) == "2026-07-03T00:00:00Z"
 
 
+def test_the_end_stamp_is_the_newest_stamp_in_the_tail_rows_are_appended_in_order(tmp_path):
+    """The contract since #1236: a session's end is the newest stamp among
+    its last rows. Hosts append rows in order, so a newer stamp earlier in
+    the file is not a later end; it is not read. Pinned here so a change
+    to the rule is a deliberate one."""
+    p = tmp_path / "big.jsonl"
+    rows = [_row("2026-07-09T00:00:00Z", -1)]  # newer than every tail row
+    rows += [_row("2026-07-01T10:00:00Z", i) for i in range(20_000)]
+    rows += [_row("2026-07-02T00:00:00Z", -2)]
+    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    assert p.stat().st_size > transcript.STAMP_TAIL_BYTES
+    assert transcript.last_timestamp(p) == "2026-07-02T00:00:00Z"
+
+
+def test_a_pathological_first_row_is_read_no_further_than_the_tail_size(tmp_path, monkeypatch):
+    p = tmp_path / "big.jsonl"
+    first = b'{"role": "user", "content": "' + b"x" * (4 * transcript.STAMP_TAIL_BYTES) + b'"}\n'
+    p.write_bytes(first + (_row("2026-07-02T09:00:00Z", 2) + "\n").encode() * 3)
+    read = {"bytes": 0}
+    real_open = Path.open
+
+    class _Counting:
+        def __init__(self, handle):
+            self._h = handle
+
+        def read(self, n=-1):
+            data = self._h.read(n)
+            read["bytes"] += len(data)
+            return data
+
+        def readline(self, *a):
+            data = self._h.readline(*a)
+            read["bytes"] += len(data)
+            return data
+
+        def __getattr__(self, name):
+            return getattr(self._h, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self._h.__exit__(*a)
+
+    def counting_open(self, mode="r", *a, **k):
+        handle = real_open(self, mode, *a, **k)
+        return _Counting(handle) if "b" in mode else handle
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    assert transcript.last_timestamp(p) == "2026-07-02T09:00:00Z"
+    assert read["bytes"] <= 2 * transcript.STAMP_TAIL_BYTES
+
+
 def test_last_timestamp_falls_back_to_the_whole_file_when_the_tail_has_no_stamp(tmp_path):
     p = tmp_path / "big.jsonl"
     head = [_row("2026-07-01T10:00:00Z", 0)]
