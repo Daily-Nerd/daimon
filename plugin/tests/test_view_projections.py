@@ -367,6 +367,14 @@ def test_imported_says_when_a_live_capture_of_the_project_exists(
         count=2, created=NEWEST_IMPORT, live_seen=True)
 
 
+def test_another_projects_live_file_is_not_this_projects_live_capture(
+        tmp_checkpoint_dir):
+    _write(sid="S-live-else", created="2026-10-01T10:00:00Z", project=OTHER)
+    _write_imported("S-imp-1", NEWEST_IMPORT)
+    assert view.imported(view.open(PROJECT, live=True)) == view.Imported(
+        count=1, created=NEWEST_IMPORT, live_seen=False)
+
+
 def test_open_reports_no_import_for_a_live_latest(tmp_checkpoint_dir):
     _write_imported("S-imp-1", NEWEST_IMPORT)
     _write(sid="S-live", created="2026-10-26T10:00:00Z")
