@@ -124,10 +124,10 @@ tratar JSON crudo como texto del transcript.
 `daimon import --project <dir>` descubre por sí solo los rollouts de Codex:
 lista `$CODEX_HOME/sessions` y `archived_sessions` (`~/.codex` por defecto) y
 compara cada rollout por el `cwd` que registró su fila `session_meta`; un
-rollout presente en ambas raíces cuenta una sola vez. El plan, el tope y la
-reanudación están en
-[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas);
-cada rechazo está en la [fila de `daimon import`](../reference/cli#preparar).
+rollout presente en ambas raíces cuenta una sola vez.
+[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas)
+recorre una corrida entera; la [fila de `daimon import`](../reference/cli#preparar)
+enumera los rechazos.
 
 ## MCP
 

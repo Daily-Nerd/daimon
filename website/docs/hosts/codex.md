@@ -113,9 +113,10 @@ transcript text.
 `daimon import --project <dir>` discovers Codex rollouts on its own: it lists
 `$CODEX_HOME/sessions` and `archived_sessions` (`~/.codex` by default) and
 matches each rollout on the `cwd` its `session_meta` row recorded; a rollout
-present in both roots counts once. The plan, the bound and the resume are in
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions);
-every refusal is in the [`daimon import` row](../reference/cli#set-up).
+present in both roots counts once.
+[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions)
+walks through a run; the [`daimon import` row](../reference/cli#set-up) lists
+the refusals.
 
 ## MCP
 
