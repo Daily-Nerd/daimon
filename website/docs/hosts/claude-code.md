@@ -202,5 +202,9 @@ daimon status
 ```
 
 `daimon status` reports capture health honestly, including failures, skips,
-and crashes; a failed capture self-heals on the next start. End a session ->
-a checkpoint is written; start the next -> the briefing appears.
+and crashes. A failed capture gets one automatic retry: the next session
+start launches `daimon heal` in the background, which re-serializes the
+newest failed session whose transcript is still on disk, once per session.
+A second failure stays listed in `daimon status` as "retry attempted, still
+failing" until you run `daimon heal --force`. End a session -> a checkpoint
+is written; start the next -> the briefing appears.

@@ -134,9 +134,13 @@ project checkpoint: <session id>, written <n>m ago
 last serialize result: success — wrote checkpoint: ...
 ```
 
-Si la última serialización falló o una sesión nunca se capturó, una captura
-fallida se auto-repara al inicio de la siguiente sesión — o ejecuta
-`daimon heal` para reintentar de inmediato.
+Si la última serialización falló, el siguiente inicio de sesión la reintenta
+una vez en segundo plano: lanza `daimon heal`, que re-serializa la sesión
+fallida más reciente cuya transcripción sigue en disco. Un solo reintento
+automático por sesión. Ejecuta `daimon heal` para reintentar ahora, `daimon
+heal --all` para cada sesión reparable de esta máquina (`--project <dir>`
+para un solo proyecto), o `daimon heal --force` para gastar otro intento en
+una sesión que ya usó su reintento (`--session <id>` para elegir una).
 
 ## Antes de terminar una sesión
 
