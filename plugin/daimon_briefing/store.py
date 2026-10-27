@@ -358,7 +358,16 @@ def _stamp_first_seen(checkpoint: dict, prev: dict | None) -> None:
     reworded items are stamped with THIS checkpoint's `created`. Idempotent: an
     item already carrying first_seen is never re-stamped, so rotation/re-writes
     and heal keep original birth stamps. Deliberately exact-match only — fuzzy
-    item identity is the ACB scope-creep graveyard."""
+    item identity is the ACB scope-creep graveyard.
+
+    A birth stamp never runs backward (#1236): when `prev` is NEWER than this
+    checkpoint (an import, a heal or the sweep landing behind a live latest)
+    an inherited stamp that postdates this session's own `created` is not
+    this item's birth, it is the newer session's, so the item is stamped
+    with this checkpoint's `created` instead. A stamp that predates it (the
+    item was born earlier still and carried into the newer latest) is kept.
+    The rule is `_created_regresses`, the same one the pointer guard and
+    carry read; this is its third reader, not a third copy."""
     born = {}
     if isinstance(prev, dict):
         prev_created = prev.get("created")
@@ -367,10 +376,14 @@ def _stamp_first_seen(checkpoint: dict, prev: dict | None) -> None:
             if isinstance(text, str) and text:
                 born[text] = item.get("first_seen") or prev_created
     created = checkpoint.get("created")
+    created_epoch = _created_epoch(created)
     for item in serializer.iter_items(checkpoint):
         if item.get("first_seen"):
             continue
-        stamp = born.get(item.get("text")) or created
+        stamp = born.get(item.get("text"))
+        if stamp and _created_regresses(stamp, created_epoch):
+            stamp = None  # born after this session ended: not its birth
+        stamp = stamp or created
         if stamp:
             item["first_seen"] = stamp
 
@@ -382,12 +395,15 @@ def _created_regresses(prior_created, new_epoch: float | None) -> bool:
     (no prior, a torn or legacy prior without a `created`, an unstamped
     incoming checkpoint): last-write-wins stays the default.
 
-    Two readers, deliberately the same predicate (#123, #1236): the pointer
-    guard below refuses to move `latest` backward for such a checkpoint, and
-    `capture.carry_forward` refuses to fold that newer latest INTO it. A
-    checkpoint the guard keeps off `latest` is therefore also one that never
-    carries newer items backward or corroborates from them; the two
-    decisions cannot drift apart because neither re-derives the rule."""
+    Three readers, deliberately the same predicate (#123, #1236): the
+    pointer guard below refuses to move `latest` backward for such a
+    checkpoint, `capture.carry_forward` refuses to fold that newer latest
+    INTO it, and `_stamp_first_seen` refuses to give it a birth stamp newer
+    than its own session. None of them re-derives the rule, so they cannot
+    disagree in the harmful direction. Carry asks before the write and the
+    guard asks inside the pointer lock; a newer write landing between the
+    two can only make carry fold an OLDER prev forward, which is the
+    ordinary case, never a newer one backward."""
     if new_epoch is None:
         return False
     prior = _created_epoch(prior_created)

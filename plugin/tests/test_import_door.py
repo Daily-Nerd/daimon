@@ -636,3 +636,51 @@ def test_a_held_import_admission_names_import_as_its_cure(tmp_path, log_dir):
     )
     assert "then `daimon heal`" in "\n".join(render._outstanding_lines(held))
 
+def _first_seen_of(sid):
+    return store.read_checkpoint(sid)["working_context"]["open_questions"][0][
+        "first_seen"
+    ]
+
+
+def test_an_older_checkpoint_never_inherits_a_birth_stamp_newer_than_itself(
+    tmp_checkpoint_dir,
+):
+    store.write_checkpoint(
+        "S-live",
+        _cp("S-live", "2026-10-20T10:00:00Z", "same loop"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    assert _first_seen_of("S-live") == "2026-10-20T10:00:00Z"
+    store.write_checkpoint(
+        "S-old",
+        _cp("S-old", "2026-10-01T10:00:00Z", "same loop"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    assert _first_seen_of("S-old") == "2026-10-01T10:00:00Z"
+
+
+def test_an_older_checkpoint_keeps_an_inherited_birth_older_than_itself(
+    tmp_checkpoint_dir,
+):
+    live = _cp("S-live", "2026-10-20T10:00:00Z", "same loop")
+    live["working_context"]["open_questions"][0]["first_seen"] = "2026-09-01T10:00:00Z"
+    store.write_checkpoint(
+        "S-live", live, project_dir=CARRY_PROJECT, writer=Writer.HUMAN
+    )
+    store.write_checkpoint(
+        "S-old",
+        _cp("S-old", "2026-10-01T10:00:00Z", "same loop"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    assert _first_seen_of("S-old") == "2026-09-01T10:00:00Z"
+    # And a newer session inherits as it always did.
+    store.write_checkpoint(
+        "S-next",
+        _cp("S-next", "2026-10-21T10:00:00Z", "same loop"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    assert _first_seen_of("S-next") == "2026-09-01T10:00:00Z"

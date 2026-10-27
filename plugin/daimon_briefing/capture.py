@@ -607,7 +607,10 @@ def carry_forward(checkpoint: dict, project) -> dict:
         # by the same rule nothing of that newer latest may be folded into
         # it: a carried item would be born after the session that carries
         # it, and a corroboration from it would count the future as a
-        # witness. Same predicate as the guard, so the two cannot disagree.
+        # witness. Same predicate as the guard, so the two cannot disagree
+        # in the harmful direction: this asks before the write and the
+        # guard asks inside the pointer lock, and a newer write landing in
+        # between can only make this fold an older prev forward.
         if store.regresses_latest(prev, checkpoint):
             log.info("carry: skipped for %s, the stream's latest (%s) is "
                      "newer than this session; nothing is folded backward",
