@@ -267,21 +267,22 @@ def has_checkpoint(sid: str) -> bool:
                for p in config.checkpoint_dir().glob("rollout-*.json"))
 
 
-def imported_sessions(text: str) -> frozenset:
-    """Session keys with an ` [import]` success line anywhere in `text`
-    (#1236). The second half of the import's done-set, beside
+def captured_sessions(text: str) -> frozenset:
+    """Session keys with a success line anywhere in `text`, whatever its
+    suffix (#1236). The second half of the import's done-set, beside
     `has_checkpoint`: the flat store keeps a bounded number of checkpoints
-    by recency and an import is old, so it is pruned first, and this line is
-    then the only record that the session was paid for. Reads every line,
-    never the fold's tail, for the reason the admission pass reads every
-    line: a resume must not pay again because the log scrolled. The marker
-    is the last thing on the line (after ` [fallback backend]` when a rescue
-    produced the checkpoint), so the test is a suffix test."""
+    by recency, so an old session's checkpoint is pruned first, and the
+    success line is then the only record that it was paid for. A live
+    capture counts the same as an import, since the classifier already
+    treats any success line as terminal and a pruned live checkpoint was
+    paid for exactly like a pruned import. Reads every line, never the
+    fold's tail, for the reason the admission pass reads every line: a
+    resume must not pay again because the log scrolled. `_LEDGER_OK_RE` is
+    prefix-anchored, so ` [fallback backend]` and ` [import]` both match."""
     out = set()
     for line in text.splitlines():
-        line = line.strip()
-        m = _LEDGER_OK_RE.match(line)
-        if m and line.endswith(" [import]"):
+        m = _LEDGER_OK_RE.match(line.strip())
+        if m:
             out.add(_session_key(Path(m.group(1)).stem))
     return frozenset(out)
 
