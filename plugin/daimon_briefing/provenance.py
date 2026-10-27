@@ -438,26 +438,27 @@ class SourceResolver:
         are not part of the contract); Windsurf `<id>.jsonl` in its own
         root and `<id>.md` in daimon's; Kimi the wire log under every
         workspace and session directory (scar 0061: the file is always
-        `wire.jsonl`, the session is the directory). A root that is missing
-        or unreadable contributes nothing; the method never raises."""
+        `wire.jsonl`, the session is the directory). A root that is missing,
+        a file, or a directory this user cannot list contributes nothing:
+        `Path.glob` and `rglob` return an empty iterator for all three
+        rather than raising (the same fact `ledger.has_checkpoint` leans
+        on, verified on 3.10 and 3.13), which is why there is no `exists`
+        probe and no OSError guard here; `exists` is the one call that can
+        raise on a denied parent."""
         roots = self._roots(host)
         if roots is None:
             return []
         found: list[Path] = []
-        try:
-            if host == "claude-code":
-                found.extend(self.claude_projects.glob("*/*.jsonl"))
-            elif host == "codex":
-                for root in roots:
-                    if root.exists():
-                        found.extend(root.rglob("*.jsonl"))
-            elif host == "windsurf":
-                found.extend(roots[0].glob("*.jsonl"))
-                found.extend(roots[1].glob("*.md"))
-            elif host == "kimi":
-                found.extend(roots[0].glob("*/*/agents/main/wire.jsonl"))
-        except OSError:
-            pass
+        if host == "claude-code":
+            found.extend(self.claude_projects.glob("*/*.jsonl"))
+        elif host == "codex":
+            for root in roots:
+                found.extend(root.rglob("*.jsonl"))
+        elif host == "windsurf":
+            found.extend(roots[0].glob("*.jsonl"))
+            found.extend(roots[1].glob("*.md"))
+        elif host == "kimi":
+            found.extend(roots[0].glob("*/*/agents/main/wire.jsonl"))
         return sorted(found)
 
     def _candidates(self, source: dict) -> list[Path] | None:
