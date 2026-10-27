@@ -55,3 +55,11 @@ what marks a breaking change. The PR convention check runs release-please's
 own parser over every branch commit, so write each subject as
 `type(scope): description`, to the same bar as a PR title. The PR title and
 body are not read for the changelog.
+
+The merge commit itself must not be read either, or the PR is listed twice.
+GitHub's merge button writes the PR title under a blank line in the merge
+commit body, and release-please parses that line as one more commit. No repo
+setting removes it, so the maintainer merges with
+`uv run python scripts/merge_pr.py <number>`, which merges with the default
+subject and an empty body and then checks the commit that landed. The same
+script with `--check` verifies a PR merged by hand.
