@@ -45,10 +45,11 @@ and registers them in `~/.gemini/settings.json` (user layer). Requires the
 
 ## Importing past sessions
 
-`daimon import` does not reach Gemini CLI: daimon registers no transcript root
-for this host, so discovery lists nothing, a Gemini file given with
-`--transcript` is refused, and the plan says so in its last line,
-`gemini, hermes (no transcript file)`. The command and the hosts it covers are
+`daimon import` does not reach Gemini CLI yet: daimon registers no transcript
+root for this host, so discovery lists nothing and the plan names it in its
+last line as `gemini (no registered root)`. A Gemini file given with
+`--transcript` is refused before any spend, exit 2, with a line that names the
+file, the host and that same reason. The command and the hosts it covers are
 in
 [Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions).
 
