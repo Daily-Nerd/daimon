@@ -328,3 +328,38 @@ def test_open_with_no_checkpoint_keeps_the_route_facts(tmp_checkpoint_dir):
     assert got.checkpoint is None
     assert got.fell_back is False
     assert got.route is store.Route.OWN_ELSE_GLOBAL
+    assert got.imported is None
+
+
+# ---- open: the import door (#1236) ------------------------------------------
+
+NEWEST_IMPORT = "2026-10-14T10:00:00Z"
+
+
+def _write_imported(sid, created, project=PROJECT):
+    cp = _checkpoint(sid=sid, created=created)
+    cp["capture_door"] = "import"
+    store.write_checkpoint(sid, cp, project_dir=project, writer=Writer.HUMAN)
+
+
+def test_open_reports_the_import_count_and_when_the_newest_ended(
+        tmp_checkpoint_dir):
+    # Oldest first, as `daimon import` writes them; the newest is latest.
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", "2026-10-12T10:00:00Z")
+    _write_imported("S-imp-3", NEWEST_IMPORT)
+    # Another project's import is not this project's history.
+    _write_imported("S-else", "2026-10-13T10:00:00Z", project=OTHER)
+    got = view.open(PROJECT, live=True)
+    assert got.imported == view.Imported(count=3, created=NEWEST_IMPORT)
+
+
+def test_open_reports_no_import_for_a_live_latest(tmp_checkpoint_dir):
+    _write_imported("S-imp-1", NEWEST_IMPORT)
+    _write(sid="S-live", created="2026-10-26T10:00:00Z")
+    assert view.open(PROJECT, live=True).imported is None
+
+
+def test_open_reads_a_checkpoint_without_the_key_as_live(tmp_checkpoint_dir):
+    _write(sid="S-old", created=NEWEST_IMPORT)
+    assert view.open(PROJECT, live=True).imported is None
