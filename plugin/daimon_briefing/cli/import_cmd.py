@@ -276,8 +276,9 @@ def register(sub, fmt) -> None:
         "on the working directory each file recorded; the skips the plan "
         "names come out of those N and nothing older takes their place, so "
         "the same command rebuilds the same plan. Windsurf and Kimi record "
-        "no project and Gemini and Hermes write no transcript file: pass "
-        "--transcript for those",
+        "no project: pass --transcript for those. Gemini (no registered "
+        "root) and Hermes (no transcript file) cannot be imported yet, by "
+        "discovery or by --transcript",
     )
     p.add_argument(
         "--max-calls",

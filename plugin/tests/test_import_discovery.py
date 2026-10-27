@@ -89,9 +89,15 @@ def test_the_capability_table_names_every_host_once():
         "codex": ("automatic", ""),
         "windsurf": ("path-given", "records no project, pass --transcript"),
         "kimi": ("path-given", "records no project, pass --transcript"),
-        "gemini": ("unsupported", "no transcript file"),
+        "gemini": ("unsupported", "no registered root"),
         "hermes": ("unsupported", "no transcript file"),
     }
+    # Every row carries a reason the plan can print, and the unsupported
+    # reasons are provenance's own facts, one per host without a root.
+    assert all(c.reason for c in importer.CAPABILITIES if c.mode != "automatic")
+    assert {c.host for c in importer.CAPABILITIES if c.mode == "unsupported"} == set(
+        provenance.NO_ROOT_REASONS
+    )
     assert [c.host for c in importer.CAPABILITIES] == [
         h for h in provenance.HOSTS if h != "manual"
     ]
@@ -99,8 +105,37 @@ def test_the_capability_table_names_every_host_once():
     assert importer.DISCOVERED_HOSTS == ("claude-code", "codex")
     assert importer.not_discovered_line() == (
         "  not discovered: windsurf, kimi (records no project, pass "
-        "--transcript); gemini, hermes (no transcript file)"
+        "--transcript); gemini (no registered root); hermes (no transcript file)"
     )
+
+
+def test_a_host_without_a_root_and_without_a_reason_cannot_build_the_table(monkeypatch):
+    reasons = dict(provenance.NO_ROOT_REASONS)
+    del reasons["gemini"]
+    monkeypatch.setattr(provenance, "NO_ROOT_REASONS", reasons)
+    with pytest.raises(LookupError, match="gemini"):
+        importer._capabilities()
+
+
+def test_a_gemini_transcript_given_with_transcript_is_refused_by_name(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    """Gemini CLI writes a transcript (its SessionEnd hook passes the path)
+    but no root is registered for it, so it is not discovered and a path
+    given by hand refuses before spend, naming the host and the reason
+    instead of the generic no-directory line."""
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    p = home / ".gemini" / "tmp" / "0123abcd" / "chats" / "session-2026-10-01.json"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"messages": [{"role": "user", "content": "hi"}]}))
+    assert cli.main(_argv("--transcript", str(p))) == 2
+    err = capsys.readouterr().err
+    assert "gemini" in err and "no registered root" in err and str(p) in err
+    assert "records no project directory" not in err
+    assert chat.calls == []
+    assert provenance.unsupported_import_host(p, home=home) == "gemini"
+    assert provenance.unsupported_import_host(tmp_path / "elsewhere.jsonl", home=home) is None
 
 
 # ---- discovery: cwd is the match, the slug never is -----------------------------

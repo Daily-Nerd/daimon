@@ -73,16 +73,20 @@ class Capability(NamedTuple):
 def _capabilities() -> tuple:
     """The table, one row per host in `provenance.HOSTS` except `manual`
     (the name for a file outside every root, not a host a transcript comes
-    from), derived from the two facts provenance owns so it cannot drift
+    from), derived from the three facts provenance owns so it cannot drift
     from them: a host with no registered root (`SourceResolver.roots`
-    answers None: Gemini, Hermes) has no transcript file to find; a host
-    whose files record no project (`HOSTS_RECORDING_NO_PROJECT`: Windsurf,
-    and Kimi until a cwd field is measured in wire.jsonl) can only be
-    imported path-given, since nothing in the file ties it to a project;
-    every other host is discovered. The roots are asked of a resolver over
-    paths that do not exist, since only the shape of the table matters
-    here. This is the single source for the plan's "not discovered" line;
-    the docs capability table is written by hand from the same rows."""
+    answers None) cannot be imported at all, by discovery or by
+    `--transcript`, for the reason `NO_ROOT_REASONS` states per host
+    (Gemini writes a transcript but no root is registered for it; Hermes
+    writes none), and a rootless host with no reason there refuses to
+    build the table; a host whose files record no project
+    (`HOSTS_RECORDING_NO_PROJECT`: Windsurf, and Kimi until a cwd field is
+    measured in wire.jsonl) can only be imported path-given, since nothing
+    in the file ties it to a project; every other host is discovered. The
+    roots are asked of a resolver over paths that do not exist, since only
+    the shape of the table matters here. This is the single source for the
+    plan's "not discovered" line; the docs capability table is written by
+    hand from the same rows."""
     nowhere = Path("/nonexistent")
     probe = provenance.SourceResolver(
         home=nowhere, codex_home=nowhere, claude_projects=nowhere, kimi_home=nowhere
@@ -92,7 +96,14 @@ def _capabilities() -> tuple:
         if host == "manual":
             continue
         if probe.roots(host) is None:
-            rows.append(Capability(host, "unsupported", "no transcript file"))
+            if host not in provenance.NO_ROOT_REASONS:
+                raise LookupError(
+                    f"host {host} has no transcript root and no entry in "
+                    "provenance.NO_ROOT_REASONS"
+                )
+            rows.append(
+                Capability(host, "unsupported", provenance.NO_ROOT_REASONS[host])
+            )
         elif host in provenance.HOSTS_RECORDING_NO_PROJECT:
             rows.append(
                 Capability(host, "path-given", "records no project, pass --transcript")
@@ -215,6 +226,17 @@ DONE_LOGGED = "already captured (serialize.log)"
 DONE_REASONS = frozenset((DONE_CHECKPOINT, DONE_LOGGED))
 
 
+def unsupported_refusal(host: str, path: Path) -> str:
+    """The one wording for a transcript of a host the import cannot take
+    yet, by discovery or by `--transcript`: the host and provenance's
+    reason, so the user is not told the file "records no project"."""
+    reason = provenance.NO_ROOT_REASONS.get(host, "unsupported")
+    return (
+        f"refused: {path} is a {host} transcript and {host} cannot be "
+        f"imported yet ({reason}), by discovery or by --transcript"
+    )
+
+
 def _under(path: Path, root: Path) -> bool:
     # os.path.realpath never raises (non-strict), unlike Path.resolve on a
     # symlink loop, so the containment test needs no guard.
@@ -266,6 +288,9 @@ def check_project(
             f"refused: {path} records no project directory ({host} never "
             f"does); name the project with --project on the command line"
         )
+    rootless = provenance.unsupported_import_host(path)
+    if rootless is not None:
+        raise ProjectMismatch(unsupported_refusal(rootless, path))
     raise ProjectMismatch(
         f"refused: {path} records no project directory and is not under "
         f"{root}; only a transcript of {project} can be imported into it"

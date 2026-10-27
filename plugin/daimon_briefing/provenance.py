@@ -47,6 +47,23 @@ _LOCATORS = frozenset(("managed", "host-api", "unsupported"))
 # so neither belongs here; a host added to `infer_host` with no cwd field
 # joins this row, never a literal in the importer.
 HOSTS_RECORDING_NO_PROJECT = frozenset(("windsurf", "kimi"))
+# #1236: why each host with no registered root (`SourceResolver.roots`
+# answers None) cannot be imported, by discovery or by `--transcript`. One
+# entry per such host; the import capability table refuses to build for a
+# rootless host missing here. Gemini CLI does write a transcript (its
+# SessionEnd hook passes `transcript_path`; gemini-cli v0.21.0 fixed the
+# empty stub of gemini-cli#14715), but this resolver registers no root for
+# it, so `infer_host` classes the file as `manual` and nothing in it names
+# a project. Hermes has no transcript file at all (host-api locator).
+NO_ROOT_REASONS = {
+    "gemini": "no registered root",
+    "hermes": "no transcript file",
+}
+# Gemini CLI's config home, the directory its hooks and settings live in
+# (`host_detect` probes the same name, `skill_install` writes GEMINI.md
+# under it). Not a transcript root: it is consulted only to NAME a file
+# as Gemini's when someone hands it to the import.
+_GEMINI_HOME = ".gemini"
 _OUTCOMES = frozenset(("verified", "not-verified"))
 _BINDING_MODES = frozenset(("message-ids", "transcript-scan"))
 _DIGEST_SCOPES = frozenset(("raw-file", "rendered-transcript"))
@@ -141,6 +158,23 @@ def infer_host(transcript_path, *, home=None, codex_home=None,
     if _under(path, kimi_home / "sessions"):
         return "kimi", "managed"
     return "manual", "unsupported"
+
+
+def unsupported_import_host(transcript_path, *, home=None) -> str | None:
+    """The host a file belongs to when that host has no registered root
+    (`NO_ROOT_REASONS`), or None (#1236). `infer_host` answers `manual`
+    for such a file, which is right for a receipt (nothing can resolve it)
+    and wrong for a refusal line, which should name the host. Today the
+    one detectable case is Gemini: a path under `~/.gemini`, the config
+    home Gemini CLI keeps everything it writes in. Hermes writes no file,
+    so it is never detected. Never raises."""
+    if transcript_path is None:
+        return None
+    path = Path(transcript_path).expanduser()
+    home = Path(home).expanduser() if home is not None else Path.home()
+    if _under(path, home / _GEMINI_HOME):
+        return "gemini"
+    return None
 
 
 def session_key(transcript_path, *, host: str) -> str:
@@ -445,11 +479,13 @@ class SourceResolver:
 
     def roots(self, host: str) -> tuple[Path, ...] | None:
         """The registered transcript roots of `host`, or None for a host
-        that writes no transcript file (gemini, hermes) and for `manual`.
-        The one table of per-host roots: `infer_host` reads the same
-        directories, `transcripts` lists them, `resolve` confines a
-        candidate to them, and the import capability table asks this to
-        tell "no transcript file" from "path-given"."""
+        with no registered root: Gemini (it writes a transcript, but under
+        no directory this resolver knows), Hermes (no transcript file) and
+        `manual` (a file outside every root). The one table of per-host
+        roots: `infer_host` reads the same directories, `transcripts` lists
+        them, `resolve` confines a candidate to them, and the import
+        capability table asks this to tell a rootless host (its reason is
+        in `NO_ROOT_REASONS`) from a path-given one."""
         if host == "claude-code":
             return (self.claude_projects,)
         if host == "codex":
