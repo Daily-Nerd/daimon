@@ -768,6 +768,20 @@ def test_last_timestamp_falls_back_to_the_whole_file_when_the_tail_has_no_stamp(
     assert transcript.last_timestamp(p) == "2026-07-01T10:00:00Z"
 
 
+def test_last_timestamp_answers_none_when_the_whole_file_fallback_cannot_decode(tmp_path):
+    """A large file whose first row and tail decode but whose middle holds
+    bytes that are not UTF-8, with no stamp in the tail: the tail read
+    succeeds, the fallback read of the whole file cannot, and the answer
+    is None so the caller's mtime fallback stands in."""
+    p = tmp_path / "big.jsonl"
+    head = (_row("2026-07-01T10:00:00Z", 0) + "\n").encode()
+    middle = b'{"role": "user", "content": "\xff\xfe"}\n'
+    tail = (_json.dumps({"role": "user", "content": "x" * 100}) + "\n").encode() * 2_000
+    p.write_bytes(head + middle + tail)
+    assert p.stat().st_size > transcript.STAMP_TAIL_BYTES
+    assert transcript.last_timestamp(p) is None
+
+
 def test_last_timestamp_keeps_the_kimi_branch_on_a_large_wire_log(tmp_path):
     """The Kimi header is the first row; a tail read must still see it so a
     large wire log reads `time` in milliseconds, not `timestamp`."""
