@@ -83,6 +83,17 @@ waits on the quiet period. A knob worth setting for your first week:
 echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env   # don't skip short first sessions
 ```
 
+## Importing past sessions
+
+A Windsurf transcript records no project, so `daimon import` never discovers
+one: pass it by path,
+`daimon import --project <dir> --transcript ~/.windsurf/transcripts/<trajectory_id>.jsonl`
+(or the `.md` daimon accumulates under `~/.daimon/windsurf/transcripts/`),
+with `--project` typed on the command line, since nothing in the file can
+confirm the project. The plan, the bound and the resume are in
+[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions);
+every refusal is in the [`daimon import` row](../reference/cli#set-up).
+
 ## MCP
 
 `daimon hooks install windsurf` also prints an `mcpServers` snippet for
