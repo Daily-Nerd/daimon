@@ -531,33 +531,40 @@ def chunk_transcript(text: str, chunk_lines: int, overlap_lines: int) -> list[st
     return chunks
 
 
-def merge_calls(n_partials: int, k: int) -> int:
-    """The model calls `_merge_partials` makes to fold `n_partials` into one
-    when every group holds `k`: at each level the partials are grouped in
-    consecutive runs of `k`, every group of two or more is one call, and a
-    trailing singleton passes through free. The same arithmetic `_plan_waves`
-    uses to size the deadline (#314), kept as a count here because the plan
-    `daimon import` prints (#1236) needs calls, not waves. The #1220 budget
-    rule can shrink a group below `k` on a chain with a tight prompt limit,
-    which adds levels; that is why the plan says "about"."""
-    calls = 0
+def merge_call_groups(n_partials: int, k: int):
+    """Per merge level, how many groups cost a model call when `n_partials`
+    fold `k` at a time: the partials are grouped in consecutive runs of
+    `k`, every group of two or more is one call, and the trailing singleton
+    (when `m % k == 1`) passes through free. The one statement of the merge
+    tree's shape: `_plan_waves` sizes the deadline from it (#314) and
+    `merge_calls` counts the plan `daimon import` prints from it (#1236),
+    so neither can drift from the other. The #1220 budget rule can shrink a
+    group below `k` on a chain with a tight prompt limit, which adds levels
+    beyond this; that is why the import plan says "about"."""
     m = n_partials
     while m > 1:
         n_groups = (m + k - 1) // k
-        calls += n_groups - (1 if m % k == 1 else 0)
+        yield n_groups - (1 if m % k == 1 else 0)
         m = n_groups
-    return calls
+
+
+def merge_calls(n_partials: int, k: int) -> int:
+    """The model calls `_merge_partials` makes to fold `n_partials` into one,
+    summed over `merge_call_groups`."""
+    return sum(merge_call_groups(n_partials, k))
 
 
 def planned_calls(messages) -> int:
-    """How many model calls a serialize of `messages` makes when every call
-    succeeds (#1236): one per chunk of the rendered transcript plus the merge
-    calls that fold the chunks. Renders the same text and reads the same
-    knobs `serialize_strict` does, so the count `daimon import` prints before
-    any spend is the pipeline's own, not a second estimate. A validation
-    retry (#118), a rescue on the fallback backend (#475) and a chunk-cache
-    hit (#48) each move the real number by a call or more; none is
-    predictable before the run."""
+    """About how many model calls a serialize of `messages` makes when every
+    call succeeds (#1236): one per chunk of the rendered transcript plus the
+    merge calls that fold the chunks. Renders the same text and reads the
+    same knobs `serialize_strict` does, so the count `daimon import` prints
+    before any spend is the pipeline's own shape, not a second estimate. It
+    is a plan, not the spend: a validation resample (#118) reruns every
+    chunk and merge, a parse retry repeats a call, a rescue on the fallback
+    backend (#475) adds the fallback's own call, and a chunk-cache hit (#48)
+    removes one. The spend is `llm.capture_cost()["calls"]`, stamped on the
+    checkpoint after the run."""
     text = _render_transcript(extraction_messages(messages))
     n = len(chunk_transcript(text, config.chunk_lines(), config.chunk_overlap()))
     return n + merge_calls(n, config.merge_group_size())
@@ -2156,15 +2163,11 @@ def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
         return 1
     w = max(1, workers)
     waves = (n_chunks + w - 1) // w
-    m = n_chunks
-    while m > 1:
-        n_groups = (m + k - 1) // k
-        # Only the last group can be a singleton (when m % k == 1); it merges
-        # without an LLM call.
-        call_groups = n_groups - (1 if m % k == 1 else 0)
+    # The merge tree's shape lives in merge_call_groups (#1236): a level with
+    # only a free singleton costs no wave.
+    for call_groups in merge_call_groups(n_chunks, k):
         if call_groups > 0:
             waves += (call_groups + w - 1) // w
-        m = n_groups
     return waves
 
 
@@ -2733,6 +2736,21 @@ def conversation_message_count(messages) -> int:
                if not (isinstance(m, dict) and m.get("tool_result")))
 
 
+# #1236: what the last unit of work in this process recorded about itself,
+# beside the per-run collectors `llm` keeps (the fallback flag, the served
+# models, the spend records). Opened by `serialize_strict` with them, read by
+# `daimon import` after `_run_serialize` returns, the way it reads
+# `llm.fallback_used()`. In-process state, so another process's capture can
+# never leak into the count the way a log scrape could.
+_run_state: dict = {"quotes_downgraded": 0}
+
+
+def quotes_downgraded() -> int:
+    """How many verbatim items `verify_quotes` downgraded in the last
+    serialize of this process (its own return value), 0 before any ran."""
+    return _run_state["quotes_downgraded"]
+
+
 def require_enough_messages(messages) -> None:
     """Raise `TooShortError` for a transcript below `DAIMON_MIN_MESSAGES`: the
     one gate both `serialize_strict` and the capture preflight (#1132 PR 10b)
@@ -2775,6 +2793,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # read only what THIS run put on the wire. Before the too-short gate:
     # a skipped serialize must not leave an earlier run's state behind.
     llm.reset_call_state()
+    _run_state["quotes_downgraded"] = 0
     require_enough_messages(messages)
     # #342: first liveness stamp — from here on the child proves it is alive
     # via heartbeats (entry, every chunk/pass, every merge group), so hung
@@ -2998,9 +3017,9 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # stamp the verdict — the briefing never re-greps. #358: items with a
     # validated binding resolve their id and compare bytes against just that
     # message, whole-transcript scan as fallback.
-    verify_quotes(checkpoint, transcript_text, messages,
-                  source_ref=source_ref, transcript_hash=transcript_hash,
-                  now=now)
+    _run_state["quotes_downgraded"] = verify_quotes(
+        checkpoint, transcript_text, messages,
+        source_ref=source_ref, transcript_hash=transcript_hash, now=now)
     # #359: derive the code-owned `grounded` verdict AFTER verification (it
     # must judge the surviving bindings) — outcome claims with a validated
     # signal pointer are marked grounded; unwitnessed verbatim outcome
