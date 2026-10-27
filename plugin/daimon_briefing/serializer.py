@@ -2471,6 +2471,11 @@ _CODE_OWNED_KEYS = (
     # by _stamp_llm_provenance; a model naming the key is writing its own
     # bill. The introspection path ran no model and stays absent.
     "capture_cost",
+    # #1236: which door the capture came through is a fact about the run,
+    # stamped by capture.run for the import door and absent for every live
+    # one. A model naming the key could mark live work as history, or an
+    # import as live, and the briefing's head note would believe it.
+    "capture_door",
     # #268: origin binding is asserted by policy.bind_origin at the write
     # boundary. No code path reads a top-level copy, but a model naming the
     # key must not leave one lying beside the real per-item stamps.

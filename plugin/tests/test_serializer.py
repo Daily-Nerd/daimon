@@ -3701,3 +3701,26 @@ def test_two_captures_in_one_process_each_bill_only_their_own_calls(
     assert first["capture_cost"] == one_call
     assert second["capture_cost"] == one_call
     assert "llm_model_served" not in second  # the planted receipt is gone too
+
+
+# ---- #1236: capture_door, which door the capture came through ----
+
+
+def test_serialize_discards_a_model_authored_capture_door(fake_chat_factory, monkeypatch):
+    # A model naming the key could mark live work as history, or an import as
+    # live. Stripped like capture_cost; only capture.run ever stamps it.
+    monkeypatch.setenv("DAIMON_LLM_API_KEY", "sk-test")
+    spoofed = json.loads(_valid_checkpoint_json("S1"))
+    spoofed["capture_door"] = "import"
+    chat = fake_chat_factory(json.dumps(spoofed))
+    ckpt = serializer.serialize("S1", make_messages(20), chat=chat)
+    assert ckpt is not None
+    assert "capture_door" not in ckpt
+    assert "capture_door" in serializer._CODE_OWNED_KEYS
+
+
+def test_validate_accepts_checkpoints_with_and_without_capture_door():
+    stamped = json.loads(_valid_checkpoint_json("S-import"))
+    stamped["capture_door"] = "import"
+    assert serializer.validate(stamped)
+    assert serializer.validate(json.loads(_valid_checkpoint_json("S-live")))

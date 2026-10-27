@@ -219,3 +219,48 @@ def test_both_doors_stamp_the_same_slug_and_leave_no_stamp(
     assert seen["home-hook"] == slug
     for home in ("home-cli", "home-hook"):
         assert not (tmp_path / home / "logs" / "heartbeats" / SESSION).exists()
+
+
+def test_import_door_changes_only_the_door_stamp(
+        tmp_path, fake_chat_factory, monkeypatch):
+    """#1236: `door="import"` is one stamp and one ledger suffix, nothing
+    else. The checkpoint, the events and the rejection rows of an import are
+    byte-equal to a live capture of the same transcript once `capture_door`
+    is set aside, and a live capture carries no `capture_door` at all."""
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    tpath = _write_transcript(tmp_path)
+    slug = store.project_slug(PROJECT)
+
+    home_live = tmp_path / "home-live"
+    _seed_home(monkeypatch, home_live)
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_NEW_CP))
+    assert cli._run_serialize(tpath, PROJECT) == 0
+
+    home_import = tmp_path / "home-import"
+    _seed_home(monkeypatch, home_import)
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_NEW_CP))
+    assert cli._run_serialize(tpath, PROJECT, door="import") == 0
+
+    live_cp = json.loads(
+        (home_live / "checkpoints" / f"{SESSION}.json").read_text(encoding="utf-8"))
+    import_cp = json.loads(
+        (home_import / "checkpoints" / f"{SESSION}.json").read_text(encoding="utf-8"))
+    assert "capture_door" not in live_cp
+    assert import_cp.pop("capture_door") == "import"
+    assert import_cp == live_cp
+
+    for ledger_name in ("events.jsonl", "verification.jsonl"):
+        live_rows = _rows_minus_ts(home_live / "checkpoints" / slug / ledger_name)
+        import_rows = _rows_minus_ts(home_import / "checkpoints" / slug / ledger_name)
+        assert live_rows, f"scenario produced no {ledger_name} rows"
+        assert import_rows == live_rows
+
+    # The one ledger difference: the import's success line carries the marker.
+    live_log = (home_live / "logs" / "serialize.log").read_text(encoding="utf-8")
+    import_log = (home_import / "logs" / "serialize.log").read_text(encoding="utf-8")
+    live_ok = [ln for ln in live_log.splitlines() if ln.startswith("wrote checkpoint: ")]
+    import_ok = [ln for ln in import_log.splitlines() if ln.startswith("wrote checkpoint: ")]
+    assert len(live_ok) == 1 and len(import_ok) == 1
+    assert not live_ok[0].endswith(" [import]")
+    assert import_ok[0].endswith(" [import]")
