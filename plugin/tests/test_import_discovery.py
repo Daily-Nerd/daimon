@@ -154,6 +154,16 @@ def test_a_sidechain_log_below_a_session_directory_is_not_discovered(tmp_path, h
     assert importer.discover(PROJECT, resolver).paths == [top]
 
 
+def test_a_transcript_that_records_no_directory_is_not_discovered(tmp_path, home):
+    """Discovery matches on the recorded cwd and nothing else: a file under
+    this project's own slug directory with no cwd on any row is left out
+    (path-given, slice 2's slug-root fallback still accepts it)."""
+    kept = _claude(home, "S-kept", STAMPS[1])
+    _claude(home, "S-blank", STAMPS[2], cwd=None)
+    resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
+    assert importer.discover(PROJECT, resolver).paths == [kept]
+
+
 # ---- the window: newest N before the skips ----------------------------------------
 
 
