@@ -364,6 +364,33 @@ def test_a_host_with_roots_and_no_listing_pattern_is_refused_not_empty(
         resolver.transcripts("kimi")
 
 
+def test_an_unlistable_root_is_named_and_the_other_root_still_lists(
+    tmp_path, monkeypatch
+):
+    """Python 3.10 raises PermissionError out of glob under a parent the
+    user cannot read (3.13 returns nothing); the lister reports the root
+    and goes on."""
+    resolver = _lister(tmp_path, monkeypatch)
+    keep = tmp_path / ".codex" / "archived_sessions" / "rollout-kept.jsonl"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("{}\n", encoding="utf-8")
+    sealed = tmp_path / ".codex" / "sessions"
+    real_glob = Path.glob
+
+    def glob(self, pattern, *a, **k):
+        if self == sealed:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_glob(self, pattern, *a, **k)
+
+    monkeypatch.setattr(Path, "glob", glob)
+    listing = resolver.transcripts("codex")
+    assert listing.files == [keep]
+    assert listing.unreadable == (sealed,)
+    # The receipt index behaves as before: the readable root still resolves.
+    found = resolver.resolve(_source("rollout-kept", host="codex"))
+    assert found.state == "resolved" and found.path == keep
+
+
 def test_resolver_supports_codex_recursive_sessions(tmp_path):
     codex = tmp_path / ".codex"
     target = codex / "sessions" / "2026" / "08" / "S-codex.jsonl"

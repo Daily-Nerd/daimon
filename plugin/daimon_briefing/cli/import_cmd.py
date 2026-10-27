@@ -105,8 +105,10 @@ def _cmd_import(args) -> int:
             claude_projects=config.claude_projects_dir()
         )
         window = args.sessions if args.sessions is not None else importer.DEFAULT_SESSIONS
-        paths = importer.discover(project, resolver)[:window]
+        found = importer.discover(project, resolver)
+        paths = found.paths[:window]
     else:
+        found = None
         paths = args.transcript
     try:
         plan = importer.plan_import(
@@ -121,7 +123,9 @@ def _cmd_import(args) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     _print_plan(plan)
-    if discovered:
+    if found is not None:
+        for host, root in found.unreadable:
+            print(f"  {host} root unreadable: {root}")
         print(importer.not_discovered_line())
     if args.plan:
         return 0

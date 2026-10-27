@@ -119,15 +119,15 @@ def test_discover_matches_on_the_recorded_cwd_newest_first(tmp_path, home):
     archived = _codex(home, "arch", STAMPS[4], root="archived_sessions")
     _transcript(_slug_dir(home), "notes", STAMPS[8], suffix=".md")
     resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
-    assert importer.discover(PROJECT, resolver) == [
+    assert importer.discover(PROJECT, resolver).paths == [
         newest, mid, archived, subdir, oldest
     ]
-    assert importer.discover(OTHER, resolver) == [
+    assert importer.discover(OTHER, resolver).paths == [
         _slug_dir(home) / "S-theirs.jsonl",
         home / ".codex" / "sessions" / "2026" / "10" / "01"
         / "rollout-2026-10-01T10-00-00-theirs.jsonl",
     ]
-    assert importer.discover("/p/nobody", resolver) == []
+    assert importer.discover("/p/nobody", resolver).paths == []
     assert "S-sub" not in str(_slug_dir(home))  # the slug was not the match
 
 
@@ -139,7 +139,7 @@ def test_discover_resolves_the_recorded_cwd_like_the_cli_resolves_project(
     a = _claude(home, "S-slash", STAMPS[1], cwd=PROJECT + "/")
     b = _claude(home, "S-dots", STAMPS[2], cwd=PROJECT + "/plugin/..")
     resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
-    assert importer.discover(PROJECT, resolver) == [b, a]
+    assert importer.discover(PROJECT, resolver).paths == [b, a]
 
 
 # ---- the window: newest N before the skips ----------------------------------------
@@ -271,6 +271,33 @@ def test_a_path_given_run_prints_no_hosts_line(
     out = capsys.readouterr().out
     assert "1 session, about 1 model call" in out
     assert "not discovered" not in out
+
+
+def test_an_unlistable_root_is_one_named_line_never_a_traceback(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    from pathlib import Path
+
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    _claude(home, "S-ok", STAMPS[0])
+    sealed = home / ".codex" / "sessions"
+    sealed.mkdir(parents=True)
+    real_glob = Path.glob
+
+    def glob(self, pattern, *a, **k):
+        if self == sealed:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_glob(self, pattern, *a, **k)
+
+    monkeypatch.setattr(Path, "glob", glob)
+    assert cli.main(_argv("--plan")) == 0
+    out = capsys.readouterr().out
+    assert f"  codex root unreadable: {sealed}" in out
+    assert _planned(out) == ["S-ok"]
+    assert chat.calls == []
+    resolver = provenance.SourceResolver(claude_projects=_slug_dir(home).parent)
+    assert importer.discover(PROJECT, resolver).unreadable == (("codex", sealed),)
 
 
 # ---- Codex: session_meta cwd in, rollout stem out -----------------------------------

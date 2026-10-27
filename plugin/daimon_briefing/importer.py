@@ -117,10 +117,18 @@ def not_discovered_line() -> str:
     return "  not discovered: " + "; ".join(parts)
 
 
-def discover(project: str, resolver: provenance.SourceResolver) -> list:
+class Discovery(NamedTuple):
+    """What `discover` found: the project's transcripts newest first, and
+    every (host, root) the lister could not read, for the plan to name."""
+
+    paths: list
+    unreadable: tuple
+
+
+def discover(project: str, resolver: provenance.SourceResolver) -> Discovery:
     """Every transcript of `project` under the automatic hosts' roots,
     newest first by session end (`capture.session_end_stamp`: the last row
-    stamp, the mtime for a stamp-free file), ties by path.
+    stamp, the mtime for a stamp-free file), ties by path ascending.
 
     The match is the working directory the transcript itself recorded
     (`transcript.recorded_cwd`), resolved through the one project resolver
@@ -131,9 +139,12 @@ def discover(project: str, resolver: provenance.SourceResolver) -> list:
     consulted. A file that records no directory is not this project's as
     far as discovery can tell and is left out. Reads nothing but the files
     under the roots; spends nothing; never raises on a file it cannot read."""
-    found = []
+    found: list = []
+    unreadable: list = []
     for host in DISCOVERED_HOSTS:
-        for path in resolver.transcripts(host).files:
+        listing = resolver.transcripts(host)
+        unreadable.extend((host, root) for root in listing.unreadable)
+        for path in listing.files:
             cwd = transcript.recorded_cwd(path)
             if cwd is None:
                 continue
@@ -142,7 +153,7 @@ def discover(project: str, resolver: provenance.SourceResolver) -> list:
             found.append((capture.session_end_stamp(path), path))
     found.sort(key=lambda pair: str(pair[1]))
     found.sort(key=lambda pair: pair[0], reverse=True)  # stable: ties keep path order
-    return [path for _ended, path in found]
+    return Discovery([path for _ended, path in found], tuple(unreadable))
 
 
 class ImportRefused(Exception):

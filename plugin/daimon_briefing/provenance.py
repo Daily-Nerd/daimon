@@ -471,7 +471,11 @@ class SourceResolver:
         The pattern per root is `_LISTINGS`; a host with roots and no
         pattern raises `LookupError`, so a host added to `roots` cannot
         read as "nothing on disk". A missing root and a root that is a
-        file list as empty (`Path.glob` returns nothing for both)."""
+        file list as empty (`Path.glob` returns nothing for both); a root
+        under a parent this user cannot read raises `PermissionError` out
+        of `glob` on Python 3.10 (3.13 returns nothing), so each root is
+        guarded on its own and named in `unreadable`, and the other roots
+        of the host still list."""
         roots = self.roots(host)
         if roots is None:
             return Listing([], ())
@@ -484,7 +488,10 @@ class SourceResolver:
         files: list[Path] = []
         unreadable: list[Path] = []
         for root, pattern in zip(roots, patterns):
-            files.extend(root.glob(pattern))
+            try:
+                files.extend(root.glob(pattern))
+            except OSError:
+                unreadable.append(root)
         return Listing(sorted(files), tuple(unreadable))
 
     def _candidates(self, source: dict) -> list[Path] | None:
