@@ -97,6 +97,23 @@ def test_an_import_from_today_says_so(tmp_checkpoint_dir):
     assert "Active topic (imported, today): the release cadence" in text
 
 
+def test_an_unreadable_created_stamp_is_said_not_guessed():
+    # A hand-planted import file with no usable `created`: the note names
+    # no age and no date, and the qualifier says the same.
+    assert briefing.import_note(1, None, None) == (
+        f"{marks.WARNING_MARK} Imported history: 1 past session, which ended "
+        "on an unknown date, before daimon captured anything live here. "
+        "Check it before acting on it.")
+    assert briefing.import_note(2, None, "not a stamp") == (
+        f"{marks.WARNING_MARK} Imported history: 2 past sessions, the newest "
+        "ended on an unknown date, before daimon captured anything live "
+        "here. Check it before acting on it.")
+    assert briefing.import_age_days("not a stamp", NOW) is None
+    assert briefing.topic_qualifier(None, imported=True) == \
+        " (imported, on an unknown date)"
+    assert briefing.topic_qualifier(12.5, imported=False) == ""
+
+
 def test_the_note_is_one_warning_line_for_a_machine_reader(
         tmp_checkpoint_dir):
     _import_three()
