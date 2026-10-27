@@ -83,7 +83,7 @@ import plan for app (claude-code): 4 sessions, about 8 model calls
   3  2026-10-12  57 msgs  2 calls  5a9e3d27-18f4-4c6b-a2d0-7e3b9c1f48a2
   4  2026-10-14  23 msgs  1 call  c4d81f6a-9b3e-4a27-8f05-1e6d2b7c93f4
   skipped 0e7b6a52-3c1d-4e8f-9a04-b5c7d2e1f690: modified in the last 10 minutes, may be live
-  not discovered: windsurf, kimi (records no project, pass --transcript); gemini, hermes (no transcript file)
+  not discovered: windsurf, kimi (records no project, pass --transcript); gemini (no registered root); hermes (no transcript file)
 ```
 
 Discovery covers Claude Code and Codex. daimon lists the transcripts under both
@@ -160,7 +160,7 @@ import plan for app (claude-code): 3 sessions, about 5 model calls
   3  2026-10-14  23 msgs  1 call  c4d81f6a-9b3e-4a27-8f05-1e6d2b7c93f4
   skipped 0e7b6a52-3c1d-4e8f-9a04-b5c7d2e1f690: modified in the last 10 minutes, may be live
   skipped 8d2e4b71-c6a9-4f30-b5d2-91e7a3c40f6e: already has a checkpoint
-  not discovered: windsurf, kimi (records no project, pass --transcript); gemini, hermes (no transcript file)
+  not discovered: windsurf, kimi (records no project, pass --transcript); gemini (no registered root); hermes (no transcript file)
 ```
 
 The first briefing after an import opens with one note under the greeting, so
