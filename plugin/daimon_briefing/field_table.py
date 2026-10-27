@@ -50,6 +50,10 @@ from __future__ import annotations
 import json
 from typing import Any, NamedTuple
 
+# The one package import: `schema` is a stdlib-only leaf that imports nothing
+# back, so the table can name a code-owned key once instead of spelling it.
+from . import schema
+
 
 SCHEMA_DOCUMENT_VERSION = 1
 
@@ -417,18 +421,20 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "daimon import bounds its run on it. "
         "Introspection checkpoints stay absent: no model ran."),
     FieldRule(
-        "envelope", "capture_door", "string", True, False, "code", "strip",
-        _c(stripped_at_serialize=True, values=("import",)),
+        "envelope", schema.CAPTURE_DOOR, "string", True, False, "code", "strip",
+        _c(stripped_at_serialize=True, values=(schema.CAPTURE_DOOR_IMPORT,)),
         "#1236 which door the capture came through when it was not a live "
         "one. \"import\" is stamped by capture.run for any caller passing "
         "door=\"import\" (the bounded first fill): the record is a past "
         "session serialized after the fact, not where the user left off. "
-        "Read by view.open: when the checkpoint `brief` serves as latest "
-        "carries it, the briefing head gets one imported-history note "
-        "(how many of the project's checkpoints came through the door, "
-        "when the newest ended) and the active topic line the "
-        "`(imported, Nd ago)` qualifier; a live capture that becomes "
-        "latest ends both, with no state to clean up. Every live door (the "
+        "Read by view.imported: when the checkpoint `brief` serves as "
+        "latest carries it, the briefing head gets one imported-history "
+        "note (how many of the project's session files still on disk came "
+        "through the door, so a number the store's GC can lower over time; "
+        "when the newest ended; whether a live capture of the project "
+        "exists) and the active topic line the `(imported, Nd ago)` "
+        "qualifier; a live capture that becomes latest ends both, with no "
+        "state to clean up. Every live door (the "
         "SessionEnd hooks, `daimon serialize` by hand, heal, the orphan "
         "sweep) and the introspection path leave the key absent, so absent "
         "reads as a live capture, the same reading an old checkpoint "

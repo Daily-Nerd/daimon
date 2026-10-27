@@ -112,7 +112,7 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # Every live door leaves the key absent: absent means a live capture,
     # the same reading an old checkpoint already has.
     if door == DOOR_IMPORT:
-        checkpoint["capture_door"] = DOOR_IMPORT
+        checkpoint[schema.CAPTURE_DOOR] = DOOR_IMPORT
     # #811: carry is part of writing a checkpoint, not a step capture happens
     # to perform. Shared with the introspection path via capture.carry_forward.
     checkpoint = carry_forward(checkpoint, project)

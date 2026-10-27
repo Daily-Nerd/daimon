@@ -2510,7 +2510,7 @@ _CODE_OWNED_KEYS = (
     # stamped by capture.run for the import door and absent for every live
     # one. A model naming the key could mark live work as history, or an
     # import as live, and the briefing's head note would believe it.
-    "capture_door",
+    schema.CAPTURE_DOOR,
     # #268: origin binding is asserted by policy.bind_origin at the write
     # boundary. No code path reads a top-level copy, but a model naming the
     # key must not leave one lying beside the real per-item stamps.
