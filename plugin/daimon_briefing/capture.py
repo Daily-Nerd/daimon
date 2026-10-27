@@ -599,6 +599,21 @@ def carry_forward(checkpoint: dict, project) -> dict:
         # this project's bucket permanently. No prev -> no carry.
         prev = store.read_latest_body(project, route=store.Route.OWN,
                                       admit=store.Admit.ANY)
+        # #1236: carry runs forward in session time, never backward. When
+        # the stream's latest was created AFTER this checkpoint (an import
+        # of an old transcript, a heal of an old session, the orphan sweep
+        # catching up behind a live capture), the pointer guard in
+        # store.write_checkpoint will keep this checkpoint off `latest`, and
+        # by the same rule nothing of that newer latest may be folded into
+        # it: a carried item would be born after the session that carries
+        # it, and a corroboration from it would count the future as a
+        # witness. Same predicate as the guard, so the two cannot disagree.
+        if store.regresses_latest(prev, checkpoint):
+            log.info("carry: skipped for %s, the stream's latest (%s) is "
+                     "newer than this session; nothing is folded backward",
+                     checkpoint.get("session_id"),
+                     (prev or {}).get("session_id"))
+            return checkpoint
         now = store._created_epoch(checkpoint.get("created")) or time.time()
         events = store.resolutions(project_dir=project)
         resolved = frozenset(ref for ref, evt in events.items()

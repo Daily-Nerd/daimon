@@ -349,3 +349,152 @@ def test_import_marker_is_best_effort(tmp_path, monkeypatch):
     monkeypatch.setenv("DAIMON_LOG_DIR", str(blocker))
     ledger.write_import_marker(SID, PROJECT, "/t/x.jsonl")
     assert os.path.isfile(blocker)
+
+
+# ---- carry never runs backward -----------------------------------------------
+#
+# An import of an old transcript lands behind the stream's live latest. The
+# pointer guard (#123) already keeps it off `latest`; the same rule now keeps
+# carry from folding that newer latest into it, so an older checkpoint never
+# carries items born after it and never corroborates from them. The rule is
+# owned by store and read by both, so it holds for every door, not just the
+# import: a heal of an old session and the orphan sweep get the same answer.
+
+from daimon_briefing import store, transcript  # noqa: E402
+from daimon_briefing.surfaces import Writer  # noqa: E402
+
+CARRY_PROJECT = "/p/carry-order"
+
+
+def _cp(sid, created, text="an open loop"):
+    return {
+        "session_id": sid,
+        "created": created,
+        "working_context": {
+            "open_questions": [{"text": text, "trust": "inferred", "importance": 7}]
+        },
+        "epistemic_snapshot": {},
+    }
+
+
+def _spy_emitters(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        capture,
+        "_emit_supersede_candidates",
+        lambda *a, **k: calls.append("supersede") or 0,
+    )
+    monkeypatch.setattr(
+        capture,
+        "_emit_corroborations",
+        lambda *a, **k: calls.append("corroborate") or 0,
+    )
+    return calls
+
+
+def _carried(cp):
+    return [q for q in cp["working_context"]["open_questions"] if q.get("carried_from")]
+
+
+def test_an_older_capture_folds_nothing_backward_and_emits_nothing(
+    tmp_checkpoint_dir, monkeypatch
+):
+    store.write_checkpoint(
+        "S-live",
+        _cp("S-live", "2026-10-20T10:00:00Z"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    calls = _spy_emitters(monkeypatch)
+    older = capture.carry_forward(
+        _cp("S-old", "2026-10-01T10:00:00Z", "an older loop"), CARRY_PROJECT
+    )
+    assert _carried(older) == []
+    assert calls == []
+
+
+def test_a_newer_capture_still_carries(tmp_checkpoint_dir, monkeypatch):
+    store.write_checkpoint(
+        "S-live",
+        _cp("S-live", "2026-10-20T10:00:00Z"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    calls = _spy_emitters(monkeypatch)
+    newer = capture.carry_forward(
+        _cp("S-next", "2026-10-21T10:00:00Z", "a newer loop"), CARRY_PROJECT
+    )
+    assert [q["carried_from"] for q in _carried(newer)] == ["S-live"]
+    assert calls == ["supersede", "corroborate"]
+
+
+def test_the_carry_rule_is_the_pointer_guard_rule(tmp_checkpoint_dir):
+    """One predicate, two readers: the answer carry gets for a prev body is
+    the answer the pointer guard gives for the pointer holding that body."""
+    pdir = tmp_checkpoint_dir / store.project_slug(CARRY_PROJECT)
+    cases = [
+        (_cp("P", "2026-10-20T10:00:00Z"), _cp("N", "2026-10-01T10:00:00Z"), True),
+        (_cp("P", "2026-10-20T10:00:00Z"), _cp("N", "2026-10-21T10:00:00Z"), False),
+        (_cp("P", "2026-10-20T10:00:00Z"), _cp("N", "2026-10-20T10:00:00Z"), False),
+        ({**_cp("P", ""), "created": None}, _cp("N", "2026-10-01T10:00:00Z"), False),
+        (_cp("P", "2026-10-20T10:00:00Z"), {**_cp("N", ""), "created": None}, False),
+    ]
+    for prev, incoming, expected in cases:
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / "latest.json").write_text(json.dumps(prev), encoding="utf-8")
+        epoch = store._created_epoch(incoming.get("created"))
+        assert store._pointer_regresses(pdir, epoch) is expected, (prev, incoming)
+        assert store.regresses_latest(prev, incoming) is expected, (prev, incoming)
+    assert store.regresses_latest(None, _cp("N", "2026-10-01T10:00:00Z")) is False
+
+
+_OLD_STAMPS = ["2026-07-01T10:00:00Z", "2026-07-01T10:01:00Z", "2026-07-01T10:02:00Z"]
+
+
+def _old_transcript(tmp_path, sid="S-older"):
+    rows = []
+    for i, ts in enumerate(_OLD_STAMPS):
+        role = "user" if i % 2 == 0 else "assistant"
+        rows.append(
+            {
+                "type": role,
+                "message": {"role": role, "content": f"turn {i}"},
+                "timestamp": ts,
+            }
+        )
+    p = tmp_path / f"{sid}.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    os.utime(p, (1782000000, 1782000000))
+    return p
+
+
+@pytest.mark.parametrize("door", [None, "import"])
+def test_a_capture_behind_the_live_latest_keeps_latest_and_carries_nothing(
+    tmp_path, tmp_checkpoint_dir, log_dir, fake_chat_factory, monkeypatch, door
+):
+    """End to end through `_run_serialize`, for the import door and a live
+    door alike: the per-session file lands, `latest` stays with the newer
+    session, and the older checkpoint holds none of the newer one's items."""
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    store.write_checkpoint(
+        "S-live",
+        _cp("S-live", "2026-10-20T10:00:00Z", "live loop"),
+        project_dir=CARRY_PROJECT,
+        writer=Writer.HUMAN,
+    )
+    tpath = _old_transcript(tmp_path)
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json("S-older")))
+    assert cli._run_serialize(tpath, CARRY_PROJECT, door=door) == 0
+    written = store.read_checkpoint("S-older")
+    assert written is not None
+    assert written["created"] == _OLD_STAMPS[-1]
+    assert transcript.last_timestamp(tpath) == _OLD_STAMPS[-1]
+    assert _carried(written) == []
+    assert (
+        store.read_latest_body(
+            project_dir=CARRY_PROJECT, route=store.Route.OWN, admit=store.Admit.ANY
+        )["session_id"]
+        == "S-live"
+    )
+    events = tmp_checkpoint_dir / store.project_slug(CARRY_PROJECT) / "events.jsonl"
+    assert not events.exists() or "corroborat" not in events.read_text(encoding="utf-8")
