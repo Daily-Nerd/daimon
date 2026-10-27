@@ -100,14 +100,16 @@ def test_an_import_from_today_says_so(tmp_checkpoint_dir):
 def test_an_unreadable_created_stamp_is_said_not_guessed():
     # A hand-planted import file with no usable `created`: the note names
     # no age and no date, and the qualifier says the same.
-    assert briefing.import_note(1, None, None) == (
+    assert briefing.import_note(1, None, None, live_seen=False, here=True) == (
         f"{marks.WARNING_MARK} Imported history: 1 past session, which ended "
         "on an unknown date, before daimon captured anything live here. "
         "Check it before acting on it.")
-    assert briefing.import_note(2, None, "not a stamp") == (
+    assert briefing.import_note(2, None, "not a stamp", live_seen=True,
+                                here=False) == (
         f"{marks.WARNING_MARK} Imported history: 2 past sessions, the newest "
-        "ended on an unknown date, before daimon captured anything live "
-        "here. Check it before acting on it.")
+        "ended on an unknown date, newer than daimon's last live capture in "
+        "that project and serialized after the fact. Check it before acting "
+        "on it.")
     assert briefing.import_age_days("not a stamp", NOW) is None
     assert briefing.topic_qualifier(None, imported=True) == \
         " (imported, on an unknown date)"
@@ -161,6 +163,115 @@ def test_the_note_survives_the_byte_ceiling(tmp_checkpoint_dir, monkeypatch):
     assert "bytes over the 200-byte budget" in text
     # The body gave way (the open loop is cut); the note did not.
     assert "(0 of 1 shown; 1 cut for budget)" in text
+
+
+# ---- the note travels with the body, never with the reader's notes ----------
+
+OTHER = "/p/imported-elsewhere"
+HERE_CLAUSE = "before daimon captured anything live here"
+
+
+def test_a_fresh_project_prints_no_note_about_another_projects_import(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    # Project A imported; project B has no checkpoint. B's default brief is
+    # the header-only path: the foreign body is suppressed, and so is any
+    # fact about it.
+    _import_three(project=OTHER)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    assert cli.main(["brief"]) == 0
+    out = capsys.readouterr().out
+    assert "No briefing for this project yet" in out
+    assert "Imported history" not in out
+    assert "(imported" not in out
+
+
+def test_the_global_fallback_body_carries_the_note_about_that_project(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    _import_three(project=OTHER)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    monkeypatch.setattr("time.time", lambda: NOW)
+    assert cli.main(["brief", "--global-fallback"]) == 0
+    out = capsys.readouterr().out
+    assert ("Imported history: 3 past sessions, the newest ended 12d ago "
+            "(2026-10-14), before daimon captured anything live in that "
+            "project. Check it before acting on it.") in out
+    assert HERE_CLAUSE not in out
+    assert "Active topic (imported, 12d ago): the release cadence" in out
+
+
+def test_the_global_fallback_body_of_a_live_capture_carries_no_note(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    _write(_checkpoint("S-live", NEWEST), project=OTHER)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    assert cli.main(["brief", "--global-fallback"]) == 0
+    assert "Imported history" not in capsys.readouterr().out
+
+
+def test_the_hook_injects_no_note_for_a_fresh_project(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import hooks
+    _import_three(project=OTHER)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    out = hooks.pre_llm_call(session_id="S-b", user_message="hi",
+                             conversation_history=[], is_first_turn=True,
+                             model="m", platform="cli")
+    assert "Imported history" not in (out or {}).get("context", "")
+
+
+def test_the_hook_fallback_body_carries_the_note_about_that_project(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import hooks
+    _import_three(project=OTHER)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
+    monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
+    monkeypatch.setattr("time.time", lambda: NOW)
+    out = hooks.pre_llm_call(session_id="S-b", user_message="hi",
+                             conversation_history=[], is_first_turn=True,
+                             model="m", platform="cli")
+    context = (out or {}).get("context", "")
+    assert "before daimon captured anything live in that project" in context
+    assert HERE_CLAUSE not in context
+
+
+# ---- the clause is checked, not asserted ------------------------------------
+
+
+def test_an_import_newer_than_a_live_capture_says_so(tmp_checkpoint_dir):
+    _write(_checkpoint("S-live-old", "2026-10-01T10:00:00Z"))
+    _write(_checkpoint("S-imp-1", "2026-10-09T10:00:00Z", door="import"))
+    _write(_checkpoint("S-imp-2", NEWEST, door="import"))
+    text = _brief().text
+    assert ("Imported history: 2 past sessions, the newest ended 12d ago "
+            "(2026-10-14), newer than daimon's last live capture here and "
+            "serialized after the fact. Check it before acting on it."
+            in text)
+    assert HERE_CLAUSE not in text
+
+
+# ---- the note joins the head notes through the one cap ----------------------
+
+
+def test_the_note_keeps_the_hidden_note_count_right():
+    from daimon_briefing import display
+    ledger_notes = display.cap_notes([f"{marks.WARNING_MARK} note {i}"
+                                      for i in range(8)])
+    got = briefing.head_notes("IMPORT", ledger_notes)
+    assert got == ("IMPORT", *[f"{marks.WARNING_MARK} note {i}"
+                               for i in range(4)],
+                   f"{marks.WARNING_MARK} and 4 more notes; run: daimon status")
+    assert display.all_notes(got) == ("IMPORT", *ledger_notes.all)
+    assert briefing.head_notes(None, ledger_notes) is ledger_notes
+
+
+def test_the_note_sits_after_the_degrade_note(monkeypatch, capsys):
+    assert briefing._head_lines(True, [], (NOTE,)) == [
+        marks.GREETING, "", briefing.DEGRADE_NOTE, "", NOTE]
+    pytest.importorskip("rich")
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    b = briefing.build(_checkpoint("S-imp-1", NEWEST, door="import"))
+    render._rich_brief(b, degraded=True, notes=(NOTE,))
+    out = capsys.readouterr().out
+    assert out.index("RECEIPT UNVERIFIED") < out.index("Imported history")
 
 
 # ---- the CLI renders, plain and rich ----------------------------------------

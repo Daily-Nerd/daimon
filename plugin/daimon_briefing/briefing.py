@@ -751,9 +751,13 @@ class Annotated(NamedTuple):
     `events` the resolution fold, `suppressed` the loops a resolution closed
     and `quarantined` the items a human quarantine removed (a forgotten item
     is counted nowhere: it must read as absent). `snapshot` is the reader's
-    own, whichever body was served, and `notes` its health lines plus the
-    #1236 imported-history note when the body is one, each starting with a
-    warning sign."""
+    own, whichever body was served, and `notes` its health lines, each
+    starting with a warning sign. `import_note` (#1236) is the one line a
+    BODY renderer prints first among the notes when the served body is
+    imported history; it is a fact about the body, never a reader note, so
+    a surface that prints `notes` without the body (the header-only
+    fallback, the no-checkpoint orientation) never prints it. `body_notes`
+    is the two joined through the one cap."""
     checkpoint: Any
     withheld: Any
     events: Any
@@ -772,9 +776,26 @@ class Annotated(NamedTuple):
     # #1181: "<class>:skipped-<reason>" per claim worldcheck skipped, for the
     # CALLER to record beside the counters; () when it did not run.
     worldcheck_skips: tuple = ()
+    import_note: str | None = None
+
+    @property
+    def body_notes(self) -> tuple:
+        """The notes a renderer that prints the BODY puts in the head: the
+        import note first, then the reader's notes, capped once."""
+        return head_notes(self.import_note, self.notes)
 
 
 # ---- #1236: the head note for an imported latest ----
+
+
+def head_notes(import_note: str | None, notes) -> tuple:
+    """`notes` with `import_note` in front, capped once over every line
+    behind `notes` (a capped tuple remembers what it was capped from), so
+    the "and N more" count stays right. `notes` itself when there is no
+    import note."""
+    if import_note is None:
+        return notes
+    return display.cap_notes((import_note, *display.all_notes(notes)))
 
 # The transient envelope stamp `prepare` writes when the view says the body
 # is imported history: the age in days of the newest imported session, on
@@ -803,12 +824,19 @@ def _import_age_label(days: float | None) -> str:
     return f"{int(days)}d ago"
 
 
-def import_note(count: int, days: float | None, created) -> str:
+def import_note(count: int, days: float | None, created, *,
+                live_seen: bool, here: bool) -> str:
     """The one head line for an imported latest (#1236 design 4c): how many
-    past sessions the import wrote, when the newest ended (age on the
-    briefing's clock, the date off the `created` stamp), and that none of it
-    was captured live. One line, so a machine reader keeps it whole as one
-    warning (`api.parse_briefing` drops a continuation line)."""
+    past sessions are on disk from the import, when the newest ended (age on
+    the briefing's clock, the date off the `created` stamp), and how it
+    stands to live capture, which is CHECKED, not assumed: with no live file
+    of the project on disk, the design's sentence; with one, the import is
+    newer than it (the pointer guard refuses an older latest) and was
+    serialized after the fact, and the line says that instead. `here` is
+    False when the body was served off the global pointer, so the project
+    named is "that project", not the reader's. One line, so a machine reader
+    keeps it whole as one warning (`api.parse_briefing` drops a continuation
+    line)."""
     when = _import_age_label(days)
     if isinstance(created, str) and store._created_epoch(created) is not None:
         when += f" ({created[:10]})"
@@ -816,9 +844,15 @@ def import_note(count: int, days: float | None, created) -> str:
         sessions = f"1 past session, which ended {when}"
     else:
         sessions = f"{count} past sessions, the newest ended {when}"
+    where = "here" if here else "in that project"
+    if live_seen:
+        standing = (f"newer than daimon's last live capture {where} and "
+                    "serialized after the fact")
+    else:
+        standing = f"before daimon captured anything live {where}"
     return marks.warning(
-        f"Imported history: {sessions}, before daimon captured anything "
-        "live here. Check it before acting on it.")
+        f"Imported history: {sessions}, {standing}. Check it before acting "
+        "on it.")
 
 
 def topic_qualifier(days: float | None, *, imported: bool) -> str:
@@ -857,19 +891,24 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
     if stamps and isinstance(checkpoint, dict):
         checkpoint, _candidates, stale_items = stamp(checkpoint, snap, now)
     notes = snap.notes()
-    imported = opened.imported
-    if imported is not None and isinstance(checkpoint, dict):
-        # #1236: the view said the body is imported history. The age is read
-        # once here, on the clock the stale marks use, stamped for the
-        # active topic qualifier, and worded into the first head note. The
-        # note rides with the ledger-health notes so one accounting charges
-        # it to the head: never a drop candidate, a warning to a machine
-        # reader. A live capture that becomes latest has no `imported`, so
-        # all of this ends with it and nothing is left to clean up.
-        age = import_age_days(imported.created, now)
-        checkpoint = {**checkpoint, _IMPORT_AGE_KEY: age}
-        notes = display.merge_notes(
-            (import_note(imported.count, age, imported.created),), notes)
+    note: str | None = None
+    if isinstance(checkpoint, dict):
+        imported = view.imported(opened) if stamps else None
+        if imported is not None:
+            # The view said the body is imported history. The age is read
+            # once here, on the clock the stale marks use, stamped for the
+            # active topic qualifier, and worded into `import_note`, which
+            # only a body renderer prints (first among the head notes, so
+            # one accounting charges it: never a drop candidate, a warning
+            # to a machine reader). A live capture that becomes latest has
+            # no door, so all of this ends with it and nothing is left to
+            # clean up. `stamps=False` is the teammate path: no walk, no
+            # note, as it carries no other stamp either.
+            age = import_age_days(imported.created, now)
+            checkpoint = {**checkpoint, _IMPORT_AGE_KEY: age}
+            note = import_note(imported.count, age, imported.created,
+                               live_seen=imported.live_seen,
+                               here=not opened.fell_back)
     wc_stats = None
     ledger_rows: list = []
     skips: list = []
@@ -908,7 +947,7 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
-        notes, opened.fell_back, tuple(skips))
+        notes, opened.fell_back, tuple(skips), note)
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -1968,6 +2007,9 @@ def machine_brief(target, now, *, loops_pointer: bool) -> RenderedBriefing:
         return RenderedBriefing(
             f"{ruling_text}checkpoint exists but has nothing worth surfacing.",
             "empty", notes)
+    # #1236: the body renders, so its import note leads the notes; the
+    # returns above print no body and keep the reader's notes alone.
+    notes = annotated.body_notes
     return RenderedBriefing(
         render_plain(b, receipt_degraded(filtered), rulings,
                      loops_pointer=loops_pointer, notes=notes),

@@ -190,13 +190,19 @@ class Visible:
 @dataclass(frozen=True)
 class Imported:
     """#1236: the served checkpoint came through the import door. `count` is
-    how many of its project's session files did (the served one included,
-    so never below one), `created` the `created` stamp of the served one:
-    when the newest imported session ended. The briefing words it; this is
-    the fact."""
+    how many of its project's session files still on disk did (the served
+    one included, so never below one): the store's GC keeps a bounded number
+    of files by recency and imports are the oldest, so this number can only
+    shrink over time, never grow. `created` is the `created` stamp of the
+    served one: when the newest imported session ended. `live_seen` says
+    whether any live capture of the project (a file without the door key)
+    is on disk; when it is, the imports are newer than it, since the
+    pointer guard refuses an older latest. The briefing words it; this is
+    the fact, computed by `imported` on demand."""
 
     count: int
     created: Any
+    live_seen: bool
 
 
 @dataclass(frozen=True)
@@ -206,10 +212,11 @@ class Opened:
     removed, `suppressed` counts loops closed by a resolution (only when the
     caller asked for `live`). `route` is the route the read was asked to take
     and `fell_back` is the route FACT: the global pointer served the body
-    (scar 0058: read it off the result, never reconstruct it). `imported`
-    (#1236) is set when the body carries the code-owned `capture_door:
-    "import"`; a live capture has no key and reads None, as an old
-    checkpoint always has."""
+    (scar 0058: read it off the result, never reconstruct it). `door`
+    (#1236) is the body's code-owned `capture_door` value, set by every
+    builder from the body alone; a live capture has no key and reads None,
+    as an old checkpoint always has. The costlier import facts are
+    `imported(opened)`, computed only when a body renderer asks."""
 
     checkpoint: dict | None
     withheld: tuple
@@ -217,7 +224,7 @@ class Opened:
     snapshot: Snapshot
     route: store.Route = store.Route.OWN
     fell_back: bool = False
-    imported: Imported | None = None
+    door: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1193,13 +1200,13 @@ def _filter(raw: dict, snap: Snapshot, live_only: bool):
 
 def _opened(raw, snap: Snapshot, live_only: bool,
             route: store.Route = store.Route.OWN,
-            fell_back: bool = False,
-            imported: Imported | None = None) -> Opened:
+            fell_back: bool = False) -> Opened:
     if not isinstance(raw, dict):
         return Opened(None, (), 0, snap, route, fell_back)
     copy_, withheld, suppressed = _filter(raw, snap, live_only)
+    door = raw.get(schema.CAPTURE_DOOR)
     return Opened(copy_, withheld, suppressed, snap, route, fell_back,
-                  imported)
+                  door if isinstance(door, str) else None)
 
 
 def _bucket_files(slug: str) -> Iterator[tuple[Path, dict | None]]:
@@ -1221,25 +1228,32 @@ def _bucket_files(slug: str) -> Iterator[tuple[Path, dict | None]]:
             yield path, raw
 
 
-def _imported(raw) -> Imported | None:
-    """#1236: None for a live capture (no `capture_door`, as every live door
-    and every old checkpoint leaves it). For the import door: how many of
-    the body's project's session files came through it, the body counted
-    whatever the walk finds (it is the served one), and when it ended. The
-    walk runs only on an imported body, so a live brief reads one file as
-    before; the bucket is the body's own slug, never a wider set."""
-    if (not isinstance(raw, dict)
-            or raw.get("capture_door") != schema.CAPTURE_DOOR_IMPORT):
+def imported(opened: Opened) -> Imported | None:
+    """#1236: the import facts of an opened body, for a body renderer. None
+    for a live capture (no door, as every live door and every old checkpoint
+    leaves it). For the import door: how many of the body's project's session
+    files came through it (the body counted whatever the walk finds, since it
+    is the served one), whether a live capture of the project is on disk,
+    and when the body's session ended. The walk over the bucket's files runs
+    here and only here, never in `open`: an existence check or a reader-notes
+    path pays nothing for it. The bucket is the body's own slug, never a
+    wider set."""
+    raw = opened.checkpoint
+    if (opened.door != schema.CAPTURE_DOOR_IMPORT
+            or not isinstance(raw, dict)):
         return None
     slug = raw.get("project_slug")
-    others = 0
+    others, live_seen = 0, False
     if isinstance(slug, str):
-        others = sum(
-            1 for _path, payload in _bucket_files(slug)
-            if payload is not None
-            and payload.get("capture_door") == schema.CAPTURE_DOOR_IMPORT
-            and payload.get("session_id") != raw.get("session_id"))
-    return Imported(others + 1, raw.get("created"))
+        for _path, payload in _bucket_files(slug):
+            if payload is None:
+                continue
+            if schema.CAPTURE_DOOR not in payload:
+                live_seen = True
+            elif (payload.get(schema.CAPTURE_DOOR) == schema.CAPTURE_DOOR_IMPORT
+                  and payload.get("session_id") != raw.get("session_id")):
+                others += 1
+    return Imported(others + 1, raw.get("created"), live_seen)
 
 
 def open(project, *, live: bool,  # noqa: A001 — the projection's name
@@ -1250,12 +1264,12 @@ def open(project, *, live: bool,  # noqa: A001 — the projection's name
     project's own pointer only, OWN_ELSE_GLOBAL may serve the global pointer,
     and `Opened.fell_back` says whether it did. `project` may be a bare slug.
     The snapshot is always the reader's own, whichever body was served.
-    `Opened.imported` (#1236) says when the body is imported history."""
+    `Opened.door` (#1236) says when the body is imported history; the
+    counted facts are `imported(opened)`, on demand."""
     snap = snapshot(project)
     got = store.read_latest_result(project_dir=project, route=route,
                                    admit=store.Admit.ANY)
-    return _opened(got.checkpoint, snap, live, route, got.fell_back,
-                   _imported(got.checkpoint))
+    return _opened(got.checkpoint, snap, live, route, got.fell_back)
 
 
 @dataclass(frozen=True)
