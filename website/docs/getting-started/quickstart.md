@@ -128,9 +128,13 @@ project checkpoint: <session id>, written <n>m ago
 last serialize result: success — wrote checkpoint: ...
 ```
 
-If the last serialize failed or a session was never captured, a failed capture
-self-heals on the next session start — or run `daimon heal` to retry
-immediately.
+If the last serialize failed, the next session start retries it once in the
+background: it launches `daimon heal`, which re-serializes the newest failed
+session whose transcript is still on disk. One automatic retry per session.
+Run `daimon heal` to retry now, `daimon heal --all` for every healable
+session on this machine (`--project <dir>` for one project), or `daimon heal
+--force` to spend another attempt on a session that already used its retry
+(`--session <id>` to pick one).
 
 ## Before you end a session
 
