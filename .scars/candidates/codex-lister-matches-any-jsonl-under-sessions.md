@@ -10,7 +10,7 @@ anchors:
   - path: plugin/daimon_briefing/provenance.py
   - path: plugin/daimon_briefing/importer.py
   - pattern: "def transcripts\b"
-  - pattern: "rglob.\*\.jsonl"
+  - pattern: "\*\*/\*\.jsonl"
 evidence:
   - commit: 3e68cbf
   - note: "#1236 design section 7 names the Codex root as sessions/**/rollout-*.jsonl; tests/test_provenance.py::test_resolver_supports_codex_recursive_sessions resolves a receipt to sessions/2026/08/S-codex.jsonl, a stem with no rollout prefix"
@@ -35,8 +35,9 @@ must keep resolving. Narrowing the lister to `rollout-*` would turn such a
 receipt from `resolved` into `absent-local` with no error anywhere.
 
 For discovery the wider pattern is harmless: a non-rollout file under the
-Codex roots is imported only when its `session_meta` row records this
-project's directory, and its session key is its stem, which the ledger
-already folds correctly (only a `rollout-` stem is rewritten to the bare
-id). If a narrower discovery pattern is ever wanted, give discovery its own
-filter over the lister's output; do not change the lister.
+Codex roots is imported only when the first row that records a `cwd` (the
+`session_meta` row on a rollout) names this project, and its session key
+is its stem, which the ledger already folds correctly (only a `rollout-`
+stem is rewritten to the bare id). If a narrower discovery pattern is ever
+wanted, give discovery its own filter over the lister's output; do not
+change the lister.
