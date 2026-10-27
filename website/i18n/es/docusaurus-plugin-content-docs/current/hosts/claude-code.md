@@ -194,6 +194,16 @@ api.EXCLUDED_ROWS   # código -> significado en una línea
 Quitar un código es un cambio incompatible. Atá los códigos por inclusión, no
 por igualdad, porque se puede agregar uno.
 
+## Importar sesiones pasadas
+
+`daimon import --project <dir>` descubre por sí solo las sesiones de este
+host: lista `~/.claude/projects/<slug>/*.jsonl` y compara cada archivo por el
+directorio de trabajo que registraron sus filas, nunca por el nombre del
+directorio, que es un slug con pérdida. El plan, el tope y la reanudación
+están en
+[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas);
+cada rechazo está en la [fila de `daimon import`](../reference/cli#preparar).
+
 ## Enséñale el protocolo al agente
 
 ```sh
