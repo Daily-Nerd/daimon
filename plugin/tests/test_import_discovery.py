@@ -397,6 +397,30 @@ def test_a_window_of_captured_sessions_says_how_to_reach_older_history(
     assert "raise --sessions" not in out
 
 
+def test_no_hint_when_every_transcript_on_disk_is_inside_the_window(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    """All captured and nothing older to reach: raising --sessions would
+    find nothing, so the line stays out."""
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    for i in range(3):
+        _claude(home, f"S-{i}", STAMPS[i])
+        store.write_checkpoint(
+            f"S-{i}", json.loads(_valid_json()) | {"session_id": f"S-{i}"},
+            project_dir=PROJECT, writer=Writer.HUMAN,
+        )
+    assert cli.main(_argv("--sessions", "3")) == 0
+    out = capsys.readouterr().out
+    assert out.count("already has a checkpoint") == 3
+    assert "raise --sessions" not in out
+    assert "nothing to import" in out
+    capsys.readouterr()
+    assert cli.main(_argv("--sessions", "5")) == 0
+    assert "raise --sessions" not in capsys.readouterr().out
+    assert chat.calls == []
+
+
 # ---- Codex: session_meta cwd in, rollout stem out -----------------------------------
 
 
