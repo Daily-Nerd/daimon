@@ -265,10 +265,16 @@ def _has_checkpoint(sid: str) -> bool:
 
 
 def _spawn_routing(line: str) -> dict:
-    """The routing facts a spawn-style line carries: `project` (None for the
-    hooks' `?`), `transcript` and `reason` (#1236), each present only when
-    the line has its group. One reader for the fold and for the long-window
-    pass that feeds it."""
+    """The facts a spawn-style line carries. `project` (None for the hooks'
+    `?`) and `transcript` are routing facts, each present only when the line
+    has its group, so a later line without the group keeps the earlier
+    value. `reason` (#1236) is a fact about the ATTEMPT the line opens, so
+    it is always present: a line without the group answers None, which
+    overwrites whatever the previous attempt said. The Codex, Kimi and
+    Windsurf adapters write no reason group; without this a live spawn of a
+    session that was imported once would keep `import` and the classifier
+    would hand its failure to nobody. One reader for the fold and for the
+    long-window pass that feeds it."""
     facts: dict = {}
     pm = _LEDGER_PROJECT_RE.search(line)
     if pm:
@@ -278,8 +284,7 @@ def _spawn_routing(line: str) -> dict:
     if tm:
         facts["transcript"] = tm.group(1)
     rm = _LEDGER_REASON_RE.search(line)
-    if rm:
-        facts["reason"] = rm.group(1).strip() or None
+    facts["reason"] = (rm.group(1).strip() or None) if rm else None
     return facts
 
 
@@ -531,7 +536,11 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                     "age_str": _format_age(age) if age is not None else "unknown",
                     "transcript": e["transcript"], "project": e["project"],
                     "spawned": e["spawned"], "line": e["result_line"],
-                    "retried": e["retried"]}
+                    "retried": e["retried"],
+                    # #1236: the attempt's reason rides along so a held
+                    # admission can name its repairer: an import's refusal
+                    # is cured by `daimon import`, never by heal.
+                    "reason": e.get("reason")}
             if held:
                 item["state"], item["hint"] = held
             out.append(item)
@@ -571,7 +580,7 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
                         "age_str": _format_age(age), "transcript": t,
                         "project": e["project"], "spawned": True, "line": None,
-                        "retried": e["retried"]})
+                        "retried": e["retried"], "reason": e.get("reason")})
     out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
     return out
 

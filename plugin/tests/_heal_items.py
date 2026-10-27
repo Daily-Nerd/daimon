@@ -11,7 +11,7 @@ _DEFAULT = object()
 
 
 def item(sid, cls="healable", *, kind="error", age=60, project="/p",
-         transcript=_DEFAULT, line=None, retried=False, **extra):
+         transcript=_DEFAULT, line=None, retried=False, reason=None, **extra):
     """An outstanding error (or hung, via `kind`) item as the classifier emits it."""
     if transcript is _DEFAULT:
         transcript = f"/t/{sid}.jsonl"
@@ -20,6 +20,6 @@ def item(sid, cls="healable", *, kind="error", age=60, project="/p",
     out = {"sid": sid, "kind": kind, "class": cls, "age": age,
            "age_str": f"{age // 60}m", "transcript": transcript,
            "project": project, "spawned": True, "line": line,
-           "retried": retried}
+           "retried": retried, "reason": reason}
     out.update(extra)
     return out

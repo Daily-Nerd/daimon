@@ -498,3 +498,141 @@ def test_a_capture_behind_the_live_latest_keeps_latest_and_carries_nothing(
     )
     events = tmp_checkpoint_dir / store.project_slug(CARRY_PROJECT) / "events.jsonl"
     assert not events.exists() or "corroborat" not in events.read_text(encoding="utf-8")
+
+
+# ---- round 2: the reason belongs to the attempt, the birth stamp to the session
+
+
+def _codex_spawn(now, sid, transcript, seconds_ago):
+    """A Codex spawn line: `(project: ...)` and no reason group, like the Kimi
+    and Windsurf adapters write."""
+    stamp = datetime.fromtimestamp(now - seconds_ago, timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    return (
+        f"{stamp} codex-stop: spawned serialize for {sid} "
+        f"(project: {PROJECT}) (transcript: {transcript})"
+    )
+
+
+def test_a_reasonless_live_failure_after_a_failed_import_is_healable(tmp_path, log_dir):
+    now = time.time()
+    t = _transcript(tmp_path)
+    text = (
+        "\n".join(
+            [
+                _aged(_marker(log_dir, SID, t), 900, now),
+                f"error: LLM HTTP 429 (transcript: {t}) after 3s",
+                _codex_spawn(now, SID, t, 120),
+                f"error: boom (transcript: {t}) after 3s",
+            ]
+        )
+        + "\n"
+    )
+    assert ledger._session_ledger(text, now)[SID]["reason"] is None
+    assert [x.session_id for x in heal.plan_all(text, now).targets] == [SID]
+
+
+def test_a_reasonless_live_spawn_before_the_tail_still_owns_the_attempt(
+    tmp_path, log_dir
+):
+    """Both spawns scrolled out of the tail, both errors inside it: the
+    long-window pass replays the lines in order, so the later reasonless
+    spawn overwrites the import's reason. The attempt is unrecoverable only
+    because its spawn is outside the tail, the pre-existing #1213 reading,
+    never because it reads as an import."""
+    now = time.time()
+    t = _transcript(tmp_path)
+    filler = [f"note for S-other-{i}: compact-summary-only-context" for i in range(250)]
+    text = (
+        "\n".join(
+            [
+                _aged(_marker(log_dir, SID, t), 900, now),
+                _codex_spawn(now, SID, t, 800),
+                *filler,
+                f"error: LLM HTTP 429 (transcript: {t}) after 3s",
+                f"error: boom (transcript: {t}) after 3s",
+            ]
+        )
+        + "\n"
+    )
+    e = ledger._session_ledger(text, now)[SID]
+    assert e["reason"] is None and e["project"] == PROJECT
+    out = ledger._compute_outstanding(text, now)
+    assert [f["class"] for f in out] == ["unrecoverable"]
+    assert [s.reason for s in heal.plan_all(text, now).skipped] == ["unrecoverable"]
+
+
+def test_a_hung_reasonless_live_spawn_after_an_import_is_healable(
+    tmp_path, log_dir, monkeypatch
+):
+    monkeypatch.setenv("DAIMON_HUNG_AFTER", "100")
+    now = time.time()
+    t = _transcript(tmp_path)
+    text = (
+        "\n".join(
+            [
+                _aged(_marker(log_dir, SID, t), 900, now),
+                "wrote checkpoint: /c/{SID}.json (took 4s) [import]".replace(
+                    "{SID}", SID
+                ),
+                _codex_spawn(now, SID, t, 500),
+            ]
+        )
+        + "\n"
+    )
+    out = ledger._compute_outstanding(text, now)
+    assert [(f["kind"], f["class"]) for f in out] == [("hung", "healable")]
+    assert [x.session_id for x in heal.plan_all(text, now).targets] == [SID]
+
+
+def test_a_held_import_admission_names_import_as_its_cure(tmp_path, log_dir):
+    from daimon_briefing import jsonl
+
+    now = time.time()
+    t = _transcript(tmp_path)
+    text = (
+        "\n".join(
+            [
+                _aged(_marker(log_dir, SID, t), 300, now),
+                f"{jsonl.ADMISSION_PREFIX}events.jsonl is unreadable; fix it "
+                f"(session: {SID}) (transcript: {t}) after 0s",
+            ]
+        )
+        + "\n"
+    )
+    held = ledger._outstanding_failures(
+        ledger._session_ledger(text, now),
+        now,
+        lambda sid: False,
+        1800,
+        lambda p: True,
+        admission_state=lambda p: ("unreadable", "fix it"),
+    )
+    assert [(f["class"], f["reason"]) for f in held] == [
+        ("admission-refused", "import")
+    ]
+    lines = "\n".join(render._outstanding_lines(held))
+    assert "then re-run `daimon import`" in lines
+    assert "daimon heal" not in lines
+    # A live refusal keeps heal as its cure.
+    live = (
+        "\n".join(
+            [
+                _codex_spawn(now, "S-live-2", t, 300),
+                f"{jsonl.ADMISSION_PREFIX}events.jsonl is unreadable; fix it "
+                f"(session: S-live-2) (transcript: {t}) after 0s",
+            ]
+        )
+        + "\n"
+    )
+    held = ledger._outstanding_failures(
+        ledger._session_ledger(live, now),
+        now,
+        lambda sid: False,
+        1800,
+        lambda p: True,
+        admission_state=lambda p: ("unreadable", "fix it"),
+    )
+    assert "then `daimon heal`" in "\n".join(render._outstanding_lines(held))
+

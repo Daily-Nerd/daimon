@@ -1060,8 +1060,12 @@ def _outstanding_lines(outstanding) -> list:
         elif f["class"] == "admission-refused":
             # D10.4: heal holds this back until the ledger reads again, so
             # "run heal" alone would send the reader in a circle.
+            # #1236: once the ledger reads again a held import reclassifies
+            # as `import`, which heal never takes, so its cure is named here.
+            cure = ("re-run `daimon import`"
+                    if f.get("reason") == "import" else "`daimon heal`")
             lines.append(f"  - {f['sid']}  admission refused: events.jsonl is "
-                         f"{f['state']}; {f['hint']}, then `daimon heal`")
+                         f"{f['state']}; {f['hint']}, then {cure}")
             continue
         else:
             lines.append(f"  - {f['sid']}  error {age} ago — run `daimon heal`")
