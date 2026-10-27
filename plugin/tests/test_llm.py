@@ -2235,7 +2235,7 @@ def test_capture_cost_sums_when_every_call_reported():
     llm._note_call_usage("litellm", "m", _tokens(20, 2), None)
     assert llm.capture_cost() == {
         "prompt_tokens": 30, "completion_tokens": 3, "total_tokens": 33,
-        "cost_usd": None, "backend": "litellm", "model": "m"}
+        "cost_usd": None, "backend": "litellm", "model": "m", "calls": 2}
 
 
 def test_capture_cost_withholds_counts_when_one_call_reported_nothing(caplog):
@@ -2246,7 +2246,7 @@ def test_capture_cost_withholds_counts_when_one_call_reported_nothing(caplog):
         cost = llm.capture_cost()
     assert cost == {"prompt_tokens": None, "completion_tokens": None,
                     "total_tokens": None, "cost_usd": None,
-                    "backend": "command", "model": "m"}
+                    "backend": "command", "model": "m", "calls": 2}
     assert any("1 of 2" in r.getMessage() for r in caplog.records)
 
 
@@ -2266,7 +2266,7 @@ def test_capture_cost_with_no_calls_is_zero_spend_and_no_backend():
     # an injected chat): zero is the measured spend, not an estimate.
     assert llm.capture_cost() == {
         "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-        "cost_usd": 0.0, "backend": None, "model": None}
+        "cost_usd": 0.0, "backend": None, "model": None, "calls": 0}
 
 
 def test_reset_usage_clears_records():

@@ -402,7 +402,8 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
                   "total_tokens: integer | null",
                   "cost_usd: number | null",
                   "backend: string | array | null",
-                  "model: string | array | null")),
+                  "model: string | array | null",
+                  "calls: integer")),
         "#1235 what this serialize charged, summed over every LLM call of the "
         "run from what each backend reported on the wire. Every count is null "
         "when any call reported no usage (never a partial sum); zero calls is "
@@ -411,6 +412,9 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "of the call(s) that produced the counts (litellm, command, "
         "claude-cli, or fallback for a rescue), model the served name the "
         "backend itself reported; a list when a run mixed more than one. "
+        "calls (#1236) is how many calls a backend answered in the run, "
+        "resamples, parse retries and a rescue included, never withheld; "
+        "daimon import bounds its run on it. "
         "Introspection checkpoints stay absent: no model ran."),
     FieldRule(
         "envelope", "capture_door", "string", True, False, "code", "strip",
