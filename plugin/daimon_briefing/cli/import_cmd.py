@@ -126,6 +126,19 @@ def _cmd_import(args) -> int:
     if found is not None:
         for host, root in found.unreadable:
             print(f"  {host} root unreadable: {root}")
+        # The window is cut before the skips, so a project daimon has been
+        # capturing live shows its newest sessions as done. Say what reaches
+        # further back, and only when there is further back to reach.
+        if (
+            paths
+            and not plan.sessions
+            and len(found.paths) > len(paths)
+            and all(k.reason in importer.DONE_REASONS for k in plan.skipped)
+        ):
+            print(
+                f"  all {len(paths)} newest sessions already captured; raise "
+                "--sessions to reach older history"
+            )
         print(importer.not_discovered_line())
     if args.plan:
         return 0
@@ -258,7 +271,8 @@ def register(sub, fmt) -> None:
         default=None,
         metavar="N",
         help="discover the project's N newest transcripts under the Claude "
-        "Code and Codex roots (default: 5), newest by session end, matched "
+        f"Code and Codex roots (default: {importer.DEFAULT_SESSIONS}), "
+        "newest by session end, matched "
         "on the working directory each file recorded; the skips the plan "
         "names come out of those N and nothing older takes their place, so "
         "the same command rebuilds the same plan. Windsurf and Kimi record "

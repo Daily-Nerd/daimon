@@ -202,10 +202,17 @@ def import_done(session_key: str, captured: frozenset) -> str | None:
     captures). `ledger.has_checkpoint` is the reader the heal classifier
     uses, so heal and the import agree on what a captured session is."""
     if ledger.has_checkpoint(session_key):
-        return "already has a checkpoint"
+        return DONE_CHECKPOINT
     if session_key in captured:
-        return "already captured (serialize.log)"
+        return DONE_LOGGED
     return None
+
+
+# The two skip reasons `import_done` answers; the CLI reads a window that
+# holds nothing but these as "all captured" (slice 3 hint line).
+DONE_CHECKPOINT = "already has a checkpoint"
+DONE_LOGGED = "already captured (serialize.log)"
+DONE_REASONS = frozenset((DONE_CHECKPOINT, DONE_LOGGED))
 
 
 def _under(path: Path, root: Path) -> bool:

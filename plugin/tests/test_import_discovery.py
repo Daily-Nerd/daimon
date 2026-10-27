@@ -357,6 +357,46 @@ def test_a_symlinked_project_resolves_to_the_directory_the_transcript_recorded(
     assert store.read_checkpoint("S-link")["project_slug"] == store.project_slug(resolved)
 
 
+def test_a_window_of_captured_sessions_says_how_to_reach_older_history(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    """L5: the window is cut before the skips, so a project daimon has been
+    capturing live shows its newest sessions as done. The plan says what
+    to do, and only when older transcripts exist beyond the window."""
+    chat = fake_chat_factory(_valid_json())
+    monkeypatch.setattr(cli, "_chat", chat)
+    for i in range(4):
+        _claude(home, f"S-{i}", STAMPS[i])
+    for sid in ("S-3", "S-2"):
+        store.write_checkpoint(
+            sid, json.loads(_valid_json()) | {"session_id": sid},
+            project_dir=PROJECT, writer=Writer.HUMAN,
+        )
+    assert cli.main(_argv("--sessions", "2")) == 0
+    out = capsys.readouterr().out
+    assert "skipped S-3: already has a checkpoint" in out
+    assert "skipped S-2: already has a checkpoint" in out
+    hint = "  all 2 newest sessions already captured; raise --sessions to reach older history"
+    assert hint in out
+    assert out.index(hint) < out.index(importer.not_discovered_line())
+    assert "nothing to import" in out
+    assert chat.calls == []
+    # With every transcript on disk inside the window there is nothing older
+    # to reach, and the line stays out.
+    capsys.readouterr()
+    assert cli.main(_argv("--sessions", "4")) == 0
+    out = capsys.readouterr().out
+    assert "raise --sessions" not in out
+    assert _planned(out) == ["S-0", "S-1"]
+    # One window row skipped for another reason (too short) is not "all captured".
+    _claude(home, "S-short", STAMPS[5], n=2)
+    capsys.readouterr()
+    assert cli.main(_argv("--sessions", "3", "--plan")) == 0
+    out = capsys.readouterr().out
+    assert "skipped S-short: transcript too short" in out
+    assert "raise --sessions" not in out
+
+
 # ---- Codex: session_meta cwd in, rollout stem out -----------------------------------
 
 
