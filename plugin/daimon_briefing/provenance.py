@@ -423,22 +423,51 @@ class SourceResolver:
             return (self.kimi_home / "sessions",)
         return None
 
+    def transcripts(self, host: str) -> list[Path]:
+        """Every transcript file under `host`'s registered roots, sorted, or
+        [] for a host with no root (gemini, hermes, manual) (#1236).
+
+        The one lister over `_roots`: `daimon import` discovers a project's
+        sessions through it, and `_candidates` builds its stem index from
+        the same list for the two hosts it indexes, so the files the import
+        can find and the files a receipt can resolve to are one set. The
+        patterns are the on-disk layouts `_candidates` always matched:
+        Claude Code `<projects>/<slug>/<session>.jsonl` (one level, never a
+        loose file at the root); Codex any `.jsonl` anywhere below
+        `sessions` and `archived_sessions` (the date directories between
+        are not part of the contract); Windsurf `<id>.jsonl` in its own
+        root and `<id>.md` in daimon's; Kimi the wire log under every
+        workspace and session directory (scar 0061: the file is always
+        `wire.jsonl`, the session is the directory). A root that is missing
+        or unreadable contributes nothing; the method never raises."""
+        roots = self._roots(host)
+        if roots is None:
+            return []
+        found: list[Path] = []
+        try:
+            if host == "claude-code":
+                found.extend(self.claude_projects.glob("*/*.jsonl"))
+            elif host == "codex":
+                for root in roots:
+                    if root.exists():
+                        found.extend(root.rglob("*.jsonl"))
+            elif host == "windsurf":
+                found.extend(roots[0].glob("*.jsonl"))
+                found.extend(roots[1].glob("*.md"))
+            elif host == "kimi":
+                found.extend(roots[0].glob("*/*/agents/main/wire.jsonl"))
+        except OSError:
+            pass
+        return sorted(found)
+
     def _candidates(self, source: dict) -> list[Path] | None:
         host = source["host"]
         sid = source["session_id"]
         try:
-            if host == "claude-code":
+            if host in ("claude-code", "codex"):
                 if host not in self._indexes:
                     self._indexes[host] = self._build_index(
-                        self.claude_projects.glob("*/*.jsonl"))
-                return list(self._indexes[host].get(sid, ()))
-            if host == "codex":
-                if host not in self._indexes:
-                    paths: list[Path] = []
-                    for root in self._roots(host) or ():
-                        if root.exists():
-                            paths.extend(root.rglob("*.jsonl"))
-                    self._indexes[host] = self._build_index(paths)
+                        self.transcripts(host))
                 return list(self._indexes[host].get(sid, ()))
             if host == "windsurf":
                 return [

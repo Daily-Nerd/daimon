@@ -278,6 +278,49 @@ def test_resolver_local_candidate_wins_over_different_author(tmp_path):
     assert result.state == "resolved"
 
 
+def test_the_resolver_lists_each_hosts_transcripts_from_its_own_roots(
+    tmp_path, monkeypatch
+):
+    claude = tmp_path / "projects"
+    a = claude / "one" / "S-a.jsonl"
+    b = claude / "two" / "S-b.jsonl"
+    codex = tmp_path / ".codex"
+    c = codex / "sessions" / "2026" / "10" / "rollout-x.jsonl"
+    d = codex / "archived_sessions" / "rollout-y.jsonl"
+    kimi = tmp_path / ".kimi-code"
+    k = kimi / "sessions" / "wd_p_0123" / "k-1" / "agents" / "main" / "wire.jsonl"
+    w = tmp_path / ".windsurf" / "transcripts" / "ws-1.jsonl"
+    m = tmp_path / ".daimon" / "windsurf" / "transcripts" / "ws-2.md"
+    # The daimon-authored Windsurf root follows DAIMON_WINDSURF_DIR (#607),
+    # which conftest points at exactly this directory.
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(m.parent.parent))
+    for p in (a, b, c, d, k, w, m):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{}\n", encoding="utf-8")
+    (claude / "one" / "notes.md").write_text("x", encoding="utf-8")
+    (claude / "loose.jsonl").write_text("{}\n", encoding="utf-8")
+    resolver = provenance.SourceResolver(
+        home=tmp_path, codex_home=codex, claude_projects=claude, kimi_home=kimi
+    )
+    assert resolver.transcripts("claude-code") == [a, b]
+    assert resolver.transcripts("codex") == [d, c]
+    assert resolver.transcripts("kimi") == [k]
+    assert resolver.transcripts("windsurf") == [m, w]
+    assert resolver.transcripts("gemini") == []
+    assert resolver.transcripts("manual") == []
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(tmp_path / "no-windsurf"))
+    empty = provenance.SourceResolver(
+        home=tmp_path / "nowhere", codex_home=tmp_path / "no-codex",
+        claude_projects=tmp_path / "no-projects", kimi_home=tmp_path / "no-kimi",
+    )
+    assert all(empty.transcripts(h) == [] for h in provenance._HOSTS)
+    # The lister feeds the resolver's own index, so a resolve still lands.
+    found = resolver.resolve(
+        {"version": 1, "host": "codex", "session_id": "rollout-x", "locator": "managed"}
+    )
+    assert found.state == "resolved" and found.path == c
+
+
 def test_resolver_supports_codex_recursive_sessions(tmp_path):
     codex = tmp_path / ".codex"
     target = codex / "sessions" / "2026" / "08" / "S-codex.jsonl"
