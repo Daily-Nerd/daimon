@@ -38,6 +38,13 @@ NOT_AGENT_FACING = {
     "configure": "human setup: resolves the LLM backend and writes ~/.daimon/env",
     "hooks": "human setup: installs host hook scripts",
     "skill": "human setup: installs this very skill",
+    "import": (
+        "human setup (#1236): the bounded first fill of a project's past "
+        "transcripts, run by the person after install. Every session is "
+        "one or more model calls the person bounds and pays for, so an "
+        "agent never starts one; the briefing it produces is read through "
+        "brief like any other"
+    ),
     # -- internal plumbing: the hooks invoke these, never an agent --
     "serialize": "internal: the session-end child that writes the checkpoint",
     "write-checkpoint": "internal: the write seam serialize calls",

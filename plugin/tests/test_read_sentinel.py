@@ -515,7 +515,8 @@ no_items("installs or lists host integration files; no store read",
 no_items("prints the project slug of a path",  "cli:slug")
 no_items("writes or migrates; reads names of buckets, never item text",
          "cli:bucket migrate", "cli:team init", "cli:team sync",
-         "cli:write-checkpoint", "cli:serialize", "cli:handoff",
+         "cli:write-checkpoint", "cli:serialize", "cli:import",
+         "cli:handoff",
          "cli:refute add", "cli:ruling propose", "cli:ruling check try")
 no_items("prints only usage counters", "cli:log")
 no_items("blocking server loop, skipped like the write guard skips it",

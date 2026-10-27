@@ -545,10 +545,13 @@ def _verify_agent_request_done(project, messages) -> int:
     return confirmed
 
 
-def _session_end_stamp(path) -> str:
+def session_end_stamp(path) -> str:
     """When the session in `path` ended, in checkpoint `created` format (#123):
     the transcript's last message timestamp, falling back to the file mtime
-    (markdown/plain transcripts carry no per-row stamps), then to now."""
+    (markdown/plain transcripts carry no per-row stamps), then to now.
+
+    Public since #1236: the import plan orders sessions by this stamp, so
+    the order it runs in is the order the `created` stamps will say."""
     stamp = transcript.last_timestamp(path)
     if stamp:
         return stamp
@@ -557,6 +560,10 @@ def _session_end_stamp(path) -> str:
     except OSError:
         mtime = time.time()
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime))
+
+
+# The name `cli` re-exports as its stable seam (`cli._session_end_stamp`).
+_session_end_stamp = session_end_stamp
 
 
 def carry_forward(checkpoint: dict, project) -> dict:

@@ -14,6 +14,12 @@ DESTS = {
         "project": ("OUT", "R1"),
         "session": ("INE", "R6"),
     },
+    "import": {
+        "project": ("OUT", "R1"),
+        "transcript": ("INE", "R6"),
+        "max_calls": ("INE", "R6"),
+        "plan": ("OUT", "R3"),
+    },
     "write-checkpoint": {
         "project": ("OUT", "R1"),
         "source": ("INE", "R6"),

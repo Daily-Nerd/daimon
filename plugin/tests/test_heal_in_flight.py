@@ -71,7 +71,7 @@ def test_status_renders_the_repair_in_flight():
 def test_heal_reports_a_running_repair_instead_of_skipping_silently(monkeypatch):
     now = 1_800_000_000.0
     monkeypatch.setattr(ledger, "heartbeat_age", lambda sid, now=None: 5)
-    monkeypatch.setattr(ledger, "_has_checkpoint", lambda sid: False)
+    monkeypatch.setattr(ledger, "has_checkpoint", lambda sid: False)
     plan = ledger._heal_plan(_text(now), now)
     assert plan["target"] is None
     assert [(s["sid"], s["reason"]) for s in plan["skipped"]] == [

@@ -477,10 +477,17 @@ def capture_cost() -> dict:
     chat), not an unknown, so the counts are 0 and cost 0.0 with no backend
     and no model to name. `backend` and `model` follow the llm_model_served
     convention: one distinct value is a string, more than one a sorted
-    list, none at all is None."""
+    list, none at all is None.
+
+    `calls` (#1236) is the number of records: every call a backend answered
+    in this unit of work, a validation resample, a parse retry and a rescue
+    on the fallback backend included; a call that raised before an answer
+    is not a record. Never withheld, since a silent backend still answered.
+    `daimon import` bounds its run on this count, not on its plan."""
     records = list(_usage_records)
     cost: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-                  "cost_usd": 0.0, "backend": None, "model": None}
+                  "cost_usd": 0.0, "backend": None, "model": None,
+                  "calls": len(records)}
     backends = sorted({r["backend"] for r in records if r["backend"]})
     models = sorted({r["model"] for r in records if r["model"]})
     if backends:

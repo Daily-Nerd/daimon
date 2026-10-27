@@ -3615,7 +3615,7 @@ def test_validate_tolerates_served_field_presence_and_absence(fake_chat_factory)
 
 def _cost(**kv):
     base = {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None,
-            "cost_usd": None, "backend": None, "model": None}
+            "cost_usd": None, "backend": None, "model": None, "calls": 0}
     base.update(kv)
     return base
 
@@ -3697,7 +3697,7 @@ def test_two_captures_in_one_process_each_bill_only_their_own_calls(
 
     assert first is not None and second is not None
     one_call = {"prompt_tokens": 1002, "completion_tokens": 10, "total_tokens": 1012,
-                "cost_usd": 0.01, "backend": "command", "model": None}
+                "cost_usd": 0.01, "backend": "command", "model": None, "calls": 1}
     assert first["capture_cost"] == one_call
     assert second["capture_cost"] == one_call
     assert "llm_model_served" not in second  # the planted receipt is gone too

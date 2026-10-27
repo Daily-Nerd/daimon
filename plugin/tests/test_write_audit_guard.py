@@ -433,6 +433,26 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
             chat=FakeChat(_cp_json("x", [_T_GATEWAY, _T_FORGET, _T_KEEP, _T_SER])))
         ctx["ids"] = _ids_by_text(proj)
 
+    def r_import():
+        # #1236: the import verb's only writes are `_run_serialize`'s, the
+        # path `serialize` above already drives, plus the ledger marker in
+        # serialize.log (a log sink outside the audited roots). A jsonl
+        # transcript whose rows record the project as their cwd, old enough
+        # to clear the live window; single-pass, so the chunk-cache bypass
+        # stays ratcheted under `serialize` where it is justified.
+        rows = []
+        for i in range(4):
+            role = "user" if i % 2 == 0 else "assistant"
+            rows.append({"type": role, "cwd": str(proj),
+                         "message": {"role": role, "content": f"turn {i}"},
+                         "timestamp": "2026-07-01T10:00:00Z"})
+        ts = tmp_path / "guard-import.jsonl"
+        ts.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+        os.utime(ts, (1782000000, 1782000000))
+        run(["import", "--project", str(proj), "--transcript", str(ts)], 0,
+            chat=FakeChat(_cp_json("x", [_T_GATEWAY, _T_KEEP])))
+        assert store.read_checkpoint("guard-import") is not None
+
     def r_brief():
         run(["brief"], 0)
 
@@ -955,6 +975,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("write-checkpoint",): r_write_checkpoint,
         ("team", "init"): r_team_init,
         ("serialize",): r_serialize,
+        ("import",): r_import,
         ("brief",): r_brief,
         ("anchor",): r_anchor,
         ("recall",): r_recall,

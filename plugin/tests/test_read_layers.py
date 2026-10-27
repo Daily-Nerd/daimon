@@ -81,6 +81,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/effects.py": "view",  # effects record of a read
     "daimon_briefing/view.py": "view",  # the read view
     "daimon_briefing/capture.py": "write",  # the serialize-time capture pipeline
+    "daimon_briefing/importer.py": "write",  # the import plan: selection and call count over the capture pipeline (#1236)
     "daimon_briefing/carry.py": "write",  # merges unresolved items forward at write time
     "daimon_briefing/channels.py": "write",  # authority of each write channel
     "daimon_briefing/clock.py": "write",  # the one clock and id source every ledger stamp reads
@@ -124,6 +125,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/cli/hooks.py": "entry",  # hooks install, list, status
     "daimon_briefing/cli/ledger_cmd.py": "entry",  # ledger repair
     "daimon_briefing/cli/serialize.py": "entry",  # serialize, write-checkpoint, heal
+    "daimon_briefing/cli/import_cmd.py": "entry",  # import: the bounded first fill (#1236)
     "daimon_briefing/cli/skill.py": "entry",  # skill install and show
     "daimon_briefing/cli/team.py": "entry",  # team init, sync, status
     "daimon_briefing/cli/_ledger.py": "read",  # shared renderers and resolvers of the ledger verbs
@@ -160,6 +162,9 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
     ("daimon_briefing/cli/inject.py", "_cmd_recall_inject", "store.read_latest_body"):
         "reads the own latest checkpoint directly; moves onto the view in PR 7",
+    ("daimon_briefing/cli/import_cmd.py", "_cmd_import", "store.read_checkpoint"):
+        "reads the checkpoint this run just wrote, for its capture_cost stamp "
+        "and to tell a written checkpoint from a skip; no item text shown",
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):
         "the per-session seen/cooldown state file, not a checkpoint",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.items_for_project"):

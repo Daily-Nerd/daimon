@@ -882,6 +882,34 @@ def last_timestamp(path) -> str | None:
     return datetime.fromtimestamp(best, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def recorded_cwd(path) -> str | None:
+    """The project directory a `.jsonl` transcript recorded, or None (#1236).
+
+    Claude Code stamps `cwd` on every row; a Codex rollout carries it on its
+    `session_meta` row, at the top level or under `payload`. The first
+    non-empty string wins, read the same way `last_timestamp` reads its
+    rows. `daimon import` checks it against `--project` before any spend,
+    so a transcript of another repo is refused rather than filed into the
+    wrong bucket. A host that records no directory (Windsurf, a markdown
+    export) answers None; so does a non-jsonl, unreadable or empty file.
+    Never raises."""
+    p = Path(path)
+    if p.suffix != ".jsonl":
+        return None
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for obj in _objects_of(text):
+        for holder in (obj, obj.get("payload")):
+            if not isinstance(holder, dict):
+                continue
+            raw = holder.get("cwd")
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
 # Matches "**user**:", "user:", "**Assistant**:" etc. at line start.
 _ROLE_RE = re.compile(r"^\s*\**\s*(user|assistant|system|tool)\s*\**\s*:\s*", re.IGNORECASE)
 
