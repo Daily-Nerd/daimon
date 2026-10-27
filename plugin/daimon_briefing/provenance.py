@@ -34,6 +34,15 @@ _HOSTS = frozenset((
 # exactly as recorded; only a NEW capture (or a resolve of a checkpoint that
 # already carries host "kimi") benefits from the roots and aliases below.
 _LOCATORS = frozenset(("managed", "host-api", "unsupported"))
+# #1236: the hosts whose transcripts record no project directory, the one
+# capability row the import consults beside the roots `infer_host` knows.
+# Windsurf writes none in either of its roots; Kimi's wire.jsonl has no
+# measured cwd field (design section 7). A path-given import of one of these
+# needs the project named on the command line, since nothing in the file can
+# confirm it. Claude Code rows and the Codex session_meta row carry a cwd,
+# so neither belongs here; a host added to `infer_host` with no cwd field
+# joins this row, never a literal in the importer.
+HOSTS_RECORDING_NO_PROJECT = frozenset(("windsurf", "kimi"))
 _OUTCOMES = frozenset(("verified", "not-verified"))
 _BINDING_MODES = frozenset(("message-ids", "transcript-scan"))
 _DIGEST_SCOPES = frozenset(("raw-file", "rendered-transcript"))
@@ -128,6 +137,25 @@ def infer_host(transcript_path, *, home=None, codex_home=None,
     if _under(path, kimi_home / "sessions"):
         return "kimi", "managed"
     return "manual", "unsupported"
+
+
+def session_key(transcript_path, *, host: str) -> str:
+    """The session id a transcript names on `host`, the id a serialize of
+    it must run under (#1236).
+
+    Every host adapted before Kimi names the file for its session, so the
+    stem is the id (a Codex rollout stem is its own id too: the ledger
+    folds it to the bare id on its side, `ledger._session_key`). Kimi's
+    file is always `wire.jsonl` under `sessions/wd_<dir>_<hash>/<session
+    id>/agents/main/`, so the id is the directory segment three levels up,
+    the segment the Kimi glob in `SourceResolver._candidates` matches and
+    the hook's own lookup walks (scar 0046, scar 0061: never the stem).
+    `host` is `infer_host`'s answer for the same path, so the two readers
+    cannot disagree about which layout applies."""
+    path = Path(transcript_path).expanduser()
+    if host == "kimi" and path.name == "wire.jsonl" and len(path.parents) > 3:
+        return path.parents[2].name
+    return path.stem
 
 
 def normalize_host(value) -> str | None:
