@@ -33,8 +33,15 @@ session that would still land behind the bucket's live latest is named in
 the plan as history only: the store keeps `latest` where it is and carries
 nothing for it (slice 1), and the user is told before spending.
 
-Discovery (which transcripts to consider when none are given) is the next
-slice and lands beside `plan_import` here, not in the CLI.
+Discovery (`discover`, slice 3) answers the question before that one: which
+transcripts to consider when none are given. It walks the automatic hosts'
+roots through the one lister over them (`provenance.SourceResolver.
+transcripts`), keeps the files whose recorded working directory resolves to
+the project, and returns them newest first by session end. The CLI cuts
+that list to `--sessions` and hands the window to `plan_import`, which
+applies every skip above INSIDE it: a skipped session stays in the window
+and nothing older takes its place, so the same command rebuilds the same
+plan (design 4(d)) and the user can read off which files a run touches.
 """
 
 import os
@@ -48,7 +55,116 @@ from . import capture, config, ledger, provenance, serializer, store, transcript
 # live capture for the same session id (design 4(a)).
 LIVE_WINDOW_SECONDS = 600
 
+# How many of the project's newest transcripts a discovery run considers
+# when `--sessions` is not given (design 4(a), maintainer decision 10-26).
+DEFAULT_SESSIONS = 5
+
 HISTORY_NOTE = "older than the latest capture, history only, nothing carried"
+
+
+class Capability(NamedTuple):
+    """One host's row in the import capability table (design section 7)."""
+
+    host: str
+    mode: str  # "automatic" | "path-given" | "unsupported"
+    reason: str  # "" for automatic; printed in the plan for the others
+
+
+def _capabilities() -> tuple:
+    """The table, one row per host in `provenance.HOSTS` except `manual`
+    (the name for a file outside every root, not a host a transcript comes
+    from), derived from the three facts provenance owns so it cannot drift
+    from them: a host with no registered root (`SourceResolver.roots`
+    answers None) cannot be imported at all, by discovery or by
+    `--transcript`, for the reason `NO_ROOT_REASONS` states per host
+    (Gemini writes a transcript but no root is registered for it; Hermes
+    writes none), and a rootless host with no reason there refuses to
+    build the table; a host whose files record no project
+    (`HOSTS_RECORDING_NO_PROJECT`: Windsurf, and Kimi until a cwd field is
+    measured in wire.jsonl) can only be imported path-given, since nothing
+    in the file ties it to a project; every other host is discovered. The
+    roots are asked of a resolver over paths that do not exist, since only
+    the shape of the table matters here. This is the single source for the
+    plan's "not discovered" line; the docs capability table is written by
+    hand from the same rows."""
+    nowhere = Path("/nonexistent")
+    probe = provenance.SourceResolver(
+        home=nowhere, codex_home=nowhere, claude_projects=nowhere, kimi_home=nowhere
+    )
+    rows = []
+    for host in provenance.HOSTS:
+        if host == "manual":
+            continue
+        if probe.roots(host) is None:
+            if host not in provenance.NO_ROOT_REASONS:
+                raise LookupError(
+                    f"host {host} has no transcript root and no entry in "
+                    "provenance.NO_ROOT_REASONS"
+                )
+            rows.append(
+                Capability(host, "unsupported", provenance.NO_ROOT_REASONS[host])
+            )
+        elif host in provenance.HOSTS_RECORDING_NO_PROJECT:
+            rows.append(
+                Capability(host, "path-given", "records no project, pass --transcript")
+            )
+        else:
+            rows.append(Capability(host, "automatic", ""))
+    return tuple(rows)
+
+
+CAPABILITIES = _capabilities()
+DISCOVERED_HOSTS = tuple(c.host for c in CAPABILITIES if c.mode == "automatic")
+
+
+def not_discovered_line() -> str:
+    """The one plan line naming the hosts discovery does not reach and why,
+    grouped by reason in table order."""
+    groups: dict = {}
+    for c in CAPABILITIES:
+        if c.mode != "automatic":
+            groups.setdefault(c.reason, []).append(c.host)
+    parts = [f"{', '.join(hosts)} ({reason})" for reason, hosts in groups.items()]
+    return "  not discovered: " + "; ".join(parts)
+
+
+class Discovery(NamedTuple):
+    """What `discover` found: the project's transcripts newest first, and
+    every (host, root) the lister could not read, for the plan to name."""
+
+    paths: list
+    unreadable: tuple
+
+
+def discover(project: str, resolver: provenance.SourceResolver) -> Discovery:
+    """Every transcript of `project` under the automatic hosts' roots,
+    newest first by session end (`capture.session_end_stamp`: the last row
+    stamp, the mtime for a stamp-free file), ties by path ascending.
+
+    The match is the working directory the transcript itself recorded
+    (`transcript.recorded_cwd`), resolved through the one project resolver
+    the CLI applied to `--project` (`config.resolve_project_dir`), and only
+    that: the Claude Code directory name is a lossy slug (a session run
+    from a subdirectory lands in another slug directory and still records
+    this project; two directories can share a slug), so it is never
+    consulted. A file that records no directory is not this project's as
+    far as discovery can tell and is left out. Reads nothing but the files
+    under the roots; spends nothing; never raises on a file it cannot read."""
+    found: list = []
+    unreadable: list = []
+    for host in DISCOVERED_HOSTS:
+        listing = resolver.transcripts(host)
+        unreadable.extend((host, root) for root in listing.unreadable)
+        for path in listing.files:
+            cwd = transcript.recorded_cwd(path)
+            if cwd is None:
+                continue
+            if config.resolve_project_dir(cwd, allow_slug=False) != project:
+                continue
+            found.append((capture.session_end_stamp(path), path))
+    found.sort(key=lambda pair: str(pair[1]))
+    found.sort(key=lambda pair: pair[0], reverse=True)  # stable: ties keep path order
+    return Discovery([path for _ended, path in found], tuple(unreadable))
 
 
 class ImportRefused(Exception):
@@ -97,10 +213,28 @@ def import_done(session_key: str, captured: frozenset) -> str | None:
     captures). `ledger.has_checkpoint` is the reader the heal classifier
     uses, so heal and the import agree on what a captured session is."""
     if ledger.has_checkpoint(session_key):
-        return "already has a checkpoint"
+        return DONE_CHECKPOINT
     if session_key in captured:
-        return "already captured (serialize.log)"
+        return DONE_LOGGED
     return None
+
+
+# The two skip reasons `import_done` answers; the CLI reads a window that
+# holds nothing but these as "all captured" (slice 3 hint line).
+DONE_CHECKPOINT = "already has a checkpoint"
+DONE_LOGGED = "already captured (serialize.log)"
+DONE_REASONS = frozenset((DONE_CHECKPOINT, DONE_LOGGED))
+
+
+def unsupported_refusal(host: str, path: Path) -> str:
+    """The one wording for a transcript of a host the import cannot take
+    yet, by discovery or by `--transcript`: the host and provenance's
+    reason, so the user is not told the file "records no project"."""
+    reason = provenance.NO_ROOT_REASONS.get(host, "unsupported")
+    return (
+        f"refused: {path} is a {host} transcript and {host} cannot be "
+        f"imported yet ({reason}), by discovery or by --transcript"
+    )
 
 
 def _under(path: Path, root: Path) -> bool:
@@ -154,6 +288,9 @@ def check_project(
             f"refused: {path} records no project directory ({host} never "
             f"does); name the project with --project on the command line"
         )
+    rootless = provenance.unsupported_import_host(path)
+    if rootless is not None:
+        raise ProjectMismatch(unsupported_refusal(rootless, path))
     raise ProjectMismatch(
         f"refused: {path} records no project directory and is not under "
         f"{root}; only a transcript of {project} can be imported into it"
@@ -221,9 +358,12 @@ def plan_import(
             continue
         try:
             detailed = transcript.from_file_detailed(path)
-        except OSError:
-            # Stat succeeded, the read did not: permissions, or a file gone
-            # between the two. Named, and nothing was spent.
+        except (OSError, UnicodeDecodeError):
+            # Stat succeeded, the read did not: permissions, a file gone
+            # between the two, or bytes that are not UTF-8 (a tail cut
+            # mid-character by a crashed host). The capture reader stays
+            # strict on purpose; here the file is one more named skip, and
+            # nothing was spent.
             skipped.append(Skipped(sid, path, "transcript unreadable"))
             continue
         messages = detailed["messages"]
