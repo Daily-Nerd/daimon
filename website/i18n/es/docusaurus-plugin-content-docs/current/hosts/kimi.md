@@ -111,6 +111,17 @@ divulgación sigue recurriendo a la cita guardada. Un checkpoint de Kimi
 capturado antes de este cambio tampoco lleva ids de mensaje y sigue
 recurriendo a la cita guardada.
 
+## Importar sesiones pasadas
+
+Un transcript de Kimi no registra un proyecto que daimon pueda leer, así que
+`daimon import` nunca descubre uno: pásalo por ruta,
+`daimon import --project <dir> --transcript ~/.kimi-code/sessions/<workspace>/<session id>/agents/main/wire.jsonl`,
+con `--project` escrito en la línea de comandos; el id de sesión es el
+directorio, como en todo este host. Mira
+[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas)
+para una corrida de punta a punta y la [fila de `daimon import`](../reference/cli#preparar)
+para ver qué se rechaza.
+
 ## MCP
 
 `daimon hooks install kimi` registra el [servidor MCP](../reference/mcp) de

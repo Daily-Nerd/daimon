@@ -64,6 +64,6 @@ It is not praise alone. The same summary names the weak half: "The retrieval hal
    closed, and go visibly stale instead of lying forever.
 
 **Start with the [Quickstart](getting-started/quickstart.md)** — install to
-first briefing in five steps. Per-host setup lives in
+first briefing in six steps. Per-host setup lives in
 [Hosts](hosts/index.md); the trust system is explained in
 [Trust classes](concepts/trust-classes.md).

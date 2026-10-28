@@ -92,6 +92,19 @@ primera semana:
 echo 'DAIMON_MIN_MESSAGES=4' >> ~/.daimon/env   # no omitas sesiones cortas iniciales
 ```
 
+## Importar sesiones pasadas
+
+Un transcript de Windsurf no registra proyecto, así que `daimon import` nunca
+descubre uno: pásalo por ruta,
+`daimon import --project <dir> --transcript ~/.windsurf/transcripts/<trajectory_id>.jsonl`
+(o el `.md` que daimon acumula en `~/.daimon/windsurf/transcripts/`), con
+`--project` escrito en la línea de comandos, porque nada en el archivo puede
+confirmar el proyecto. Cómo una corrida planifica, se detiene y se reanuda
+está en
+[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas),
+y los rechazos, el chequeo de proyecto incluido, están en la
+[fila de `daimon import`](../reference/cli#preparar).
+
 ## MCP
 
 `daimon hooks install windsurf` también imprime un snippet `mcpServers`

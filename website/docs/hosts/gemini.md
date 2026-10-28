@@ -43,6 +43,16 @@ Install copies both scripts (plus `_daimon_hook_lib.py`) to `~/.gemini/hooks/`
 and registers them in `~/.gemini/settings.json` (user layer). Requires the
 `daimon` CLI on `PATH` (`uv tool install 'daimon-briefing[pretty]'`).
 
+## Importing past sessions
+
+`daimon import` does not reach Gemini CLI yet: daimon registers no transcript
+root for this host, so discovery lists nothing and the plan names it in its
+last line as `gemini (no registered root)`. A Gemini file given with
+`--transcript` is refused before any spend, exit 2, with a line that names the
+file, the host and that same reason. The command and the hosts it covers are
+in
+[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions).
+
 ## MCP
 
 `hook/gemini-hooks.py install` also registers the read-only

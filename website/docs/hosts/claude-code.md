@@ -183,6 +183,15 @@ api.EXCLUDED_ROWS   # code -> one-line meaning
 Removing a code is a breaking change. Pin codes by inclusion, not equality,
 because a code may be added.
 
+## Importing past sessions
+
+`daimon import --project <dir>` discovers this host's sessions on its own: it
+lists `~/.claude/projects/<slug>/*.jsonl` and matches each file on the working
+directory its rows recorded, never on the directory name, which is a lossy
+slug. The plan, the bound and the resume are in
+[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions);
+every refusal is in the [`daimon import` row](../reference/cli#set-up).
+
 ## Teach the agent the protocol
 
 ```sh
