@@ -1,5 +1,7 @@
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
 from pathlib import Path
 
 import pytest
@@ -3701,6 +3703,128 @@ def test_two_captures_in_one_process_each_bill_only_their_own_calls(
     assert first["capture_cost"] == one_call
     assert second["capture_cost"] == one_call
     assert "llm_model_served" not in second  # the planted receipt is gone too
+
+
+@pytest.mark.parametrize("escalate", [False, True])
+def test_concurrent_chunked_captures_keep_collectors_isolated(monkeypatch, escalate):
+    from daimon_briefing import llm
+
+    monkeypatch.setenv("DAIMON_CHUNK_LINES", "6")
+    monkeypatch.setenv("DAIMON_CHUNK_OVERLAP", "1")
+    monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "2")
+    monkeypatch.setenv("DAIMON_CHUNK_CACHE", "0")
+    monkeypatch.setenv("DAIMON_MERGE_GROUP_SIZE", "100")
+    messages = make_messages(20)
+    rendered = serializer._render_transcript(messages)
+    n_chunks = len(serializer.chunk_transcript(rendered, 6, 1))
+    assert n_chunks > 1
+    n_calls = n_chunks * (len(serializer.escalation_systems()) if escalate else 1) + 1
+
+    first_calls = Barrier(2)
+
+    def capture(name, prompt_tokens, fallback):
+        call_lock = Lock()
+        call_count = 0
+
+        def chat(_messages, **_kwargs):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                first = call_count == 1
+            if first:
+                first_calls.wait(timeout=10)
+            llm._note_call_usage(
+                "litellm", f"model-{name}",
+                {"prompt_tokens": prompt_tokens, "completion_tokens": 2,
+                 "total_tokens": prompt_tokens + 2},
+                0.01,
+            )
+            llm.note_served(f"model-{name}")
+            if fallback:
+                llm.note_fallback_used()
+            return _valid_checkpoint_json(f"chunk-{name}")
+
+        checkpoint = serializer.serialize_strict(
+            f"S-{name}", messages, chat=chat, escalate=escalate)
+        return checkpoint, llm.fallback_used(), llm.served_models()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(capture, "first", 11, True)
+        second = pool.submit(capture, "second", 29, False)
+        first_checkpoint, first_fallback, first_models = first.result(timeout=30)
+        second_checkpoint, second_fallback, second_models = second.result(timeout=30)
+
+    assert first_checkpoint["capture_cost"] == {
+        "prompt_tokens": 11 * n_calls,
+        "completion_tokens": 2 * n_calls,
+        "total_tokens": 13 * n_calls,
+        "cost_usd": pytest.approx(0.01 * n_calls),
+        "calls": n_calls,
+        "backend": "litellm",
+        "model": "model-first",
+    }
+    assert second_checkpoint["capture_cost"] == {
+        "prompt_tokens": 29 * n_calls,
+        "completion_tokens": 2 * n_calls,
+        "total_tokens": 31 * n_calls,
+        "cost_usd": pytest.approx(0.01 * n_calls),
+        "calls": n_calls,
+        "backend": "litellm",
+        "model": "model-second",
+    }
+    assert first_checkpoint["llm_model_served"] == "model-first"
+    assert second_checkpoint["llm_model_served"] == "model-second"
+    assert first_fallback is True
+    assert second_fallback is False
+    assert first_models == ["model-first"]
+    assert second_models == ["model-second"]
+
+
+def test_failed_capture_state_is_not_inherited_by_next_capture():
+    from daimon_briefing import llm
+
+    def failing_chat(_messages, **_kwargs):
+        llm._note_call_usage(
+            "litellm", "failed-model",
+            {"prompt_tokens": 100, "completion_tokens": 10,
+             "total_tokens": 110},
+            1.0,
+        )
+        llm.note_served("failed-model")
+        llm.note_fallback_used()
+        raise RuntimeError("gateway failed")
+
+    with pytest.raises(serializer.LLMCallError):
+        serializer.serialize_strict("S-failed", make_messages(20), chat=failing_chat)
+
+    assert llm.capture_cost()["prompt_tokens"] == 100
+    assert llm.served_models() == ["failed-model"]
+    assert llm.fallback_used() is True
+
+    def succeeding_chat(_messages, **_kwargs):
+        llm._note_call_usage(
+            "litellm", "success-model",
+            {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+            0.02,
+        )
+        llm.note_served("success-model")
+        return _valid_checkpoint_json("S-success")
+
+    checkpoint = serializer.serialize_strict(
+        "S-success", make_messages(20), chat=succeeding_chat)
+
+    assert checkpoint["capture_cost"] == {
+        "prompt_tokens": 7,
+        "completion_tokens": 3,
+        "total_tokens": 10,
+        "cost_usd": 0.02,
+        "calls": 1,
+        "backend": "litellm",
+        "model": "success-model",
+    }
+    assert checkpoint["llm_model_served"] == "success-model"
+    assert llm.served_models() == ["success-model"]
+    assert llm.fallback_used() is False
 
 
 # ---- #1236: capture_door, which door the capture came through ----
