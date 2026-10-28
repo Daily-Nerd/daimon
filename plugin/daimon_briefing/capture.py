@@ -33,18 +33,19 @@ import time
 from pathlib import Path
 
 from . import (amendments, carry, config, normalize, provenance, requests,
-               serializer, store, transcript)
+               schema, serializer, store, transcript)
 from .surfaces import Writer
 
 log = logging.getLogger(__name__)
 
 
-DOOR_IMPORT = "import"
+DOOR_IMPORT = schema.CAPTURE_DOOR_IMPORT
 # #1236: the doors a caller may name. None is every live door (the SessionEnd
 # hooks, `daimon serialize` by hand, heal's retry, the orphan sweep): they
 # stamp nothing, so an old checkpoint and a new live one read the same.
 # "import" is the bounded first fill, which stamps `capture_door` so the
-# briefing can say the record is history and not where the user left off.
+# briefing says the record is history and not where the user left off
+# (`view.open` reads the key, `briefing.prepare` words the note).
 # A name outside this set is a caller bug and raises before any model call.
 _DOORS = frozenset({None, DOOR_IMPORT})
 
@@ -111,7 +112,7 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # Every live door leaves the key absent: absent means a live capture,
     # the same reading an old checkpoint already has.
     if door == DOOR_IMPORT:
-        checkpoint["capture_door"] = DOOR_IMPORT
+        checkpoint[schema.CAPTURE_DOOR] = DOOR_IMPORT
     # #811: carry is part of writing a checkpoint, not a step capture happens
     # to perform. Shared with the introspection path via capture.carry_forward.
     checkpoint = carry_forward(checkpoint, project)

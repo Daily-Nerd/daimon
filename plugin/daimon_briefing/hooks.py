@@ -289,11 +289,12 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # OWN_ELSE_GLOBAL may have served another project's checkpoint (the
         # body read does not say), so `daimon loops` is only pointed at when
         # the read was strictly this project's own.
+        # #1236: the body renders here, so its import note leads the notes.
         text = briefing.render(
             annotated.checkpoint, project_dir=project,
             loops_pointer=(briefing.injection_read_route(project)
                            is store.Route.OWN),
-            snap=annotated.snapshot, notes=annotated.notes)
+            snap=annotated.snapshot, notes=annotated.body_notes)
         if not text:
             return None
         return {"context": text}

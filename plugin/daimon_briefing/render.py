@@ -514,8 +514,9 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 console.print(
                     Panel(
                         Text(sel.kept["active_topic"].get("text", "").strip()),
-                        title="Active topic", border_style="white",
-                        title_align="left",
+                        # #1236: the plain line's label, qualifier included.
+                        title=briefing.active_topic_label(sel),
+                        border_style="white", title_align="left",
                     )
                 )
             continue

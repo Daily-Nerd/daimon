@@ -328,3 +328,115 @@ def test_open_with_no_checkpoint_keeps_the_route_facts(tmp_checkpoint_dir):
     assert got.checkpoint is None
     assert got.fell_back is False
     assert got.route is store.Route.OWN_ELSE_GLOBAL
+    assert got.door is None
+
+
+# ---- open: the import door (#1236) ------------------------------------------
+
+NEWEST_IMPORT = "2026-10-14T10:00:00Z"
+
+
+def _write_imported(sid, created, project=PROJECT):
+    cp = _checkpoint(sid=sid, created=created)
+    cp["capture_door"] = "import"
+    store.write_checkpoint(sid, cp, project_dir=project, writer=Writer.HUMAN)
+
+
+def test_open_reports_the_import_count_and_when_the_newest_ended(
+        tmp_checkpoint_dir):
+    # Oldest first, as `daimon import` writes them; the newest is latest.
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", "2026-10-12T10:00:00Z")
+    _write_imported("S-imp-3", NEWEST_IMPORT)
+    # Another project's import is not this project's history.
+    _write_imported("S-else", "2026-10-13T10:00:00Z", project=OTHER)
+    opened = view.open(PROJECT, live=True)
+    assert opened.door == "import"
+    assert view.imported(opened) == view.Imported(
+        count=3, created=NEWEST_IMPORT, live_seen=False)
+
+
+def test_imported_says_when_a_live_capture_of_the_project_exists(
+        tmp_checkpoint_dir):
+    # A live capture older than the imports: the imports became latest, so
+    # the note must not claim nothing live was ever captured here.
+    _write(sid="S-live-old", created="2026-10-01T10:00:00Z")
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", NEWEST_IMPORT)
+    assert view.imported(view.open(PROJECT, live=True)) == view.Imported(
+        count=2, created=NEWEST_IMPORT, live_seen=True)
+
+
+def test_another_projects_live_file_is_not_this_projects_live_capture(
+        tmp_checkpoint_dir):
+    _write(sid="S-live-else", created="2026-10-01T10:00:00Z", project=OTHER)
+    _write_imported("S-imp-1", NEWEST_IMPORT)
+    assert view.imported(view.open(PROJECT, live=True)) == view.Imported(
+        count=1, created=NEWEST_IMPORT, live_seen=False)
+
+
+def test_open_reports_no_import_for_a_live_latest(tmp_checkpoint_dir):
+    _write_imported("S-imp-1", NEWEST_IMPORT)
+    _write(sid="S-live", created="2026-10-26T10:00:00Z")
+    opened = view.open(PROJECT, live=True)
+    assert opened.door is None
+    assert view.imported(opened) is None
+
+
+def test_open_reads_a_checkpoint_without_the_key_as_live(tmp_checkpoint_dir):
+    _write(sid="S-old", created=NEWEST_IMPORT)
+    assert view.imported(view.open(PROJECT, live=True)) is None
+
+
+def test_open_does_not_walk_the_store_until_a_renderer_asks(
+        tmp_checkpoint_dir, monkeypatch):
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", NEWEST_IMPORT)
+    calls = []
+    real = store._session_files
+
+    def counted(root):
+        calls.append(root)
+        return real(root)
+
+    monkeypatch.setattr(store, "_session_files", counted)
+    opened = view.open(PROJECT, live=True)
+    assert calls == [], "open answers from the pointer alone"
+    assert view.imported(opened).count == 2
+    assert len(calls) == 1
+
+
+def test_a_torn_session_file_in_the_store_is_skipped_by_the_walk(
+        tmp_checkpoint_dir):
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", NEWEST_IMPORT)
+    (tmp_checkpoint_dir / "torn.json").write_text("{not json", encoding="utf-8")
+    assert view.imported(view.open(PROJECT, live=True)) == view.Imported(
+        count=2, created=NEWEST_IMPORT, live_seen=False)
+
+
+def test_an_imported_body_with_no_slug_counts_only_itself():
+    # Nothing to walk for: no bucket can be named, so the served body is the
+    # whole count. No store is read.
+    opened = view._opened({"capture_door": "import", "created": NEWEST_IMPORT},
+                          view.Snapshot.empty(), False)
+    assert view.imported(opened) == view.Imported(
+        count=1, created=NEWEST_IMPORT, live_seen=False)
+    assert view.imported(view._opened(None, view.Snapshot.empty(), False)) is None
+
+
+def test_a_store_that_cannot_be_listed_still_counts_the_served_body(
+        tmp_checkpoint_dir, monkeypatch):
+    _write_imported("S-imp-1", "2026-10-09T10:00:00Z")
+    _write_imported("S-imp-2", NEWEST_IMPORT)
+    calls = []
+
+    def listing_fails(root):
+        calls.append(root)
+        raise OSError("EACCES")
+
+    monkeypatch.setattr(store, "_session_files", listing_fails)
+    got = view.imported(view.open(PROJECT, live=True))
+    assert calls, "the walk must have been attempted"
+    assert got == view.Imported(count=1, created=NEWEST_IMPORT,
+                                live_seen=False)

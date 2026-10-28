@@ -1136,8 +1136,10 @@ def _cmd_loops(args, fx) -> int:
     if not isinstance(checkpoint, dict):
         print("no checkpoint for this project yet — nothing to list")
         return 0
-    if annotated.notes:
-        render.render_lifecycle_lines(list(annotated.notes))
+    # #1236: the listing is the body's loops, so the body's import note
+    # leads the notes here as it does in the brief.
+    if annotated.body_notes:
+        render.render_lifecycle_lines(list(annotated.body_notes))
     stale_ids = {id(i) for i in annotated.stale_items}
     rows = []
     for field in schema.ITEM_FIELDS:
