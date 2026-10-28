@@ -32,8 +32,9 @@ def _run_backend_test() -> int:
         # working() (#182): the roundtrip is ~15s of otherwise-dead
         # terminal at the exact moment a new user decides whether the
         # tool works — spinner on rich/TTY, one plain line elsewhere.
+        # #1255: its own unit of work; nothing reads what the call records.
         with render.working("testing backend — one tiny prompt through "
-                            "the resolved backend"):
+                            "the resolved backend"), llm.call_scope():
             reply = llm.chat(
                 [{"role": "user", "content":
                   'Reply with exactly this JSON and nothing else: {"ok": true}'}],

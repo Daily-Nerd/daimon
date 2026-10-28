@@ -313,6 +313,30 @@
       "notes": "#1235 what this serialize charged, summed over every LLM call of the run from what each backend reported on the wire. Every count is null when any call reported no usage (never a partial sum); zero calls is a measured zero. cost_usd only when every call was priced (the claude CLI prints one; HTTP backends do not). backend is the label of the call(s) that produced the counts (litellm, command, claude-cli, or fallback for a rescue), model the served name the backend itself reported; a list when a run mixed more than one. calls (#1236) is how many calls a backend answered in the run, resamples, parse retries and a rescue included, never withheld; daimon import bounds its run on it. Introspection checkpoints stay absent: no model ran."
     },
     {
+      "field": "capture_fallback",
+      "type": "boolean",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#1255 true when the weaker fallback backend produced part of this checkpoint (the configured backend failed and a rescue answered), false when none did. Stamped by serialize_strict on the checkpoint it returns, so every caller reads it from the result whichever thread ran the serialize; `daimon serialize` and `daimon import` print their [fallback backend] marker from it. Absent on a checkpoint older than the stamp and on the introspection path: unknown, read as nothing to report."
+    },
+    {
+      "field": "capture_quotes_downgraded",
+      "type": "integer",
+      "optional": true,
+      "nullable": false,
+      "owner": "code",
+      "disposition": "strip",
+      "constraints": {
+        "stripped_at_serialize": true
+      },
+      "notes": "#1255 how many verbatim items quote verification downgraded to inferred in this serialize, 0 when none. Stamped beside capture_fallback and read by `daimon import` for its per-session line. Absent on a checkpoint older than the stamp and on the introspection path: unknown, read as none."
+    },
+    {
       "field": "capture_door",
       "type": "string",
       "optional": true,

@@ -21,7 +21,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import Context, copy_context
 from datetime import datetime, timezone
-from typing import Callable, Iterable, Iterator, TypeVar
+from functools import wraps
+from typing import Callable, Iterable, Iterator, ParamSpec, TypeVar
 
 from . import (config, configure, field_table, ledger, llm, normalize,
                provenance, schema, tool_context)
@@ -104,7 +105,15 @@ EXTRACTION_VERSION = 3
 
 
 class SerializeError(Exception):
-    """Base for named serialization failures. str(e) is log/CLI-ready."""
+    """Base for named serialization failures. str(e) is log/CLI-ready.
+
+    `served_models` (#1255) is the sorted distinct models the run's backends
+    named before it failed, set once by serialize_strict's scope; empty when
+    none answered, which a too-short skip never reaches."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.served_models: list[str] = []
 
 
 class TooShortError(SerializeError):
@@ -2531,6 +2540,11 @@ _CODE_OWNED_KEYS = (
     # one. A model naming the key could mark live work as history, or an
     # import as live, and the briefing's head note would believe it.
     schema.CAPTURE_DOOR,
+    # #1255: whether the fallback backend produced part of the result, and how
+    # many verbatim items verification downgraded, are facts about this run,
+    # stamped by _stamp_run_facts. A model naming either could hide a rescue
+    # or fake a clean verification.
+    schema.CAPTURE_FALLBACK, schema.CAPTURE_QUOTES_DOWNGRADED,
     # #268: origin binding is asserted by policy.bind_origin at the write
     # boundary. No code path reads a top-level copy, but a model naming the
     # key must not leave one lying beside the real per-item stamps.
@@ -2744,6 +2758,16 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
             pass
 
 
+def _stamp_run_facts(checkpoint: dict, quotes_downgraded: int) -> None:
+    """#1255: what this run knows about itself, on the checkpoint it returns.
+
+    Read here, inside the run's scope, and stamped as plain values so a caller
+    on any thread reads them from the result. Written unconditionally: a
+    measured False or 0 differs from an old checkpoint's absence (unknown)."""
+    checkpoint[schema.CAPTURE_FALLBACK] = llm.fallback_used()
+    checkpoint[schema.CAPTURE_QUOTES_DOWNGRADED] = quotes_downgraded
+
+
 def conversation_message_count(messages) -> int:
     """Non-tool rows — THE too-short count, for BOTH capture doors (#750).
 
@@ -2754,21 +2778,6 @@ def conversation_message_count(messages) -> int:
     refused by the other."""
     return sum(1 for m in messages or []
                if not (isinstance(m, dict) and m.get("tool_result")))
-
-
-# #1236: what the last unit of work in this process recorded about itself,
-# beside the per-run collectors `llm` keeps (the fallback flag, the served
-# models, the spend records). Opened by `serialize_strict` with them, read by
-# `daimon import` after `_run_serialize` returns, the way it reads
-# `llm.fallback_used()`. In-process state, so another process's capture can
-# never leak into the count the way a log scrape could.
-_run_state: dict = {"quotes_downgraded": 0}
-
-
-def quotes_downgraded() -> int:
-    """How many verbatim items `verify_quotes` downgraded in the last
-    serialize of this process (its own return value), 0 before any ran."""
-    return _run_state["quotes_downgraded"]
 
 
 def require_enough_messages(messages) -> None:
@@ -2783,7 +2792,26 @@ def require_enough_messages(messages) -> None:
         )
 
 
-@llm.capture_scope
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _run_scope(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Open the run's llm collectors around `function` and, when it fails with
+    a named error, hand the models served so far to the exception (#1255): the
+    scope closes on return, so nothing can read them afterwards."""
+    @wraps(function)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with llm.call_scope():
+            try:
+                return function(*args, **kwargs)
+            except SerializeError as exc:
+                exc.served_models = llm.served_models()
+                raise
+    return wrapped
+
+
+@_run_scope
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                      escalate=False, source_ref=None, transcript_hash=None,
                      now=None, coverage=None) -> dict:
@@ -2807,14 +2835,11 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     """
     if chat is None:
         chat = llm.chat
-    # #1235: this call is the unit of work every capture door shares, so it
-    # opens the per-run collectors here, not at each door. A long-lived host
-    # process serializes many times and renders briefings in between; the
-    # stamps written at the end of this call (_stamp_llm_provenance) must
-    # read only what THIS run put on the wire. Before the too-short gate:
-    # a skipped serialize must not leave an earlier run's state behind.
-    llm.reset_call_state()
-    _run_state["quotes_downgraded"] = 0
+    # #1235: this call is the unit of work every capture door shares, so
+    # _run_scope opens the per-run collectors around it, not each door. A
+    # long-lived host process serializes many times and renders briefings in
+    # between; the stamps written at the end of this call must read only what
+    # THIS run put on the wire.
     require_enough_messages(messages)
     # #342: first liveness stamp — from here on the child proves it is alive
     # via heartbeats (entry, every chunk/pass, every merge group), so hung
@@ -3039,7 +3064,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # stamp the verdict — the briefing never re-greps. #358: items with a
     # validated binding resolve their id and compare bytes against just that
     # message, whole-transcript scan as fallback.
-    _run_state["quotes_downgraded"] = verify_quotes(
+    quotes_downgraded = verify_quotes(
         checkpoint, transcript_text, messages,
         source_ref=source_ref, transcript_hash=transcript_hash, now=now)
     # #359: derive the code-owned `grounded` verdict AFTER verification (it
@@ -3056,6 +3081,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # #230: stamp provenance last, immediately before hand-off to store/write —
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.
+    _stamp_run_facts(checkpoint, quotes_downgraded)
     _stamp_llm_provenance(checkpoint)
     # #514: date the extraction. PROMPT_VERSION and EXTRACTION_VERSION are two
     # independent levers; without this stamp a lone EXTRACTION_VERSION bump

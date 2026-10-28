@@ -790,8 +790,9 @@ def test_the_summary_reports_tokens_unreported_sessions_and_downgrades(
         "imported 2 of 2, 2 calls (2 planned), 41,210 tokens reported, "
         "1 session unreported"
     )
-    # L4: the count is the serializer's own return, read in process.
-    assert serializer.quotes_downgraded() == 0  # the second session downgraded none
+    # L4: the count is the serializer's own return, stamped on each checkpoint.
+    assert store.read_checkpoint("S-0")["capture_quotes_downgraded"] == 1
+    assert store.read_checkpoint("S-1")["capture_quotes_downgraded"] == 0
 
 
 def test_the_summary_names_every_session_the_fallback_produced(

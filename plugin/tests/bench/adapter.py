@@ -37,7 +37,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from daimon_briefing import carry, config, llm, recall, serializer, store
+from daimon_briefing import carry, config, recall, serializer, store
 
 from tests.bench import cache as cache_mod
 from tests.bench import dataset, metrics
@@ -160,12 +160,12 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
             return index, sid, cached, "cached", []
         try:
             checkpoint = serializer.serialize_strict(sid, messages, chat=chat)
-        except serializer.TooShortError:
-            return index, sid, None, "too_short", llm.served_models()
-        except serializer.SerializeError:
-            return index, sid, None, "failed", llm.served_models()
+        except serializer.TooShortError as exc:
+            return index, sid, None, "too_short", exc.served_models
+        except serializer.SerializeError as exc:
+            return index, sid, None, "failed", exc.served_models
         except Exception:
-            return index, sid, None, "failed", llm.served_models()
+            return index, sid, None, "failed", []
         # #343: verify the wire receipts BEFORE the cache write. served is this
         # capture's distinct receipt set, isolated from sibling captures.
         # Any receipt disagreeing with the run pin means a gateway substituted
@@ -173,7 +173,9 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
         # cached (scar 0015: the write gate is the only poison gate) and the
         # question fails loudly below. A separate pin-served capture racing a
         # substituted one retains its own receipt and can still be cached.
-        served = llm.served_models()
+        # llm_model_served is one name or, for a run that mixed models, a list.
+        stamped = checkpoint.get("llm_model_served") or []
+        served = [stamped] if isinstance(stamped, str) else list(stamped)
         with cache_lock:
             offender = cache.check_served(served)
             if offender is None:

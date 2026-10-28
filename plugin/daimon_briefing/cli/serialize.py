@@ -25,6 +25,7 @@ from .. import (
     llm,
     recall,
     render,
+    schema,
     serializer,
     store,
     transcript,
@@ -280,7 +281,10 @@ def _run_serialize(transcript_path: Path, project: str | None,
             return 0
         elapsed = int(time.monotonic() - start)
         msg = f"wrote checkpoint: {out} (took {elapsed}s)"
-        if llm.fallback_used():
+        # #1255: read from the checkpoint the serialize returned, so the
+        # marker never depends on which thread ran it. Absent = unknown.
+        written = store.read_checkpoint(session_id)
+        if written is not None and written.get(schema.CAPTURE_FALLBACK) is True:
             # Trailing marker (#28): the configured backend failed and the
             # weaker command fallback produced this checkpoint — success, but
             # downgraded. Suffix-safe: _RESULT_OK_RE/_LEDGER_OK_RE are

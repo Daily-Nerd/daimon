@@ -3746,13 +3746,13 @@ def test_concurrent_chunked_captures_keep_collectors_isolated(monkeypatch, escal
 
         checkpoint = serializer.serialize_strict(
             f"S-{name}", messages, chat=chat, escalate=escalate)
-        return checkpoint, llm.fallback_used(), llm.served_models()
+        return checkpoint
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(capture, "first", 11, True)
         second = pool.submit(capture, "second", 29, False)
-        first_checkpoint, first_fallback, first_models = first.result(timeout=30)
-        second_checkpoint, second_fallback, second_models = second.result(timeout=30)
+        first_checkpoint = first.result(timeout=30)
+        second_checkpoint = second.result(timeout=30)
 
     assert first_checkpoint["capture_cost"] == {
         "prompt_tokens": 11 * n_calls,
@@ -3774,10 +3774,8 @@ def test_concurrent_chunked_captures_keep_collectors_isolated(monkeypatch, escal
     }
     assert first_checkpoint["llm_model_served"] == "model-first"
     assert second_checkpoint["llm_model_served"] == "model-second"
-    assert first_fallback is True
-    assert second_fallback is False
-    assert first_models == ["model-first"]
-    assert second_models == ["model-second"]
+    assert first_checkpoint["capture_fallback"] is True
+    assert second_checkpoint["capture_fallback"] is False
 
 
 def test_failed_capture_state_is_not_inherited_by_next_capture():
@@ -3794,12 +3792,15 @@ def test_failed_capture_state_is_not_inherited_by_next_capture():
         llm.note_fallback_used()
         raise RuntimeError("gateway failed")
 
-    with pytest.raises(serializer.LLMCallError):
+    with pytest.raises(serializer.LLMCallError) as raised:
         serializer.serialize_strict("S-failed", make_messages(20), chat=failing_chat)
 
-    assert llm.capture_cost()["prompt_tokens"] == 100
-    assert llm.served_models() == ["failed-model"]
-    assert llm.fallback_used() is True
+    # The failed run reports through its exception; the caller's own scope
+    # holds nothing of it.
+    assert raised.value.served_models == ["failed-model"]
+    assert llm.capture_cost()["calls"] == 0
+    assert llm.served_models() == []
+    assert llm.fallback_used() is False
 
     def succeeding_chat(_messages, **_kwargs):
         llm._note_call_usage(
@@ -3823,8 +3824,7 @@ def test_failed_capture_state_is_not_inherited_by_next_capture():
         "model": "success-model",
     }
     assert checkpoint["llm_model_served"] == "success-model"
-    assert llm.served_models() == ["success-model"]
-    assert llm.fallback_used() is False
+    assert checkpoint["capture_fallback"] is False
 
 
 # ---- #1236: capture_door, which door the capture came through ----

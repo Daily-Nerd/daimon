@@ -12,10 +12,10 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from functools import wraps
-from typing import Callable, ParamSpec, TypeVar, cast
 
 from . import config, redact
 
@@ -28,46 +28,35 @@ class _CallState:
         self.served_models: list[str] = []
         self.usage_records: list[dict] = []
 
-    def reset(self) -> None:
-        self.fallback_used = False
-        self.served_models.clear()
-        self.usage_records.clear()
 
-
-_DEFAULT_CALL_STATE = _CallState()
 _CURRENT_CALL_STATE: ContextVar[_CallState | None] = ContextVar(
     "daimon_llm_call_state", default=None)
-_LAST_CALL_STATE: ContextVar[_CallState | None] = ContextVar(
-    "daimon_llm_last_call_state", default=None)
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
 
 
 def _call_state() -> _CallState:
-    return (_CURRENT_CALL_STATE.get() or _LAST_CALL_STATE.get()
-            or _DEFAULT_CALL_STATE)
+    state = _CURRENT_CALL_STATE.get()
+    if state is None:
+        raise RuntimeError(
+            "llm call state used outside a call scope: open llm.call_scope() "
+            "around the unit of work that owns these collectors (#1255)")
+    return state
 
 
-def capture_scope(function: Callable[_P, _R]) -> Callable[_P, _R]:
-    """Give one serializer invocation its own collector in this context.
+@contextmanager
+def call_scope() -> Iterator[None]:
+    """Give one unit of work its own collectors in this context.
 
-    The last outermost state remains readable in the calling thread after
-    return, including by the CLI's fallback check. Nested states do not merge
-    into their outer scope.
+    #1255: every collector read and write needs an open scope, and what the
+    unit learned about itself leaves through its own result, never through
+    state read after the scope closed. Worker threads that run in a copy of
+    this context (serializer._map_in_context) share the scope's collectors.
+    A nested scope starts empty and does not merge into its outer one.
     """
-    @wraps(function)
-    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
-        previous = _CURRENT_CALL_STATE.get()
-        state = _CallState()
-        token = _CURRENT_CALL_STATE.set(state)
-        try:
-            return function(*args, **kwargs)
-        finally:
-            _CURRENT_CALL_STATE.reset(token)
-            if previous is None:
-                _LAST_CALL_STATE.set(state)
-
-    return cast(Callable[_P, _R], wrapped)
+    token = _CURRENT_CALL_STATE.set(_CallState())
+    try:
+        yield
+    finally:
+        _CURRENT_CALL_STATE.reset(token)
 
 
 def _run_command(argv, stdin_text, timeout, env, cwd):
@@ -499,19 +488,6 @@ def usage_records() -> list:
 
 def reset_usage() -> None:
     _call_state().usage_records.clear()
-
-
-def reset_call_state() -> None:
-    """Clear the active run's collectors, or compatibility state in tests."""
-    state = _CURRENT_CALL_STATE.get()
-    if state is not None:
-        state.reset()
-        return
-    last = _LAST_CALL_STATE.get()
-    if last is not None:
-        last.reset()
-    _DEFAULT_CALL_STATE.reset()
-    _LAST_CALL_STATE.set(None)
 
 
 def capture_cost() -> dict:

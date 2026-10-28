@@ -43,6 +43,13 @@ from typing import Any, NamedTuple
 CAPTURE_DOOR = "capture_door"
 CAPTURE_DOOR_IMPORT = "import"
 
+# #1255: what one serialize run knows about itself, stamped by
+# `serialize_strict` on the checkpoint it returns and read from the result,
+# never from a side channel. Absent on a checkpoint older than the stamps
+# (unknown), so every reader treats absence as "nothing to report".
+CAPTURE_FALLBACK = "capture_fallback"
+CAPTURE_QUOTES_DOWNGRADED = "capture_quotes_downgraded"
+
 
 class ItemField(NamedTuple):
     """One item-bearing checkpoint field, with the facts each consumer needs."""
