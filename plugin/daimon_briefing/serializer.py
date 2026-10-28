@@ -19,7 +19,9 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import Context, copy_context
 from datetime import datetime, timezone
+from typing import Callable, Iterable, Iterator, TypeVar
 
 from . import (config, configure, field_table, ledger, llm, normalize,
                provenance, schema, tool_context)
@@ -27,6 +29,24 @@ from . import (config, configure, field_table, ledger, llm, normalize,
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
 log = logging.getLogger(__name__)
+
+
+_TaskArg = TypeVar("_TaskArg")
+_TaskResult = TypeVar("_TaskResult")
+
+
+def _run_in_context(
+        task: tuple[Context, Callable[[_TaskArg], _TaskResult], _TaskArg]
+) -> _TaskResult:
+    context, function, argument = task
+    return context.run(function, argument)
+
+
+def _map_in_context(pool: ThreadPoolExecutor,
+                    function: Callable[[_TaskArg], _TaskResult],
+                    arguments: Iterable[_TaskArg]) -> Iterator[_TaskResult]:
+    tasks = ((copy_context(), function, argument) for argument in arguments)
+    return pool.map(_run_in_context, tasks)
 
 
 # Serialize-prompt version. Bumped D-008 -> D-010 (#101: emotional_valence
@@ -2307,12 +2327,12 @@ def _save_chunk_cache(key: str, partial: dict) -> None:
         return
     if llm.fallback_used():
         # #28/#343 lesson: once the weaker fallback backend has fired in this
-        # process, nothing from this run may be cached under the primary
+        # capture, nothing from this run may be cached under the primary
         # backend's key — that is exactly how caches get poisoned.
         return
     served = llm.served_models()
     if len(served) > 1:
-        # #465: distinct producers observed in this process — no chunk is
+        # #465: distinct producers observed in this capture — no chunk is
         # attributable to a single model, and caching any of it under the
         # alias key is exactly how caches get poisoned (scar 0015). The write
         # gate stays THE gate.
@@ -2479,7 +2499,7 @@ def _merge_partials(chat, session_id: str, partials: list, deadline,
         workers = min(config.chunk_concurrency(), len(groups))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             # pool.map preserves input order, keeping chronological sequence intact.
-            partials = list(pool.map(_one_group, enumerate(groups)))
+            partials = list(_map_in_context(pool, _one_group, enumerate(groups)))
     return partials[0]
 
 
@@ -2652,7 +2672,7 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
     alias — routing config. Behind a gateway with silent fallback chains a
     different model can serve the call with no error, so the response body's
     own `model` field is the only per-call truth; llm.py collects the
-    distinct names across this process's calls (chunks + merge) and this
+    distinct names across this capture's calls (chunks + merge) and this
     stamp records them: one distinct name -> string, more than one -> sorted
     list AND the substitution-during-run signal (WARNING + the
     `serialize:model-substituted` usage counter). Mixed-within-a-run is the
@@ -2763,6 +2783,7 @@ def require_enough_messages(messages) -> None:
         )
 
 
+@llm.capture_scope
 def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                      escalate=False, source_ref=None, transcript_hash=None,
                      now=None, coverage=None) -> dict:
@@ -2895,7 +2916,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
         workers = min(config.chunk_concurrency(), len(jobs))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             # pool.map preserves input order — chunk-major stays chronological.
-            return list(pool.map(_one_pass, jobs))
+            return list(_map_in_context(pool, _one_pass, jobs))
 
     def _produce(note: str) -> dict:
         nonlocal partials
@@ -2952,7 +2973,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             workers = min(config.chunk_concurrency(), len(chunks))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 # executor.map preserves input order, so partials stay chronological.
-                partials = list(pool.map(_one_chunk, enumerate(chunks)))
+                partials = list(_map_in_context(
+                    pool, _one_chunk, enumerate(chunks)))
         # Retry re-runs ONLY the merge (the final sampling that failed) — the
         # chunk partials are kept; they are the expensive calls.
         return _merge_partials(chat, session_id, list(partials), deadline,

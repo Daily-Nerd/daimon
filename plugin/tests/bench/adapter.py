@@ -129,7 +129,8 @@ def _created_stamp(index: int) -> str:
 def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
                        backend: str, model: str, project_dir: str,
                        workers: int, carry_on: bool = False,
-                       scene_on: bool = False) -> tuple[dict, dict]:
+                       scene_on: bool = False,
+                       run_served: set[str] | None = None) -> tuple[dict, dict]:
     """Serialize every haystack session into the (already isolated) store.
 
     Returns (tally, attribution):
@@ -156,24 +157,22 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
         with cache_lock:
             cached = cache.get(key)
         if cached is not None:
-            return index, sid, cached, "cached"
+            return index, sid, cached, "cached", []
         try:
             checkpoint = serializer.serialize_strict(sid, messages, chat=chat)
         except serializer.TooShortError:
-            return index, sid, None, "too_short"
+            return index, sid, None, "too_short", llm.served_models()
         except serializer.SerializeError:
-            return index, sid, None, "failed"
+            return index, sid, None, "failed", llm.served_models()
         except Exception:
-            return index, sid, None, "failed"
-        # #343: verify the wire receipts BEFORE the cache write. served is the
-        # run-unit's distinct receipt set (llm.served_models(), reset by run.py
-        # per question) — this serialize's own receipts are guaranteed in it
-        # (chat() appends before returning), plus possibly concurrent workers'.
+            return index, sid, None, "failed", llm.served_models()
+        # #343: verify the wire receipts BEFORE the cache write. served is this
+        # capture's distinct receipt set, isolated from sibling captures.
         # Any receipt disagreeing with the run pin means a gateway substituted
         # a model (scar 0032) and per-call attribution is lost, so NOTHING is
         # cached (scar 0015: the write gate is the only poison gate) and the
-        # question fails loudly below. Deliberately conservative: a pin-served
-        # checkpoint racing a substituted one is re-paid next run, never risked.
+        # question fails loudly below. A separate pin-served capture racing a
+        # substituted one retains its own receipt and can still be cached.
         served = llm.served_models()
         with cache_lock:
             offender = cache.check_served(served)
@@ -184,8 +183,8 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
                 cache.put(key, checkpoint,
                           served_model=cache.pinned_served if served else None)
         if offender is not None:
-            return index, sid, None, "model_mismatch"
-        return index, sid, checkpoint, "serialized"
+            return index, sid, None, "model_mismatch", served
+        return index, sid, checkpoint, "serialized", served
 
     workers = max(1, min(workers, len(sessions) or 1))
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -195,8 +194,11 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
     # row upstream, never a partial score over sessions a substitute model
     # serialized. Raised after the pool so concurrent workers finish cleanly
     # (their results are discarded with the question; none were cached).
+    observed = sorted({name for row in produced for name in row[4]})
+    if run_served is not None:
+        run_served.update(observed)
     if any(r[3] == "model_mismatch" for r in produced):
-        observed = sorted(set(llm.served_models()) - {cache.pinned_served})
+        observed = sorted(set(observed) - {cache.pinned_served})
         raise cache_mod.ServedModelMismatch(cache.pinned_served, observed)
 
     tally = {"serialized": 0, "cached": 0, "too_short": 0, "failed": 0, "indexed": 0}
@@ -206,7 +208,8 @@ def serialize_question(question: dict, *, chat, cache: cache_mod.CheckpointCache
     # checkpoint written just before it (listed-session order), so carry-on output
     # is deterministic even though the LLM serialize above ran concurrently — the
     # raw serialize has no dependence on prior state (see the module docstring).
-    for index, sid, checkpoint, status in sorted(produced, key=lambda r: r[0]):
+    for index, sid, checkpoint, status, _served in sorted(
+            produced, key=lambda r: r[0]):
         tally[status] += 1
         if checkpoint is None:
             continue
@@ -258,7 +261,8 @@ def recall_question(question: dict, *, project_dir: str, depth: int) -> list[dic
 def run_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
                  backend: str, model: str, root: Path, k: int, depth: int,
                  min_messages: str = BENCH_MIN_MESSAGES, workers: int = 1,
-                 carry_on: bool = False, scene_on: bool = False) -> dict:
+                 carry_on: bool = False, scene_on: bool = False,
+                 run_served: set[str] | None = None) -> dict:
     """Full per-question pipeline: isolate → serialize haystack → recall → score."""
     env = _question_env(root, question["question_id"], min_messages, carry_on,
                         scene_on)
@@ -267,7 +271,7 @@ def run_question(question: dict, *, chat, cache: cache_mod.CheckpointCache,
         tally, attribution = serialize_question(
             question, chat=chat, cache=cache, backend=backend, model=model,
             project_dir=project_dir, workers=workers, carry_on=carry_on,
-            scene_on=scene_on,
+            scene_on=scene_on, run_served=run_served,
         )
         results = recall_question(question, project_dir=project_dir, depth=depth)
 
