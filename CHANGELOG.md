@@ -5,6 +5,81 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.62.0](https://github.com/Daily-Nerd/daimon/compare/v0.61.0...v0.62.0) (2026-10-28)
+
+
+### Features
+
+* **briefing:** an imported latest gets a head note and the active topic says imported ([e9e37ca](https://github.com/Daily-Nerd/daimon/commit/e9e37ca3099715c24668dffe63b7ae3168821374))
+* **cli:** daimon import serializes the given transcripts of one project in one bounded run ([16508e6](https://github.com/Daily-Nerd/daimon/commit/16508e612ae88f877c573005e496c1b4b7cb7c9f))
+* **import:** a window of captured sessions names the way to older history, in the plan and in both CLI reference rows ([45b1167](https://github.com/Daily-Nerd/daimon/commit/45b1167b5e481945892c84d2987c0c473867dc5a)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **import:** discover a project's transcripts on disk and plan the N newest, skips applied inside that window ([df85e93](https://github.com/Daily-Nerd/daimon/commit/df85e93a197c9f6a17fcfb138fedd5530fb0d2ad)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **ledger:** an import marker opens an attempt that heal never retries ([9cefcb2](https://github.com/Daily-Nerd/daimon/commit/9cefcb227c71a2c36c45f52001115e9f9879809c)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **llm:** capture_cost stamps how many calls the backends answered ([de92774](https://github.com/Daily-Nerd/daimon/commit/de92774359fcf964299d3ba01f09d5de4c968361))
+* **provenance:** a session key per host, and the hosts whose transcripts record no project ([712b257](https://github.com/Daily-Nerd/daimon/commit/712b2579bc84f196df708e2c6bf567356170300e))
+* **provenance:** public HOSTS and roots, one listing pattern per root, and the import table iterates the host set ([80b2910](https://github.com/Daily-Nerd/daimon/commit/80b291022bf22eca6c82947d8e0ddf769cd778eb)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **provenance:** SourceResolver.transcripts lists each host's files from its own roots ([3e68cbf](https://github.com/Daily-Nerd/daimon/commit/3e68cbfd3f661c85094cd2235914ee83d80bfe8a)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **serializer:** count the model calls a transcript's serialize will make before any spend ([4c88aea](https://github.com/Daily-Nerd/daimon/commit/4c88aead8b7240b95cb16af9822ac75145c35818))
+* **serialize:** the import door stamps capture_door and marks its success line ([381f577](https://github.com/Daily-Nerd/daimon/commit/381f577f012556ae02fdcac6da1a289164a8a304)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **transcript:** read the working directory a transcript recorded ([5c2c900](https://github.com/Daily-Nerd/daimon/commit/5c2c900634384756e4057308f158022dead73122))
+* **view:** open reports the import door count and when the newest imported session ended ([9a00602](https://github.com/Daily-Nerd/daimon/commit/9a0060259b35cbeed8f48a46366c4d1c8b691bb4))
+
+
+### Bug Fixes
+
+* **briefing:** a planted age key on disk is dropped before the stamp ([c280410](https://github.com/Daily-Nerd/daimon/commit/c280410466f49ed634847ef8c19b61aca2ea23dc))
+* **briefing:** the import note is set only once the body has something to show ([82a6f7d](https://github.com/Daily-Nerd/daimon/commit/82a6f7dcd75669102eb0aadd83bad2829976bd33))
+* **briefing:** the import note travels with the body and its facts are read on demand ([313c85a](https://github.com/Daily-Nerd/daimon/commit/313c85a02f8743a92be6c27f3aa0bf0c9a87071d))
+* **carry:** a capture behind the stream's latest folds nothing backward ([aabb447](https://github.com/Daily-Nerd/daimon/commit/aabb4477858ab6fdc3401be8a0183e8b9f483f92)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **import:** a transcript root the user cannot list is one named plan line, and the other roots still list ([3c84abe](https://github.com/Daily-Nerd/daimon/commit/3c84abee9fc98bfe174316731ea5c849a7f4a4bb)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **import:** a transcript the capture reader cannot decode is the named unreadable skip, before any spend ([9bb0f3e](https://github.com/Daily-Nerd/daimon/commit/9bb0f3e4e18f49559c1c739fd65c1b73b4455c9e)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **import:** bound on spent calls, key sessions by host, accept no-project hosts on a typed --project ([5229987](https://github.com/Daily-Nerd/daimon/commit/52299870b6df571378d557870dd0b75081da381c))
+* **import:** one stat decides a missing transcript, and an unreadable one is a named skip ([5c581fc](https://github.com/Daily-Nerd/daimon/commit/5c581fc58d3fa7e04e1a32520904ff5643482656))
+* **import:** the reason a rootless host cannot be imported is provenance's, Gemini reads no registered root, and a Gemini path given by hand is refused by name ([ab8b5c8](https://github.com/Daily-Nerd/daimon/commit/ab8b5c82de691c0cb8b9906a73501fa7991fa2c8)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **ledger:** any success line marks a session captured for the import's done-set ([0879f41](https://github.com/Daily-Nerd/daimon/commit/0879f41622b7eeb2d5029e660f76dbddc4f30a39))
+* **ledger:** every spawn line owns its attempt's reason, and a held import names its own cure ([9c94ab2](https://github.com/Daily-Nerd/daimon/commit/9c94ab2d7d1370f827b2963b23c7f88701ad4f78)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **provenance:** a Codex rollout present in both sessions and archived_sessions lists once, from sessions ([dcaaace](https://github.com/Daily-Nerd/daimon/commit/dcaaace3fae1582d485e7c17c30cb6416ae45934)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **store:** an older checkpoint never inherits a birth stamp newer than its own session ([603ad91](https://github.com/Daily-Nerd/daimon/commit/603ad919f9889d38022352a660460098806f8480)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **transcript:** recorded_cwd stops at the first row that records one, and both readers answer None on undecodable bytes ([df7d4c5](https://github.com/Daily-Nerd/daimon/commit/df7d4c5632d5d44765044c1764e4aa8eaac94ceb)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **transcript:** the end stamp is the newest stamp in the tail, and the first row is read no further than the tail size ([a3bad07](https://github.com/Daily-Nerd/daimon/commit/a3bad07a40d904b1e8bf2073126d296885d654d3)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+
+
+### Performance Improvements
+
+* **transcript:** last_timestamp reads a bounded tail and falls back to the whole file only when the tail has no stamp ([dbde9b8](https://github.com/Daily-Nerd/daimon/commit/dbde9b8b7ca3ff86c469adfb31bdb1f1c338735a)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+
+
+### Documentation
+
+* **changelog:** list each 0.61.0 change once ([6357cb6](https://github.com/Daily-Nerd/daimon/commit/6357cb6ddd4ede1c1fdd95e848170d91c4f6e68c)), closes [#1176](https://github.com/Daily-Nerd/daimon/issues/1176)
+* **claims:** count the quote downgrade rate over fresh items only, 11.3% ([385a3b0](https://github.com/Daily-Nerd/daimon/commit/385a3b07ee3515b2d4b4bf5f1168f8c7d824075a))
+* **cli:** document daimon import in the reference, with the Spanish mirror ([fc49c80](https://github.com/Daily-Nerd/daimon/commit/fc49c806e7b766d0908f6e43f75ca34479d9b68b))
+* **cli:** the import row quotes the not-discovered line and says Gemini and Hermes cannot be imported yet, EN and ES ([9babbea](https://github.com/Daily-Nerd/daimon/commit/9babbeaf7aa000b36115a6787e4429cc83e78275)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **cli:** the import row says about, spent versus planned, every refusal and exit code ([e447900](https://github.com/Daily-Nerd/daimon/commit/e447900716b7c973804a9172385e8eae93bd5399))
+* **cli:** the import row says how discovery picks the N newest and which hosts stay path-given ([e45b5fd](https://github.com/Daily-Nerd/daimon/commit/e45b5fdb36e0ea3816e44198b8e8eaa3a8fed5cd)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **hosts:** the Claude Code page says import discovers sessions by the recorded working directory ([7a6eac9](https://github.com/Daily-Nerd/daimon/commit/7a6eac980da9a13a206e96bb720990442f304529))
+* **hosts:** the Codex import section points at the quickstart in its own words ([9ac0862](https://github.com/Daily-Nerd/daimon/commit/9ac0862d056287ccc600ebd3e9c3b4f4bb77f086))
+* **hosts:** the Codex page says import discovers rollouts in both roots by the session_meta cwd ([9c58087](https://github.com/Daily-Nerd/daimon/commit/9c58087a241cbc767564cf2fb50edb2549eb507e))
+* **hosts:** the Gemini import cell reads no registered root ([75e52a7](https://github.com/Daily-Nerd/daimon/commit/75e52a77dd5af3c01805378e77e971e8313aaa45))
+* **hosts:** the Gemini page quotes its plan reason and describes the exit 2 refusal of a hand-given file ([e01fea1](https://github.com/Daily-Nerd/daimon/commit/e01fea16bf72b0d877aa198705e4649b741de289))
+* **hosts:** the Gemini page says a path given with --transcript is refused ([80e4137](https://github.com/Daily-Nerd/daimon/commit/80e4137062bab4a99f62e376cb47572137ff7752))
+* **hosts:** the Gemini page says import does not reach this host ([f772ca8](https://github.com/Daily-Nerd/daimon/commit/f772ca8f8715d0b405bbdd01a2a466e67dd15ad0))
+* **hosts:** the host table gains an Import column from the importer capability rows ([d478046](https://github.com/Daily-Nerd/daimon/commit/d47804646389dcc81a363f262e9410519ccc4275))
+* **hosts:** the Kimi import section points at the quickstart in its own words ([07b61ca](https://github.com/Daily-Nerd/daimon/commit/07b61ca53571a81cdcb8c411761ca13f801547f0))
+* **hosts:** the Kimi page says import takes the wire log by path with the project typed ([cd86c8c](https://github.com/Daily-Nerd/daimon/commit/cd86c8c91bb22cb5febca593ff2a89a5c39dc4db))
+* **hosts:** the unsupported row says no registered root, and the Spanish mode labels read as table cells ([09229d2](https://github.com/Daily-Nerd/daimon/commit/09229d2b0dc5fde27defe975e8d57813651a3dba))
+* **hosts:** the Windsurf import section says transcript like the rest of its Spanish page and points at the quickstart in its own words ([41f1990](https://github.com/Daily-Nerd/daimon/commit/41f199079c070835d8f71fadc6ad6f250bd029b1))
+* **hosts:** the Windsurf page says import takes a transcript by path with the project typed ([1d97d32](https://github.com/Daily-Nerd/daimon/commit/1d97d32ea562a5728497ec4ca6add651989aca68))
+* **index:** the landing page counts six quickstart steps ([d496244](https://github.com/Daily-Nerd/daimon/commit/d49624459a2f811a7a7a15fd8a0d8e25a4bd1793))
+* **quickstart:** a step fills the briefing from past sessions with daimon import, its plan, bound, resume and the imported-history note ([501acbc](https://github.com/Daily-Nerd/daimon/commit/501acbcb79b7b2d8c6869c9ab7243b9a84f48366))
+* **quickstart:** Gemini is unreached by root, not by file, the compaction note is its own fact, the bound reads planned calls, and the plain path names NO_COLOR and DAIMON_PLAIN ([7428dfa](https://github.com/Daily-Nerd/daimon/commit/7428dfae2389bbab3fb844536fe4df58f7146f21))
+* **quickstart:** the plan's not-discovered line names gemini by its missing root and hermes by its missing file ([163e2d4](https://github.com/Daily-Nerd/daimon/commit/163e2d437403f58f16bafb486672000fd6361de3))
+* **readme:** say what heal, the Windsurf adapter and team attribution do ([6f2c381](https://github.com/Daily-Nerd/daimon/commit/6f2c3818a990ff0b3a70ad00acfb63bee6fc2991))
+* **schema:** capture_door names its reader in the field table and the published schema ([6c113b9](https://github.com/Daily-Nerd/daimon/commit/6c113b959e0c1018334bb8b26fbeea8a3c0bd822))
+* **schema:** describe capture_door as stamped with no reader yet ([e3ada11](https://github.com/Daily-Nerd/daimon/commit/e3ada1141241d77eb40ff9ad8eda1df23dc4c8f9)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+* **schema:** one constant names the capture_door key and the table says the count can shrink ([8e28a6f](https://github.com/Daily-Nerd/daimon/commit/8e28a6f882938f100fb4a2f0c5082d4533e2eefe))
+* **transcript:** recorded_cwd names the one row shape where its line split could change the answer ([a28130e](https://github.com/Daily-Nerd/daimon/commit/a28130e731608482326859546809556e897f6290)), closes [#1236](https://github.com/Daily-Nerd/daimon/issues/1236)
+
 ## [0.61.0](https://github.com/Daily-Nerd/daimon/compare/v0.60.0...v0.61.0) (2026-10-26)
 
 
