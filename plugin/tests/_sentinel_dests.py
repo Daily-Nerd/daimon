@@ -17,6 +17,7 @@ DESTS = {
     "import": {
         "project": ("OUT", "R1"),
         "transcript": ("INE", "R6"),
+        "sessions": ("INE", "R6"),
         "max_calls": ("INE", "R6"),
         "plan": ("OUT", "R3"),
     },

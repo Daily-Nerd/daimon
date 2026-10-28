@@ -172,14 +172,20 @@ THIS session as its own predecessor instead of an independent witness, so a prov
 corroborate itself. Omit only when the host has no way to tell the live session its own id.
 
 === import ===
-usage: daimon import [-h] [--project PROJECT] --transcript PATH [--max-calls N] [--plan] options:
--h, --help show this help message and exit --project PROJECT project directory the transcripts
-belong to (default: DAIMON_PROJECT_DIR, then cwd); a transcript that records no project (Windsurf,
-Kimi) is accepted only when this flag is given --transcript PATH a transcript file to import
-(repeatable); one that records a working directory must record this project's --max-calls N stop
-before the session whose planned calls would take the spent count past N (default: the planned
-total); a run passes N only by one session's own retries and rescue --plan print the plan and exit
-without a model call
+usage: daimon import [-h] [--project PROJECT] [--transcript PATH | --sessions N] [--max-calls N]
+[--plan] options: -h, --help show this help message and exit --project PROJECT project directory the
+transcripts belong to (default: DAIMON_PROJECT_DIR, then cwd); a transcript that records no project
+(Windsurf, Kimi) is accepted only when this flag is given --transcript PATH a transcript file to
+import (repeatable); one that records a working directory must record this project's. Without it the
+project's transcripts are discovered on disk (see --sessions) --sessions N discover the project's N
+newest transcripts under the Claude Code and Codex roots (default: 5), newest by session end,
+matched on the working directory each file recorded; the skips the plan names come out of those N
+and nothing older takes their place, so the same command rebuilds the same plan. Windsurf and Kimi
+record no project: pass --transcript for those. Gemini (no registered root) and Hermes (no
+transcript file) cannot be imported yet, by discovery or by --transcript --max-calls N stop before
+the session whose planned calls would take the spent count past N (default: the planned total); a
+run passes N only by one session's own retries and rescue --plan print the plan and exit without a
+model call
 
 === brief ===
 usage: daimon brief [-h] [--project PROJECT] [--team] [--slug SLUG] [--global-fallback] [--auto]

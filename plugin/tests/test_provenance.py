@@ -1,6 +1,8 @@
 """Durable quote receipts and strict host source resolution (#594)."""
 
 import json
+
+import pytest
 from pathlib import Path
 
 from daimon_briefing import provenance, serializer, store
@@ -278,6 +280,135 @@ def test_resolver_local_candidate_wins_over_different_author(tmp_path):
     assert result.state == "resolved"
 
 
+# Every host whose resolver has transcript roots, with one file planted at
+# that host's measured layout. The key set is asserted against the resolver,
+# so a host added to `roots` with no entry here goes red, and a host whose
+# lister has no pattern goes red on the planted file.
+def _planted(tmp_path):
+    claude = tmp_path / "projects"
+    codex = tmp_path / ".codex"
+    kimi = tmp_path / ".kimi-code"
+    return {
+        "claude-code": [claude / "one" / "S-a.jsonl", claude / "two" / "S-b.jsonl"],
+        "codex": [
+            codex / "sessions" / "2026" / "10" / "rollout-x.jsonl",
+            codex / "archived_sessions" / "rollout-y.jsonl",
+        ],
+        "windsurf": [
+            tmp_path / ".windsurf" / "transcripts" / "ws-1.jsonl",
+            tmp_path / ".daimon" / "windsurf" / "transcripts" / "ws-2.md",
+        ],
+        "kimi": [
+            kimi / "sessions" / "wd_p_0123" / "k-1" / "agents" / "main" / "wire.jsonl"
+        ],
+    }
+
+
+def _lister(tmp_path, monkeypatch):
+    # The daimon-authored Windsurf root follows DAIMON_WINDSURF_DIR (#607),
+    # which conftest points at exactly this directory.
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(tmp_path / ".daimon" / "windsurf"))
+    return provenance.SourceResolver(
+        home=tmp_path, codex_home=tmp_path / ".codex",
+        claude_projects=tmp_path / "projects", kimi_home=tmp_path / ".kimi-code",
+    )
+
+
+def test_the_public_host_order_and_the_membership_set_agree():
+    assert set(provenance.HOSTS) == provenance._HOSTS
+    assert len(provenance.HOSTS) == len(provenance._HOSTS)
+    assert "manual" in provenance.HOSTS
+
+
+def test_the_resolver_lists_each_hosts_transcripts_from_its_own_roots(
+    tmp_path, monkeypatch
+):
+    resolver = _lister(tmp_path, monkeypatch)
+    planted = _planted(tmp_path)
+    assert set(planted) == {h for h in provenance.HOSTS if resolver.roots(h) is not None}
+    for files in planted.values():
+        for f in files:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text("{}\n", encoding="utf-8")
+    (tmp_path / "projects" / "one" / "notes.md").write_text("x", encoding="utf-8")
+    (tmp_path / "projects" / "loose.jsonl").write_text("{}\n", encoding="utf-8")
+    for host, files in planted.items():
+        listing = resolver.transcripts(host)
+        assert listing.files == sorted(files), host
+        assert listing.unreadable == ()
+    for host in provenance.HOSTS:
+        if resolver.roots(host) is None:
+            assert resolver.transcripts(host) == provenance.Listing([], ())
+    monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(tmp_path / "no-windsurf"))
+    empty = provenance.SourceResolver(
+        home=tmp_path / "nowhere", codex_home=tmp_path / "no-codex",
+        claude_projects=tmp_path / "no-projects", kimi_home=tmp_path / "no-kimi",
+    )
+    assert all(empty.transcripts(h).files == [] for h in provenance.HOSTS)
+    # The lister feeds the resolver's own index, so a resolve still lands.
+    found = resolver.resolve(_source("rollout-x", host="codex"))
+    assert found.state == "resolved" and found.path == planted["codex"][0]
+
+
+def test_a_host_with_roots_and_no_listing_pattern_is_refused_not_empty(
+    tmp_path, monkeypatch
+):
+    resolver = _lister(tmp_path, monkeypatch)
+    patterns = dict(provenance._LISTINGS)
+    del patterns["kimi"]
+    monkeypatch.setattr(provenance, "_LISTINGS", patterns)
+    with pytest.raises(LookupError, match="kimi"):
+        resolver.transcripts("kimi")
+    patterns["kimi"] = ("a",) * (len(resolver.roots("kimi") or ()) + 1)
+    with pytest.raises(LookupError, match="kimi"):
+        resolver.transcripts("kimi")
+
+
+def test_an_unlistable_root_is_named_and_the_other_root_still_lists(
+    tmp_path, monkeypatch
+):
+    """Python 3.10 raises PermissionError out of glob under a parent the
+    user cannot read (3.13 returns nothing); the lister reports the root
+    and goes on."""
+    resolver = _lister(tmp_path, monkeypatch)
+    keep = tmp_path / ".codex" / "archived_sessions" / "rollout-kept.jsonl"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("{}\n", encoding="utf-8")
+    sealed = tmp_path / ".codex" / "sessions"
+    real_glob = Path.glob
+
+    def glob(self, pattern, *a, **k):
+        if self == sealed:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_glob(self, pattern, *a, **k)
+
+    monkeypatch.setattr(Path, "glob", glob)
+    listing = resolver.transcripts("codex")
+    assert listing.files == [keep]
+    assert listing.unreadable == (sealed,)
+    # The receipt index builds from the roots the lister could read, so a
+    # session under the readable root resolves while the other root is sealed.
+    found = resolver.resolve(_source("rollout-kept", host="codex"))
+    assert found.state == "resolved" and found.path == keep
+
+
+def test_a_codex_rollout_in_both_roots_lists_once_as_the_sessions_copy(
+    tmp_path, monkeypatch
+):
+    """Codex moves a rollout into archived_sessions; a copy in both roots is
+    one session, and the live root wins."""
+    resolver = _lister(tmp_path, monkeypatch)
+    live = tmp_path / ".codex" / "sessions" / "2026" / "10" / "rollout-moved.jsonl"
+    old = tmp_path / ".codex" / "archived_sessions" / "rollout-moved.jsonl"
+    only = tmp_path / ".codex" / "archived_sessions" / "rollout-only.jsonl"
+    for f in (live, old, only):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("{}\n", encoding="utf-8")
+    assert resolver.transcripts("codex").files == [only, live]
+    found = resolver.resolve(_source("rollout-moved", host="codex"))
+    assert found.state == "resolved" and found.path == live
+
+
 def test_resolver_supports_codex_recursive_sessions(tmp_path):
     codex = tmp_path / ".codex"
     target = codex / "sessions" / "2026" / "08" / "S-codex.jsonl"
@@ -356,7 +487,7 @@ def test_resolver_rejects_managed_host_without_registered_roots(tmp_path):
     resolver = provenance.SourceResolver(home=tmp_path)
     source = dict(_source("S-gemini", host="gemini"), locator="managed")
 
-    assert resolver._roots("gemini") is None
+    assert resolver.roots("gemini") is None
     assert resolver.resolve(source).state == "unsupported"
 
 
