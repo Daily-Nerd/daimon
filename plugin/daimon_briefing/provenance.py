@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TypeGuard
+from typing import NamedTuple, TypeGuard
 
 
 SOURCE_REF_VERSION = 1
@@ -25,8 +25,12 @@ QUOTE_PROVENANCE_VERSION = 1
 QUOTE_VERIFIER_ID = "tier-f"
 QUOTE_VERIFIER_VERSION = 1
 
-_HOSTS = frozenset((
-    "claude-code", "codex", "windsurf", "gemini", "hermes", "manual", "kimi"))
+# The public host enumeration, in the order public surfaces list hosts (the
+# import capability table, the plan's "not discovered" line). `manual` is
+# not a host a transcript comes from: it names a file outside every
+# registered root. `_HOSTS` is the same set for membership tests.
+HOSTS = ("claude-code", "codex", "windsurf", "kimi", "gemini", "hermes", "manual")
+_HOSTS = frozenset(HOSTS)
 # #1064: Kimi was captured for several releases before it was a registered
 # host here, so every checkpoint it produced was stamped host "manual",
 # locator "unsupported". This module resolves a source ref at READ time and
@@ -43,6 +47,23 @@ _LOCATORS = frozenset(("managed", "host-api", "unsupported"))
 # so neither belongs here; a host added to `infer_host` with no cwd field
 # joins this row, never a literal in the importer.
 HOSTS_RECORDING_NO_PROJECT = frozenset(("windsurf", "kimi"))
+# #1236: why each host with no registered root (`SourceResolver.roots`
+# answers None) cannot be imported, by discovery or by `--transcript`. One
+# entry per such host; the import capability table refuses to build for a
+# rootless host missing here. Gemini CLI does write a transcript (its
+# SessionEnd hook passes `transcript_path`; gemini-cli v0.21.0 fixed the
+# empty stub of gemini-cli#14715), but this resolver registers no root for
+# it, so `infer_host` classes the file as `manual` and nothing in it names
+# a project. Hermes has no transcript file at all (host-api locator).
+NO_ROOT_REASONS = {
+    "gemini": "no registered root",
+    "hermes": "no transcript file",
+}
+# Gemini CLI's config home, the directory its hooks and settings live in
+# (`host_detect` probes the same name, `skill_install` writes GEMINI.md
+# under it). Not a transcript root: it is consulted only to NAME a file
+# as Gemini's when someone hands it to the import.
+_GEMINI_HOME = ".gemini"
 _OUTCOMES = frozenset(("verified", "not-verified"))
 _BINDING_MODES = frozenset(("message-ids", "transcript-scan"))
 _DIGEST_SCOPES = frozenset(("raw-file", "rendered-transcript"))
@@ -137,6 +158,23 @@ def infer_host(transcript_path, *, home=None, codex_home=None,
     if _under(path, kimi_home / "sessions"):
         return "kimi", "managed"
     return "manual", "unsupported"
+
+
+def unsupported_import_host(transcript_path, *, home=None) -> str | None:
+    """The host a file belongs to when that host has no registered root
+    (`NO_ROOT_REASONS`), or None (#1236). `infer_host` answers `manual`
+    for such a file, which is right for a receipt (nothing can resolve it)
+    and wrong for a refusal line, which should name the host. Today the
+    one detectable case is Gemini: a path under `~/.gemini`, the config
+    home Gemini CLI keeps everything it writes in. Hermes writes no file,
+    so it is never detected. Never raises."""
+    if transcript_path is None:
+        return None
+    path = Path(transcript_path).expanduser()
+    home = Path(home).expanduser() if home is not None else Path.home()
+    if _under(path, home / _GEMINI_HOME):
+        return "gemini"
+    return None
 
 
 def session_key(transcript_path, *, host: str) -> str:
@@ -394,6 +432,35 @@ def binding_roles(receipt) -> list[str] | None:
     return list(binding["roles"])
 
 
+# One glob per root, index-aligned with `SourceResolver.roots(host)`: the
+# on-disk layout `_candidates` always matched. Claude Code `<projects>/
+# <slug>/<session>.jsonl`, exactly one directory deep: never a loose file
+# at the root, and never a sidechain log below a session directory
+# (`<slug>/<session>/subagents/agent-<id>.jsonl`), which is not a session
+# of its own; Codex
+# any `.jsonl` anywhere below `sessions` and `archived_sessions` (the date
+# directories between are not part of the contract); Windsurf `<id>.jsonl`
+# in its own root and `<id>.md` in daimon's; Kimi the wire log under every
+# workspace and session directory (scar 0061: the file is always
+# `wire.jsonl`, the session is the directory). A host with roots and no
+# entry here, or with a pattern count that differs from its root count, is
+# refused by `transcripts` rather than listed as empty.
+_LISTINGS: dict[str, tuple[str, ...]] = {
+    "claude-code": ("*/*.jsonl",),
+    "codex": ("**/*.jsonl", "**/*.jsonl"),
+    "windsurf": ("*.jsonl", "*.md"),
+    "kimi": ("*/*/agents/main/wire.jsonl",),
+}
+
+
+class Listing(NamedTuple):
+    """What `SourceResolver.transcripts` found: the files, sorted, and the
+    roots it could not list."""
+
+    files: list[Path]
+    unreadable: tuple[Path, ...]
+
+
 class SourceResolver:
     """Strict resolver over registered host roots; never guesses or falls back."""
 
@@ -410,7 +477,15 @@ class SourceResolver:
         self.current_author = current_author
         self._indexes: dict[str, dict[str, list[Path]]] = {}
 
-    def _roots(self, host: str) -> tuple[Path, ...] | None:
+    def roots(self, host: str) -> tuple[Path, ...] | None:
+        """The registered transcript roots of `host`, or None for a host
+        with no registered root: Gemini (it writes a transcript, but under
+        no directory this resolver knows), Hermes (no transcript file) and
+        `manual` (a file outside every root). The one table of per-host
+        roots: `infer_host` reads the same directories, `transcripts` lists
+        them, `resolve` confines a candidate to them, and the import
+        capability table asks this to tell a rootless host (its reason is
+        in `NO_ROOT_REASONS`) from a path-given one."""
         if host == "claude-code":
             return (self.claude_projects,)
         if host == "codex":
@@ -423,22 +498,62 @@ class SourceResolver:
             return (self.kimi_home / "sessions",)
         return None
 
+    def transcripts(self, host: str) -> Listing:
+        """Every transcript file under `host`'s registered roots, sorted,
+        beside the roots that could not be listed; an empty listing for a
+        host with no root (#1236).
+
+        The one lister over `roots`: `daimon import` discovers a project's
+        sessions through it, and `_candidates` builds its stem index from
+        the same files for the two hosts it indexes, so the files the
+        import can find and the files a receipt can resolve to are one set.
+        The pattern per root is `_LISTINGS`; a host with roots and no
+        pattern raises `LookupError`, so a host added to `roots` cannot
+        read as "nothing on disk". A missing root and a root that is a
+        file list as empty (`Path.glob` returns nothing for both); a root
+        under a parent this user cannot read raises `PermissionError` out
+        of `glob` on Python 3.10 (3.13 returns nothing), so each root is
+        guarded on its own and named in `unreadable`, and the other roots
+        of the host still list.
+
+        Codex only: a rollout present under both `sessions` and
+        `archived_sessions` is one session that Codex moved (it archives
+        by moving the file), so the stem lists once, from `sessions`, the
+        root that comes first. For every other host each root is its own
+        writer (Windsurf's own log and daimon's hook log can both exist for
+        one session) and nothing is folded."""
+        roots = self.roots(host)
+        if roots is None:
+            return Listing([], ())
+        patterns = _LISTINGS.get(host)
+        if patterns is None or len(patterns) != len(roots):
+            raise LookupError(
+                f"host {host} has {len(roots)} transcript root(s) and "
+                f"{0 if patterns is None else len(patterns)} listing pattern(s)"
+            )
+        files: list[Path] = []
+        unreadable: list[Path] = []
+        stems: set[str] = set()
+        for root, pattern in zip(roots, patterns):
+            try:
+                found = sorted(root.glob(pattern))
+            except OSError:
+                unreadable.append(root)
+                continue
+            if host == "codex":
+                found = [p for p in found if p.stem not in stems]
+                stems.update(p.stem for p in found)
+            files.extend(found)
+        return Listing(sorted(files), tuple(unreadable))
+
     def _candidates(self, source: dict) -> list[Path] | None:
         host = source["host"]
         sid = source["session_id"]
         try:
-            if host == "claude-code":
+            if host in ("claude-code", "codex"):
                 if host not in self._indexes:
                     self._indexes[host] = self._build_index(
-                        self.claude_projects.glob("*/*.jsonl"))
-                return list(self._indexes[host].get(sid, ()))
-            if host == "codex":
-                if host not in self._indexes:
-                    paths: list[Path] = []
-                    for root in self._roots(host) or ():
-                        if root.exists():
-                            paths.extend(root.rglob("*.jsonl"))
-                    self._indexes[host] = self._build_index(paths)
+                        self.transcripts(host).files)
                 return list(self._indexes[host].get(sid, ()))
             if host == "windsurf":
                 return [
@@ -477,7 +592,7 @@ class SourceResolver:
         candidates = self._candidates(source)
         if candidates is None:
             return SourceResolution("unsupported")
-        roots = self._roots(source["host"]) or ()
+        roots = self.roots(source["host"]) or ()
         existing = []
         seen = set()
         for path in candidates:

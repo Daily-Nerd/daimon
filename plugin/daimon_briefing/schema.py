@@ -34,6 +34,15 @@ import re
 from collections.abc import Iterator
 from typing import Any, NamedTuple
 
+# #1236: the code-owned envelope key naming the door a capture came through,
+# and the one value it persists. `capture.run` stamps it for the import door
+# (the bounded first fill), the serializer strips a model-authored copy, and
+# `view` reads it; every live door leaves the key absent, so absent reads as
+# a live capture. Declared here, the stdlib-only leaf, so every writer and
+# reader names the same strings without importing each other.
+CAPTURE_DOOR = "capture_door"
+CAPTURE_DOOR_IMPORT = "import"
+
 
 class ItemField(NamedTuple):
     """One item-bearing checkpoint field, with the facts each consumer needs."""

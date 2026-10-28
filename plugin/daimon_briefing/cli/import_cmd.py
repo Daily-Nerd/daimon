@@ -1,8 +1,11 @@
-"""`daimon import`: the bounded first fill (#1236, slice 2, path-given).
+"""`daimon import`: the bounded first fill (#1236, slices 2 and 3).
 
 The command owns the run and nothing about the selection: `importer.
-plan_import` decides the session list, this module prints it, loops over it
-oldest first, applies the two stop rules and prints the summary. Each
+discover` finds the project's transcripts when none are given (newest
+first, cut to `--sessions` here, default `importer.DEFAULT_SESSIONS`),
+`importer.plan_import` decides the session list inside that window, this
+module prints it, loops over it oldest first, applies the two stop rules
+and prints the summary. Each
 session goes through `cli._run_serialize(..., door="import")`, the one
 capture pipeline, after `ledger.write_import_marker` has opened the attempt
 in serialize.log, so every result line stays byte-identical to a live
@@ -32,7 +35,7 @@ from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import capture, config, importer, ledger, llm, serializer, store
+from .. import capture, config, importer, ledger, llm, provenance, serializer, store
 from .. import render
 from .serialize import _read_serialize_log
 
@@ -94,10 +97,23 @@ def _cmd_import(args) -> int:
     # jsonl.Refused, which `main` prints as `error: ...` at exit 2, before
     # a marker or a model call.
     store.admission_preflight(project)
+    discovered = args.transcript is None
+    if discovered:
+        # The same Claude Code root `plan_import` checks paths against, so
+        # discovery and the project check read one set of roots.
+        resolver = provenance.SourceResolver(
+            claude_projects=config.claude_projects_dir()
+        )
+        window = args.sessions if args.sessions is not None else importer.DEFAULT_SESSIONS
+        found = importer.discover(project, resolver)
+        paths = found.paths[:window]
+    else:
+        found = None
+        paths = args.transcript
     try:
         plan = importer.plan_import(
             project,
-            args.transcript,
+            paths,
             now=time.time(),
             log_text=_read_serialize_log(),
             live_session_id=os.environ.get("CLAUDE_CODE_SESSION_ID"),
@@ -107,6 +123,23 @@ def _cmd_import(args) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     _print_plan(plan)
+    if found is not None:
+        for host, root in found.unreadable:
+            print(f"  {host} root unreadable: {root}")
+        # The window is cut before the skips, so a project daimon has been
+        # capturing live shows its newest sessions as done. Say what reaches
+        # further back, and only when there is further back to reach.
+        if (
+            paths
+            and not plan.sessions
+            and len(found.paths) > len(paths)
+            and all(k.reason in importer.DONE_REASONS for k in plan.skipped)
+        ):
+            print(
+                f"  all {len(paths)} newest sessions already captured; raise "
+                "--sessions to reach older history"
+            )
+        print(importer.not_discovered_line())
     if args.plan:
         return 0
     if not plan.sessions:
@@ -191,16 +224,21 @@ def _cmd_import(args) -> int:
     return rc
 
 
-def _positive(raw: str) -> int:
+def _positive(flag: str):
+    """An argparse type for a count of 1 or more, naming `flag` in its
+    refusal; shared by `--max-calls` and `--sessions`."""
     import argparse
 
-    try:
-        value = int(raw)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"not a whole number: {raw!r}")
-    if value < 1:
-        raise argparse.ArgumentTypeError("--max-calls needs a count of 1 or more")
-    return value
+    def parse(raw: str) -> int:
+        try:
+            value = int(raw)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"not a whole number: {raw!r}")
+        if value < 1:
+            raise argparse.ArgumentTypeError(f"{flag} needs a count of 1 or more")
+        return value
+
+    return parse
 
 
 def register(sub, fmt) -> None:
@@ -218,17 +256,33 @@ def register(sub, fmt) -> None:
         "project (Windsurf, Kimi) is accepted only when this flag is "
         "given",
     )
-    p.add_argument(
+    which = p.add_mutually_exclusive_group()
+    which.add_argument(
         "--transcript",
         action="append",
-        required=True,
         metavar="PATH",
         help="a transcript file to import (repeatable); one that records a "
-        "working directory must record this project's",
+        "working directory must record this project's. Without it the "
+        "project's transcripts are discovered on disk (see --sessions)",
+    )
+    which.add_argument(
+        "--sessions",
+        type=_positive("--sessions"),
+        default=None,
+        metavar="N",
+        help="discover the project's N newest transcripts under the Claude "
+        f"Code and Codex roots (default: {importer.DEFAULT_SESSIONS}), "
+        "newest by session end, matched "
+        "on the working directory each file recorded; the skips the plan "
+        "names come out of those N and nothing older takes their place, so "
+        "the same command rebuilds the same plan. Windsurf and Kimi record "
+        "no project: pass --transcript for those. Gemini (no registered "
+        "root) and Hermes (no transcript file) cannot be imported yet, by "
+        "discovery or by --transcript",
     )
     p.add_argument(
         "--max-calls",
-        type=_positive,
+        type=_positive("--max-calls"),
         default=None,
         metavar="N",
         help="stop before the session whose planned calls would take the "

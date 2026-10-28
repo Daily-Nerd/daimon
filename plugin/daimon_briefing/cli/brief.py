@@ -208,9 +208,10 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     except Exception:
         handoff = None
     trailer = _withheld_trailer(annotated, team_counts)
-    # One cap over every note this brief carries: the snapshot's, the request
-    # joins' (merged in `briefing.prepare`) and the teammates' (#1132 PR 10a).
-    notes = display.merge_notes(annotated.notes if annotated else (),
+    # One cap over every note this brief carries: the #1236 import note of
+    # the body rendered here, the snapshot's, the request joins' (merged in
+    # `briefing.prepare`) and the teammates' (#1132 PR 10a).
+    notes = display.merge_notes(annotated.body_notes if annotated else (),
                                 team_counts.notes if team_counts else ())
     # #1128: the note rides INTO render_brief so it is charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the

@@ -24,8 +24,9 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, NamedTuple, NoReturn
+from typing import Any, Iterator, Literal, Mapping, NamedTuple, NoReturn
 
 from . import (amendments, carry, config, display, index_locate, jsonl,
                multihash, normalize, provenance, refutations)
@@ -187,13 +188,35 @@ class Visible:
 
 
 @dataclass(frozen=True)
+class Imported:
+    """#1236: the served checkpoint came through the import door. `count` is
+    how many of its project's session files still on disk did (the served
+    one included, so never below one): the store's GC keeps a bounded number
+    of files by recency and imports are the oldest, so this number can only
+    shrink over time, never grow. `created` is the `created` stamp of the
+    served one: when the newest imported session ended. `live_seen` says
+    whether any live capture of the project (a file without the door key)
+    is on disk; when it is, the imports are newer than it, since the
+    pointer guard refuses an older latest. The briefing words it; this is
+    the fact, computed by `imported` on demand."""
+
+    count: int
+    created: Any
+    live_seen: bool
+
+
+@dataclass(frozen=True)
 class Opened:
     """A checkpoint after the view: `checkpoint` is a copy with every
     withheld item removed (None when there is none), `withheld` names what was
     removed, `suppressed` counts loops closed by a resolution (only when the
     caller asked for `live`). `route` is the route the read was asked to take
     and `fell_back` is the route FACT: the global pointer served the body
-    (scar 0058: read it off the result, never reconstruct it)."""
+    (scar 0058: read it off the result, never reconstruct it). `door`
+    (#1236) is the body's code-owned `capture_door` value, set by every
+    builder from the body alone; a live capture has no key and reads None,
+    as an old checkpoint always has. The costlier import facts are
+    `imported(opened)`, computed only when a body renderer asks."""
 
     checkpoint: dict | None
     withheld: tuple
@@ -201,6 +224,7 @@ class Opened:
     snapshot: Snapshot
     route: store.Route = store.Route.OWN
     fell_back: bool = False
+    door: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1180,7 +1204,56 @@ def _opened(raw, snap: Snapshot, live_only: bool,
     if not isinstance(raw, dict):
         return Opened(None, (), 0, snap, route, fell_back)
     copy_, withheld, suppressed = _filter(raw, snap, live_only)
-    return Opened(copy_, withheld, suppressed, snap, route, fell_back)
+    door = raw.get(schema.CAPTURE_DOOR)
+    return Opened(copy_, withheld, suppressed, snap, route, fell_back,
+                  door if isinstance(door, str) else None)
+
+
+def _bucket_files(slug: str) -> Iterator[tuple[Path, dict | None]]:
+    """Every session file of bucket `slug` in the flat store, as `(path,
+    payload)`, and `(path, None)` for a file that does not parse. Membership
+    is the payload's own `project_slug`, as in `store.project_surfaces`: the
+    flat dir holds every project's sessions side by side."""
+    try:
+        files = store._session_files(config.checkpoint_dir())
+    except OSError:
+        files = []
+    for path in files:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            yield path, None
+            continue
+        if isinstance(raw, dict) and raw.get("project_slug") == slug:
+            yield path, raw
+
+
+def imported(opened: Opened) -> Imported | None:
+    """#1236: the import facts of an opened body, for a body renderer. None
+    for a live capture (no door, as every live door and every old checkpoint
+    leaves it). For the import door: how many of the body's project's session
+    files came through it (the body counted whatever the walk finds, since it
+    is the served one), whether a live capture of the project is on disk,
+    and when the body's session ended. The walk over the bucket's files runs
+    here and only here, never in `open`: an existence check or a reader-notes
+    path pays nothing for it. The bucket is the body's own slug, never a
+    wider set."""
+    raw = opened.checkpoint
+    if (opened.door != schema.CAPTURE_DOOR_IMPORT
+            or not isinstance(raw, dict)):
+        return None
+    slug = raw.get("project_slug")
+    others, live_seen = 0, False
+    if isinstance(slug, str):
+        for _path, payload in _bucket_files(slug):
+            if payload is None:
+                continue
+            if schema.CAPTURE_DOOR not in payload:
+                live_seen = True
+            elif (payload.get(schema.CAPTURE_DOOR) == schema.CAPTURE_DOOR_IMPORT
+                  and payload.get("session_id") != raw.get("session_id")):
+                others += 1
+    return Imported(others + 1, raw.get("created"), live_seen)
 
 
 def open(project, *, live: bool,  # noqa: A001 — the projection's name
@@ -1190,7 +1263,9 @@ def open(project, *, live: bool,  # noqa: A001 — the projection's name
     False keeps them. `route` is the store route: OWN (the default) reads the
     project's own pointer only, OWN_ELSE_GLOBAL may serve the global pointer,
     and `Opened.fell_back` says whether it did. `project` may be a bare slug.
-    The snapshot is always the reader's own, whichever body was served."""
+    The snapshot is always the reader's own, whichever body was served.
+    `Opened.door` (#1236) says when the body is imported history; the
+    counted facts are `imported(opened)`, on demand."""
     snap = snapshot(project)
     got = store.read_latest_result(project_dir=project, route=route,
                                    admit=store.Admit.ANY)
@@ -1275,22 +1350,13 @@ def sessions(project) -> Sessions:
     if not isinstance(scope, Own):
         return Sessions((), 0, ())      # Denied: no bucket, so no file is its
     slug = scope.own
-    root = config.checkpoint_dir()
-    try:
-        files = store._session_files(root)
-    except OSError:
-        files = []
     snap = snapshot(project)
     tenant_scoped = config.tenant_scoped()
     rows, unreadable = [], 0
-    for path in files:
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+    for path, raw in _bucket_files(slug):
+        if raw is None:
             if not tenant_scoped:
                 unreadable += 1
-            continue
-        if not isinstance(raw, dict) or raw.get("project_slug") != slug:
             continue
         rows.append(SessionRow(path.stem, raw.get("created"),
                                _topic_text(raw, snap)))
