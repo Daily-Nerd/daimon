@@ -800,7 +800,7 @@ def test_the_summary_names_every_session_the_fallback_produced(
     inner = fake_chat_factory(_valid_json())
 
     def chat(messages, **kwargs):
-        llm._fallback_used = True  # the rescue fired inside this serialize
+        llm.note_fallback_used()  # the rescue fired inside this serialize
         return inner(messages, **kwargs)
 
     monkeypatch.setattr(cli, "_chat", chat)

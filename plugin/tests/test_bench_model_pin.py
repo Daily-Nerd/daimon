@@ -40,7 +40,7 @@ class ServingChat:
     def __call__(self, messages, **kwargs):
         self.calls += 1
         # Simulate the response.model receipt (llm.py, #458 / scar 0032).
-        llm._served_models.append(self.served)
+        llm.note_served(self.served)
         blob = " ".join(str(m.get("content") or "") for m in messages)
         marker = next((w for w in blob.split() if w.endswith("marker")), "nomarker")
         return json.dumps({
@@ -99,7 +99,6 @@ def test_second_question_different_served_model_fails_loudly_not_cached(tmp_path
 
     # Question 2 observes a DIFFERENT served model: fail loudly, name both
     # models, and cache NOTHING from it.
-    llm.reset_served_models()  # mirrors run.py's per-question reset
     with pytest.raises(cache_mod.ServedModelMismatch) as err:
         _run_q(_question("q_b", "betamarker"), ServingChat("model-b"),
                cache, tmp_path / "r2")
@@ -112,7 +111,6 @@ def test_uniform_run_scores_normally(tmp_path):
     cache = cache_mod.CheckpointCache(tmp_path / "c")
     r1 = _run_q(_question("q_a", "alphamarker"), ServingChat("model-a"),
                 cache, tmp_path / "r1")
-    llm.reset_served_models()
     r2 = _run_q(_question("q_b", "betamarker"), ServingChat("model-a"),
                 cache, tmp_path / "r2")
     assert r1["recall_at_5"] == 1.0

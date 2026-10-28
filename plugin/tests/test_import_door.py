@@ -82,7 +82,7 @@ def test_import_marker_coexists_with_the_fallback_marker(
     tmp_checkpoint_dir, log_dir, fake_chat_factory, monkeypatch
 ):
     def chat_with_fallback(*a, **k):
-        llm._fallback_used = True  # simulate llm.chat falling back mid-serialize
+        llm.note_fallback_used()  # simulate llm.chat falling back mid-serialize
         return fake_chat_factory(_valid_json("S-fb"))(*a, **k)
 
     monkeypatch.setattr(cli, "_chat", chat_with_fallback)

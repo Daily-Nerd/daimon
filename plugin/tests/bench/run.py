@@ -233,20 +233,15 @@ def run(args) -> dict:
     t0 = time.monotonic()
     for i, q in enumerate(questions, 1):
         qt0 = time.monotonic()
-        # #343: question-scoped receipts. Resetting the #458 collector per
-        # question attributes a substitution to the question that observed it
-        # — and lets a run keep scoring after the gateway heals (the cumulative
-        # set would taint every later question with a model seen once).
-        # `run_served` re-accumulates everything for the run-level #458 stamp,
-        # INCLUDING receipts from questions that errored: the foreign model's
-        # serve happened and stays on the record.
-        llm.reset_served_models()
+        # #343: the adapter adds per-capture receipts to this question-scoped
+        # set, including receipts from captures that errored.
         try:
             result = adapter.run_question(
                 q, chat=chat, cache=cache, backend=stamp["backend"],
                 model=stamp["model"] or "unknown", root=Path(args.work_dir),
                 k=args.k, depth=args.depth, min_messages=args.min_messages,
                 workers=args.workers, carry_on=args.carry, scene_on=args.scene,
+                run_served=run_served,
             )
             print(f"[{i}/{len(questions)}] {result['question_id']} "
                   f"hit@{args.k}={result['hit_at_5']} "
@@ -267,12 +262,11 @@ def run(args) -> dict:
             }
             print(f"[{i}/{len(questions)}] {q['question_id']} "
                   f"ERROR served-model mismatch (#343): {e}")
-        run_served.update(llm.served_models())
         per_question.append(result)
 
     agg = metrics.aggregate(per_question, args.k)
     # #458: stamp what actually served across the whole run (accumulated over
-    # the per-question resets above). A mixed run is flagged loudly in the
+    # per-capture receipts above). A mixed run is flagged loudly in the
     # aggregate block AND on stdout — never aggregated silently.
     _stamp_served_models(stamp, agg, sorted(run_served))
     if agg.get("mixed_models"):

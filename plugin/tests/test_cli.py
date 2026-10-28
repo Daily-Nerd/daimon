@@ -7368,7 +7368,7 @@ def test_serialize_result_line_marks_llm_fallback(
     from daimon_briefing import llm
 
     def chat_with_fallback(*a, **k):
-        llm._fallback_used = True  # simulate llm.chat falling back mid-serialize
+        llm.note_fallback_used()  # simulate llm.chat falling back mid-serialize
         return fake_chat_factory(_valid_json("S-fb"))(*a, **k)
 
     monkeypatch.setattr(cli, "_chat", chat_with_fallback)

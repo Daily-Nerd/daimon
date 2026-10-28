@@ -12,11 +12,62 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from contextvars import ContextVar
 from datetime import datetime, timezone
+from functools import wraps
+from typing import Callable, ParamSpec, TypeVar, cast
 
 from . import config, redact
 
 log = logging.getLogger(__name__)
+
+
+class _CallState:
+    def __init__(self) -> None:
+        self.fallback_used = False
+        self.served_models: list[str] = []
+        self.usage_records: list[dict] = []
+
+    def reset(self) -> None:
+        self.fallback_used = False
+        self.served_models.clear()
+        self.usage_records.clear()
+
+
+_DEFAULT_CALL_STATE = _CallState()
+_CURRENT_CALL_STATE: ContextVar[_CallState | None] = ContextVar(
+    "daimon_llm_call_state", default=None)
+_LAST_CALL_STATE: ContextVar[_CallState | None] = ContextVar(
+    "daimon_llm_last_call_state", default=None)
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _call_state() -> _CallState:
+    return (_CURRENT_CALL_STATE.get() or _LAST_CALL_STATE.get()
+            or _DEFAULT_CALL_STATE)
+
+
+def capture_scope(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Give one serializer invocation its own collector in this context.
+
+    The last outermost state remains readable in the calling thread after
+    return, including by the CLI's fallback check. Nested states do not merge
+    into their outer scope.
+    """
+    @wraps(function)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        previous = _CURRENT_CALL_STATE.get()
+        state = _CallState()
+        token = _CURRENT_CALL_STATE.set(state)
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _CURRENT_CALL_STATE.reset(token)
+            if previous is None:
+                _LAST_CALL_STATE.set(state)
+
+    return cast(Callable[_P, _R], wrapped)
 
 
 def _run_command(argv, stdin_text, timeout, env, cwd):
@@ -252,7 +303,7 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
             # record safely; served_models() dedupes/sorts on read. Absent or
             # non-string field -> record nothing (honest absence, no guessing).
             if isinstance(served, str) and served.strip():
-                _served_models.append(served.strip())
+                note_served(served.strip())
             # Log the usage block as the wire sent it (raw keys, so an
             # Anthropic-only block says prompt=None here). The RECORD of this
             # call's spend is the normalized _note_call_usage entry below,
@@ -289,20 +340,20 @@ def _chat_litellm(messages, model=None, temperature=None, timeout=None, retries=
     raise ChatError(f"LLM failed after {retries} tries: {last}")
 
 
-# #28: the silent-fallback flag. Sticky across chat() calls within one process
-# (a serialize is one child process, possibly several chat calls) so the caller
-# can stamp "this checkpoint used the weaker fallback backend" on its result
-# line. reset_fallback() at the start of a unit of work; fallback_used() after.
-_fallback_used = False
+# #28: the silent-fallback flag is sticky across calls within one capture so
+# the caller can stamp that the weaker fallback backend produced the result.
 
 
 def fallback_used() -> bool:
-    return _fallback_used
+    return _call_state().fallback_used
+
+
+def note_fallback_used() -> None:
+    _call_state().fallback_used = True
 
 
 def reset_fallback() -> None:
-    global _fallback_used
-    _fallback_used = False
+    _call_state().fallback_used = False
 
 
 # #458 / scar 0032: the requested model name is ROUTING CONFIG, not provenance.
@@ -314,21 +365,19 @@ def reset_fallback() -> None:
 # deliberately mirror the #28 fallback pattern above: chat()'s `-> str`
 # contract is consumed by every injectable-chat seam (serializer, cli, bench,
 # test fakes) and must not change shape. reset_served_models() at the start of
-# a unit of work; served_models() when stamping. The command backend exposes
-# NO served-model info and records nothing — honest absence, never the
-# requested name copied into the served slot.
-_served_models: list = []
+# a capture; served_models() when stamping. The command backend exposes NO
+# served-model info and records nothing — honest absence, never the requested
+# name copied into the served slot.
 
 
 def served_models() -> list:
     """Distinct served-model names observed since the last reset, sorted —
     deterministic stamp order regardless of chunk-thread completion order."""
-    return sorted(set(_served_models))
+    return sorted(set(_call_state().served_models))
 
 
 def reset_served_models() -> None:
-    # Clear in place: concurrent chunk threads hold the same list object.
-    del _served_models[:]
+    _call_state().served_models.clear()
 
 
 def note_served(name) -> None:
@@ -345,11 +394,11 @@ def note_served(name) -> None:
     honest-absence rule — a non-string or blank name records NOTHING rather
     than guessing (scar 0032)."""
     if isinstance(name, str) and name.strip():
-        _served_models.append(name.strip())
+        _call_state().served_models.append(name.strip())
 
 
-# #1235: what each call cost. Same module-sticky shape as the two collectors
-# above, for the same reason: chat()'s `-> str` contract must not change.
+# #1235: what each call cost. Capture-local records preserve chat()'s `-> str`
+# contract while separating concurrent serialize calls.
 # One record per SUCCESSFUL call (content returned), on every backend path,
 # whether or not the backend reported usage, so the fold below can tell "every
 # call reported" from "some did": a sum over a subset is a floor dressed as a
@@ -357,7 +406,6 @@ def note_served(name) -> None:
 # records nothing: no content reached the checkpoint, and a retry's own
 # successful call records its own spend. reset_usage() at the start of a unit
 # of work; capture_cost() when stamping.
-_usage_records: list[dict] = []
 
 
 def _int_or_none(value):
@@ -441,30 +489,29 @@ def _note_call_usage(backend, model, usage, cost_usd) -> None:
               "cost_usd": cost_usd}
     if usage is not None:
         record.update(usage)
-    _usage_records.append(record)
+    _call_state().usage_records.append(record)
 
 
 def usage_records() -> list:
     """Copies of the per-call records since the last reset, in call order."""
-    return [dict(r) for r in _usage_records]
+    return [dict(r) for r in _call_state().usage_records]
 
 
 def reset_usage() -> None:
-    # Clear in place: concurrent chunk threads hold the same list object.
-    del _usage_records[:]
+    _call_state().usage_records.clear()
 
 
 def reset_call_state() -> None:
-    """Open a unit of work: clear every per-run collector this module keeps
-    (the #28 fallback flag, the #458 served-model receipts, the #1235 spend
-    records) in one call, so a fourth collector cannot be forgotten by one
-    door. Called by serializer.serialize_strict, the one place every capture
-    door (the CLI, the in-process host hook, heal) passes through, right
-    before the first LLM call of that serialize; the stamps at the end of the
-    same call read what this run put on the wire and nothing earlier."""
-    reset_fallback()
-    reset_served_models()
-    reset_usage()
+    """Clear the active run's collectors, or compatibility state in tests."""
+    state = _CURRENT_CALL_STATE.get()
+    if state is not None:
+        state.reset()
+        return
+    last = _LAST_CALL_STATE.get()
+    if last is not None:
+        last.reset()
+    _DEFAULT_CALL_STATE.reset()
+    _LAST_CALL_STATE.set(None)
 
 
 def capture_cost() -> dict:
@@ -484,7 +531,7 @@ def capture_cost() -> dict:
     on the fallback backend included; a call that raised before an answer
     is not a record. Never withheld, since a silent backend still answered.
     `daimon import` bounds its run on this count, not on its plan."""
-    records = list(_usage_records)
+    records = list(_call_state().usage_records)
     cost: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
                   "cost_usd": 0.0, "backend": None, "model": None,
                   "calls": len(records)}
@@ -614,8 +661,7 @@ def _rescue(messages, deadline, exc, primary_label):
 
     Shared by both dispatch edges (#475) so the three things that must travel
     together can never drift apart: the ledger-matched log literal, the
-    _fallback_used flag, and the #341 deadline re-arm."""
-    global _fallback_used
+    capture's fallback flag, and the #341 deadline re-arm."""
     fallback = _resolve_fallback_command()
     if not (config.llm_fallback() and fallback is not None):
         raise exc
@@ -623,7 +669,7 @@ def _rescue(messages, deadline, exc, primary_label):
     if missing:
         # #747 coherence: posture already reads this config as none/gap, so
         # runtime must not attempt the doomed exec — that would log the
-        # ledger-counted attempt literal, set _fallback_used, and bury the
+        # ledger-counted attempt literal, set the fallback flag, and bury the
         # primary's diagnostic under "binary not found" (#748 field case).
         # The primary error surfaces untouched instead.
         log.warning("llm.rescue skipped: fallback binary not found (%s)", missing)
@@ -637,7 +683,7 @@ def _rescue(messages, deadline, exc, primary_label):
     # reword it — a rescue that logs anything else counts as zero attempts
     # and reproduces the "attempted 0" unreadability #475 was filed about.
     log.warning("llm.fallback backend=command (%s)", reason)
-    _fallback_used = True
+    note_fallback_used()
     if deadline is not None:
         # #341: the primary just drained the shared budget retrying the very
         # failure the fallback exists to rescue — handing the fallback the
@@ -677,7 +723,7 @@ def rescue_unparseable(messages, deadline):
 
     Same one hop as chat()'s rescue, and deliberately routed through _rescue
     so the three things that must travel together cannot drift: the
-    ledger-matched log literal, the _fallback_used flag, and the #341 deadline
+    ledger-matched log literal, the capture's fallback flag, and the #341 deadline
     re-arm. Raises NoRescueAvailable when no fallback resolves, so the caller
     can tell "nothing was tried" from "the rescue also failed".
     """

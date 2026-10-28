@@ -67,10 +67,10 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_llm_module_state():
-    """#458/#461: llm keeps module-sticky per-unit-of-work state (the #28
-    fallback flag, the #458 served-model collector) — clear both per test.
-    Without the fallback reset, test_llm's fallback tests leak
-    `_fallback_used = True` into any later chunk-cache test in the same
+    """#458/#461: llm keeps per-context per-unit-of-work state (the #28
+    fallback flag, the #458 served-model collector) — clear it per test.
+    Without the fallback reset, test_llm's fallback tests leak a fallback
+    marker into any later chunk-cache test in the same
     process and `_save_chunk_cache` refuses writes: the file-pair run
     `pytest tests/test_llm.py tests/test_serializer.py` failed 7 tests
     while the full suite happened to dodge the ordering (#461)."""

@@ -105,7 +105,7 @@ def test_1b_flat_chunk_that_stays_flat_names_the_chunk(monkeypatch):
 
 
 def test_1c_rescue_output_is_never_cached_scar_0040():
-    llm._fallback_used = True
+    llm.note_fallback_used()
     serializer._save_chunk_cache(serializer._chunk_cache_key("x"), good())
     assert not list(serializer._chunk_cache_dir().glob("*.json"))
 
