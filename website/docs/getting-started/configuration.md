@@ -318,6 +318,8 @@ Previously an unset `DAIMON_LLM_COMMAND` plus a `claude` anywhere on PATH was en
 
 The `claude-cli` preset runs its `claude -p` child with `--strict-mcp-config`, so it loads no MCP servers. Without that flag, the child's own launcher exits early under the isolation env the serializer sets, and Claude Code caches that as a connection failure, so every new session on the machine skips daimon's MCP server for the next 15 minutes (#1077). If you point a `DAIMON_LLM_COMMAND` at `claude` yourself, add `--strict-mcp-config` to it too: the serializer only turns text into JSON and never needs an MCP tool.
 
+The preset also passes `--no-session-persistence` when your `claude` lists it in `claude --help` (checked once per process), so a model call leaves no session in Claude Code's store; `daimon configure` warns if your `claude` is too old for it. Calls made before this are saved under `~/.claude/projects/` in directories whose name contains `daimon-cli-`; deleting them is up to you.
+
 :::
 
 ## Serializer chunking
