@@ -128,12 +128,52 @@ def not_discovered_line() -> str:
     return "  not discovered: " + "; ".join(parts)
 
 
+class HostAccount(NamedTuple):
+    """#1263: what discovery did with every transcript one automatic host's
+    roots listed. `read` = `no_directory` + `other_project` + `matched`:
+    counts only, so the plan can say why a project has few or no sessions
+    without naming another project's files."""
+
+    host: str
+    roots: tuple
+    read: int
+    no_directory: int
+    other_project: int
+    matched: int
+
+    def line(self) -> str:
+        """The plan line for this host, roots shown with `~` for the home
+        directory, zero-count clauses left out."""
+        home = str(Path.home())
+        where = ", ".join(
+            "~" + str(r)[len(home):] if str(r).startswith(home + os.sep) else str(r)
+            for r in self.roots
+        )
+        if not self.read:
+            return f"  {self.host}: no transcripts under {where}"
+        rest = [
+            f"{n} recorded {what}"
+            for n, what in (
+                (self.other_project, "another project"),
+                (self.no_directory, "no directory"),
+            )
+            if n
+        ]
+        tail = f" ({', '.join(rest)})" if rest else ""
+        return (
+            f"  {self.host}: {self.matched} of {self.read} transcripts under "
+            f"{where} recorded this project{tail}"
+        )
+
+
 class Discovery(NamedTuple):
-    """What `discover` found: the project's transcripts newest first, and
-    every (host, root) the lister could not read, for the plan to name."""
+    """What `discover` found: the project's transcripts newest first, every
+    (host, root) the lister could not read, for the plan to name, and one
+    `HostAccount` per automatic host."""
 
     paths: list
     unreadable: tuple
+    hosts: tuple
 
 
 def discover(project: str, resolver: provenance.SourceResolver) -> Discovery:
@@ -149,22 +189,40 @@ def discover(project: str, resolver: provenance.SourceResolver) -> Discovery:
     this project; two directories can share a slug), so it is never
     consulted. A file that records no directory is not this project's as
     far as discovery can tell and is left out. Reads nothing but the files
-    under the roots; spends nothing; never raises on a file it cannot read."""
+    under the roots; spends nothing; never raises on a file it cannot read.
+    Every file read lands in exactly one count of its host's `HostAccount`."""
     found: list = []
     unreadable: list = []
+    accounts: list = []
     for host in DISCOVERED_HOSTS:
         listing = resolver.transcripts(host)
         unreadable.extend((host, root) for root in listing.unreadable)
+        no_directory = other_project = matched = 0
         for path in listing.files:
             cwd = transcript.recorded_cwd(path)
             if cwd is None:
+                no_directory += 1
                 continue
             if config.resolve_project_dir(cwd, allow_slug=False) != project:
+                other_project += 1
                 continue
+            matched += 1
             found.append((capture.session_end_stamp(path), path))
+        accounts.append(
+            HostAccount(
+                host,
+                resolver.roots(host) or (),
+                len(listing.files),
+                no_directory,
+                other_project,
+                matched,
+            )
+        )
     found.sort(key=lambda pair: str(pair[1]))
     found.sort(key=lambda pair: pair[0], reverse=True)  # stable: ties keep path order
-    return Discovery([path for _ended, path in found], tuple(unreadable))
+    return Discovery(
+        [path for _ended, path in found], tuple(unreadable), tuple(accounts)
+    )
 
 
 class ImportRefused(Exception):
