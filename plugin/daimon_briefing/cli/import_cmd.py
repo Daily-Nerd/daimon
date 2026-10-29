@@ -126,19 +126,23 @@ def _cmd_import(args) -> int:
     if found is not None:
         for host, root in found.unreadable:
             print(f"  {host} root unreadable: {root}")
+        for account in found.hosts:
+            print(account.line())
         # The window is cut before the skips, so a project daimon has been
         # capturing live shows its newest sessions as done. Say what reaches
         # further back, and only when there is further back to reach.
-        if (
-            paths
-            and not plan.sessions
-            and len(found.paths) > len(paths)
-            and all(k.reason in importer.DONE_REASONS for k in plan.skipped)
-        ):
-            print(
-                f"  all {len(paths)} newest sessions already captured; raise "
-                "--sessions to reach older history"
+        if len(found.paths) > len(paths):
+            done = not plan.sessions and all(
+                k.reason in importer.DONE_REASONS for k in plan.skipped
             )
+            cut = (
+                f"all {len(paths)} newest of {len(found.paths)} matched already "
+                "captured"
+                if done
+                else f"{len(paths)} newest of {len(found.paths)} matched planned "
+                "or skipped"
+            )
+            print(f"  window: {cut}; raise --sessions to reach older history")
         print(importer.not_discovered_line())
     if args.plan:
         return 0

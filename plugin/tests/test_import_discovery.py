@@ -433,7 +433,10 @@ def test_a_window_of_captured_sessions_says_how_to_reach_older_history(
     out = capsys.readouterr().out
     assert "skipped S-3: already has a checkpoint" in out
     assert "skipped S-2: already has a checkpoint" in out
-    hint = "  all 2 newest sessions already captured; raise --sessions to reach older history"
+    hint = (
+        "  window: all 2 newest of 4 matched already captured; raise --sessions to reach "
+        "older history"
+    )
     assert hint in out
     assert out.index(hint) < out.index(importer.not_discovered_line())
     assert "nothing to import" in out
@@ -451,7 +454,8 @@ def test_a_window_of_captured_sessions_says_how_to_reach_older_history(
     assert cli.main(_argv("--sessions", "3", "--plan")) == 0
     out = capsys.readouterr().out
     assert "skipped S-short: transcript too short" in out
-    assert "raise --sessions" not in out
+    assert "window: 3 newest of 5 matched planned or skipped;" in out
+    assert "already captured" not in out
 
 
 def test_no_hint_when_every_transcript_on_disk_is_inside_the_window(
@@ -567,3 +571,112 @@ def test_sessions_rejects_zero_and_a_word(capsys):
         cli.main(_argv("--sessions", "five"))
     assert exc.value.code == 2
     assert "not a whole number: 'five'" in capsys.readouterr().err
+
+
+# ---- #1263: the plan accounts for every transcript discovery read --------------
+
+
+def _account_lines(out):
+    """The per-host account lines of a discovery plan, in print order."""
+    return [ln for ln in out.splitlines() if ln.startswith(("  claude-code:", "  codex:"))]
+
+
+def test_an_empty_root_is_accounted_for_per_host(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    assert cli.main(_argv("--plan")) == 0
+    assert _account_lines(capsys.readouterr().out) == [
+        "  claude-code: no transcripts under ~/.claude/projects",
+        "  codex: no transcripts under ~/.codex/sessions, ~/.codex/archived_sessions",
+    ]
+
+
+def test_files_of_another_project_only_are_counted_not_named(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    _claude(home, "S-a", STAMPS[0], cwd=OTHER, slug_of=OTHER)
+    _claude(home, "S-b", STAMPS[1], cwd=OTHER, slug_of=OTHER)
+    assert cli.main(_argv("--plan")) == 0
+    out = capsys.readouterr().out
+    assert (
+        "  claude-code: 0 of 2 transcripts under ~/.claude/projects recorded this "
+        "project (2 recorded another project)"
+    ) in out
+    assert OTHER not in out
+    assert "S-a" not in out
+
+
+def test_files_with_no_recorded_directory_are_counted(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    _claude(home, "S-ok", STAMPS[0])
+    _claude(home, "S-nocwd", STAMPS[1], cwd=None)
+    _claude(home, "S-theirs", STAMPS[2], cwd=OTHER, slug_of=OTHER)
+    assert cli.main(_argv("--plan")) == 0
+    assert (
+        "  claude-code: 1 of 3 transcripts under ~/.claude/projects recorded this "
+        "project (1 recorded another project, 1 recorded no directory)"
+    ) in capsys.readouterr().out
+
+
+def test_a_short_plan_is_explained_when_matches_fall_beyond_the_window(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    for i in range(4):
+        _claude(home, f"S-{i}", STAMPS[i])
+    _codex(home, "ccc", STAMPS[5])
+    assert cli.main(_argv("--sessions", "2", "--plan")) == 0
+    out = capsys.readouterr().out
+    assert "  claude-code: 4 of 4 transcripts under ~/.claude/projects recorded this project" in out
+    assert (
+        "  codex: 1 of 1 transcripts under ~/.codex/sessions, "
+        "~/.codex/archived_sessions recorded this project"
+    ) in out
+    assert (
+        "  window: 2 newest of 5 matched planned or skipped; raise --sessions to reach "
+        "older history"
+    ) in out
+
+
+def test_no_window_line_when_every_match_is_inside_the_window(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    _claude(home, "S-0", STAMPS[0])
+    assert cli.main(_argv("--plan")) == 0
+    out = capsys.readouterr().out
+    assert _account_lines(out)[0].startswith("  claude-code: 1 of 1 transcripts")
+    assert "raise --sessions" not in out
+    assert "newest of" not in out
+
+
+def test_a_transcript_run_prints_no_account(
+    tmp_path, home, fake_chat_factory, capsys, monkeypatch
+):
+    monkeypatch.setattr(cli, "_chat", fake_chat_factory(_valid_json()))
+    p = _claude(home, "S-given", STAMPS[0])
+    assert cli.main(_argv("--transcript", str(p), "--plan")) == 0
+    out = capsys.readouterr().out
+    assert _account_lines(out) == []
+    assert "recorded this project" not in out
+    assert "matched" not in out
+
+
+def test_discover_counts_every_file_it_read_per_host(tmp_path, home):
+    _claude(home, "S-ok", STAMPS[0])
+    _claude(home, "S-nocwd", STAMPS[1], cwd=None)
+    _claude(home, "S-theirs", STAMPS[2], cwd=OTHER, slug_of=OTHER)
+    _codex(home, "ddd", STAMPS[3])
+    resolver = provenance.SourceResolver(claude_projects=home / ".claude" / "projects")
+    cc, codex = importer.discover(PROJECT, resolver).hosts
+    assert (cc.host, cc.read, cc.no_directory, cc.other_project, cc.matched) == (
+        "claude-code", 3, 1, 1, 1,
+    )
+    assert cc.roots == (home / ".claude" / "projects",)
+    assert (codex.host, codex.read, codex.no_directory, codex.other_project, codex.matched) == (
+        "codex", 1, 0, 0, 1,
+    )
