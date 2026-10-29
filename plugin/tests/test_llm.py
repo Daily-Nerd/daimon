@@ -2273,3 +2273,72 @@ def test_reset_usage_clears_records():
     llm._note_call_usage("litellm", None, None, None)
     llm.reset_usage()
     assert llm.usage_records() == []
+
+
+# ---- #1261: the claude-cli preset keeps its calls out of the host's session
+# store with --no-session-persistence, learned once per executable.
+
+def _claude_cli_env(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_BACKEND", "claude-cli")
+    monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+
+
+def test_claude_preset_carries_no_session_persistence(monkeypatch):
+    _claude_cli_env(monkeypatch)
+    cmd, out, inp = llm._resolve_command()
+    assert "--no-session-persistence" in shlex.split(cmd)
+    assert "--strict-mcp-config" in shlex.split(cmd)
+
+
+def test_claude_preset_omits_flag_an_older_claude_lacks(monkeypatch):
+    _claude_cli_env(monkeypatch)
+    monkeypatch.setattr(llm, "_claude_help_text", lambda exe: "Usage: claude\n")
+    cmd, _, _ = llm._resolve_command()
+    assert "--no-session-persistence" not in shlex.split(cmd)
+    assert llm.claude_session_flag("/usr/bin/claude") == ("unsupported", "")
+
+
+def test_claude_help_probe_failure_leaves_flag_off_and_is_reported(monkeypatch):
+    _claude_cli_env(monkeypatch)
+
+    def boom(exe):
+        raise FileNotFoundError("no claude")
+    monkeypatch.setattr(llm, "_claude_help_text", boom)
+    cmd, _, _ = llm._resolve_command()
+    assert "--no-session-persistence" not in shlex.split(cmd)
+    state, detail = llm.claude_session_flag("/usr/bin/claude")
+    assert state == "unverified" and "FileNotFoundError" in detail
+
+
+def test_claude_help_probe_runs_once_for_many_resolutions(monkeypatch):
+    _claude_cli_env(monkeypatch)
+    calls = []
+    monkeypatch.setattr(llm, "_claude_help_text",
+                        lambda exe: calls.append(exe) or "--no-session-persistence")
+    for _ in range(5):
+        llm._resolve_command()
+    assert calls == ["/usr/bin/claude"]
+
+
+def test_claude_help_text_goes_through_run_command(monkeypatch):
+    seen = []
+
+    def fake(argv, stdin_text, timeout, env, cwd):
+        seen.append(argv)
+        return 0, "out ", "err"
+    monkeypatch.undo()  # drop the conftest stub of the seam under test
+    monkeypatch.setattr(llm, "_run_command", fake)
+    assert llm._claude_help_text("/x/claude") == "out err"
+    assert seen == [["/x/claude", "--help"]]
+    monkeypatch.setattr(llm, "_run_command", lambda *a: (2, "", "bad"))
+    with pytest.raises(RuntimeError):
+        llm._claude_help_text("/x/claude")
+
+
+def test_explicit_command_is_never_rewritten(monkeypatch):
+    monkeypatch.setenv("DAIMON_LLM_COMMAND", "claude -p --model haiku")
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
+    monkeypatch.setattr(llm, "_claude_help_text",
+                        lambda exe: pytest.fail("explicit command must not probe"))
+    assert llm._resolve_command()[0] == "claude -p --model haiku"

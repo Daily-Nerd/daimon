@@ -823,6 +823,20 @@ def _fallback_binary_warning(st: dict) -> str | None:
             f"({st.get('fallback_command')}) cannot run; fix {knob}")
 
 
+def _session_persistence_warning(st: dict) -> str | None:
+    """#1261: the claude-cli preset keeps its calls out of Claude Code's
+    session store only when this claude takes --no-session-persistence. Say so
+    when it does not, or when the probe that decides it could not run."""
+    state = st.get("session_persistence")
+    if not state or state[0] == "supported":
+        return None
+    if state[0] == "unsupported":
+        return ("⚠ this claude has no --no-session-persistence: each daimon "
+                "model call is saved as a Claude Code session; update claude")
+    return (f"⚠ could not read `claude --help` ({state[1]}): daimon model "
+            f"calls may be saved as Claude Code sessions")
+
+
 def _prompt_limit_warnings(st: dict) -> list:
     """#1220: a command backend that takes its prompt as an argument cannot
     serve a large one. One line per such backend, saying what that means for
@@ -848,7 +862,8 @@ def _prompt_limit_warnings(st: dict) -> list:
 
 def _configure_warnings(st: dict) -> list:
     return [w for w in (_command_binary_warning(st),
-                        _fallback_binary_warning(st)) if w
+                        _fallback_binary_warning(st),
+                        _session_persistence_warning(st)) if w
             ] + _prompt_limit_warnings(st)
 
 
