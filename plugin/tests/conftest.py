@@ -1,6 +1,33 @@
+import atexit
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# #1264: the whole run lives under a throwaway HOME. The package derives dozens
+# of paths from Path.home() / expanduser("~"); redirecting them one variable at a
+# time (see _isolate_daimon_home) only covers the paths someone remembered. Doing
+# it here, at conftest import, runs before any daimon_briefing or hook/ module is
+# imported, so paths computed at import time and in child processes land under it
+# too. A parent process that already redirected (pytest-xdist workers inherit the
+# controller's environment) keeps its home instead of stacking another one.
+_RUN_HOME_MARK = "DAIMON_TEST_RUN_HOME"
+
+
+def _redirect_home_for_run() -> None:
+    mark = os.environ.get(_RUN_HOME_MARK)
+    if mark and mark == os.environ.get("HOME"):
+        return
+    home = Path(tempfile.mkdtemp(prefix="daimon-test-home-")).resolve()
+    atexit.register(shutil.rmtree, home, ignore_errors=True)
+    os.environ["HOME"] = str(home)
+    os.environ["USERPROFILE"] = str(home)  # Path.home() on Windows
+    os.environ[_RUN_HOME_MARK] = str(home)
+
+
+_redirect_home_for_run()
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -9,6 +36,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def _isolate_daimon_home(tmp_path, monkeypatch):
     """Total isolation: no test may read or write the developer's real ~/.daimon.
 
+    HOME itself is redirected once for the whole run (module top, #1264); this
+    fixture gives each test its own directory per known path on top of that.
     Redirects the env file, checkpoint dir, AND serialize-log dir under tmp, and
     clears host overrides. Isolation is automatic (autouse) — the opt-in fixtures
     below just expose these paths — so a serialize test that forgets a fixture
@@ -30,9 +59,8 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     # write the developer's real ~/.daimon/windsurf, and the purge/reap paths
     # DELETE, so an unredirected default would destroy real host state.
     monkeypatch.setenv("DAIMON_WINDSURF_DIR", str(home / "windsurf"))
-    # #943: the check manifest and the materialized 0o500 bodies. HOME is NOT
-    # redirected here, so an unset override resolves to the DEVELOPER'S real
-    # ~/.daimon/checks and a sync test would arm scripts in the live install.
+    # #943: the check manifest and the materialized 0o500 bodies. The
+    # run-wide HOME redirect above is the backstop; this gives each test its own.
     monkeypatch.setenv("DAIMON_CHECKS_DIR", str(home / "checks"))
     monkeypatch.delenv("DAIMON_TEAM", raising=False)
     monkeypatch.delenv("DAIMON_AUTHOR", raising=False)
