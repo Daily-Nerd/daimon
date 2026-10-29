@@ -789,6 +789,56 @@ def extract_json(text):
 # never touches the shared cache.
 _CLAUDE_PRESET = ("claude -p --model haiku --output-format json --strict-mcp-config", "json:result")
 
+# #1261: the preset runs every call in a throwaway cwd, and Claude Code saves
+# each call as a session under ~/.claude/projects/<temp-slug>/. The call is
+# daimon's implementation detail, not a user session, so the preset asks the
+# host not to persist it. A Claude Code older than the flag exits on an unknown
+# option, so the flag is added only when `claude --help` lists it. That is read
+# once per process per resolved executable (the answer is a property of the
+# installed binary), never retried per call.
+_NO_SESSION_FLAG = "--no-session-persistence"
+_HELP_PROBE_TIMEOUT = 15
+# resolved claude path -> (state, detail); state is "supported", "unsupported"
+# (the help listed no such flag) or "unverified" (the probe itself failed).
+_claude_flag_cache: dict = {}
+
+
+def _claude_help_text(exe):
+    """`claude --help` output for `exe`. The one probe seam, going through
+    _run_command like every other child; raises on exec failure or timeout."""
+    rc, out, err = _run_command([exe, "--help"], None, _HELP_PROBE_TIMEOUT,
+                                None, None)
+    if rc != 0:
+        raise RuntimeError(f"`{exe} --help` exited {rc}")
+    return out + err
+
+
+def claude_session_flag(exe):
+    """(state, detail) for whether the claude at `exe` takes
+    --no-session-persistence. An unverified probe (exec failure, timeout, bad
+    exit) leaves the flag off, so the call still runs as before; the state
+    stays visible for the doctor instead of being swallowed."""
+    if exe not in _claude_flag_cache:
+        try:
+            text = _claude_help_text(exe)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            _claude_flag_cache[exe] = ("unverified", f"{type(exc).__name__}: {exc}")
+        else:
+            _claude_flag_cache[exe] = (
+                ("supported", "") if _NO_SESSION_FLAG in text
+                else ("unsupported", ""))
+    return _claude_flag_cache[exe]
+
+
+def _claude_preset_command(exe):
+    """The claude-cli preset's command string: the base preset plus the
+    no-persistence flag when this claude takes it. The single owner of the
+    argv the claude-cli backend runs."""
+    base = _CLAUDE_PRESET[0]
+    if claude_session_flag(exe)[0] == "supported":
+        return f"{base} {_NO_SESSION_FLAG}"
+    return base
+
 
 def _flatten_messages(messages):
     """Format messages for CLI input: role in caps, one newline between role and content,
@@ -848,8 +898,9 @@ def _resolve_command():
         return _Resolved((cmd, (config.llm_command_output() or "text"),
                           config.llm_command_input()),
                          "DAIMON_LLM_COMMAND_INPUT", "command")
-    if config.llm_backend().strip() == "claude-cli" and shutil.which("claude"):
-        return _Resolved((*_CLAUDE_PRESET, "stdin"), "DAIMON_LLM_COMMAND_INPUT",
+    exe = shutil.which("claude") if config.llm_backend().strip() == "claude-cli" else None
+    if exe:
+        return _Resolved((_claude_preset_command(exe), _CLAUDE_PRESET[1], "stdin"), "DAIMON_LLM_COMMAND_INPUT",
                          "claude-cli")
     return None
 

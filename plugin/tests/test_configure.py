@@ -48,7 +48,8 @@ def test_named_claude_cli_backend_resolves_the_zero_config_preset(clean_llm_env)
     assert st["ready"] is True
     assert st["claude_on_path"] is True
     assert st["command_source"] == "claude-cli"
-    assert st["command"] == llm._CLAUDE_PRESET[0]
+    assert st["command"] == llm._CLAUDE_PRESET[0] + " --no-session-persistence"
+    assert st["session_persistence"] == ("supported", "")
 
 
 def test_claude_on_path_alone_no_longer_resolves_a_command_backend(clean_llm_env):

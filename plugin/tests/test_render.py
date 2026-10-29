@@ -2519,3 +2519,14 @@ def test_rich_leaves_the_noted_line_off_when_the_text_claim_was_answered(
     render.render_brief(stamped)
     out = capsys.readouterr().out
     assert "PR #60 awaiting review [carried]" in out and "(noted" not in out
+
+
+def test_session_persistence_warning_1261():
+    """#1261: the doctor names a claude that keeps daimon's calls as sessions,
+    and a probe that could not run; a supporting claude or no preset is quiet."""
+    w = render._session_persistence_warning
+    assert w({}) is None
+    assert w({"session_persistence": None}) is None
+    assert w({"session_persistence": ("supported", "")}) is None
+    assert "update claude" in w({"session_persistence": ("unsupported", "")})
+    assert "OSError: nope" in w({"session_persistence": ("unverified", "OSError: nope")})

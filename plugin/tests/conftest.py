@@ -94,6 +94,17 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _claude_help_probe_stub(monkeypatch):
+    """#1261: the claude-cli preset reads `claude --help` once per executable.
+    No test may exec a real claude for it: the probe seam answers with a help
+    listing that carries the flag, and the per-process cache starts empty."""
+    from daimon_briefing import llm
+    llm._claude_flag_cache.clear()
+    monkeypatch.setattr(llm, "_claude_help_text",
+                        lambda exe: "  --no-session-persistence  Disable\n")
+
+
+@pytest.fixture(autouse=True)
 def _reset_llm_module_state():
     """#458/#461: llm keeps per-context per-unit-of-work state (the #28
     fallback flag, the #458 served-model collector) — every test gets a fresh

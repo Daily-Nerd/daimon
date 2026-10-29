@@ -58,6 +58,12 @@ def status() -> dict:
         # surface built to catch misconfiguration before a detached hook
         # child fails minutes later.
         "fallback_command": fb[0] if fb else None,
+        # #1261: whether the preset's calls stay out of the host's session
+        # store: "supported" | "unsupported" | "unverified" | None (no preset).
+        "session_persistence": (
+            llm.claude_session_flag(shutil.which("claude"))
+            if cmd and not config.llm_command() else None
+        ),
         "fallback_input": fb[2] if fb else None,
         # #747: a binary that RESOLVES but does not exist read as working
         # everywhere (field case: DAIMON_LLM_COMMAND_FALLBACK=1). Name it here
