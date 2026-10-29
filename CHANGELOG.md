@@ -5,6 +5,28 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.0](https://github.com/Daily-Nerd/daimon/compare/v0.62.0...v0.63.0) (2026-10-29)
+
+
+### Features
+
+* **import:** account for every transcript discovery read, per host ([9994949](https://github.com/Daily-Nerd/daimon/commit/99949492aea64bad0d5c2642da5dfa59286ef357)), closes [#1263](https://github.com/Daily-Nerd/daimon/issues/1263)
+
+
+### Bug Fixes
+
+* **config:** skip the git spawn for a project dir that does not exist ([0909575](https://github.com/Daily-Nerd/daimon/commit/09095758e5e9a77b0fc8ae211d6b2264c43cf48b)), closes [#1262](https://github.com/Daily-Nerd/daimon/issues/1262)
+* **llm:** keep claude-cli model calls out of the host's session store ([e48933a](https://github.com/Daily-Nerd/daimon/commit/e48933abfd767fca52f69c4a8edae669eaf8f983)), closes [#1261](https://github.com/Daily-Nerd/daimon/issues/1261)
+* **llm:** report a serialize run's facts on its result, not through shared state ([4490140](https://github.com/Daily-Nerd/daimon/commit/44901400460f2f6cd0b86df8dc1c0f01eb568d43)), closes [#1255](https://github.com/Daily-Nerd/daimon/issues/1255)
+* **llm:** scope capture collectors per serialize ([7830aad](https://github.com/Daily-Nerd/daimon/commit/7830aad0cb46228963c4a60cc093bf9246c453ac))
+
+
+### Documentation
+
+* **configuration:** note the claude-cli preset's no-session-persistence flag ([3b10b1e](https://github.com/Daily-Nerd/daimon/commit/3b10b1e4e609066fcff19bb9cc27a8286b6ca101)), closes [#1261](https://github.com/Daily-Nerd/daimon/issues/1261)
+* **import:** quote the per-host transcript account in the plan output ([d73976c](https://github.com/Daily-Nerd/daimon/commit/d73976ca8633208d2357d72431f66ff1c5ff8db5)), closes [#1263](https://github.com/Daily-Nerd/daimon/issues/1263)
+* **scars:** name llm.note_fallback_used in the fallback landmine ([205ac8e](https://github.com/Daily-Nerd/daimon/commit/205ac8e31f677b3a11fe4099b6006eed5285c13c))
+
 ## [0.62.0](https://github.com/Daily-Nerd/daimon/compare/v0.61.0...v0.62.0) (2026-10-28)
 
 
