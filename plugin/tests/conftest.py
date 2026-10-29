@@ -68,18 +68,18 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _reset_llm_module_state():
     """#458/#461: llm keeps per-context per-unit-of-work state (the #28
-    fallback flag, the #458 served-model collector) — clear it per test.
-    Without the fallback reset, test_llm's fallback tests leak a fallback
-    marker into any later chunk-cache test in the same
-    process and `_save_chunk_cache` refuses writes: the file-pair run
+    fallback flag, the #458 served-model collector) — every test gets a fresh
+    scope and drops it after. Without that, test_llm's fallback tests leak a
+    fallback marker into any later chunk-cache test in the same process and
+    `_save_chunk_cache` refuses writes: the file-pair run
     `pytest tests/test_llm.py tests/test_serializer.py` failed 7 tests
     while the full suite happened to dodge the ordering (#461)."""
     from daimon_briefing import llm
-    # #1235: production opens these collectors in serializer.serialize_strict
-    # (llm.reset_call_state). Tests still need this reset because many call
-    # llm.chat(), _chat_command() or _note_call_usage() directly, outside any
-    # serialize, and would otherwise read the previous test's records.
-    llm.reset_call_state()
+    # #1255: a write outside a scope raises, so a test that calls llm.chat(),
+    # _chat_command() or _note_call_usage() directly needs one open. A test
+    # that wants none sets llm._CURRENT_CALL_STATE to None itself.
+    with llm.call_scope():
+        yield
 
 
 # ---- fake vitni CLI (#204 receipts, #439 worldcheck receipt-validity) -------

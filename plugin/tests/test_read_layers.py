@@ -165,6 +165,9 @@ RAW_READ_SITES: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/cli/import_cmd.py", "_cmd_import", "store.read_checkpoint"):
         "reads the checkpoint this run just wrote, for its capture_cost stamp "
         "and to tell a written checkpoint from a skip; no item text shown",
+    ("daimon_briefing/cli/serialize.py", "_run_serialize", "store.read_checkpoint"):
+        "reads the checkpoint this run just wrote, for its capture_fallback "
+        "stamp (#1255); no item text shown",
     ("daimon_briefing/cli/inject.py", "_load_seen", "json.loads"):
         "the per-session seen/cooldown state file, not a checkpoint",
     ("daimon_briefing/cli/lifecycle.py", "_cmd_forget", "store.items_for_project"):

@@ -421,6 +421,27 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "daimon import bounds its run on it. "
         "Introspection checkpoints stay absent: no model ran."),
     FieldRule(
+        "envelope", schema.CAPTURE_FALLBACK, "boolean", True, False, "code",
+        "strip",
+        _c(stripped_at_serialize=True),
+        "#1255 true when the weaker fallback backend produced part of this "
+        "checkpoint (the configured backend failed and a rescue answered), "
+        "false when none did. Stamped by serialize_strict on the checkpoint "
+        "it returns, so every caller reads it from the result whichever "
+        "thread ran the serialize; `daimon serialize` and `daimon import` "
+        "print their [fallback backend] marker from it. Absent on a "
+        "checkpoint older than the stamp and on the introspection path: "
+        "unknown, read as nothing to report."),
+    FieldRule(
+        "envelope", schema.CAPTURE_QUOTES_DOWNGRADED, "integer", True, False,
+        "code", "strip",
+        _c(stripped_at_serialize=True),
+        "#1255 how many verbatim items quote verification downgraded to "
+        "inferred in this serialize, 0 when none. Stamped beside "
+        "capture_fallback and read by `daimon import` for its per-session "
+        "line. Absent on a checkpoint older than the stamp and on the "
+        "introspection path: unknown, read as none."),
+    FieldRule(
         "envelope", schema.CAPTURE_DOOR, "string", True, False, "code", "strip",
         _c(stripped_at_serialize=True, values=(schema.CAPTURE_DOOR_IMPORT,)),
         "#1236 which door the capture came through when it was not a live "

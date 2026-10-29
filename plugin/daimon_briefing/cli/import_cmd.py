@@ -35,7 +35,7 @@ from pathlib import Path
 
 import daimon_briefing.cli as _cli
 
-from .. import capture, config, importer, ledger, llm, provenance, serializer, store
+from .. import capture, config, importer, ledger, provenance, schema, store
 from .. import render
 from .serialize import _read_serialize_log
 
@@ -200,13 +200,13 @@ def _cmd_import(args) -> int:
         else:
             tokens += total
             line = f"[{i}/{n}] {s.session_id}: {total:,} tokens"
-        downgraded = serializer.quotes_downgraded()
-        if downgraded:
+        downgraded = written.get(schema.CAPTURE_QUOTES_DOWNGRADED)
+        if isinstance(downgraded, int) and downgraded:
             line += f", {_plural(downgraded, 'quote')} downgraded"
         if s.history:
             history += 1
             line += ", history only"
-        if llm.fallback_used():
+        if written.get(schema.CAPTURE_FALLBACK) is True:
             rescued.append(s.session_id)
             line += " [fallback backend]"
         print(line)

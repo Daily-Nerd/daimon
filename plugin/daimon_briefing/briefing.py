@@ -2806,13 +2806,15 @@ def _render_llm(checkpoint) -> str | None:
     import json
 
     try:
-        return llm.chat(
-            [
-                {"role": "system", "content": _RECONSTRUCT_SYS},
-                {"role": "user", "content": "CHECKPOINT:\n" + json.dumps(checkpoint, indent=2)},
-            ],
-            # temperature comes from config (default 0.0 for determinism;
-            # DAIMON_LLM_TEMPERATURE overrides).
-        )
+        # #1255: its own unit of work; nothing reads what the call records.
+        with llm.call_scope():
+            return llm.chat(
+                [
+                    {"role": "system", "content": _RECONSTRUCT_SYS},
+                    {"role": "user", "content": "CHECKPOINT:\n" + json.dumps(checkpoint, indent=2)},
+                ],
+                # temperature comes from config (default 0.0 for determinism;
+                # DAIMON_LLM_TEMPERATURE overrides).
+            )
     except Exception:
         return None

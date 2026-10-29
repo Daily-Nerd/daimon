@@ -2062,8 +2062,8 @@ def test_rescue_empty_output_keeps_retry_class_and_primary_text(monkeypatch):
 def test_rescue_not_attempted_when_fallback_binary_is_missing(monkeypatch, caplog):
     # Runtime must agree with posture (#747 reads this config as none/gap):
     # attempting the doomed exec would log the ledger-counted attempt literal,
-    # set _fallback_used, and bury the primary's diagnostic. The primary error
-    # surfaces verbatim instead — the honest read of the field case.
+    # call note_fallback_used, and bury the primary's diagnostic. The primary
+    # error surfaces verbatim instead — the honest read of the field case.
     primary = "No LLM model (set DAIMON_LLM_MODEL or LITELLM_MODEL)."
     monkeypatch.setenv("DAIMON_LLM_BACKEND", "litellm")
     monkeypatch.setenv("DAIMON_LLM_FALLBACK", "1")

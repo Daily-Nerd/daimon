@@ -38,7 +38,7 @@ thing that can. Same failure class as scar 0015, and it is also what makes the
 #465 multi-producer gate (`serializer.py:1658`) meaningful.
 
 So any NEW code path that substitutes one backend for another MUST set
-`_fallback_used = True` before returning, even if it has no interest in the log
+`llm.note_fallback_used()` before returning, even if it has no interest in the log
 line or the counters. Forgetting it fails no test and prints nothing — it
 poisons the cache for subsequent runs. When #475 added the command-primary
 rescue edge, that is why both edges route through one `_rescue()` helper
