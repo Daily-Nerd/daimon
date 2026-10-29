@@ -335,6 +335,53 @@ def test_resolve_project_root_none_and_empty_passthrough():
     assert config.resolve_project_root("") == ""
 
 
+def _fail_if_spawned(monkeypatch):
+    def _spawned(*_a, **_k):
+        raise AssertionError("git was spawned")
+
+    monkeypatch.setattr(subprocess, "run", _spawned)
+
+
+def test_resolve_project_root_missing_dir_spawns_nothing(tmp_path, monkeypatch):
+    # #1262: git can only fail on a directory that is not there.
+    gone = tmp_path / "gone"
+    _fail_if_spawned(monkeypatch)
+    assert config.resolve_project_root(str(gone)) == str(gone)
+
+
+def test_resolve_project_root_file_spawns_nothing(tmp_path, monkeypatch):
+    afile = tmp_path / "afile"
+    afile.write_text("x")
+    _fail_if_spawned(monkeypatch)
+    assert config.resolve_project_root(str(afile)) == str(afile)
+
+
+def test_resolve_project_root_relative_missing_dir_spawns_nothing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    _fail_if_spawned(monkeypatch)
+    assert config.resolve_project_root("no/such/dir") == "no/such/dir"
+
+
+def test_resolve_project_root_relative_repo_dir_still_resolves(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    (repo / "sub").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert Path(config.resolve_project_root("repo/sub")).resolve() == repo.resolve()
+
+
+def test_resolve_project_root_dir_created_after_a_miss_is_not_stale(tmp_path):
+    # A missing answer must not be memoized as "its own root".
+    later = tmp_path / "later"
+    assert config.resolve_project_root(str(later)) == str(later)
+    later.mkdir()
+    _init_git_repo(later)
+    assert Path(config.resolve_project_root(str(later))).resolve() == later.resolve()
+
+
 def test_resolve_project_root_symmetry_subdir_and_root_share_slug(tmp_path):
     """Write-from-subdir and read-from-root must land in the SAME checkpoint bucket:
     the resolved dirs must produce identical store slugs (#74 core invariant)."""

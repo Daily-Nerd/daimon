@@ -827,7 +827,12 @@ def resolve_project_root(raw: str | None) -> str | None:
 
     Falsy `raw` passes through unchanged (None must keep falling back to the global
     pointer — an unknown project is not invented into a dir), and short-circuits
-    before the memo below, so it can never occupy an entry. On ANY git failure —
+    before the memo below, so it can never occupy an entry. So does a path that is
+    not an existing directory (missing, or a file): git can only fail there and `raw`
+    is the answer it would fall back to, so the fork is skipped (#1262; a transcript
+    scan resolves hundreds of cwds that no longer exist). The check runs before the
+    memo, so a missing path is never cached as "its own root" and a directory
+    created later resolves on its first ask. On ANY git failure —
     not a repo, git binary missing, timeout, OS error, dir gone — `raw` is returned
     UNCHANGED, preserving exact pre-normalization behavior. Never raises.
 
@@ -850,7 +855,7 @@ def resolve_project_root(raw: str | None) -> str | None:
     file pointing elsewhere, or a corrupt repo. Two resolvers that disagree about
     which bucket a path names is the exact defect #948 exists to close.
     """
-    if not raw:
+    if not raw or not os.path.isdir(raw):
         return raw
     return _git_toplevel(raw)
 
