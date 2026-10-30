@@ -228,7 +228,7 @@ def test_render_brief_plain_body_budget_has_a_floor(monkeypatch,
     # #1044: an oversized handoff must not zero out the body's own budget:
     # the floor guarantees SOME body space even when the configured ceiling
     # is smaller than the surrounding text alone. A real host never hits
-    # this at the real 11264-byte default; the floor still has to hold for a
+    # this at the real 9728-byte default; the floor still has to hold for a
     # deliberately small one.
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "50")

@@ -982,8 +982,9 @@ def estimate_tokens(text: str) -> int:
 
 
 def _byte_len(text: str) -> int:
-    """UTF-8 byte length (#1044): what the hosts that spill actually measure.
-    A char count under-counts: the render carries multi-byte glyphs (section
+    """UTF-8 byte length (#1044): the budget unit. Hosts count characters or
+    UTF-16 units, which a byte count never undershoots. A char count
+    under-counts: the render carries multi-byte glyphs (section
     signs, arrows, ellipses) that are 2-3 bytes each in UTF-8."""
     return len(text.encode("utf-8"))
 
@@ -1922,8 +1923,9 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     protected furniture.
 
     One budget: `effective_budget(max_bytes)`, min(brief_max_bytes,
-    brief_max_tokens * 4) in UTF-8 bytes, the unit the hosts that spill
-    measure (#1044). `max_bytes` overrides the byte side for this call only;
+    brief_max_tokens * 4) in UTF-8 bytes, a unit no host limit
+    counts fewer of (#1044).
+    `max_bytes` overrides the byte side for this call only;
     `render.render_brief` passes the room left once the blocks printed beside
     the body are counted."""
     budget = effective_budget(max_bytes)

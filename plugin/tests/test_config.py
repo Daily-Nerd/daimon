@@ -1055,7 +1055,7 @@ def test_the_autouse_fixture_isolates_the_checks_dir():
 
 def test_brief_max_bytes_default(monkeypatch):
     monkeypatch.delenv("DAIMON_BRIEF_MAX_BYTES", raising=False)
-    assert config.brief_max_bytes() == 11264
+    assert config.brief_max_bytes() == 9728
 
 
 def test_brief_max_bytes_env_override(monkeypatch):
@@ -1070,7 +1070,7 @@ def test_brief_max_bytes_zero_disables(monkeypatch):
 
 def test_brief_max_bytes_garbage_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "not-a-number")
-    assert config.brief_max_bytes() == 11264
+    assert config.brief_max_bytes() == 9728
 
 
 def test_brief_max_bytes_negative_clamps_to_zero(monkeypatch):

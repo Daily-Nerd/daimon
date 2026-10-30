@@ -627,7 +627,8 @@ def test_render_plain_under_budget_untouched(monkeypatch, sample_checkpoint):
 #
 # A separate, LATER check than the #79 token budget above: applied to the
 # whole assembled text (rulings + panels + cognitive body), measured in
-# UTF-8 bytes, because that is the unit the hosts that spill actually use.
+# UTF-8 bytes, because bytes never undershoot the characters or UTF-16 units
+# a host counts.
 
 _CEILING_RULINGS = [
     briefing._RULING_HEADER,
@@ -706,7 +707,7 @@ def test_byte_ceiling_zero_disables(monkeypatch):
 
 def test_byte_ceiling_leaves_small_briefings_untouched(monkeypatch, sample_checkpoint):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
-    monkeypatch.delenv("DAIMON_BRIEF_MAX_BYTES", raising=False)  # real default (11264)
+    monkeypatch.delenv("DAIMON_BRIEF_MAX_BYTES", raising=False)  # real default (9728)
     b = briefing.build(sample_checkpoint, now=1_800_000_000.0)
     out = briefing.render_plain(b)
     assert "truncated" not in out and "PR #6" in out

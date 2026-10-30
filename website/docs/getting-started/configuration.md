@@ -130,12 +130,26 @@ Deterministic cross-session carry-over of unresolved items.
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_BRIEF_MAX_TOKENS` | `3000` | Token budget for the injected briefing, estimated at 4 bytes per token (no tokenizer dependency). It is folded into one byte budget, `min(DAIMON_BRIEF_MAX_BYTES, DAIMON_BRIEF_MAX_TOKENS * 4)`, that every block of `daimon brief` shares. `0` = unbounded. |
-| `DAIMON_BRIEF_MAX_BYTES` | `11264` | The byte budget for the WHOLE `daimon brief` output, in UTF-8 bytes (what a host's own spill threshold measures): the handoff baton, the rulings, the request and decision panels, the cognitive body, the code-drift block, the teammates section and the withheld-items note all count against it. When it runs short the briefing drops whole items in one fixed order (stale carried items first, background sections before actionable ones, carried before this session's own) and each section says what it hid. The greeting, standing rulings, the handoff and the newest decisions are never dropped; if those alone exceed the budget the brief says by how much. `0` = unbounded. |
+| `DAIMON_BRIEF_MAX_BYTES` | `9728` | The byte budget for the WHOLE stdout of `daimon brief`, in UTF-8 bytes. UTF-8 bytes are never fewer than the characters or UTF-16 units a host counts, so a byte budget is the safe side of every host limit (table below). The `--label` line, the fallback and in-flight warnings, the handoff baton, the rulings, the request and decision panels, the cognitive body, the code-drift block, the teammates section and the withheld-items note all count against it. When it runs short the briefing drops whole items in one fixed order (stale carried items first, background sections before actionable ones, carried before this session's own) and each section says what it hid. The greeting, standing rulings, the handoff and the newest decisions are never dropped; if those alone exceed the budget the brief says by how much. `0` = unbounded. |
 | `DAIMON_MAX_BRIEFING_DECISIONS` | `10` | Cap on decisions shown in the briefing (render-time view only, the checkpoint keeps all of them). The Decisions note counts what the cap cut. The newest `min(3, cap)` decisions from the last session are always shown. `0` = unbounded. |
 | `DAIMON_BRIEF_GLOBAL_FALLBACK` | header-only | Controls the cross-project global-pointer fallback when a project has no checkpoint of its own. Default shows a header only; set to `full` (or `1`) to inject the full foreign body. A project with no identity never reads the global pointer, and on a `DAIMON_TENANT_SCOPED` home this setting and `brief --global-fallback` have no effect (the flag is refused). |
 | `DAIMON_STALE_DAYS` | `7.0` | Age threshold (days) past which a carried item's effective last-verified stamp (its `last_verified`, else the latest resolutions.jsonl event, else `first_seen`) is stale enough for `brief` to warn about it. `0` warns on every carried item. |
 | `DAIMON_PLAIN` | off | When truthy (case-insensitive), forces plain-text output — disables the rich tables/panels in `status`, `brief`, and `--help`. |
 | `NO_COLOR` | unset | Presence-based, per the [NO_COLOR convention](https://no-color.org/): if the variable is set to *any* value (even empty), rich output is disabled. |
+
+### Host output limits behind the `DAIMON_BRIEF_MAX_BYTES` default
+
+A session-start hook captures the whole stdout of `daimon brief --label`. These are the limits measured on each host, which is why the default is 9728 (9.5 KiB) and not higher.
+
+| Host | Measured limit | What happens past it |
+|---|---|---|
+| Claude Code 2.1.314 | 10,000 UTF-16 units, after the output is trimmed | The output is spilled to a file and replaced by a 2 KB preview. The largest briefing seen unspilled was 8,920 characters, the smallest spilled one 10,508. |
+| Codex 0.157.0 | About 10,000 characters (the unit is not confirmed; the banner mentions tokens) | About 10,000 characters are delivered with a "Warning: truncated output" banner and a "Full hook output saved to" trailer. |
+| Kimi Code 0.43.1 | No cut seen, hook results complete up to 25,728 characters | None observed. |
+| Gemini | Not measured | Unknown. |
+| Windsurf | No briefing injection (the briefing is read from a terminal) | Not applicable. |
+
+Raising `DAIMON_BRIEF_MAX_BYTES` above 9728 can push the briefing past the Claude Code and Codex limits.
 
 ## Worldcheck
 

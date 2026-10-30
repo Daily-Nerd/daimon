@@ -141,12 +141,26 @@ Arrastre determinista de ítems sin resolver entre sesiones.
 | Variable | Default | Qué hace |
 |---|---|---|
 | `DAIMON_BRIEF_MAX_TOKENS` | `3000` | Presupuesto de tokens para el briefing inyectado, estimado a 4 bytes por token (sin dependencia de tokenizador). Se pliega en un único presupuesto de bytes, `min(DAIMON_BRIEF_MAX_BYTES, DAIMON_BRIEF_MAX_TOKENS * 4)`, que comparten todos los bloques de `daimon brief`. `0` = sin límite. |
-| `DAIMON_BRIEF_MAX_BYTES` | `11264` | El presupuesto de bytes para la salida COMPLETA de `daimon brief`, en bytes UTF-8 (lo que mide el límite de recorte de un host): el bloque de traspaso (handoff), las reglas vigentes, los paneles de solicitudes y decisiones, el cuerpo cognitivo, el bloque de desvío de código, la sección de compañeros de equipo y la nota de ítems ocultos cuentan contra él. Cuando se agota, el briefing suelta ítems completos en un único orden fijo (primero los arrastrados vencidos, las secciones de fondo antes que las accionables, lo arrastrado antes que lo de esta sesión) y cada sección dice qué ocultó. El saludo, las reglas vigentes, el traspaso y las decisiones más nuevas nunca se sueltan; si solo eso ya excede el presupuesto, el briefing dice por cuánto. `0` = sin límite. |
+| `DAIMON_BRIEF_MAX_BYTES` | `9728` | El presupuesto de bytes para el stdout COMPLETO de `daimon brief`, en bytes UTF-8. Los bytes UTF-8 nunca son menos que los caracteres o unidades UTF-16 que cuenta un host, así que un presupuesto en bytes queda siempre del lado seguro de cada límite (tabla abajo). La línea de `--label`, los avisos de fallback y de serialize en curso, el bloque de traspaso (handoff), las reglas vigentes, los paneles de solicitudes y decisiones, el cuerpo cognitivo, el bloque de desvío de código, la sección de compañeros de equipo y la nota de ítems ocultos cuentan contra él. Cuando se agota, el briefing suelta ítems completos en un único orden fijo (primero los arrastrados vencidos, las secciones de fondo antes que las accionables, lo arrastrado antes que lo de esta sesión) y cada sección dice qué ocultó. El saludo, las reglas vigentes, el traspaso y las decisiones más nuevas nunca se sueltan; si solo eso ya excede el presupuesto, el briefing dice por cuánto. `0` = sin límite. |
 | `DAIMON_MAX_BRIEFING_DECISIONS` | `10` | Tope de decisiones mostradas en el briefing (solo vista de renderizado, el checkpoint las conserva todas). La nota de Decisiones cuenta lo que el tope recortó. Las `min(3, tope)` decisiones más nuevas de la última sesión siempre se muestran. `0` = sin límite. |
 | `DAIMON_BRIEF_GLOBAL_FALLBACK` | solo encabezado | Controla el fallback al puntero global entre proyectos cuando un proyecto no tiene checkpoint propio. El default muestra solo un encabezado; ponlo en `full` (o `1`) para inyectar el cuerpo foráneo completo. Un proyecto sin identidad nunca lee el puntero global, y en un home con `DAIMON_TENANT_SCOPED` esta variable y `brief --global-fallback` no tienen efecto (el flag se rechaza). |
 | `DAIMON_STALE_DAYS` | `7.0` | Umbral de edad (días) tras el cual el sello efectivo de última verificación de un ítem arrastrado (su `last_verified`, si no el último evento de resolutions.jsonl, si no `first_seen`) está lo bastante desactualizado para que `brief` lo advierta. `0` advierte en cada ítem arrastrado. |
 | `DAIMON_PLAIN` | off | Cuando es verdadero (sin distinción de mayúsculas), fuerza salida de texto plano — desactiva las tablas/paneles enriquecidos en `status`, `brief` y `--help`. |
 | `NO_COLOR` | sin definir | Por presencia, según la [convención NO_COLOR](https://no-color.org/): si la variable está definida con *cualquier* valor (incluso vacío), la salida enriquecida se desactiva. |
+
+### Límites de salida de los hosts detrás del valor por defecto de `DAIMON_BRIEF_MAX_BYTES`
+
+Un hook de inicio de sesión captura todo el stdout de `daimon brief --label`. Estos son los límites medidos en cada host, por eso el valor por defecto es 9728 (9,5 KiB) y no más alto.
+
+| Host | Límite medido | Qué pasa al superarlo |
+|---|---|---|
+| Claude Code 2.1.314 | 10.000 unidades UTF-16, después de recortar la salida | La salida se vuelca a un archivo y se reemplaza por una vista previa de 2 KB. El mayor briefing sin volcar fue de 8.920 caracteres, el menor volcado de 10.508. |
+| Codex 0.157.0 | Unos 10.000 caracteres (la unidad no está confirmada; el aviso menciona tokens) | Se entregan unos 10.000 caracteres con un aviso "Warning: truncated output" y una línea final "Full hook output saved to". |
+| Kimi Code 0.43.1 | Sin corte observado, resultados de hook completos hasta 25.728 caracteres | Ninguno observado. |
+| Gemini | No medido | Desconocido. |
+| Windsurf | Sin inyección de briefing (el briefing se lee desde una terminal) | No aplica. |
+
+Subir `DAIMON_BRIEF_MAX_BYTES` por encima de 9728 puede llevar el briefing más allá de los límites de Claude Code y Codex.
 
 ## Worldcheck
 
