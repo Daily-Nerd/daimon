@@ -68,6 +68,17 @@ def test_whole_hook_stdout_fits_the_default_budget(
     assert len(out.strip().encode("utf-16-le")) // 2 <= HOST_UNITS
 
 
+def test_terminal_render_still_prints_the_lead_lines_first(
+        fallback_world, monkeypatch, capsys):
+    # A TTY is never captured by a host, so nothing is charged, but the label
+    # and the warning must not vanish with the move into `render_brief`.
+    monkeypatch.setattr("daimon_briefing.render.supports_rich", lambda: True)
+    out = _brief_stdout(capsys)
+    # Rich wraps at the terminal width, so only the start of each line holds.
+    assert out.startswith("DAIMON BRIEFING (checkpoint:")
+    assert "no checkpoint for this project" in out
+
+
 def test_label_and_warnings_are_charged_to_the_budget(
         fallback_world, monkeypatch, capsys):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "3000")
