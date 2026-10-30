@@ -5,6 +5,13 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.1](https://github.com/Daily-Nerd/daimon/compare/v0.63.0...v0.63.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **briefing:** keep the whole brief stdout under the measured host limits ([462c7e3](https://github.com/Daily-Nerd/daimon/commit/462c7e3c61956161a386d117b51ac674da66ab4a)), closes [#1269](https://github.com/Daily-Nerd/daimon/issues/1269)
+
 ## [0.63.0](https://github.com/Daily-Nerd/daimon/compare/v0.62.0...v0.63.0) (2026-10-29)
 
 
