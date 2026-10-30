@@ -177,7 +177,7 @@ def _withheld_trailer(own, team) -> list:
 
 def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                           worldcheck_project=None, team_counts=None,
-                          loops_pointer=True) -> int:
+                          loops_pointer=True, lead=()) -> int:
     """Shared tail of `brief` and `brief --slug`: drift, render, footnotes,
     and the effects (worldcheck bookkeeping, surfaced stamps) recorded into
     `fx` once the output is written; `effects_commit` writes them after it
@@ -192,7 +192,10 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     `worldcheck_project=None` skips the #365 external-state spot-check for the
     same reason drift skips: --slug and global-fallback briefs render ANOTHER
     project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
-    the wrong repo context for those claims."""
+    the wrong repo context for those claims.
+    `lead` is the lines this verb prints above the briefing (label, warnings).
+    They ride into `render_brief` so they count against the one byte budget:
+    everything a host hook captures is stdout, not just the body."""
     checkpoint = annotated.checkpoint if annotated else None
 
     # NOTE: drift is checked against the resolved project root. If read_latest fell
@@ -222,7 +225,7 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                                   trailer=trailer,
                                   loops_pointer=loops_pointer,
                                   snap=annotated.snapshot if annotated else None,
-                                  notes=notes)
+                                  notes=notes, lead=lead)
 
     # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare, shared
     # with the MCP tool and the Hermes hook. It is opt-in, budget-bounded and
@@ -323,11 +326,12 @@ def _cmd_brief(args, fx) -> int:
                 f"no checkpoint bucket for slug {slug} — "
                 "`daimon projects` lists what exists"])
             return 1
-        render.render_brief_note([f"cross-project briefing — project: {slug}"])
         # A named bucket is somebody else's listing: no `daimon loops` pointer.
-        return _render_briefing_body(annotated, slug, fx,
-                                     drift_project=None, teammates=None,
-                                     loops_pointer=False)
+        return _render_briefing_body(
+            annotated, slug, fx, drift_project=None, teammates=None,
+            loops_pointer=False,
+            lead=render.brief_note_lines(
+                [f"cross-project briefing — project: {slug}"]))
     # Route like status/serialize: --project, else DAIMON_PROJECT_DIR, else cwd.
     # read_latest still falls back to the global pointer if the project has none.
     project = _cli._resolve_project(args.project)
@@ -389,14 +393,18 @@ def _cmd_brief(args, fx) -> int:
                     f"{counts.quarantined} quarantined item(s) withheld "
                     "(a teammate's)"])
         return 0
+    # The lines above the briefing are collected, not printed: `render_brief`
+    # charges them to the byte budget the host's output limit is measured on.
+    lead: list[str] = []
     if getattr(args, "label", False) and isinstance(checkpoint, dict):
-        render.render_brief_line([_checkpoint_label(checkpoint, fallback_used)])
+        lead.append(_checkpoint_label(checkpoint, fallback_used))
     # Label the global-pointer fallback (#29): status calls the same situation
     # "global checkpoint (fallback)"; brief must not present another project's
     # state as this project's without saying so.
     if fallback_used:
-        render.render_brief_note(["no checkpoint for this project — showing the global "
-                                  "checkpoint (fallback), possibly another project's."])
+        lead += render.brief_note_lines(
+            ["no checkpoint for this project — showing the global "
+             "checkpoint (fallback), possibly another project's."])
     # #534: a LIVE serialize for this project means a fresher checkpoint is
     # being written right now — say so instead of silently briefing one
     # session behind (measured at 10% of runs on one field machine). Keyed on
@@ -404,7 +412,7 @@ def _cmd_brief(args, fx) -> int:
     # crashed serialize is heal's case, and a permanent false staleness line
     # would be worse than the silence this fixes.
     if ledger.serialize_in_flight(store.project_slug(project) or ""):
-        render.render_brief_note([
+        lead += render.brief_note_lines([
             "a serialize is in flight — this briefing may be one session "
             "behind; re-run `daimon brief` in a few minutes for the fresh one."])
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
@@ -417,7 +425,8 @@ def _cmd_brief(args, fx) -> int:
                                  worldcheck_project=None if fallback_used
                                  else project, team_counts=team_counts,
                                  loops_pointer=(not fallback_used
-                                                and _cli.loops_lists_project(project)))
+                                                and _cli.loops_lists_project(project)),
+                                 lead=lead)
 
 
 def register(sub, fmt) -> None:

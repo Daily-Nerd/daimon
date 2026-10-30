@@ -457,22 +457,25 @@ def brief_max_tokens() -> int:
 
 
 def brief_max_bytes() -> int:
-    """Hard ceiling on the FINAL rendered briefing (#1044), measured in UTF-8
-    bytes, not the chars//4 estimate `brief_max_tokens` uses. Applied AFTER
-    every section is assembled (rulings, request/verdict/owed panels, the
-    cognitive body), as a backstop the token budget cannot give: the token
+    """Hard ceiling on everything `daimon brief` prints (#1044), measured in
+    UTF-8 bytes, not the chars//4 estimate `brief_max_tokens` uses. Applied
+    AFTER every section is assembled (rulings, request/verdict/owed panels,
+    the cognitive body), as a backstop the token budget cannot give: the token
     budget never sees the skeleton furniture, and the render carries
     multi-byte glyphs (section signs, arrows, ellipses) that inflate bytes
-    past what a char count implies. Measured in bytes because the hosts that
-    spill measure bytes too: Claude Code's own spill message reports "12.8KB"
-    for a 13,249-character render.
-    Default 11264 (11 KiB): safely under Claude Code's ~12 KB spill line.
+    past what a char count implies. Bytes are the safe side: UTF-8 bytes are
+    never fewer than the UTF-16 units or characters a host may count instead.
+    Measured host limits: Claude Code 2.1.314 spills hook stdout past 10,000
+    UTF-16 units (trimmed first) and keeps a 2 KB preview; Codex 0.157.0
+    delivers about 10,000 characters and appends a truncation banner; Kimi
+    Code 0.43.1 showed no cut up to 25,728 characters; Gemini is unmeasured.
+    Default 9728 (9.5 KiB): under the tightest measured limit, with room left.
     0 = unbounded. DAIMON_BRIEF_MAX_BYTES overrides."""
     raw = _get("DAIMON_BRIEF_MAX_BYTES")
     try:
-        n = int(raw) if raw is not None else 11264
+        n = int(raw) if raw is not None else 9728
     except ValueError:
-        return 11264
+        return 9728
     return max(0, n)
 
 

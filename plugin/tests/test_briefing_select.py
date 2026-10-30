@@ -444,9 +444,9 @@ def test_render_plain_is_a_thin_wrapper_over_select(monkeypatch):
 
 
 def test_effective_budget_is_one_byte_unit(monkeypatch):
-    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "11264")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "9728")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
-    assert briefing.effective_budget() == 11264   # tokens*4 = 12000 is looser
+    assert briefing.effective_budget() == 9728   # tokens*4 = 12000 is looser
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "800")
     assert briefing.effective_budget() == 3200
     assert briefing.effective_budget(1000) == 1000

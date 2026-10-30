@@ -256,7 +256,7 @@ def _manifest(cards: dict) -> dict:
 def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
                  project_dir=None, worldcheck_project=None,
                  trailer=None, loops_pointer: bool = True, snap=None,
-                 notes=()) -> dict:
+                 notes=(), lead=()) -> dict:
     """`worldcheck_project` (#694 PR 2/3) is a SEPARATE gate from
     `project_dir` — the incoming-request panel's AND the sender-side
     verdict panel's `worldcheck_project` pattern (D2), never keyed on
@@ -287,11 +287,20 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     `worldcheck_project`. The caller stamps `surfaced` from it, never by
     searching the printed text or reading the ledger again.
 
+    `lead` is the lines the CLI puts above everything else (the `--label`
+    line, the fallback and serialize-in-flight warnings, the cross-project
+    mark). They are stdout too, so they are fixed text charged to the same
+    budget as the trailer and are printed here, in front of the baton, rather
+    than by the caller before this call.
+
     `loops_pointer=False` drops the "See: daimon loops" pointer from the
     section notes: the caller sets it on a route where that command would list
     a different project than the one briefed (global fallback, --slug)."""
     trailer_text = "".join(f"{ln}\n" for ln in (trailer or ()))
+    lead_text = "".join(f"{ln}\n" for ln in lead)
     if supports_rich():
+        if lead:
+            _render_lines(list(lead))
         _print_handoff(handoff)
         b = briefing.build(checkpoint)
         # #693/#694: each path below performs exactly one ledger read per
@@ -345,7 +354,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
 
     # Non-rich path (#1044): see the docstring above. Format every
     # surrounding block BEFORE the body renders.
-    handoff_text = _format_handoff(handoff)
+    handoff_text = lead_text + _format_handoff(handoff)
     b = briefing.build(checkpoint)
     if b is None:
         blocks, pointer, cards = _no_checkpoint_lines(
@@ -1924,13 +1933,19 @@ def render_configure_lines(lines) -> None:
     _render_lines(lines)
 
 
+def brief_note_lines(lines) -> list:
+    """The `render_brief_note` lines with the warning mark applied, for a
+    caller that hands them to `render_brief` (`lead`) instead of printing."""
+    return [marks.warning(ln) for ln in lines]
+
+
 def render_brief_note(lines) -> None:
     """`daimon brief` advisory WARNINGS (the global fallback, a serialize in
     flight, a cross-project read). Each line gets the warning mark here, once,
     so a caller passes plain text and a machine reader of the briefing keeps
     the note as a warning instead of taking it for the header. A line that is
     not a warning goes through `render_brief_line`."""
-    _render_lines([marks.warning(ln) for ln in lines])
+    _render_lines(brief_note_lines(lines))
 
 
 def render_brief_line(lines) -> None:
