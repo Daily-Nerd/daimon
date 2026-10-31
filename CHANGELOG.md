@@ -5,6 +5,15 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.2](https://github.com/Daily-Nerd/daimon/compare/v0.63.1...v0.63.2) (2026-10-31)
+
+
+### Documentation
+
+* **readme:** say what daimon does and what it is not on the first screen ([753cdb2](https://github.com/Daily-Nerd/daimon/commit/753cdb2601f5956c7abc2d66c4ee79433fd42fb4))
+* **website:** say what daimon does and what it is not in the landing hero ([b6c46c5](https://github.com/Daily-Nerd/daimon/commit/b6c46c5ccac07b243a8018902b5e4cda5b695d2f))
+* **website:** say what daimon does and what it is not in the landing hero ([0794630](https://github.com/Daily-Nerd/daimon/commit/07946307ccc5731a93e738379519190606706ab1)), closes [#1273](https://github.com/Daily-Nerd/daimon/issues/1273)
+
 ## [0.63.1](https://github.com/Daily-Nerd/daimon/compare/v0.63.0...v0.63.1) (2026-10-30)
 
 
