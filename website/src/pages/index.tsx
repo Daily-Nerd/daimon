@@ -149,20 +149,27 @@ export default function Home(): ReactNode {
             {translate({
               id: 'landing.hero.pain',
               message:
-                'Your agent forgets every session — then asserts what it half-remembers.',
+                'Your agent forgets every session, then asserts what it half-remembers.',
             })}
           </p>
           <h1>
             {translate({
               id: 'landing.hero.title',
-              message: 'Memory anyone can verify',
+              message: 'Session memory for coding agents',
             })}
           </h1>
           <p className="subtitle">
             {translate({
               id: 'landing.hero.sub',
               message:
-                'Other memory tools let the model grade its own homework. daimon shows you the transcript line, the exact quote, and a signature you can check offline.',
+                'When a session ends, daimon saves what was decided and what is still open. When the next one starts, your agent gets a short briefing, with each item marked as an exact quote or an inference. Install it once and hooks do the rest, with no commands to run in normal use.',
+            })}
+          </p>
+          <p className="subtitle">
+            {translate({
+              id: 'landing.hero.not',
+              message:
+                'It is not a live monitor for background agents. It does not learn how-to skills or pass fixes from one agent to another.',
             })}
           </p>
           <InstallBlock />
