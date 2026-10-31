@@ -3,13 +3,16 @@
     "message": "CLI de código abierto"
   },
   "landing.hero.pain": {
-    "message": "Tu agente olvida cada sesión — y afirma lo que recuerda a medias."
+    "message": "Tu agente olvida cada sesión, y luego afirma lo que recuerda a medias."
   },
   "landing.hero.title": {
-    "message": "Memoria que cualquiera puede verificar"
+    "message": "Memoria de sesiones para agentes de código"
   },
   "landing.hero.sub": {
-    "message": "Otras herramientas de memoria dejan que el modelo califique su propia tarea. daimon te muestra la línea del transcript, la cita exacta y una firma que puedes verificar offline."
+    "message": "Cuando termina una sesión, daimon guarda lo que se decidió y lo que sigue abierto. Cuando empieza la siguiente, tu agente recibe un briefing corto, con cada punto marcado como cita exacta o como inferencia. Lo instalas una vez y los hooks hacen el resto, sin comandos que correr en el uso normal."
+  },
+  "landing.hero.not": {
+    "message": "No es un monitor en vivo de agentes en segundo plano. No aprende habilidades ni pasa arreglos de un agente a otro."
   },
   "landing.install.hosts": {
     "message": "Elige tu host de agente"
