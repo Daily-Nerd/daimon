@@ -11,11 +11,18 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Daily-Nerd/daimon?style=flat-square" alt="License: Apache-2.0"></a>
 </p>
 
-> A **dream-briefing** for your AI agent: a skimmable "while you were away / here's where we left off" artifact, shown when you resume a session.
+> Daimon gives your coding agent a memory of its past sessions. When a session ends, it saves what was decided and what is still open. When the next session starts, your agent gets that back as a short briefing.
+
+**What you do:** install it once. On Claude Code, Codex and Kimi Code, hooks do the rest, so in normal use there are no commands to run. Saving a session uses your `claude` CLI or any OpenAI-compatible endpoint. Gemini CLI needs a manual hook setup and Windsurf only captures for now, see [hosts](https://daily-nerd.github.io/daimon/docs/hosts/).
+
+**What it is not:**
+
+- It is not a live monitor for background agents. It reads the session transcript and skips sub-agent exchanges.
+- It does not learn how-to skills, and it does not pass fixes from one agent to another.
 
 **Documentation:** [daily-nerd.github.io/daimon](https://daily-nerd.github.io/daimon/), with setup guides, configuration reference, and concepts.
 
-Your agent forgets everything between sessions. Daimon writes a small cognitive checkpoint when a session ends and turns it into a briefing when the next one starts, so the agent resumes from a faithful prior state instead of a confident guess:
+This is what your agent reads at the start of the next session:
 
 ```
 While you were away — here's where we left off.
