@@ -34,6 +34,11 @@ carry the `[≈ corroborated ×N]` badge — a count of independent sessions tha
 witnessed the claim, on its own axis and never a higher trust class. See
 [trust classes](../concepts/trust-classes.md).
 
+With `DAIMON_WORLDCHECK` on, `daimon_brief` also runs world evidence on the
+current project's carried claims and records the result, as `daimon brief`
+does. A read by `slug` never does. See
+[Worldcheck](../getting-started/configuration.md#worldcheck) for the cost.
+
 ## Scoping rules
 
 The server inherits daimon's cross-project discipline:

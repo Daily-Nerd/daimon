@@ -172,8 +172,11 @@ probes de solo-lectura con `gh`. Apagado por defecto — `daimon brief` corre
 en la ruta de inyección crítica en latencia del hook SessionStart (un
 presupuesto de subproceso de 8s dentro de un presupuesto de hook de 10s),
 así que incluso probes de red acotados en presupuesto ahí deben activarse a
-propósito. Con el flag apagado, la ruta de render nunca toca el módulo de
-worldcheck — la salida queda byte-idéntica a una build sin él.
+propósito. Con el flag apagado no corre ningún probe y no se escribe nada. El
+render igual lee el texto de cada nota arrastrada, y la que nombra un PR, una
+rama, un archivo o una dependencia recibe el sufijo
+`(noted <fecha>, re-check before acting)`, así que la salida no es byte-idéntica a una build sin
+worldcheck.
 
 | Variable | Default | Qué hace |
 |---|---|---|
@@ -186,13 +189,15 @@ confirmación posterior solo levanta la contradicción de esa misma afirmación;
 un recibo válido no levanta una contradicción por un archivo ausente. Los
 chequeos omitidos o no disponibles no invalidan ni levantan contradicciones.
 Los chequeos de versiones de dependencias siguen anotando solo el briefing.
-La CLI compartida registra la evidencia; el renderizador no escribe estos datos.
+La evidencia la registra la ruta de briefing que corrió el chequeo (la CLI, la
+herramienta MCP, la API de host o el hook de Hermes), por un commit compartido;
+el renderizador en sí no escribe nada.
 
 | Superficie | Recolección de evidencia con `DAIMON_WORLDCHECK=1` |
 |---|---|
 | Claude Code, Codex, Gemini CLI, Kimi Code | Soportada mediante el hook existente de `daimon brief` de cada host. |
 | Windsurf | Soportada cuando el agente ejecuta `daimon brief --team`; sin inyección automática al iniciar sesión. |
-| MCP `daimon_brief`, hook de briefing en proceso de Hermes | No soportada: estas rutas de renderizado no ejecutan worldcheck. Usá la CLI para recolectar evidencia. |
+| MCP `daimon_brief` (proyecto propio, no una lectura por `slug`), hook de briefing en proceso de Hermes, API de host `render_briefing` | Soportada. Estas rutas ejecutan los mismos chequeos y registran la misma evidencia que la CLI. El costo es de unos 3 s en el peor caso por briefing con el flag activo: los chequeos de archivos y ramas son lecturas de disco, los de PR corren `gh` con un plazo de 0,8 s, y `git remote -v` tiene un timeout de 2 s. El bucle de MCP es de un solo hilo, así que ese briefing bloquea las demás llamadas MCP del host por ese tiempo, el mismo límite que ya paga el hook de la CLI. Una llamada a `daimon_brief` por `slug` nunca ejecuta worldcheck, porque un slug nombra un bucket y no la ruta de un repositorio. |
 | Recall por CLI y MCP, sugerencias proactivas | Consumen la evidencia registrada mediante el índice compartido de recall. |
 
 ## Recall

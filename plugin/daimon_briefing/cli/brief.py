@@ -227,9 +227,11 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                                   snap=annotated.snapshot if annotated else None,
                                   notes=notes, lead=lead)
 
-    # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare, shared
-    # with the MCP tool and the Hermes hook. It is opt-in, budget-bounded and
-    # read-only; it only RETURNED its counters and ledger rows. They are
+    # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare. Every
+    # briefing path opts in explicitly (#1279: this CLI, the MCP tool, the
+    # host API and the Hermes hook; a named slug never does). It is opt-in,
+    # budget-bounded and read-only; it only RETURNED its counters and ledger
+    # rows. They are
     # recorded here, where the project route is resolved and the output is
     # already written, and committed after the flush (`worldcheck_effects`).
     if checkpoint and annotated.worldcheck is not None:

@@ -66,6 +66,17 @@ def worldcheck_effects(worldcheck_project, route, stats, rows,
         worldcheck_project, route, dict(stats), tuple(rows), tuple(skips)),))
 
 
+def rendered_worldcheck_effects(project, rendered) -> Effects:
+    """`worldcheck_effects` for a `briefing.RenderedBriefing` (#1279): the
+    machine paths read one project's own bucket, so the project path is both
+    the receipt-probe scope and the ledger route. Nothing when worldcheck did
+    not run."""
+    if rendered.worldcheck is None:
+        return Effects.none()
+    return worldcheck_effects(project, project, rendered.worldcheck,
+                              rendered.ledger_rows, rendered.worldcheck_skips)
+
+
 def surfaced_effects(worldcheck_project, printed) -> Effects:
     """`surfaced` records for the cards `render_brief` printed in full.
     `printed` is its manifest (None: nothing is known to have been shown)."""

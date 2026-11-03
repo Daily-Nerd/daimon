@@ -159,8 +159,10 @@ Opt-in (#365): a brief-time spot-check of carried PR/issue-state claims
 against reality, via read-only `gh` probes. Default off — `daimon brief` runs
 on the SessionStart hook's latency-critical injection path (an 8s subprocess
 budget inside a 10s hook budget), so even budget-bounded network probes there
-must be deliberately opted into. Flag off, the render path never touches the
-worldcheck module at all — output stays byte-identical to a build without it.
+must be deliberately opted into. Flag off, no probe runs and nothing is
+written. The render still reads each carried note's text, and one that names a
+PR, branch, file or dependency gets a `(noted <date>, re-check before acting)`
+suffix, so the output is not byte-identical to a build without worldcheck.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -171,14 +173,15 @@ and PR/issue-state probes also demote the item in recall search and suggestions.
 The item stays visible. A later confirmation clears only the same claim's
 contradiction; a valid receipt cannot clear a missing-file finding. Skipped or
 unavailable probes neither invalidate nor clear anything. Dependency-version
-checks still annotate the briefing only. Evidence is recorded by the shared
-briefing CLI used by host integrations, not by the renderer.
+checks still annotate the briefing only. Evidence is recorded by whichever
+briefing path ran the check (the CLI, the MCP tool, the host API or the
+Hermes hook), through one shared commit; the renderer itself writes nothing.
 
 | Surface | World-evidence collection with `DAIMON_WORLDCHECK=1` |
 |---|---|
 | Claude Code, Codex, Gemini CLI, Kimi Code | Supported through each host's existing `daimon brief` hook. |
 | Windsurf | Supported when the agent runs `daimon brief --team`; no automatic session-start injection. |
-| MCP `daimon_brief`, Hermes in-process briefing hook | Unsupported: these render paths do not run worldcheck. Use the CLI to collect evidence. |
+| MCP `daimon_brief` (own project, not a read by `slug`), Hermes in-process briefing hook, host API `render_briefing` | Supported. These paths run the same checks and record the same evidence as the CLI. The cost is about 3 s worst case per brief with the flag on: file and branch checks are disk reads, PR checks run `gh` under a 0.8 s deadline, and `git remote -v` has a 2 s timeout. The MCP loop is single-threaded, so that brief blocks the host's other MCP calls for that long, the same bound the CLI hook already pays. A `daimon_brief` call by `slug` never runs worldcheck, because a slug names a bucket and not a repository path. |
 | CLI and MCP recall, proactive suggestions | Consume recorded evidence through the shared recall index. |
 
 ## Recall

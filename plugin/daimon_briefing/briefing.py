@@ -1954,10 +1954,19 @@ class RenderedBriefing(NamedTuple):
     (a checkpoint with nothing worth surfacing) or `unavailable` (the text is
     empty and `notes` names the exception type). `notes` are the ledger-health
     lines and the #1236 imported-history note the text already carries, each
-    starting with the warning mark."""
+    starting with the warning mark.
+
+    #1279: `worldcheck`, `ledger_rows` and `worldcheck_skips` are what
+    `prepare` returned when the caller asked for world evidence (None, () and
+    () when it did not run). They are the CALLER's to record: `check` writes
+    nothing, so a host that wants the ledger rows commits them through
+    `effects_commit.rendered_worldcheck_effects`."""
     text: str
     state: str
     notes: tuple
+    worldcheck: dict | None = None
+    ledger_rows: tuple = ()
+    worldcheck_skips: tuple = ()
 
 
 def _unavailable(exc: BaseException) -> RenderedBriefing:
@@ -1966,7 +1975,16 @@ def _unavailable(exc: BaseException) -> RenderedBriefing:
         (f"the briefing could not be prepared ({type(exc).__name__})",))
 
 
-def machine_brief(target, now, *, loops_pointer: bool) -> RenderedBriefing:
+def _world(annotated) -> dict:
+    """The worldcheck fields of a `RenderedBriefing`, from what `prepare`
+    returned."""
+    return {"worldcheck": annotated.worldcheck,
+            "ledger_rows": tuple(annotated.ledger_rows),
+            "worldcheck_skips": tuple(annotated.worldcheck_skips)}
+
+
+def machine_brief(target, now, *, loops_pointer: bool,
+                  worldcheck_project=None) -> RenderedBriefing:
     """The briefing a machine consumer reads (the MCP tool, `render_briefing`):
     the strictly scoped read of `target`, always the deterministic render,
     never the LLM one and never anything a terminal changes.
@@ -1975,17 +1993,24 @@ def machine_brief(target, now, *, loops_pointer: bool) -> RenderedBriefing:
     carrying another project's briefing is contamination, and a pre-routing
     store stays read-only for project-scoped surfaces. #1132 PR 7a: the same
     preparation the CLI and Hermes run, so an agent consumer reads the world
-    the human brief states. No worldcheck: only the CLI same-project path sets
-    that gate. A view that cannot be built is `unavailable`, never an
-    unfiltered briefing; any later failure propagates to the caller.
+    the human brief states. #1279: `worldcheck_project` is the caller's
+    explicit opt-in to world evidence (`prepare` still runs it only when
+    DAIMON_WORLDCHECK is on, and never on a global-fallback body). Pass it
+    only for a read of a project PATH: a named slug has no path, and `gh`
+    would answer for the working directory's repo. The stats, ledger rows and
+    skips come back on the result for the caller to commit. A view that
+    cannot be built is `unavailable`, never an unfiltered briefing; any later
+    failure propagates to the caller.
 
     `loops_pointer` adds the note's `daimon loops` pointer, honest only when
     that command would list this same project: never for a named slug or a
     foreign project."""
     try:
-        annotated = prepare(target, now, route=store.Route.OWN)
+        annotated = prepare(target, now, route=store.Route.OWN,
+                            worldcheck_project=worldcheck_project)
     except Exception as exc:
         return _unavailable(exc)
+    world = _world(annotated)
     notes = annotated.notes
     snap = annotated.snapshot
     # #693: one strictly-scoped ledger read serves every return below, since
@@ -2010,22 +2035,23 @@ def machine_brief(target, now, *, loops_pointer: bool) -> RenderedBriefing:
                 "the first serialized session creates one.")
         return RenderedBriefing(
             f"{ruling_text}no checkpoint for this project. {hint}",
-            "no-checkpoint", notes)
+            "no-checkpoint", notes, **world)
     b = build(filtered)
     if b is None:
         if snap.closed:
             return RenderedBriefing(
-                f"{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed", notes)
+                f"{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed", notes,
+                **world)
         return RenderedBriefing(
             f"{ruling_text}checkpoint exists but has nothing worth surfacing.",
-            "empty", notes)
+            "empty", notes, **world)
     # #1236: the body renders, so its import note leads the notes; the
     # returns above print no body and keep the reader's notes alone.
     notes = annotated.body_notes
     return RenderedBriefing(
         render_plain(b, receipt_degraded(filtered), rulings,
                      loops_pointer=loops_pointer, notes=notes),
-        "briefing", notes)
+        "briefing", notes, **world)
 
 
 def render_briefing(project_dir=None, *, now=None,
@@ -2035,14 +2061,27 @@ def render_briefing(project_dir=None, *, now=None,
     every failure becomes `unavailable` with a note naming the exception type.
     `project_dir=None` means DAIMON_PROJECT_DIR, else the working directory.
 
+    #1279: with DAIMON_WORLDCHECK on this read runs world evidence on the
+    resolved project. A host API has no post-write seam, so the verification
+    ledger rows and usage counters are committed here, best effort, after the
+    text is built.
+
     The bytes are stable under the conditions `api.render_briefing` lists."""
     try:
         target = config.resolve_read_project(
             None if project_dir is None else str(project_dir))
-        return machine_brief(target, time.time() if now is None else now,
-                             loops_pointer=loops_pointer)
+        got = machine_brief(target, time.time() if now is None else now,
+                            loops_pointer=loops_pointer,
+                            worldcheck_project=target)
     except Exception as exc:  # noqa: BLE001 — host reads never raise: the failure is the `unavailable` state
         return _unavailable(exc)
+    try:
+        from . import effects_commit
+        effects_commit.commit(
+            effects_commit.rendered_worldcheck_effects(target, got))
+    except Exception:  # noqa: BLE001 — the commit is bookkeeping, never the answer
+        pass
+    return got
 
 
 def briefing_text(project_dir=None, *, now=None) -> str:

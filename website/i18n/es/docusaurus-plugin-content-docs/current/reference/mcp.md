@@ -36,6 +36,11 @@ sesiones independientes que atestiguaron la afirmación, en su propio eje y
 nunca una clase de confianza superior. Ver
 [clases de confianza](../concepts/trust-classes.md).
 
+Con `DAIMON_WORLDCHECK` activo, `daimon_brief` también ejecuta evidencia del
+mundo sobre las afirmaciones arrastradas del proyecto actual y registra el
+resultado, igual que `daimon brief`. Una lectura por `slug` nunca lo hace. Ver
+[Worldcheck](../getting-started/configuration.md#worldcheck) para el costo.
+
 ## Reglas de alcance
 
 El servidor hereda la disciplina entre proyectos de daimon:
