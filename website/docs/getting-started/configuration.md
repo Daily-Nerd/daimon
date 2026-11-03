@@ -161,7 +161,7 @@ on the SessionStart hook's latency-critical injection path (an 8s subprocess
 budget inside a 10s hook budget), so even budget-bounded network probes there
 must be deliberately opted into. Flag off, no probe runs and nothing is
 written. The render still reads each carried note's text, and one that names a
-PR, branch, file or dependency gets a "(noted <date>, re-check before acting)"
+PR, branch, file or dependency gets a `(noted <date>, re-check before acting)`
 suffix, so the output is not byte-identical to a build without worldcheck.
 
 | Variable | Default | What it does |

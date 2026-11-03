@@ -174,8 +174,8 @@ presupuesto de subproceso de 8s dentro de un presupuesto de hook de 10s),
 así que incluso probes de red acotados en presupuesto ahí deben activarse a
 propósito. Con el flag apagado no corre ningún probe y no se escribe nada. El
 render igual lee el texto de cada nota arrastrada, y la que nombra un PR, una
-rama, un archivo o una dependencia recibe el sufijo "(noted <fecha>,
-re-check before acting)", así que la salida no es byte-idéntica a una build sin
+rama, un archivo o una dependencia recibe el sufijo
+`(noted <fecha>, re-check before acting)`, así que la salida no es byte-idéntica a una build sin
 worldcheck.
 
 | Variable | Default | Qué hace |
