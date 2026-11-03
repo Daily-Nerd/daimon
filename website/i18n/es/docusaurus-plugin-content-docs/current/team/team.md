@@ -226,6 +226,14 @@ se queda en el mirror local de la máquina (`<team_dir>/local/`) — retenido
 del remoto, nunca perdido. Sin esta puerta, un remoto habilitado recibiría
 cada proyecto de la máquina, incluidos los personales.
 
+La misma allowlist regula también las **lecturas**: `brief --team` y el índice de
+recall solo admiten el contenido de un remoto sincronizado cuando pasa la
+verificación de alcance. Un remoto al que este proyecto nunca se le otorgó no
+aporta nada al briefing ni al índice de búsqueda de este proyecto: los archivos
+quedan intactos en el clon sidecar, simplemente no entran a las superficies
+locales. El mirror local de la máquina (`<team_dir>/local/`, tus propias
+escrituras retenidas) no necesita otorgamiento.
+
 Un proyecto está en alcance para un remoto cuando se cumple cualquiera de
 estas:
 
@@ -277,6 +285,28 @@ Los checkpoints de compañeros se muestran dentro de una ventana de edad de
 lectura controlada por `DAIMON_TEAM_RETENTION_DAYS` (default 365; `0`
 significa conservar todo). Salir por edad es solo un filtro de lectura —
 ningún archivo se borra físicamente de la rama compartida de solo-anexado.
+
+### La compuerta de entrada
+
+Toda política que daimon aplica a tus propios checkpoints al salir se vuelve a
+aplicar sobre el checkpoint de un compañero al entrar, en el momento de lectura
+o indexado (en memoria: los archivos del sidecar y la historia de git nunca se
+reescriben):
+
+- **Alcance**: el contenido de un remoto que no pasa la verificación de alcance
+  de arriba nunca llega al briefing ni al índice de recall.
+- **Redacción**: tus patrones locales de secretos vuelven a depurar el texto
+  entrante antes de mostrarlo o indexarlo. Un compañero con un daimon más viejo
+  y menos patrones no puede sembrar una copia en claro duradera en tu máquina.
+- **Forget**: los valores que marcaste con tombstone usando `daimon forget`
+  también se descartan de los checkpoints entrantes: la copia de un compañero no
+  puede hacer reaparecer algo que borraste localmente.
+- **Confianza**: un ítem `verbatim` de un compañero se guarda y se puntúa como
+  `inferred`, porque su receipt solo se puede verificar en la máquina que lo
+  capturó. En la sección Teammates se muestra con una etiqueta visible:
+  `[teammate claims verbatim — unverifiable here]`, que declara ambos hechos: la
+  afirmación, y que no se puede comprobar localmente. Tus propios ítems no se
+  ven afectados.
 
 ### Las cuarentenas también viajan
 
@@ -351,7 +381,7 @@ lo enrute o no el proyecto ahora.
 
 | Variable | Default | Qué hace |
 |---|---|---|
-| `DAIMON_TEAM` | sin definir (off) | Ponla en `1` para reflejar tus checkpoints en el directorio de equipo. Regula solo escrituras; las lecturas siempre están activas. |
+| `DAIMON_TEAM` | sin definir (off) | Ponla en `1` para reflejar tus checkpoints en el directorio de equipo. Regula el mirror de salida; las lecturas están activas de todos modos, pero pasan la compuerta de alcance por remoto de arriba. |
 | `DAIMON_AUTHOR` | `git config user.name` → usuario del SO → `unknown` | El nombre de autor bajo el cual se archivan tus checkpoints. |
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Raíz del mirror local de equipo (un subdirectorio por clon de sidecar). |
 | `DAIMON_TEAM_PROJECT` | sin definir | Ruta lógica de proyecto explícita (p. ej. `core/api-gateway`) para las sesiones de esta máquina. Le gana al mapeo de `daimon-team.toml` y al fallback derivado del origin. |
