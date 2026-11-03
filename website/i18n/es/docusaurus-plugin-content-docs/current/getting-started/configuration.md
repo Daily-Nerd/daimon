@@ -189,7 +189,9 @@ confirmación posterior solo levanta la contradicción de esa misma afirmación;
 un recibo válido no levanta una contradicción por un archivo ausente. Los
 chequeos omitidos o no disponibles no invalidan ni levantan contradicciones.
 Los chequeos de versiones de dependencias siguen anotando solo el briefing.
-La CLI compartida registra la evidencia; el renderizador no escribe estos datos.
+La evidencia la registra la ruta de briefing que corrió el chequeo (la CLI, la
+herramienta MCP, la API de host o el hook de Hermes), por un commit compartido;
+el renderizador en sí no escribe nada.
 
 | Superficie | Recolección de evidencia con `DAIMON_WORLDCHECK=1` |
 |---|---|

@@ -173,8 +173,9 @@ and PR/issue-state probes also demote the item in recall search and suggestions.
 The item stays visible. A later confirmation clears only the same claim's
 contradiction; a valid receipt cannot clear a missing-file finding. Skipped or
 unavailable probes neither invalidate nor clear anything. Dependency-version
-checks still annotate the briefing only. Evidence is recorded by the shared
-briefing CLI used by host integrations, not by the renderer.
+checks still annotate the briefing only. Evidence is recorded by whichever
+briefing path ran the check (the CLI, the MCP tool, the host API or the
+Hermes hook), through one shared commit; the renderer itself writes nothing.
 
 | Surface | World-evidence collection with `DAIMON_WORLDCHECK=1` |
 |---|---|
