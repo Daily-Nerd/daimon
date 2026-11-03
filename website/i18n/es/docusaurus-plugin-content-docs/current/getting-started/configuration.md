@@ -40,6 +40,8 @@ medido, no configuración de usuario.
 | `DAIMON_PROJECT_DIR` | sin definir | Directorio de trabajo de la sesión que se briefea o serializa, usado para enrutar checkpoints por proyecto. Los hooks pasan el cwd del host a través de ella; sin definir significa que daimon usa el directorio de trabajo. Un host sin identidad de proyecto (el hook en proceso de Hermes) no recibe briefing: un proyecto desconocido no lee nada. |
 | `DAIMON_MODEL_CROSS_PROJECT` | off | Cuando es verdadero, las herramientas MCP pueden leer fuera del alcance propio del proyecto: `daimon_recall` y `daimon_brief` aceptan `slug`, `all_projects` y una ruta `project`, `daimon_status` y `requests_inbox` aceptan una ruta `project`, y `daimon_projects` lista todos los buckets. Apagado, cualquier pedido que salga del bucket propio se rechaza en voz alta con un mensaje que nombra esta variable, y `daimon_projects` lista solo el bucket propio; las descripciones de las herramientas entonces no ofrecen esos argumentos. Un `project` que resuelve al bucket propio siempre se responde. Se lee al arrancar el proceso, del entorno o del archivo env, nunca del contenido de un prompt. Bajo `DAIMON_TENANT_SCOPED` no tiene efecto y se mantiene el rechazo de tenant. Esta variable no gobierna la CLI: sin alcance de inquilino una shell siempre puede elegir su propio directorio. `DAIMON_TENANT_SCOPED` lo cierra para los verbos de la CLI. |
 | `DAIMON_CAPTURE_HOST` | sin definir | Pista puesta por el host indicando qué agente produjo una captura (`claude-code`, `codex`, `windsurf`, `gemini`, `hermes`, `manual`), enviada por los hooks de captura instalados (#594). No es algo que definas a mano — un hook la mete en el entorno que le pasa al CLI, para los casos en que una ruta de transcript sola no alcanza para resolverlo. |
+| `DAIMON_SESSION_SPEAKER` | sin definir | La única persona a la que pertenece esta sesión, declarada por el host. Llena el `stated_by` de un ítem cuando el transcript no trae un `said_by` por mensaje, y solo para ítems ligados por completo a mensajes del usuario; todo lo que cite un mensaje del asistente o de una herramienta queda sin atribuir. Es una etiqueta pura, nunca una clave, así que no toca el espacio de nombres de `DAIMON_AUTHOR`. Defínela solo donde una sesión sea una persona durante toda su vida. Un host que atiende a varias personas a través de una sola sesión debe dejarla sin definir. |
+| `DAIMON_SPEAKER_LINE` | sin definir | El delimitador que un host escribe alrededor de su propia línea de hablante al inicio de cada mensaje del usuario, para un host que atiende a varias personas a través de una sola sesión pero no es autor del transcript. Caracteres literales o la grafía `U+E000`. Cuando está definido, una fila de usuario que empieza con `<delim>from=<id> name="<name>"...<delim>` recibe `said_by` como `name (id)` y la línea se corta del contenido antes de que nada lo lea; solo cuenta la posición cero, y solo las filas de usuario. El valor lo declara el host, con la misma honestidad que el `said_by` propio de una fila. El host debe quitar el delimitador del texto del usuario antes de anteponer su línea, o un usuario puede falsificar una. Sin definir, el contenido nunca se lee para atribuir. |
 | `DAIMON_MIN_MESSAGES` | `10` | Conteo mínimo de mensajes para que una sesión valga la pena serializar. Las sesiones más cortas se omiten. |
 | `DAIMON_TIMEOUT` | `420` | Presupuesto total de serialización en segundos, compartido entre reintentos (los timeouts de socket por intento se limitan al presupuesto restante). Las llamadas reales de serialize/merge en backends gateway y CLI corren 74s–25min; mantén ≥420 o las llamadas lentas y los reintentos no caben. |
 | `DAIMON_HUNG_AFTER` | `1800` | Segundos tras los cuales un proceso de serialización sin línea de resultado se trata como colgado/matado en lugar de aún corriendo. El default de 30 min queda con margen sobre una corrida lenta (las serializaciones en producción toman 4–25 min). |
@@ -144,7 +146,7 @@ Arrastre determinista de ítems sin resolver entre sesiones.
 | `DAIMON_BRIEF_MAX_BYTES` | `9728` | El presupuesto de bytes para el stdout COMPLETO de `daimon brief`, en bytes UTF-8. Los bytes UTF-8 nunca son menos que los caracteres o unidades UTF-16 que cuenta un host, así que un presupuesto en bytes queda siempre del lado seguro de cada límite (tabla abajo). La línea de `--label`, los avisos de fallback y de serialize en curso, el bloque de traspaso (handoff), las reglas vigentes, los paneles de solicitudes y decisiones, el cuerpo cognitivo, el bloque de desvío de código, la sección de compañeros de equipo y la nota de ítems ocultos cuentan contra él. Cuando se agota, el briefing suelta ítems completos en un único orden fijo (primero los arrastrados vencidos, las secciones de fondo antes que las accionables, lo arrastrado antes que lo de esta sesión) y cada sección dice qué ocultó. El saludo, las reglas vigentes, el traspaso y las decisiones más nuevas nunca se sueltan; si solo eso ya excede el presupuesto, el briefing dice por cuánto. `0` = sin límite. |
 | `DAIMON_MAX_BRIEFING_DECISIONS` | `10` | Tope de decisiones mostradas en el briefing (solo vista de renderizado, el checkpoint las conserva todas). La nota de Decisiones cuenta lo que el tope recortó. Las `min(3, tope)` decisiones más nuevas de la última sesión siempre se muestran. `0` = sin límite. |
 | `DAIMON_BRIEF_GLOBAL_FALLBACK` | solo encabezado | Controla el fallback al puntero global entre proyectos cuando un proyecto no tiene checkpoint propio. El default muestra solo un encabezado; ponlo en `full` (o `1`) para inyectar el cuerpo foráneo completo. Un proyecto sin identidad nunca lee el puntero global, y en un home con `DAIMON_TENANT_SCOPED` esta variable y `brief --global-fallback` no tienen efecto (el flag se rechaza). |
-| `DAIMON_STALE_DAYS` | `7.0` | Umbral de edad (días) tras el cual el sello efectivo de última verificación de un ítem arrastrado (su `last_verified`, si no el último evento de resolutions.jsonl, si no `first_seen`) está lo bastante desactualizado para que `brief` lo advierta. `0` advierte en cada ítem arrastrado. |
+| `DAIMON_STALE_DAYS` | `7.0` | Umbral de edad (días) tras el cual el sello efectivo de última verificación de un ítem arrastrado (su `last_verified`, si no el último evento de resolutions.jsonl, si no `first_seen`) está lo bastante desactualizado para que `brief` lo advierta. `0` advierte en cada ítem arrastrado. Pasado el umbral, el ítem mismo se muestra como `[? unverified]` con su etiqueta guardada y su edad en un sufijo final, en lugar de la etiqueta de confianza guardada (solo al renderizar; `daimon reverify` restaura la etiqueta en el siguiente brief). |
 | `DAIMON_PLAIN` | off | Cuando es verdadero (sin distinción de mayúsculas), fuerza salida de texto plano — desactiva las tablas/paneles enriquecidos en `status`, `brief` y `--help`. |
 | `NO_COLOR` | sin definir | Por presencia, según la [convención NO_COLOR](https://no-color.org/): si la variable está definida con *cualquier* valor (incluso vacío), la salida enriquecida se desactiva. |
 
@@ -197,8 +199,19 @@ La CLI compartida registra la evidencia; el renderizador no escribe estos datos.
 
 | Variable | Default | Qué hace |
 |---|---|---|
-| `DAIMON_RECALL_DB` | `~/.daimon/recall.db` | Ubicación del índice derivado de recall (SQLite FTS). Nunca es fuente de verdad — es seguro borrarlo en cualquier momento; recall lo reconstruye escaneando los directorios de checkpoints y de equipo. |
+| `DAIMON_RECALL_DB` | por store (ver la descripción) | Solo para pruebas: fija un archivo explícito de índice de recall y omite el nombre por store. Déjala sin definir. El índice derivado de recall (SQLite FTS) nunca es fuente de verdad, así que es seguro borrarlo en cualquier momento. El store por defecto conserva `~/.daimon/recall.db`; cualquier otro store (`DAIMON_CHECKPOINT_DIR`, `--data-dir`) obtiene su propio `~/.daimon/recall/<hash>.db`. `daimon heal` elimina los índices por store cuyo store ya no existe o que pasaron 30 días sin uso. |
 | `DAIMON_RECALL_SEEN_DIR` | `~/.daimon/recall_seen` | Estado de enfriamiento de sugerencias por sesión para que un tema repetido nunca se re-inyecte. Desechable — borrarlo solo reinicia los enfriamientos. |
+
+## Alcance de inquilino
+
+Para un host que corre un solo home de daimon con un directorio de proyecto por persona. La máquina de una sola persona nunca necesita ninguna de las dos variables. Ambas se leen al iniciar el proceso, desde el entorno del proceso o el archivo env, nunca desde el contenido de un prompt, así que un modelo no puede definirlas.
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `DAIMON_TENANT_SCOPED` | off | Cuando es verdadero, quien llama no puede elegir un alcance. `--slug` y `--all-projects` en `recall`, `brief`, `why` y `decide`, `--all` en `audit privacy`, `--global-fallback` en `brief`, y un `--project` que nombre otro bucket en cualquier verbo se rechazan con un error claro, y `DAIMON_BRIEF_GLOBAL_FALLBACK` se ignora. `daimon decide` no muestra conteos de otros proyectos, `daimon status` no muestra puntero global, y una lectura nunca cae al checkpoint de otro proyecto. Las herramientas MCP rechazan de la misma forma cualquier `slug`, `all_projects` o ruta `project` fuera del bucket propio de quien llama (`DAIMON_MODEL_CROSS_PROJECT` no puede levantarlo), y `daimon projects` lista solo el bucket propio de quien llama. Se rechaza, nunca se reduce en silencio: quien pidió un alcance y recibió el suyo en su lugar leería la respuesta como completa. |
+| `DAIMON_EXTRA_READ_SLUGS` | sin definir | Slugs separados por comas que esta sesión puede leer junto al suyo, de forma ambiental, sin que intervenga ningún argumento de quien llama. Alcanza por igual a `recall`, `why` y a la ruta de sugerencias proactivas. Solo lectura: ninguna ruta de escritura acepta un slug y una sesión nunca escribe en un alcance listado. Un acierto de un alcance listado nombra su proyecto de origen. Pensada para un alcance compartido cuyo contenido ya era visible para todos en él; defínela solo donde una sesión sea una persona. |
+
+`DAIMON_MODEL_CROSS_PROJECT`, la contraparte del lado MCP, está en la tabla de Núcleo de arriba.
 
 ## Memoria de equipo
 
@@ -261,6 +274,35 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
 | `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
 
+## Cosecha de scars
+
+Redacción opcional de conocimiento negativo (#76). Al final de la sesión, daimon
+escanea el transcript en busca de lecciones con forma de scar (callejones sin
+salida: "probamos X, se rompió"; rarezas que parecen intencionales y vale la
+pena cercar; acoplamientos no obvios) y redacta archivos *candidatos* en
+`<project_root>/.scars/candidates/`. El escaneo no usa LLM (coincidencia de
+marcadores con stdlib pura, en inglés y español) y está anclado a rutas: un
+acierto que no nombra ningún archivo ni directorio real en su propia oración se
+descarta. Precisión sobre recall: un sistema de scars muere por ruido, no por
+una lección perdida.
+
+El límite con el proyecto [Scar](https://github.com/Daily-Nerd/Scar), dicho
+claramente: **daimon solo redacta candidatos.** El lint, la inyección previa a
+la edición y la promoción a scars activos son trabajo de Scar; instálalo en el
+repo de destino para que los candidatos sirvan. daimon nunca escribe dentro de
+`.scars/` por sí mismo, nunca sobrescribe un candidato existente (un humano pudo
+haberlo editado) y limita cuántos candidatos puede emitir una sesión.
+
+Límites honestos: los candidatos son borradores heurísticos y requieren revisión
+humana antes de la promoción. La cosecha solo corre en repos que han optado por
+entrar al tener un directorio `.scars/`; sin uno es un no-op silencioso aun con
+la bandera activa. El texto de los candidatos pasa por la misma redacción de
+secretos que los checkpoints, así que los archivos candidatos se pueden commitear.
+
+| Variable | Default | Qué hace |
+|---|---|---|
+| `DAIMON_SCAR_HARVEST` | off | Cuando es verdadero, redacta candidatos de scar (conocimiento negativo) al fin de sesión en `.scars/candidates/`; solo en repos con un directorio `.scars/`. |
+
 ## Escalamiento de heal
 
 Opt-in (#360): el reintento por defecto de `daimon heal` vuelve a correr la
@@ -311,13 +353,12 @@ antes de poder volverse default.
 |---|---|---|
 | `DAIMON_LOG_DIR` | `~/.daimon/logs` | Directorio de logs. Los hooks lo resuelven exactamente igual que el CLI (entorno del proceso y después este archivo), así que `serialize.log`, los heartbeats y `serialize-crash.log` se mueven juntos: lo que un hook escribe en un directorio redirigido es lo que `daimon status`, `daimon heal` y `daimon forget` leen y purgan ahí, y nada queda en el directorio por defecto. |
 | `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Dónde viven los transcripts del host (`<slug>/<session>.jsonl`). Solo-lectura — la auditoría de re-verificación de citas los lee para re-revisar citas almacenadas contra su fuente. |
-| `DAIMON_SCAR_HARVEST` | off | Cuando es verdadero, borra candidatos de scar (conocimiento negativo) desde el transcript al fin de sesión. |
 | `DAIMON_LOG_STDOUT` | off | Cuando es verdadero, las líneas de resultado de serialize también llegan a stdout, el stream que recolecta un runtime de contenedores. El hook de fin de sesión deja que el proceso hijo desprendido herede stdout en vez de descartarlo, y el CLI también refleja ahí sus líneas `error:`, así que éxito, omisión y error caen todos en una sola superficie. Pensado para hosts en contenedores, donde una línea escrita solo en `serialize.log` sobre un volumen es invisible para la plataforma. Apagado por defecto: en una terminal esas líneas aparecen en tu shell minutos después de que terminó la sesión. No toca stderr, que queda reservado para `serialize-crash.log`. |
 
 ## Backend LLM
 
 La serialización necesita un endpoint de LLM. `daimon configure` es la vía
-prevista para definir estas variables. La URL, la key y el modelo caen cada
+prevista para definir estas variables, y `daimon configure --init` corre el asistente guiado: backend, timeout, una prueba inmediata del backend, un recorrido opcional de memoria de equipo (autor + remoto, conectado vía `daimon team init`), y termina con el resumen de `daimon status`. Cada pregunta tiene una bandera de escape (`--backend`, `--timeout`, `--author`, `--team-remote`) para que scripts y CI lo corran sin interacción. La URL, la key y el modelo caen cada
 uno a una variable `LITELLM_*` si la forma `DAIMON_*` no está definida. El
 backend `litellm` necesita **ambas** `DAIMON_LLM_MODEL` y
 `DAIMON_LLM_API_KEY`; mientras falte alguna, `daimon configure` reporta

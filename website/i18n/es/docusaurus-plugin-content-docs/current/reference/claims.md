@@ -21,6 +21,7 @@ comprobación mecánica, no una afirmación de verdad.
 | Afirmación | Número publicado / garantía | Re-ejecutar con |
 | --- | --- | --- |
 | Las citas verbatim frescas fallan el chequeo a una tasa medible y publicada | **11.3%**, solo ítems frescos, sobre cada sesión que el store tenía el 2026-10-26 (1819 de 16118 en 500 sesiones tras deduplicar). Corte por mes abajo, como contexto. [Fila fechada + salvedades](./backends-tested.md) | snippet de abajo |
+| Las citas verificadas se cosen a partir de más de un mensaje a una tasa medida y publicada | **0.6%** en el store de este proyecto el 2026-11-02: 17 cosidas de 2934 receipts verificados que llevan resultado de costura (17 entre mensajes, 2 de ellas entre roles). 1372 receipts verificados no llevan resultado (sellados antes de D-019 o por una captura sin transcripción) y se reportan como no medidos, sin sumarlos. | `daimon stats --json`, clave `stitching` |
 | Cada cita verbatim almacenada sigue siendo re-chequeable después | salida `0` probado / `1` discrepancia / `3` no se puede probar | `daimon audit quotes` |
 | Un valor olvidado está probadamente ausente de cada superficie declarada | mismo contrato de salida, reporte solo-hash | `daimon audit privacy` |
 | El borrado sobrevive a re-serializar la transcripción original | la lápida suprime el ítem al re-capturar | `daimon forget <id>`, después `daimon serialize <transcripción>`, después `daimon recall` del valor |
@@ -92,6 +93,25 @@ octubre 6.5% (n=5084). Los hosts, los backends y el tipo de trabajo cambian
 de un mes a otro, y el corte no separa eso de un cambio en el verificador o
 en los modelos. El titular es el número sobre todo el store. Tu
 store va a leer tu número, desde el primer día.
+
+## Re-ejecutar la tasa de costura
+
+El resultado de costura dice si los fragmentos que coincidieron con una cita
+verificada podrían haber salido todos de un mismo mensaje. `daimon stats --json`
+reporta el conteo bajo la clave `stitching`.
+
+El denominador son los receipts que llevan un resultado de costura, nunca todos los
+receipts verificados. Un receipt sellado antes de D-019, o por una captura sin
+transcripción, no tiene resultado. Sumarlo como limpio imprimiría 0% donde la
+respuesta honesta es desconocido, así que se cuentan como `unmeasured` junto a
+la tasa.
+
+Un ítem cuenta una vez, por su id estable. Un ítem arrastrado entra a cada
+checkpoint posterior con el mismo receipt congelado, así que contar apariciones
+inflaría la tasa una vez por cada sesión que sobrevivió. El número es por
+proyecto: córrelo desde el directorio del proyecto o define `DAIMON_PROJECT_DIR`.
+Las claves son `verified`, `measured`, `stitched`, `cross_message`, `cross_role`,
+`unmeasured` y `rate_pct`.
 
 ## Qué prueban los auditores
 
