@@ -448,7 +448,7 @@ def _check_ledger_authorship(sidecar, old, new, report) -> None:
     commit in `old..new` that touched it under a git AUTHOR name whose slug is
     not the directory's owner. A warning only: that name is declared, free to
     forge, and a member who can write the owner's file can also write it. It makes a plain edit visible; it does not detect a forged
-    row (docs/team.md, authority)."""
+    row (https://daily-nerd.github.io/daimon/docs/team/, authority)."""
     if not old:
         return  # first-ever content fetch: no arrival window to diff
     # -z: git quotes a non-ASCII path otherwise, and the pattern would skip it
