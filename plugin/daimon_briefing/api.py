@@ -88,6 +88,8 @@ enforces for a host test:
     paths would change the text);
   - the settings (budgets, caps, tenant flags, capture host, the check dir)
     come from the sandbox mapping, not the process environment.
+  - DAIMON_WORLDCHECK is off (with it on, a carried claim the world has
+    contradicted is marked, and the ledger rows are written, #1279).
 
 Round trip: for `briefing` and `closed`, `parse_briefing(text).header` is
 `marks.GREETING`, every `standing_rulings` entry starts with `marks.RULING_MARK`,

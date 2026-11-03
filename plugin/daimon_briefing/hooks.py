@@ -242,9 +242,9 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
 
     Returns {"context": briefing} to append to the user message, or None. Never raises.
     """
-    # This host records no effects today (no usage line, no stamp, no
-    # telemetry), but it commits through the same seam as every other host so
-    # an effect added here later cannot be dropped.
+    # The one effect this host records is the worldcheck bookkeeping (#1279,
+    # only with DAIMON_WORLDCHECK on); it commits through the same seam as
+    # every other host so an effect added here later cannot be dropped.
     fx = effects_commit.Pending()
     try:
         if config.is_disabled():
@@ -274,8 +274,16 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # #268 witness count and stale marks stamped. Any raise from the view
         # lands in the handler below: nothing is injected rather than an
         # unfiltered briefing.
+        # #1279: world evidence on the session's own project, as the CLI
+        # brief does. `prepare` runs it only with DAIMON_WORLDCHECK on and
+        # never on a global-fallback body.
         annotated = briefing.prepare(
-            project, time.time(), route=briefing.injection_read_route(project))
+            project, time.time(), route=briefing.injection_read_route(project),
+            worldcheck_project=project)
+        if annotated.worldcheck is not None:
+            fx.add(effects_commit.worldcheck_effects(
+                project, project, annotated.worldcheck,
+                annotated.ledger_rows, annotated.worldcheck_skips))
         if annotated.checkpoint is None:
             # #693: standing rulings exist before the first checkpoint does —
             # a day-one ratification must reach the very next session.

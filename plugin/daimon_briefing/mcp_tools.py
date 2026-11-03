@@ -144,11 +144,16 @@ def _brief(arguments: dict, fx) -> str:
     # `api.render_briefing`. A view that cannot be built is a tool error.
     # The `daimon loops` pointer only when that command would list this same
     # project: never for a named slug or a foreign --project.
+    # #1279: world evidence (opt in with DAIMON_WORLDCHECK) only for a project
+    # PATH. A slug names a bucket, and `gh` would answer for the server's
+    # working directory repo, so a slug read never probes.
     got = briefing.machine_brief(
         target, time.time(),
-        loops_pointer=not read.slug and cli.loops_lists_project(target))
+        loops_pointer=not read.slug and cli.loops_lists_project(target),
+        worldcheck_project=None if read.slug else read.project)
     if got.state == "unavailable":
         raise ToolError(got.notes[0])
+    fx.add(effects_commit.rendered_worldcheck_effects(read.project, got))
     return got.text
 
 
