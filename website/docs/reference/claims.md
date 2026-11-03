@@ -21,6 +21,7 @@ claim.
 | Claim | Published number / guarantee | Re-run with |
 | --- | --- | --- |
 | Fresh verbatim claims fail the quote check at a measurable, published rate | **11.3%**, fresh items only, over every session the store held on 2026-10-26 (1819 of 16118 across 500 sessions after dedup). Month split below, as context. [Dated row + caveats](./backends-tested.md) | snippet below |
+| Verified quotes are stitched from more than one message at a measured, published rate | **0.6%** on this project's store on 2026-11-02: 17 stitched of 2934 verified receipts that carry a stitching result (17 cross-message, 2 of those cross-role). 1372 verified receipts carry no result (stamped before D-019 or by a transcript-less capture) and are reported as unmeasured, not folded in. | `daimon stats --json`, key `stitching` |
 | Every stored verbatim quote stays re-checkable after the fact | exit `0` proven / `1` mismatch found / `3` cannot prove | `daimon audit quotes` |
 | A forgotten value is provably gone from every declared surface | same exit contract, hash-only reporting | `daimon audit privacy` |
 | Deletion survives re-serializing the original transcript | tombstone suppresses the item on re-capture | `daimon forget <id>`, then `daimon serialize <transcript>`, then `daimon recall` for the value |
@@ -90,6 +91,23 @@ The month split is published as context. It makes no trend claim. July 17.1%
 split does not separate those from any change in the verifier or the models.
 The headline is the number over the whole store. Your store will read your
 number, from day one.
+
+## Re-running the stitch rate
+
+The stitching result says whether the fragments that matched a verified quote
+could all have come from one message. `daimon stats --json` reports the count
+under the `stitching` key.
+
+The denominator is the receipts that carry a stitching result, never all verified
+receipts. A receipt stamped before D-019, or by a capture with no transcript,
+has no result. Folding it in as clean would print 0% where the honest answer
+is unknown, so those are counted as `unmeasured` beside the rate.
+
+One item counts once, by its stable id. A carried item rides into every later
+checkpoint with the same frozen receipt, so counting occurrences would inflate
+the rate once per session it survived. The number is per project: run it from
+the project directory or set `DAIMON_PROJECT_DIR`. The keys are `verified`,
+`measured`, `stitched`, `cross_message`, `cross_role`, `unmeasured` and `rate_pct`.
 
 ## What the audits prove
 
