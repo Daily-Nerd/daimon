@@ -21,7 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import overload
 
-from . import jsonl
+from . import jsonl, scope
 
 log = logging.getLogger(__name__)
 
@@ -691,7 +691,7 @@ def extra_read_slugs() -> tuple[str, ...]:
         tok = raw.strip()
         if not tok or tok in out:
             continue
-        if not all(ch.isalnum() or ch in "_-" for ch in tok):
+        if scope.parse_bucket(tok) is None:
             continue
         out.append(tok)
     return tuple(out)

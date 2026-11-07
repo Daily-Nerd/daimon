@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from . import (buckets, clock, config, display, jsonl, normalize, policy,
-               redact, refutations, store, surfaces)
+               redact, refutations, scope, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. Importing the table keeps a
 # future channel tier ("ui", "signed") consistent across ledgers instead of
@@ -165,11 +165,10 @@ _EVENT_RANK = {
     "done_verified": 9,
 }
 _REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
-# store.project_slug's output: every non-word char munged to '-'. Validated
-# here for SHAPE only — whether the slug names a bucket that exists is the
-# CLI's check (it can offer near-matches and an --anyway override; this
+# A recipient is validated for SHAPE only, by `scope.parse_bucket` (the one
+# bucket-name parser, #1294) — whether the slug names a bucket that exists is
+# the CLI's check (it can offer near-matches and an --anyway override; this
 # module must stay writable for a project not yet initialized).
-_SLUG_RE = re.compile(r"[\w-]{1,255}")
 _SPACE_RE = re.compile(r"\s+")
 _MAX_TEXT = 2000
 # #1127: the display bound for an ask shown as a title or a skimmable line.
@@ -608,7 +607,7 @@ def _founder_by_id(ordered: list[dict],
             # that one row decides both — and the NEXT valid `opened` row
             # for this id (if any) is the one that founds it, in every
             # pass alike.
-            if not _SLUG_RE.fullmatch(str(row.get("to") or "")):
+            if scope.parse_bucket(str(row.get("to") or "")) is None:
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
@@ -796,7 +795,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # Read-boundary shape check (the write boundary is not the
             # boundary that matters — events() is deliberately tolerant, and
             # a row edited on disk must not ride into the render).
-            if not _SLUG_RE.fullmatch(str(row.get("to") or "")):
+            if scope.parse_bucket(str(row.get("to") or "")) is None:
                 continue
             if not str(row.get("ask") or "").strip():
                 continue
@@ -1530,7 +1529,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     carries its own.
     """
     project_dir = config.resolve_project_dir(project_dir)
-    if not _SLUG_RE.fullmatch(str(to or "")):
+    if scope.parse_bucket(str(to or "")) is None:
         raise RequestError(f"invalid recipient slug: {to!r}")
     supersedes = str(supersedes or "").strip()
     if supersedes and not _REQUEST_ID_RE.fullmatch(supersedes):
@@ -2209,12 +2208,7 @@ def _bucket_slugs() -> list[str]:
     request before it has ever serialized a session, and such a bucket must
     still be discoverable. One `exists()` stat per subdir, so a project with
     checkpoints but no requests ledger costs almost nothing."""
-    root = config.checkpoint_dir()
-    try:
-        entries = sorted(root.iterdir())
-    except OSError:
-        return []
-    return [child.name for child in entries
+    return [child.name for child in store.bucket_dirs().buckets
             if (child / "requests.jsonl").exists()]
 
 

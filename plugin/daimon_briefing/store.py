@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import (config, jsonl, normalize, policy, receipts, redact, schema,
-               serializer, surfaces, teamproject)
+               scope, serializer, surfaces, teamproject)
 from .surfaces import Writer
 
 log = logging.getLogger("daimon_briefing")
@@ -244,9 +244,7 @@ def buckets_under(layer_dir) -> list:
         layer_root = os.path.realpath(str(layer_dir))
         bounded = layer_root if layer_root.endswith(os.sep) else layer_root + os.sep
         out = []
-        for entry in base.iterdir():
-            if not entry.is_dir():
-                continue
+        for entry in bucket_dirs().buckets:
             recorded = bucket_root(entry.name)
             if recorded is None:
                 continue
@@ -1708,11 +1706,14 @@ def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
     forget would be work without effect."""
     if not config.team_apply_forget():
         return []
+    # Invariant (#1294): a forget must reach EVERY directory, a stray included.
+    # This walk deliberately does not go through `bucket_dirs`; over-reaching
+    # is fail-safe, under-reaching leaves plaintext behind.
     project_dir = _resolved(project_dir)
     if all_projects:
         try:
             targets = [d.name for d in config.checkpoint_dir().iterdir()
-                       if d.is_dir() and d.name != ".chunk-cache"]
+                       if d.is_dir() and d.name != scope.CHUNK_CACHE]
         except OSError:
             targets = []
     else:
@@ -2288,6 +2289,39 @@ def sibling_buckets(project_dir) -> list[dict]:
     return out
 
 
+@dataclasses.dataclass(frozen=True)
+class BucketDirs:
+    """The directories directly under the checkpoint dir, split by what
+    `scope.classify_dir` says they are: `buckets` (sorted paths) and `strays`
+    (sorted names that are neither a bucket nor a known store-internal
+    directory). Store-internal directories are in neither."""
+
+    buckets: tuple[Path, ...]
+    strays: tuple[str, ...]
+
+
+def bucket_dirs() -> BucketDirs:
+    """THE enumeration of buckets: a directory is a bucket if and only if
+    `scope.parse_bucket` accepts its name (#1294). A stray directory is never
+    read as a bucket; `view.projects_notes` reports it. Pure file-ops, never
+    raises."""
+    try:
+        entries = sorted(config.checkpoint_dir().iterdir())
+    except OSError:
+        return BucketDirs((), ())
+    buckets: list[Path] = []
+    strays: list[str] = []
+    for child in entries:
+        if not child.is_dir():
+            continue
+        kind = scope.classify_dir(child.name)
+        if kind is scope.DirKind.BUCKET:
+            buckets.append(child)
+        elif kind is scope.DirKind.STRAY:
+            strays.append(child.name)
+    return BucketDirs(tuple(buckets), tuple(strays))
+
+
 def list_buckets(only=None) -> list[dict]:
     """Every per-project bucket in the checkpoint dir, for `daimon projects`
     (#243): [{slug, checkpoint, mtime}], unsorted — ordering is a display
@@ -2298,13 +2332,8 @@ def list_buckets(only=None) -> list[dict]:
     given, names the buckets to list: any other child is skipped before its
     pointer is touched, so a caller that may list only some buckets never
     opens the rest. Pure file-ops, never raises."""
-    d = config.checkpoint_dir()
-    try:
-        entries = sorted(d.iterdir())
-    except OSError:
-        return []
     out: list[dict] = []
-    for child in entries:
+    for child in bucket_dirs().buckets:
         if only is not None and child.name not in only:
             continue
         latest = child / _LATEST

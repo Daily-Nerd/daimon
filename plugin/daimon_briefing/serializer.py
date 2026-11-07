@@ -25,7 +25,7 @@ from functools import wraps
 from typing import Callable, Iterable, Iterator, ParamSpec, TypeVar
 
 from . import (config, configure, field_table, ledger, llm, normalize,
-               provenance, schema, tool_context)
+               provenance, schema, scope, tool_context)
 
 # No handlers/basicConfig here — the library stays silent unless the caller
 # configures logging. Multi-hour serialize runs need this heartbeat to be killable.
@@ -2265,7 +2265,7 @@ def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
 
 
 def _chunk_cache_dir():
-    return config.checkpoint_dir() / ".chunk-cache"
+    return config.checkpoint_dir() / scope.CHUNK_CACHE
 
 
 def _chunk_cache_key(chunk_text: str, lane: str = "default") -> str:

@@ -31,8 +31,8 @@ import re
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import (channels, clock, config, jsonl, normalize, policy, redact, store,
-               surfaces)
+from . import (channels, clock, config, jsonl, normalize, policy, redact, scope,
+               store, surfaces)
 from .surfaces import WritePosture, Writer
 
 
@@ -163,15 +163,14 @@ _CHECK_HOST_ROOT_RE = re.compile(r"(?:^|[^\w/])(?:~/|\$HOME/|\$\{HOME\}/|"
 # by flag"). Same doctrine as `check` just above: validated on the way in by
 # `_policy`, stored on the founding row, pinned at ratify by `policy_sha256`
 # mirroring `check_sha256`, gated in the fold the identical way. `requests.py`
-# owns `KINDS` (`{"info", "work"}`) and the sender-slug shape
-# (`requests._SLUG_RE`); this module cannot import that one (`requests.py`
-# already imports `CHANNEL_AUTHORITY`/`CHANNEL_LABEL` from here, so the
-# reverse import would be a cycle), so both are mirrored here rather than
-# shared. `by` has exactly one member today (`requests.py` grants no other
+# owns `KINDS` (`{"info", "work"}`), which this module cannot import
+# (`requests.py` already imports `CHANNEL_AUTHORITY`/`CHANNEL_LABEL` from here,
+# so the reverse import would be a cycle), so it is mirrored here. The
+# sender-slug shape is not mirrored: `scope.parse_bucket` owns it for both
+# modules (#1294). `by` has exactly one member today (`requests.py` grants no other
 # actor a write boundary this ruling could cover) but stays a set, not a
 # literal comparison, so the CLI's own error text and this module's agree on
 # one vocabulary.
-_POLICY_SLUG_RE = re.compile(r"[\w-]{1,255}")
 _POLICY_KINDS = frozenset({"info", "work"})
 # #961 slice 5: `verb=open` covers exactly `kind=info` — the ONLY thing a
 # sender-side ruling can lower is its own agent's approval bar on an ask it
@@ -593,7 +592,7 @@ def _policy(value) -> dict | None:
     field_value = str(value.get(field_name) or "")
     kind = value.get("kind")
     by = value.get("by")
-    if not field_value or not _POLICY_SLUG_RE.fullmatch(field_value):
+    if not field_value or scope.parse_bucket(field_value) is None:
         raise RefutationError(
             f"request_policy {field_name} must be an exact bucket slug; "
             "wildcards are not permitted"

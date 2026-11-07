@@ -755,11 +755,7 @@ def _ledger_bucket_slugs() -> list[str]:
     checked directly rather than joined; a bucket with no refutations.jsonl
     or amendments.jsonl yet simply reads back `{}` from `.records()`.
     """
-    try:
-        return [child.name for child in
-                sorted(config.checkpoint_dir().iterdir()) if child.is_dir()]
-    except OSError:
-        return []
+    return [child.name for child in store.bucket_dirs().buckets]
 
 
 def _foreign_ledger_counts(slug: str | None,
@@ -836,7 +832,7 @@ def foreign_queues_typed(*, project_dir=None) -> ForeignQueues:
     # candidates are every bucket directory plus every `to` an opened row
     # names, ids only, no text read here.
     tally = _Tally()
-    candidates = {b for b in _ledger_bucket_slugs() if not b.startswith(".")}
+    candidates = set(_ledger_bucket_slugs())
     for bucket in requests._bucket_slugs():
         raw = _foreign_rows(bucket, "requests.jsonl", own, tally)
         if raw is None:
