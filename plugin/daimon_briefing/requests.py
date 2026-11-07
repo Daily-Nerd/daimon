@@ -2657,6 +2657,67 @@ def is_stale(record: dict, project_dir=None) -> bool:
     return store.sessions_since_count(anchor, project_dir) >= STALE_AFTER_SESSIONS
 
 
+# ---- #1281: wall-clock overdue, the sender's side of liveness --------------
+
+# States in which the SENDER is still owed something: an ask nobody answered,
+# one sent back for more, one accepted and not yet done. `done` and `rejected`
+# are settled for good. Distinct from `_SENDER_MOVABLE` (which excludes
+# `accepted` on purpose, see its note) and from `is_stale`, which asks whether
+# the RECIPIENT looked and did nothing.
+_OVERDUE_STATES = frozenset({"open", "needs-info", "accepted"})
+
+
+def _ts_seconds(ts) -> float | None:
+    """A ledger `ts` (`_ts`'s UTC second format) as epoch seconds, or None
+    when it does not parse. A ledger line is editable on disk, so a bad one
+    reads as unknown rather than raising out of a render."""
+    try:
+        return datetime.strptime(str(ts), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def last_movement_at(record: dict) -> str | None:
+    """The ts of the last thing that MOVED this record: the fold keeps it in
+    `updated_at`, which opened, revised, accepted, needs-info, replied and a
+    done claim all advance, and which attention stamps (surfaced, delivered)
+    and a duplicate verdict deliberately leave alone."""
+    return record.get("updated_at") or None
+
+
+def age_seconds(record: dict, now_ns: int | None = None) -> float | None:
+    """Seconds since `last_movement_at`, None when that is unknown. `now` is
+    the injected clock (scar 0016), never the wall clock directly."""
+    moved = _ts_seconds(last_movement_at(record))
+    if moved is None:
+        return None
+    now = clock.now_ns() if now_ns is None else int(now_ns)
+    return max(0.0, now / 1_000_000_000 - moved)
+
+
+def is_overdue(record: dict, now_ns: int | None = None) -> bool:
+    """#1281: True when the sender is still owed something on this record
+    (open, needs-info or accepted) and nothing has moved it for
+    `config.request_overdue_days()`. Derived on every read, never written, and
+    independent of any recipient session: the clock alone advances it.
+
+    A record whose last movement cannot be read is NOT called overdue: the
+    flag asserts an age, and an unknown one is not one."""
+    if record.get("state") not in _OVERDUE_STATES:
+        return False
+    age = age_seconds(record, now_ns)
+    return age is not None and age >= config.request_overdue_days() * 86_400
+
+
+def liveness(record: dict, now_ns: int | None = None) -> dict:
+    """The three derived fields `request list --json` adds to a row."""
+    now = clock.now_ns() if now_ns is None else int(now_ns)
+    return {"last_movement_at": last_movement_at(record),
+            "age_seconds": age_seconds(record, now),
+            "overdue": is_overdue(record, now)}
+
+
 def render_state(record: dict, project_dir=None) -> str:
     """The state LABEL for `request list`/`inbox` (D3): `stale` in place of
     `open`/`needs-info` once `is_stale`, else the record's real state.
@@ -2819,6 +2880,27 @@ def verdict_renderable(project_dir=None) -> dict:
                  or unseen_reply_id(r))]  # #1117: expiry measures the decision
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
+    return _with_notes({"rows": rows[:RENDER_CAP],
+                        "overflow": max(0, len(rows) - RENDER_CAP)},
+                       got.notes)
+
+
+def overdue_renderable(project_dir=None, shown_ids=frozenset()) -> dict:
+    """#1281: the sender-side overdue panel data, `{"rows": [...],
+    "overflow": N}`. Asks THIS project sent that are still owed (open,
+    needs-info, accepted with no done) and have not moved for the threshold,
+    read through `sent` so a sender-suppressed ask stays out (D5). Longest
+    waiting first, because the oldest is the one most likely forgotten, capped
+    at RENDER_CAP with the remainder COUNTED.
+
+    `shown_ids` are the requests the verdict panel already printed in this
+    brief: they are dropped BEFORE the cap, so a repeat never costs a slot
+    (the dedup-before-cap order `verdict_deliverable` documents)."""
+    got = sent(project_dir)
+    now = clock.now_ns()
+    rows = [r for r in got.by_id.values()
+            if r["request_id"] not in shown_ids and is_overdue(r, now)]
+    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]))
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
                        got.notes)
