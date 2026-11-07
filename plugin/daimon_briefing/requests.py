@@ -1457,16 +1457,33 @@ def listed(project_dir=None) -> "Inbox":
     policy`'s fallback — never a self-addressed record (`to == own_slug`),
     which `fold`'s own gate excludes regardless: that must stay human-only,
     the same rule `accept()`'s write boundary already holds for it."""
+    folded, notes = _sent_fold(project_dir)
+    return Inbox(sorted(
+        folded.values(),
+        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
+                       r.get("updated_at") or "", r["request_id"])),
+        notes)
+
+
+def _sent_fold(project_dir) -> tuple[dict[str, dict], tuple]:
+    """The sender-join fold `listed` renders: every request this project
+    sent, with its recipient's verdict joined in, and the read's notes. The
+    ONE fold behind every sender-side read and decision (#1299), so what a
+    verb checks and what `request list` shows cannot disagree."""
     grouped = _sender_group(project_dir)
     rows = [row for group in grouped.by_id.values() for row in group]
     own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return Inbox(sorted(
-        fold(rows, policies_by_to=_policies_by_to(rows),
-            own_slug=own_slug,
-            open_policies=_open_policies_local(project_dir)).values(),
-        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       r.get("updated_at") or "", r["request_id"])),
-        grouped.notes)
+    return (fold(rows, policies_by_to=_policies_by_to(rows),
+                 own_slug=own_slug,
+                 open_policies=_open_policies_local(project_dir)),
+            grouped.notes)
+
+
+def sent_record(request_id: str, project_dir=None) -> dict | None:
+    """One request this project sent, as `request list` renders it: through
+    the sender join, so the recipient's verdict is in it. `get` is the
+    bucket-local fold and cannot see that verdict (#1299)."""
+    return _sent_fold(project_dir)[0].get(request_id)
 
 
 def renderable(project_dir=None) -> dict:
@@ -1697,10 +1714,11 @@ def _answering(request_id: str, project_dir) -> dict | None:
 
 
 def _require(request_id: str, project_dir) -> dict:
-    """The local record, or a refusal — for the SENDER-side verbs, which
-    cannot act without one (a revision needs the ask it is replacing and the
-    revision count it is bounded by)."""
-    current = get(request_id, project_dir=project_dir)
+    """The sent record as `request list` renders it (sender join), or a
+    refusal — for the SENDER-side verbs, which cannot act without one (a
+    revision needs the ask it is replacing and the revision count it is
+    bounded by) and must decide on the recipient's verdict too (#1299)."""
+    current = sent_record(request_id, project_dir=project_dir)
     if current is None:
         raise RequestError(f"unknown request: {request_id}")
     return current
@@ -2000,6 +2018,11 @@ def reply(request_id: str, note: str, evidence: str | None = None, *,
         raise RequestError(f"invalid request id: {request_id!r}")
     record = recipient_join(project_dir=project_dir).get(request_id)
     if record is None:
+        if get(request_id, project_dir=project_dir) is not None:
+            raise RequestError(
+                f"{request_id} is a request this project sent; reply is a "
+                "recipient verb, so only the project it was sent to can "
+                "reply. To add to your own ask, use `daimon request revise`")
         raise RequestError(f"unknown request: {request_id}")
     if record["state"] != "accepted":
         raise RequestError(_reply_refusal(request_id, record["state"]))

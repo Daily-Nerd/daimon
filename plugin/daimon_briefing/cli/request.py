@@ -566,7 +566,7 @@ def _cmd_request_open(args) -> int:
             [f"warning: {to} has no bucket on this machine, so this ask is "
              "never surfaced there and never decays; it stays in "
              "`daimon request list` until that project serializes a session"])
-    record = requests.get(q_id, project_dir=project)
+    record = requests.sent_record(q_id, project_dir=project)
     render.render_ledger_lines(
         _request_lines(_masked(project, [record], snap=snap)[0],
                        project_dir=project) if record else
@@ -589,14 +589,14 @@ def _cmd_request_revise(args) -> int:
         return 1
     _cli._note_usage("request:revise")
     # #857: `revise()` above read the record through _require, and this is a
-    # SECOND read. A writer between the two makes it None, and rendering a
+    # SECOND read, through the same sender join (#1299). A writer between the two makes it None, and rendering a
     # card from None dies inside render_state rather than saying anything.
     # Both sibling paths already handle this; only revise did not.
     #
     # The revision itself landed before the record went, so the line reports
     # that. Saying nothing, or failing, would describe the wrong half of what
     # happened.
-    record = requests.get(args.request_id, project_dir=project)
+    record = requests.sent_record(args.request_id, project_dir=project)
     if record is None:
         render.render_ledger_lines(
             [f"{args.request_id}: revision recorded in this project's ledger",

@@ -5576,7 +5576,7 @@ def test_cli_revise_survives_the_record_vanishing_between_its_two_reads(
     without the None check both sibling paths already have.
 
     `revise()` reads once through `_require`, the CLI reads again to render
-    the card, and `requests.get` answers `dict | None`. A concurrent writer
+    the card, and `requests.sent_record` answers `dict | None`. A concurrent writer
     between those two reads made the second answer None, and `_request_lines`
     calls `.get()` on its first line, so the command died with an
     AttributeError instead of saying the revision landed.
@@ -5590,7 +5590,7 @@ def test_cli_revise_survives_the_record_vanishing_between_its_two_reads(
     assert _cli_open(project, recipient) == 0
     q_id = next(iter(requests.records(project_dir=project)))
 
-    real_get = requests.get
+    real_get = requests.sent_record
     reads = {"n": 0}
 
     def vanishes_after_the_first_read(*args, **kwargs):
@@ -5598,7 +5598,7 @@ def test_cli_revise_survives_the_record_vanishing_between_its_two_reads(
         reads["n"] += 1
         return real_get(*args, **kwargs) if reads["n"] == 1 else None
 
-    monkeypatch.setattr(requests, "get", vanishes_after_the_first_read)
+    monkeypatch.setattr(requests, "sent_record", vanishes_after_the_first_read)
 
     rc = cli.main(["request", "revise", q_id, "--ask", "sharpened ask text",
                    "--by", "agent", "--project", project])
@@ -6729,3 +6729,95 @@ def test_inbox_shows_the_recipients_own_replies(project):
     lines = cli_request._inbox_lines(_joined(rdir, q_id), project_dir=rdir)
     assert f"  Replies: 2, latest: {REPLY_NOTE}" in lines
     assert "  Reply evidence: PR 12" in lines
+
+
+# ---- #1299: a sender verb decides on the record the readers render --------
+
+
+def _ledger_bytes(project_dir):
+    return requests._path(project_dir).read_bytes()
+
+
+@pytest.mark.parametrize("state,verdict", [
+    ("accepted", lambda q, r: requests.accept(
+        q, channel="cli-tty", project_dir=r)),
+    ("rejected", lambda q, r: requests.reject(
+        q, channel="cli-tty", note="no", project_dir=r)),
+])
+def test_revise_refuses_a_request_the_recipient_settled_and_writes_nothing(
+        project, state, verdict):
+    rdir = f"/p/revise-settled-{state}"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    verdict(q_id, rdir)
+    before = _ledger_bytes(project)
+    with pytest.raises(requests.RequestError, match="--supersedes"):
+        requests.revise(q_id, channel="cli-agent", evidence="new text",
+                        project_dir=project)
+    assert _ledger_bytes(project) == before
+    assert requests.listing(project_dir=project)[0]["state"] == state
+
+
+def test_revise_of_a_recipients_needs_info_is_allowed_and_capped_on_the_join(
+        project):
+    rdir = "/p/revise-needs-info"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.needs_info(q_id, channel="cli-tty", note="which?",
+                        project_dir=rdir)
+    for n in range(requests.MAX_REVISIONS):
+        requests.revise(q_id, channel="cli-agent", ask=f"ask {n}",
+                        project_dir=project)
+    before = _ledger_bytes(project)
+    with pytest.raises(requests.RequestError, match="revisions"):
+        requests.revise(q_id, channel="cli-agent", ask="one more",
+                        project_dir=project)
+    assert _ledger_bytes(project) == before
+
+
+def test_cli_revise_prints_the_joined_record_not_the_local_fold(
+        project, capsys, monkeypatch):
+    """The echo is a second read; a verdict the recipient lands between the
+    write and the echo must show in it, as `request list` would."""
+    from daimon_briefing import cli
+    rdir = "/p/revise-cli-echo"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.needs_info(q_id, channel="cli-tty", note="which?",
+                        project_dir=rdir)
+    real = requests.revise
+
+    def revise_then_accept(*args, **kwargs):
+        real(*args, **kwargs)
+        requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+
+    monkeypatch.setattr(requests, "revise", revise_then_accept)
+    capsys.readouterr()
+    assert cli.main(["request", "revise", q_id, "--ask", "for 0.32.0",
+                     "--by", "agent", "--project", project]) == 0
+    out = capsys.readouterr().out
+    assert q_id in out and "accepted" in out
+
+
+def test_cli_revise_of_a_settled_request_is_refused_with_the_joined_state(
+        project, capsys):
+    from daimon_briefing import cli
+    rdir = "/p/revise-cli-settled"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    before = _ledger_bytes(project)
+    capsys.readouterr()
+    assert cli.main(["request", "revise", q_id, "--evidence", "new text",
+                     "--by", "agent", "--project", project]) == 1
+    out = capsys.readouterr().out
+    assert "accepted" in out and "--supersedes" in out
+    assert _ledger_bytes(project) == before
+
+
+def test_reply_from_the_sender_side_says_it_is_a_recipient_verb(project):
+    rdir = "/p/reply-from-sender"
+    q_id = _open(project, to=_seed_bucket(rdir))
+    requests.accept(q_id, channel="cli-tty", project_dir=rdir)
+    before = _ledger_bytes(project)
+    with pytest.raises(requests.RequestError, match="recipient") as err:
+        requests.reply(q_id, "hello", channel="cli-agent",
+                       project_dir=project)
+    assert "unknown request" not in str(err.value)
+    assert _ledger_bytes(project) == before
