@@ -48,6 +48,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/effects_commit.py": "entry",  # commits a read's Effects after its output
     "daimon_briefing/index_locate.py": "index",  # read-only id locator over the recall index; imports nothing of the package
     "daimon_briefing/recall.py": "index",  # the derived recall index, rebuilt from checkpoints and ledgers
+    "daimon_briefing/authority.py": "ledger",  # the one owner of the tier a row carries (#1301); imports only channels
     "daimon_briefing/amendments.py": "ledger",  # owns amendments.jsonl and its fold
     "daimon_briefing/buckets.py": "ledger",  # bucket migration and its receipt ledger (migrations.jsonl)
     "daimon_briefing/checks.py": "ledger",  # folds logs/checks.jsonl, the firing log of armed checks
@@ -119,6 +120,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/cli/__init__.py": "entry",  # parser, dispatch and shared helpers
     "daimon_briefing/cli/__main__.py": "entry",  # python -m daimon_briefing.cli
     "daimon_briefing/cli/_cap_refusal.py": "entry",  # shared over-cap refusal text
+    "daimon_briefing/cli/_observe.py": "entry",  # the one place the CLI asks the terminal for a channel (#1301)
     "daimon_briefing/cli/_hookhosts.py": "entry",  # hook host table and drift checks
     "daimon_briefing/cli/_lifecycle.py": "entry",  # no-host-named branch shared by hooks and skill
     "daimon_briefing/cli/check.py": "entry",  # check sync
