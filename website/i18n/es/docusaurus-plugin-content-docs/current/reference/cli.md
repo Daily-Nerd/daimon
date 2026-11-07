@@ -127,7 +127,7 @@ Un heredoc pertenece al comando al que está pegado, y a ningún otro. daimon pa
 
 Un comando de más de 64 KiB, una vez apartados los cuerpos de sus heredocs, es `arg-form-unparsed`: tokenizar un solo argumento enorme cuesta más que todo el presupuesto del hook, y un resolutor al que se le adelanta el timeout del anfitrión deja pasar la acción sin ningún registro. Un heredoc largo no cuenta para ese límite, así que un cuerpo de PR grande sigue resolviendo.
 
-Las rutas relativas resuelven contra el directorio de trabajo. Un archivo de más de 1 MiB es `file-oversize`, uno que no es texto UTF-8 es `file-binary`, y uno que falta o no se puede leer es `file-missing` o `file-unreadable`. Un solo argumento que daimon no puede leer deja todo el sujeto sin resolver, digan lo que digan los demás.
+Las rutas relativas resuelven contra el directorio de trabajo. Un archivo de más de 1 MiB es `file-oversize`, uno que no es texto UTF-8 es `file-binary`, y uno que falta o no se puede leer es `file-missing` o `file-unreadable`. Una ruta que necesita que el shell la expanda (`$f`, `$(mktemp)`, un backtick, `~/x` o un glob como `*.md`) es `shell-expansion`: daimon lee el comando antes de que corra el shell, así que pasá una ruta literal. Un solo argumento que daimon no puede leer deja todo el sujeto sin resolver, digan lo que digan los demás.
 
 Cada corrida termina en exactamente uno de tres resultados, y nunca se mezclan:
 

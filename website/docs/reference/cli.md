@@ -125,7 +125,7 @@ A heredoc belongs to the command it is attached to, and to no other. daimon spli
 
 A command over 64 KiB once its heredoc bodies are set aside is `arg-form-unparsed`: tokenizing one enormous inline argument costs more than the whole hook budget, and a resolver overtaken by the host's timeout lets the action through with no record at all. A long heredoc body does not count toward that, so a large PR body still resolves.
 
-Relative paths resolve against the working directory. A file over 1 MiB is `file-oversize`, one that is not UTF-8 text is `file-binary`, and a missing or unreadable one is `file-missing` or `file-unreadable`. One argument daimon cannot read makes the whole subject unresolved, whatever the others say.
+Relative paths resolve against the working directory. A file over 1 MiB is `file-oversize`, one that is not UTF-8 text is `file-binary`, and a missing or unreadable one is `file-missing` or `file-unreadable`. A path that needs the shell to expand it (`$f`, `$(mktemp)`, a backtick, `~/x`, or a glob like `*.md`) is `shell-expansion`: daimon reads the command before the shell runs, so pass a literal path. One argument daimon cannot read makes the whole subject unresolved, whatever the others say.
 
 Every run ends in exactly one of three outcomes, and they never fold together:
 

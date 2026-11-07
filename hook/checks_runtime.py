@@ -52,7 +52,7 @@ FIRING_LOG_KEEP_BYTES = 65536
 CAUSES = frozenset({
     "file-missing", "file-unreadable", "file-oversize", "file-binary",
     "stdin-pipe", "arg-form-unparsed", "check-timeout", "check-crashed",
-    "body-hash-mismatch", "runtime-missing",
+    "body-hash-mismatch", "runtime-missing", "shell-expansion",
 })
 
 # A file argument daimon will read into the subject. Above this it reports
@@ -415,10 +415,32 @@ def _walk(tokens):
         yield flag, value, previous
 
 
-def _read_file(raw, base):
+# A token the shell rewrites before the program sees it: parameter expansion
+# and command substitution (`$`), backticks, a leading tilde (`~/x` and
+# `~user/x`), and glob metacharacters. daimon reads the command string BEFORE
+# the shell runs, and shlex has already dropped the quotes, so it cannot tell
+# `"~/x"` (a literal directory named `~`) from `~/x`. One rule, no
+# expanduser: converting a tilde would be right only when it was unquoted.
+_EXPANSION_CHARS = frozenset("$`*?[")
+
+
+def _needs_shell_expansion(raw) -> bool:
+    return raw.startswith("~") or any(c in _EXPANSION_CHARS for c in raw)
+
+
+def _read_file(raw, base, flag="the path argument"):
     """The file's text, or the Unresolved cause that stopped it. Relative
     paths resolve against the action's working directory, because that is
-    what the shell would have done."""
+    what the shell would have done.
+
+    This is the one place a command token becomes a filesystem path, so it is
+    also where a token that is not yet a path is told apart from a file that
+    is not there (#1282)."""
+    if _needs_shell_expansion(raw):
+        return Unresolved(
+            "shell-expansion",
+            f"{flag} takes a shell expression ({raw}); daimon reads commands "
+            "before the shell expands them, so pass a literal path")
     path = raw if os.path.isabs(raw) else os.path.join(base, raw)
     # One answer about one file. A stat that decides the cap and an open that
     # happens afterwards are two answers, and they disagree whenever the file
@@ -534,7 +556,7 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
         if not raw:
             return Unresolved("arg-form-unparsed",
                               f"{flag} was given an empty path")
-        text = _read_file(raw, base)
+        text = _read_file(raw, base, flag)
         if isinstance(text, Unresolved):
             return text
         reads.append((flag, raw, text))

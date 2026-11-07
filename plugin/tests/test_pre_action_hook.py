@@ -168,6 +168,23 @@ def test_an_unresolved_subject_denies_under_enforce(host, script, tmp_path):
     assert row["decision_emitted"] == "deny"
 
 
+@pytest.mark.parametrize("host,script", HOOKS, ids=IDS)
+def test_a_shell_expression_path_denies_under_enforce_with_its_own_cause(
+        host, script, tmp_path):
+    """#1282: the posture is unchanged (unresolved denies under enforce), only
+    the cause names what is actually wrong. Runs the shipped hook copies."""
+    ruling_id = _arm(tmp_path, body=CLEAN, intent="enforce")
+    command = f"{MATCH} --body-file $f"
+    proc = _run(script, _payload(command, tmp_path, host=host), tmp_path)
+    data = json.loads(_assert_host_contract(proc))
+    reason = data["hookSpecificOutput"]["permissionDecisionReason"]
+    assert reason.startswith(f"{ruling_id}: shell-expansion: ")
+    row = _log_rows()[0]
+    assert row["outcome"] == "unresolved"
+    assert row["cause"] == "shell-expansion"
+    assert row["decision_emitted"] == "deny"
+
+
 # ---- nothing armed, and nothing to say ------------------------------------
 
 
