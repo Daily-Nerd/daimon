@@ -114,9 +114,11 @@ jobs:
       # title shaped like a conventional commit becomes one more changelog
       # line next to the one from the branch commit, and the change is listed
       # twice. Whichever way the PR is merged, the title must not parse. The
-      # type is carried by the type:* label, not by the title. The match is
-      # case-insensitive and takes any word before the colon, because the
-      # parser accepts any word as a type.
+      # type is carried by the type:* label, not by the title. release-please
+      # splits only on its known types (see _CONVENTIONAL_TYPES in
+      # scripts/merge_pr.py); the match here is wider on purpose, any word
+      # and any case before the colon, so a type added upstream later cannot
+      # slip through.
       - name: Check PR Title Is Not A Conventional Commit
         run: |
           title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
