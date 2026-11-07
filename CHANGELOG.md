@@ -5,6 +5,14 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.1](https://github.com/Daily-Nerd/daimon/compare/v0.64.0...v0.64.1) (2026-11-07)
+
+
+### Documentation
+
+* **scars:** candidate for the inverted PR title gate ([00c90d7](https://github.com/Daily-Nerd/daimon/commit/00c90d7f3ce528243dbf7b3ba5977c1d03590c55)), closes [#1285](https://github.com/Daily-Nerd/daimon/issues/1285)
+* **scripts:** describe merge_pr.py as an optional merge and a verifier ([f8eef43](https://github.com/Daily-Nerd/daimon/commit/f8eef436b5788db96f6f285626fae68924f8c1c9)), closes [#1285](https://github.com/Daily-Nerd/daimon/issues/1285)
+
 ## [0.64.0](https://github.com/Daily-Nerd/daimon/compare/v0.63.1...v0.64.0) (2026-11-07)
 
 
