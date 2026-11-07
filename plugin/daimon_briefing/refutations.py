@@ -540,15 +540,10 @@ def _policy(value) -> dict | None:
     projects' oversight without their consent, since `info` removes an ask
     from the RECIPIENT's own decision queue).
 
-    `kind: "info"` on a `verb=accept` policy is accepted and stored as a
-    genuine, if inert, policy: an `info` accept needs no ruling at all
-    (`accept()`'s own write boundary already permits it unconditionally), so
-    a policy naming it can never be the thing that authorizes a landed
-    accept — `active_request_policies` still returns it, `requests.fold`'s
-    widened exception still only ever matches a `work` row, and there is no
-    second code path here that treats `info` as unreachable and could drift
-    from that. Refusing it instead would just relabel the same inertness as
-    a write-time error for no reader's benefit.
+    `kind: "info"` on a `verb=accept` policy is the receiving project's
+    consent to expose what it knows: it is what lets that project's agent
+    accept an `info` ask from `sender`, checked by the same predicate at
+    `accept()`'s write boundary and in `requests.fold` as a `work` policy.
 
     Returns the dict that is STORED, plus a `sha256` over its own canonical
     four fields: the same role `check`'s embedded hash plays for `ratify`'s

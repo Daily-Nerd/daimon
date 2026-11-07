@@ -725,20 +725,31 @@ def test_fold_rechecks_authority_on_a_forged_row(project, event):
 # `needs_info`/`suppress` are untouched; this is `accepted` only.
 
 
+def _covered_info_ask(recipient_project, sender_dir="/p/req-info-covered"):
+    """A cross-bucket `info` ask to `recipient_project`, opened by a human
+    channel in `sender_dir`, with the receiving project's own ratified
+    `verb=accept kind=info` ruling already in place. Returns the id."""
+    sender_slug = _seed_bucket(sender_dir)
+    _cover(recipient_project, sender_slug, kind="info")
+    return requests.open_request(
+        to=store.project_slug(recipient_project), ask=ASK, why=WHY,
+        channel="cli-tty", kind="info", project_dir=sender_slug)
+
+
 def test_agent_accept_on_an_open_info_ask_lands_accepted(project):
-    q_id = _open(project, channel="cli-tty", kind="info")
+    q_id = _covered_info_ask(project)
     requests.accept(q_id, channel="cli-agent", project_dir=project)
-    record = requests.get(q_id, project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "agent"
 
 
 def test_agent_accept_on_a_needs_info_info_ask_lands_accepted(project):
-    q_id = _open(project, channel="cli-tty", kind="info")
+    q_id = _covered_info_ask(project)
     requests.needs_info(q_id, channel="cli-tty", note="says which project?",
                         project_dir=project)
     requests.accept(q_id, channel="cli-agent", project_dir=project)
-    record = requests.get(q_id, project_dir=project)
+    record = requests.recipient_join(project_dir=project)[q_id]
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "agent"
 
@@ -812,16 +823,16 @@ def test_forged_agent_accepted_row_on_a_work_ask_is_inert_in_the_fold(
     assert record["accepted_by"] is None
 
 
-def test_forged_agent_accepted_row_on_an_info_ask_lands_accepted_in_the_fold(
+def test_forged_agent_accepted_row_on_an_info_ask_is_inert_in_the_fold(
         project):
-    """The mirror of the test above: the fold's own exception, exercised
-    with no call to `accept()` at all."""
+    """Receiver consent lives in the FOLD too, not only in `accept()`: a row
+    skipping `accept()` with no covering ruling changes nothing."""
     q_id = _open(project, channel="cli-tty", kind="info")
     row = requests._stamp("accepted", q_id, "cli-agent")
     assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
-    assert record["state"] == "accepted"
-    assert record["accepted_by"] == "agent"
+    assert record["state"] == "open"
+    assert record["accepted_by"] is None
 
 
 def test_forged_mechanical_accepted_row_on_an_info_ask_is_inert_in_the_fold(
@@ -896,10 +907,10 @@ def test_forged_agent_accepted_row_cannot_reverse_a_done_info_ask(project):
     path) and REVERSES a closed ask back to `accepted`, losing the
     completion fact from the rendered state."""
     q_id = _open(project, channel="cli-tty", kind="info")
-    requests.done(q_id, channel="cli-agent", evidence="answered from README",
+    requests.done(q_id, channel="cli-tty", evidence="answered from README",
                  project_dir=project)
     record = requests.get(q_id, project_dir=project)
-    assert record["state"] == "done"  # sanity: info done lands directly
+    assert record["state"] == "done"  # sanity: a human done lands directly
     row = requests._stamp("accepted", q_id, "cli-agent")
     assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
@@ -938,6 +949,7 @@ def test_agent_accepted_info_ask_is_owed_and_agent_done_closes_it(project):
     RECIPIENT here, with no local `opened` row for it (the ordinary case
     `accept()`'s `recipient_join` fallback exists for)."""
     sender_slug = _seed_bucket("/p/req-info-owed-sender")
+    _cover(project, sender_slug, kind="info")
     q_id = requests.open_request(
         to=store.project_slug(project), ask=ASK, why=WHY, channel="cli-tty",
         kind="info", project_dir=sender_slug)
@@ -1805,9 +1817,13 @@ def test_covered_by_policy_matches_by_full_identity_not_substring():
     # "-p-req" IS a substring of "-p-req-real-sender" but not equal to it —
     # a real accept from the LONGER, different sender must stay uncovered.
     assert not requests._covered_by_policy(
-        row, frozenset({"-p-req-real-sender"}), policies)
+        row, frozenset({"-p-req-real-sender"}), policies, kind="work")
     # The genuine, exact match still covers.
-    assert requests._covered_by_policy(row, frozenset({"-p-req"}), policies)
+    assert requests._covered_by_policy(
+        row, frozenset({"-p-req"}), policies, kind="work")
+    # ...and only for the kind the grant names.
+    assert not requests._covered_by_policy(
+        row, frozenset({"-p-req"}), policies, kind="info")
 
 
 def test_a_self_ratified_policy_never_covers_a_self_addressed_accept_anywhere(
@@ -1876,20 +1892,18 @@ def test_a_policy_covered_accept_then_agent_done_lands_done(project):
     assert record["done_claimed"] is True
 
 
-def test_an_info_record_can_never_reach_a_pending_agent_claim(project):
-    """#961 slice 3 rule 4: the `done_pending` branch in the fold requires
-    `kind == "work"`, so an `info` record cannot arise in a pending state —
-    an agent's `done` on an open `info` ask lands `done` directly, never
-    `done_pending`. Forged via `append`, bypassing `requests.done()`
-    entirely, so this pins the FOLD's own invariant rather than the
-    wrapper's."""
+def test_an_info_record_reaches_a_pending_agent_claim(project):
+    """Receiver consent: the fold's `done_pending` branch holds an agent's
+    `done` on an `info` ask nobody accepted, the same as on `work`. Forged
+    via `append`, bypassing `requests.done()` entirely, so this pins the
+    FOLD's own invariant rather than the wrapper's."""
     q_id = _open(project, channel="cli-tty", kind="info")
     row = requests._stamp("done", q_id, "cli-agent")
     row["evidence"] = "a forged completion claim on an info ask"
     assert requests.append(row, project_dir=project, writer=Writer.HUMAN)
     record = requests.get(q_id, project_dir=project)
-    assert record["state"] == "done"
-    assert record["done_pending"] is False
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
     assert record["done_claimed"] is True
 
 
@@ -2164,13 +2178,13 @@ def test_human_done_on_an_open_work_ask_still_lands_as_done(project):
     assert record["done_claimed"] is False
 
 
-def test_agent_done_on_an_info_ask_still_lands_as_done(project):
+def test_agent_done_on_an_unaccepted_info_ask_is_a_pending_claim(project):
     q_id = _open(project, channel="cli-tty", kind="info")
     requests.done(q_id, channel="cli-agent", evidence="we use project_dir",
                  project_dir=project)
     record = requests.get(q_id, project_dir=project)
-    assert record["state"] == "done"
-    assert record["done_pending"] is False
+    assert record["state"] == "open"
+    assert record["done_pending"] is True
     assert record["done_claimed"] is True
 
 
@@ -2955,7 +2969,7 @@ def test_cli_open_short_name_honors_tenant_scope(
     assert not requests.records(project_dir=project)
     captured = capsys.readouterr()
     assert "resolved" not in captured.err
-    assert "no daimon bucket named 'recipient'" in captured.out
+    assert config.TENANT_SCOPE_REFUSAL in captured.out
 
 
 @pytest.mark.parametrize("spelling", ["path", "slug"])
@@ -3206,24 +3220,15 @@ def test_cli_request_list_detail_card_shows_accepted_by_human(
 
 
 def test_cli_request_list_detail_card_shows_accepted_by_agent(
-        project, recipient, monkeypatch, capsys):
-    """The verdict row lands in the SENDER's own bucket (a human, or here an
-    agent, may record a verdict from whatever directory they stand in —
-    requests.py's own #895 doctrine), so `request list` from `project`
-    (the sender) sees the whole record with no cross-bucket join needed.
-    The genuinely cross-bucket path is exercised separately, on `inbox`,
-    below."""
+        tmp_checkpoint_dir, capsys):
+    """The sender's `request list` joins the recipient's verdict row, so the
+    card names who accepted."""
     from daimon_briefing import cli
-    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
-                   "--why", WHY, "--kind", "info", "--project", project])
-    assert rc == 0
-    q_id = next(iter(requests.records(project_dir=project)))
-    capsys.readouterr()
-    assert cli.main(["request", "accept", q_id, "--by", "agent",
-                     "--project", project]) == 0
-    capsys.readouterr()
-    assert cli.main(["request", "list", "--project", project]) == 0
+    recipient_dir = "/p/accepted-by-list-recipient"
+    sender_dir = "/p/accepted-by-list-sender"
+    q_id = _covered_info_ask(recipient_dir, sender_dir)
+    requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
+    assert cli.main(["request", "list", "--project", sender_dir]) == 0
     out = capsys.readouterr().out
     assert "Accepted by: agent" in out
 
@@ -3249,30 +3254,24 @@ def test_cli_request_inbox_detail_card_shows_accepted_by_agent(
     from daimon_briefing import cli
     recipient_dir = "/p/accepted-by-961-recipient"
     sender_dir = "/p/accepted-by-961-sender"
-    q_id = requests.open_request(
-        to=store.project_slug(recipient_dir), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=sender_dir)
+    q_id = _covered_info_ask(recipient_dir, sender_dir)
     requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
     assert cli.main(["request", "inbox", "--project", recipient_dir]) == 0
     out = capsys.readouterr().out
     assert "Accepted by: agent" in out
 
 
-def test_request_json_payload_carries_accepted_by(project, recipient,
-                                                   monkeypatch, capsys):
+def test_request_json_payload_carries_accepted_by(tmp_checkpoint_dir,
+                                                   capsys):
     from daimon_briefing import cli
-    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
-                   "--why", WHY, "--kind", "info", "--project", project])
-    assert rc == 0
-    q_id = next(iter(requests.records(project_dir=project)))
-    capsys.readouterr()
-    assert cli.main(["request", "accept", q_id, "--by", "agent",
-                     "--project", project]) == 0
-    capsys.readouterr()
-    assert cli.main(["request", "list", "--project", project,
+    recipient_dir = "/p/accepted-by-json-recipient"
+    sender_dir = "/p/accepted-by-json-sender"
+    q_id = _covered_info_ask(recipient_dir, sender_dir)
+    requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
+    assert cli.main(["request", "list", "--project", sender_dir,
                      "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["request_id"] == q_id
     assert payload[0]["accepted_by"] == "agent"
 
 
@@ -3384,15 +3383,16 @@ def test_verdict_inject_lines_never_shows_a_kind_marker(project):
     assert "[info]" not in "\n".join(lines)
 
 
-def test_verdict_inject_lines_marks_an_agent_accept_distinctly(project):
+def test_verdict_inject_lines_marks_an_agent_accept_distinctly(
+        tmp_checkpoint_dir):
     """#961 slice 3: the live-delivery verdict nudge must not read an
     agent-accepted `info` ask the same as an ordinary human accept."""
     from daimon_briefing.cli import request as cli_request
-    q_id = requests.open_request(
-        to=store.project_slug(project), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=project)
-    requests.accept(q_id, channel="cli-agent", project_dir=project)
-    record = requests.get(q_id, project_dir=project)
+    recipient_dir = "/p/inject-lines-recipient"
+    sender_dir = "/p/inject-lines-sender"
+    q_id = _covered_info_ask(recipient_dir, sender_dir)
+    requests.accept(q_id, channel="cli-agent", project_dir=recipient_dir)
+    record = requests.sender_join(project_dir=sender_dir)[q_id]
     lines = cli_request._verdict_inject_lines(record)
     assert "accepted (by agent)" in lines[0]
 
@@ -4496,148 +4496,58 @@ def test_render_state_labels_stale_without_writing_it(project):
     assert requests.events(project_dir=recipient) == before  # no new row
 
 
-# ---- #961 slice 3 review item 1: an info ask's staleness anchors on
-# DELIVERY, never SURFACED -----------------------------------------------
+# ---- staleness anchors on SURFACED for both kinds ----------------------------
 #
-# `decision_renderable` (the panel) never renders an `info` ask at all, so a
-# `surfaced` stamp for one measures staleness against a card that was never
-# shown. Attention for an `info` ask is the AGENT's, measured by delivery
-# into a live session; attention for a `work` ask is the PERSON's, measured
-# by the panel. `is_stale` anchors a `kind == "info"` record on the
-# EARLIEST `delivered` stamp of its CURRENT revision instead.
+# An `info` ask waits in the same decision panel a `work` ask does (receiver
+# consent), so the card a person was shown is the attention the clock measures
+# for either kind; a live-delivery stamp alone never decays an ask.
 
 
-def test_is_stale_info_ask_ignores_a_surfaced_stamp(project):
-    """Even with a `surfaced` row on file (the brief loop no longer writes
-    one for an `info` ask, but nothing stops a direct call), an `info`
-    record must not anchor on it."""
-    sender_slug = _seed_bucket("/p/req-sender-stale-info-a")
-    recipient = "/p/req-recipient-stale-info-a"
+@pytest.mark.parametrize("kind", ["info", "work"])
+def test_is_stale_ask_after_three_recipient_sessions_past_surfaced(
+        project, kind):
+    sender_slug = _seed_bucket(f"/p/req-sender-stale-{kind}-s")
+    recipient = f"/p/req-recipient-stale-{kind}-s"
     q_id = requests.open_request(
         to=store.project_slug(recipient), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=sender_slug)
+        channel="cli-tty", kind=kind, project_dir=sender_slug)
     requests.stamp_surfaced(q_id, project_dir=recipient)
-    for n in range(requests.STALE_AFTER_SESSIONS + 1):
-        _serialize(recipient, f"S-info-a{n}", _iso(n + 1))
     record = requests.recipient_join(project_dir=recipient)[q_id]
     assert requests.is_stale(record, project_dir=recipient) is False
-
-
-def test_is_stale_info_ask_never_delivered_never_decays(project):
-    sender_slug = _seed_bucket("/p/req-sender-stale-info-b")
-    recipient = "/p/req-recipient-stale-info-b"
-    q_id = requests.open_request(
-        to=store.project_slug(recipient), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=sender_slug)
-    for n in range(5):
-        _serialize(recipient, f"S-info-b{n}", _iso(n + 1))
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is False
-
-
-def test_is_stale_info_ask_after_three_recipient_sessions_past_delivery(
-        project):
-    """Mirrors `test_is_stale_after_three_recipient_sessions_past_the_
-    anchor` exactly, `stamp_delivered` in place of `stamp_surfaced`: not
-    stale at 2 of 3 sessions past the anchor, stale at 3."""
-    sender_slug = _seed_bucket("/p/req-sender-stale-info-c")
-    recipient = "/p/req-recipient-stale-info-c"
-    q_id = requests.open_request(
-        to=store.project_slug(recipient), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=sender_slug)
-    requests.stamp_delivered(q_id, "S-info-c-session", project_dir=recipient)
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is False
-    for n in range(requests.STALE_AFTER_SESSIONS - 1):
-        _serialize(recipient, f"S-info-c{n}", _iso(n + 1))
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is False  # 2 of 3
-    _serialize(recipient, "S-info-c-last",
-              _iso(requests.STALE_AFTER_SESSIONS + 1))
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is True
-
-
-def test_is_stale_work_ask_ignores_a_delivered_stamp(project):
-    """The mirror case: a `work` ask's staleness stays anchored on
-    `surfaced`, never `delivered` — a live-delivery stamp alone, with no
-    brief ever rendering the card, must not decay it."""
-    sender_slug = _seed_bucket("/p/req-sender-stale-work-a")
-    recipient = "/p/req-recipient-stale-work-a"
-    q_id = requests.open_request(
-        to=store.project_slug(recipient), ask=ASK, why=WHY,
-        channel="cli-agent", project_dir=sender_slug)
-    requests.stamp_delivered(q_id, "S-work-a-session", project_dir=recipient)
-    for n in range(requests.STALE_AFTER_SESSIONS + 1):
-        _serialize(recipient, f"S-work-a{n}", _iso(n + 1))
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is False
-
-
-def test_is_stale_info_ask_resets_after_a_revise_to_the_new_revisions_own_delivery(
-        project):
-    """#961 slice 3 review round 2 item 4: `delivered` is keyed by REVISION
-    epoch, the same shape `surfaced` already uses for a `work` ask (#803's
-    own lesson: a revise opens a new epoch, so stale-ness measured against
-    an old one must not carry over). A `revise` bumps the revision, and the
-    new epoch's own `delivered` dict starts empty — the record must read as
-    NOT stale right after the revise even though three sessions already
-    passed the OLD revision's delivery, and must go stale again only once
-    the NEW revision has itself been delivered and aged past three
-    sessions.
-
-    Every fold-relevant row (the `opened` row's own real `order` aside, read
-    back rather than assumed) is forged with an explicit `now_ns`, INCLUDING
-    the `revised` row — `requests.revise()`'s own wrapper has no timestamp
-    override, and mixing its live "now" with a fictional future `base` for
-    the `delivered` rows put `revise` numerically BEFORE both deliveries
-    (real "now" sorts before a `base` chosen further in the future than real
-    time), so every forged delivery landed under the POST-revise revision
-    regardless of which one it was meant to be — a test-only ordering bug,
-    not a production one, caught by running this exact test first. Forging
-    `revised` too (the same technique `test_surfaced_rows_fold_per_revision_
-    epoch` already uses) keeps every relevant row on one fully controlled
-    timeline."""
-    sender_slug = _seed_bucket("/p/req-sender-stale-info-e")
-    recipient = "/p/req-recipient-stale-info-e"
-    q_id = requests.open_request(
-        to=store.project_slug(recipient), ask=ASK, why=WHY,
-        channel="cli-tty", kind="info", project_dir=sender_slug)
-    base = requests.events(project_dir=sender_slug)[0]["order"]
-
-    def _at(event, channel, seconds, bucket, **extra):
-        row = requests._stamp(event, q_id, channel,
-                              now_ns=base + seconds * 10 ** 9)
-        row.update(extra)
-        assert requests.append(row, project_dir=bucket, writer=Writer.HUMAN)
-
-    # `delivered` is a RECIPIENT-side stamp (live delivery writes it into
-    # its own bucket); `revised` is a SENDER-side event (the same bucket
-    # `opened` lives in) — each forged into the bucket the real writer
-    # would use, only the timestamp is controlled.
-    _at("delivered", "mechanical", 1, recipient, session="S-info-e-session")
-    for n in range(requests.STALE_AFTER_SESSIONS + 1):
-        _serialize(recipient, f"S-info-e{n}", requests._ts(
-            base + (n + 2) * 10 ** 9))
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is True  # sanity
-
-    _at("revised", "cli-agent", 10, sender_slug, why="a sharper why")
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert record["revision"] == 1
-    # Not stale: revision 1's own `delivered` dict is still empty, and the
-    # revision-0 delivery three sessions ago must not carry over.
-    assert requests.is_stale(record, project_dir=recipient) is False
-
-    _at("delivered", "mechanical", 11, recipient,
-       session="S-info-e-new-session")
-    record = requests.recipient_join(project_dir=recipient)[q_id]
-    assert requests.is_stale(record, project_dir=recipient) is False  # just delivered
     for n in range(requests.STALE_AFTER_SESSIONS):
-        _serialize(recipient, f"S-info-e-post{n}", requests._ts(
-            base + (12 + n) * 10 ** 9))
+        _serialize(recipient, f"S-{kind}-s{n}", _iso(n + 1))
     record = requests.recipient_join(project_dir=recipient)[q_id]
     assert requests.is_stale(record, project_dir=recipient) is True
+
+
+@pytest.mark.parametrize("kind", ["info", "work"])
+def test_is_stale_ask_never_surfaced_never_decays(project, kind):
+    sender_slug = _seed_bucket(f"/p/req-sender-stale-{kind}-n")
+    recipient = f"/p/req-recipient-stale-{kind}-n"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-tty", kind=kind, project_dir=sender_slug)
+    for n in range(5):
+        _serialize(recipient, f"S-{kind}-n{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
+
+
+@pytest.mark.parametrize("kind", ["info", "work"])
+def test_is_stale_ask_ignores_a_delivered_stamp(project, kind):
+    """A live-delivery stamp alone, with no brief ever rendering the card,
+    must not decay an ask of either kind."""
+    sender_slug = _seed_bucket(f"/p/req-sender-stale-{kind}-d")
+    recipient = f"/p/req-recipient-stale-{kind}-d"
+    q_id = requests.open_request(
+        to=store.project_slug(recipient), ask=ASK, why=WHY,
+        channel="cli-tty", kind=kind, project_dir=sender_slug)
+    requests.stamp_delivered(q_id, f"S-{kind}-d-session",
+                             project_dir=recipient)
+    for n in range(requests.STALE_AFTER_SESSIONS + 1):
+        _serialize(recipient, f"S-{kind}-d{n}", _iso(n + 1))
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.is_stale(record, project_dir=recipient) is False
 
 
 def test_inbox_renderable_drops_stale_but_inbox_listing_keeps_it(project):
@@ -5984,9 +5894,11 @@ def test_coverage_check_treats_a_non_numeric_row_order_as_uncovered(project):
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
-    assert requests._covered_by_policy(accepted, sender_slug, policies) is True
+    assert requests._covered_by_policy(
+        accepted, sender_slug, policies, kind="work") is True
     accepted["order"] = "not a number"
-    assert requests._covered_by_policy(accepted, sender_slug, policies) is False
+    assert requests._covered_by_policy(
+        accepted, sender_slug, policies, kind="work") is False
 
 
 # ---- #961 slice 5: verb=open request_policy, the sender-side ruling -------
@@ -6226,10 +6138,9 @@ def test_a_ruling_in_a_different_bucket_never_covers_an_open(project):
             project_dir=project)
 
 
-def test_foreign_request_counts_excludes_a_ruling_covered_info_open(project):
-    """`pending._foreign_request_counts` must not count a ruling-covered
-    info open as waiting work — the same #961 slice 3 defect class this
-    already closed for a human-opened `info` ask."""
+def test_foreign_request_counts_includes_a_ruling_covered_info_open(project):
+    """A ruling-covered info open still waits on the recipient's person (or
+    on a receiver ruling for its agent), so the foreign count carries it."""
     to_slug = store.project_slug(project)
     sender_dir = "/p/open-foreign-count-sender"
     _seed_bucket(sender_dir)
@@ -6238,7 +6149,7 @@ def test_foreign_request_counts_excludes_a_ruling_covered_info_open(project):
         to=to_slug, ask=ASK, why=WHY, channel="cli-agent", kind="info",
         project_dir=sender_dir)
     counts = pending._foreign_request_counts(None)
-    assert counts.get(to_slug, 0) == 0
+    assert counts.get(to_slug, 0) == 1
 
 
 # ---- lifecycle: survives overturn, decide-exclusion, accept/done/reject --
@@ -6271,7 +6182,7 @@ def test_a_past_info_open_survives_an_overturn_of_its_authorizing_ruling(
     assert forged_record["q-0000000000f4"]["kind"] == "work"
 
 
-def test_info_under_ruling_is_excluded_from_decide_and_the_foreign_count(
+def test_info_under_ruling_waits_in_the_recipients_decide_queue(
         project):
     to_slug = store.project_slug(project)
     sender_dir = "/p/open-decide-exclude-sender"
@@ -6281,15 +6192,16 @@ def test_info_under_ruling_is_excluded_from_decide_and_the_foreign_count(
         to=to_slug, ask=ASK, why=WHY, channel="cli-agent", kind="info",
         project_dir=sender_dir)
     rows = pending.queue(project_dir=project)["rows"]
-    assert not any(r["kind"] == "request" for r in rows)
+    assert [r["kind"] for r in rows] == ["request"]
 
 
 def test_info_under_ruling_may_be_agent_accepted_and_agent_done(project):
-    # #961 slice 4's own carve-out: `accept()`'s agent path never needs a
-    # ruling at all for `kind == "info"` — covered here to confirm it still
-    # applies when the `info` itself came from a ruling, not a human.
+    # The sender's `verb=open` ruling lowers the ask to `info`; the
+    # recipient's agent still needs its OWN project's `verb=accept` ruling
+    # to answer it.
     to_slug = "p-open-lifecycle-a"
     _cover_open(project, to_slug)
+    _cover(to_slug, store.project_slug(project), kind="info")
     q_id = requests.open_request(
         to=to_slug, ask=ASK, why=WHY, channel="cli-agent", kind="info",
         project_dir=project)

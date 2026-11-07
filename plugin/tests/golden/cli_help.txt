@@ -652,8 +652,8 @@ usage: daimon request [-h] {open,revise,accept,reject,needs-info,suppress,done,r
 positional arguments: {open,revise,accept,reject,needs-info,suppress,done,reply,list,inbox} open
 open a request addressed to another project's slug revise answer a needs-info or sharpen an open
 ask; capped at 3 revisions per record accept accept an addressed request; a human decision, or an
-agent may accept an addressed `info` ask reject reject it with a reason; rejection is final for that
-record, and the sender can open a new one citing it needs-info ask the sender for more before
+agent under a ruling that covers its sender reject reject it with a reason; rejection is final for
+that record, and the sender can open a new one citing it needs-info ask the sender for more before
 deciding suppress drop it out of the briefing panel; it stays in `request list`, and any later
 verdict reverses it done report the ask as satisfied; an agent claim renders as
 claimed-and-unverified until the byte-check reply send the sender a progress note on a request you
@@ -673,13 +673,13 @@ project to do --why WHY why it matters; the recipient reads this first --title T
 headline of a few words (80 characters at most) that leads wherever the request is listed; the ask
 stays the full text --to-human the ask is for that project's human, not its agent --kind {info,work}
 approval requirement: work (default) waits on a person, info is answerable from the recipient's own
-artifacts and owes no accept; only a human channel may open one as info --blocking mark the sender
-as blocked on it; a flag on the record, never a claim on the recipient's time --evidence EVIDENCE
-optional source backing the ask; recorded, never resolved --supersedes REQUEST_ID the earlier q-…
-this ask replaces; the lineage renders always --anyway record the ask even when the recipient slug
-has no bucket yet; it is never surfaced there until that project serializes --by {agent} declare
-yourself an agent; omit it only from an interactive terminal, which is the human path --project
-PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+artifacts; only a human channel may open one as info --blocking mark the sender as blocked on it; a
+flag on the record, never a claim on the recipient's time --evidence EVIDENCE optional source
+backing the ask; recorded, never resolved --supersedes REQUEST_ID the earlier q-… this ask replaces;
+the lineage renders always --anyway record the ask even when the recipient slug has no bucket yet;
+it is never surfaced there until that project serializes --by {agent} declare yourself an agent;
+omit it only from an interactive terminal, which is the human path --project PROJECT project
+directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request revise ===
 usage: daimon request revise [-h] [--ask ASK] [--why WHY] [--evidence EVIDENCE] [--title TITLE]
@@ -693,10 +693,10 @@ interactive terminal --project PROJECT project directory (default: DAIMON_PROJEC
 usage: daimon request accept [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
 request_id positional arguments: request_id exact q-… id options: -h, --help show this help message
 and exit --note NOTE kept on the record --by {agent} declare yourself an agent; permitted only for
-an addressed `info` ask still open or needs-info — a `work` ask still needs `daimon request accept`
-from a human channel --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
---slug SLUG route to another project's bucket by its slug, written --slug=<slug> (a slug starts with
-'-'); routing only, the channel gate is unchanged (#766)
+an addressed ask (`info` or `work`) an active ruling of this project covers for its sender —
+otherwise it needs `daimon request accept` from a human channel --project PROJECT project directory
+(default: DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by its slug,
+written --slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === request reject ===
 usage: daimon request reject [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
