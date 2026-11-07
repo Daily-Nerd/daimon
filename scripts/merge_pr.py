@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Merge a pull request with a merge commit whose message release-please ignores.
+"""Merge a pull request with a merge commit, and verify the commit that landed.
 
-Why this exists. PRs merge with a merge commit so every branch commit reaches
-``main`` as itself and becomes one changelog line. release-please reads each
-commit message and splits it wherever a blank line is followed by a
-conventional type (``feat``, ``fix``, ...). GitHub's merge button writes
+PRs merge with a merge commit so every branch commit reaches ``main`` as itself
+and becomes one changelog line. release-please reads each commit message and
+splits it wherever a blank line is followed by a conventional type (``feat``,
+``fix``, ...). The repo setting ``merge_commit_message=PR_TITLE`` makes GitHub's
+merge button write
 
     Merge pull request #N from owner/branch
 
     <PR title>
 
-and the PR title is conventional, so the merge commit counts as one more
-``feat``/``fix`` and the change is listed twice. GitHub offers no
-merge-message setting that leaves the title out:
-the three allowed combinations put it in the title or in the body. The only
-merge commit release-please ignores is one with the default subject and an
-empty body, which the button cannot produce on its own. This script produces
-it, then verifies the commit that landed.
+so a PR title shaped like a conventional commit would count as one more
+``feat``/``fix`` and list the change twice. The PR title gate in
+``pr-validation.yml`` (#1285) rejects such titles, so the merge button is safe
+and this script is optional. Merging with it still yields the default subject
+and an empty body, and ``--check`` stays useful as the verifier of what landed
+on ``main``: it catches a title that got past the gate (an admin merge, or a
+title edited after the check ran).
 
     uv run python scripts/merge_pr.py <number>            # merge and verify
     uv run python scripts/merge_pr.py <number> --check    # verify a merged PR
@@ -101,8 +102,10 @@ def verify(number: int) -> int:
         print("release-please will count as a commit of its own:")
         for line in offending:
             print(f"  {line}")
-        print("The next changelog lists this PR twice. Fix the committed")
-        print("CHANGELOG.md after the release lands, as #1232 did.")
+        print("The PR title gate should have rejected this PR title, so it was")
+        print("bypassed or edited after the check. The next changelog lists this")
+        print("PR twice; fix the committed CHANGELOG.md after the release lands,")
+        print("as #1232 did.")
         return 1
     print(f"ok: merge commit {sha[:7]} of #{number} has no conventional line")
     return 0
