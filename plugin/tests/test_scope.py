@@ -232,3 +232,18 @@ def test_a_stray_dir_is_reported_loudly_and_internals_are_not(
     notes = [n for n in view.projects_notes("-good") if "not a project" in n]
     assert len(notes) == 1 and "2" in notes[0]
     assert "repo.x" not in notes[0]  # a count, never a name
+
+
+def test_a_stray_note_under_tenant_scope_names_no_count(
+        tmp_checkpoint_dir, monkeypatch):
+    _plant("-good")
+    (tmp_checkpoint_dir / "repo.x").mkdir()
+    monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    notes = [n for n in view.projects_notes("-good") if "not a project" in n]
+    assert len(notes) == 1 and not any(ch.isdigit() for ch in notes[0])
+
+
+def test_bucket_exists_refuses_a_stray_dir_that_holds_a_pointer(
+        tmp_checkpoint_dir):
+    _plant("repo.x")
+    assert view.bucket_exists("repo.x", None) is False
