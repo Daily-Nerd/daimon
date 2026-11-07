@@ -155,8 +155,8 @@ Mira las secciones de instalación de arriba.
 ## Filas que una captura nunca lee
 
 Una captura lee la conversación y nada de lo que el anfitrión o un hook
-escribió alrededor. Cuatro reglas deciden qué filas de la transcripción se
-descartan, cada una con un código estable:
+escribió alrededor. Estas reglas deciden qué filas de la transcripción se
+excluyen, cada una con un código estable:
 
 | Código | Fila descartada |
 |---|---|
@@ -164,6 +164,7 @@ descartan, cada una con un código estable:
 | `meta` | `isMeta` es verdadero |
 | `attachment` | el `type` de nivel superior es `attachment`, sea cual sea su tipo interno |
 | `compact-summary` | `isCompactSummary` es verdadero |
+| `session-owner`, `file-history-snapshot`, `file-history-delta`, `last-prompt`, `ai-title`, `mode`, `permission-mode`, `queue-operation`, `system`, `summary`, `pr-link`, `bridge-session`, `cost-state`, `tools-used`, `atis-latch`, `api-request`, `api-request-blob`, `api-request-shape` | registro interno del anfitrión: el `type` de nivel superior es este nombre y la fila no nombra ningún rol. El código es el tipo |
 
 La salida de un hook llega a la transcripción como filas de tipo attachment,
 el briefing de daimon incluido, así que nada de eso se vuelve a leer. Una fila
@@ -198,7 +199,10 @@ las mismas notas. Una transcripción con filas y sin conversación admitida es
 una falla de lectura, no una sesión corta: `daimon serialize` y el hook de fin
 de sesión escriben una línea `error: unreadable-transcript: ...`, que `daimon
 status` cuenta y `daimon heal` reintenta. Un archivo sin ninguna fila es un
-salto, `empty-transcript`. Una sesión que simplemente es corta sigue siendo el
+salto, `empty-transcript`, y también lo es un archivo donde todas las filas
+fueron excluidas y ninguna descartada (una sesión que se abrió y se dejó solo
+tiene filas internas): `no-conversation`. Una sola fila de forma desconocida
+entre ellas basta para que vuelva a ser una falla. Una sesión que simplemente es corta sigue siendo el
 salto `transcript too short`.
 
 Un anfitrión puede atar sus propios tests a esto:

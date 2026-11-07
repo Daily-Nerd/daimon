@@ -63,8 +63,10 @@ def test_the_check_order_is_sidechain_meta_attachment_summary():
     assert transcript.excluded_reason(everything) == "compact-summary"
 
 
-def test_the_codes_are_exactly_the_four_in_order():
-    assert transcript.EXCLUDED_CODES == (
+def test_the_first_four_codes_keep_their_order():
+    # Codes may be added, never removed or renamed (#1292 named the host
+    # bookkeeping types after these four).
+    assert transcript.EXCLUDED_CODES[:4] == (
         "sidechain", "meta", "attachment", "compact-summary")
 
 
@@ -181,8 +183,9 @@ def test_a_file_with_no_conversation_rows_leaves_no_note(tmp_path):
     ])
     detailed = transcript.from_file_detailed(path)
     assert detailed["messages"] == []
-    # No summary note; the one row with no role is only counted (#1292).
-    assert detailed["notes"] == ["rows-dropped: no-role=1"]
+    # Both rows are excluded (an attachment, and the named `mode` bookkeeping
+    # row #1292), so nothing was dropped and no note is written.
+    assert detailed["notes"] == []
 
 
 def test_only_the_generic_branch_computes_notes(tmp_path):

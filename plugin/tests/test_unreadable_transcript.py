@@ -98,6 +98,7 @@ _CLAUDE = _jsonl(
          message={"role": "assistant", "content": "sub"}),
     _row(type="attachment", uuid="u3", attachment={"type": "x"}),
     _row(type="file-history-snapshot", snapshot={}),
+    _row(type="a-row-type-nobody-named-yet", payload={}),
     _row(type="assistant", uuid="u4",
          message={"role": "assistant",
                   "content": [{"type": "tool_use", "id": "t", "name": "b",
@@ -154,7 +155,8 @@ def test_claude_rows_are_bucketed_by_reason(tmp_path):
     p.write_text(_CLAUDE, encoding="utf-8")
     account = transcript.from_file_detailed(p)["account"]
     assert account.admitted == 1
-    assert dict(account.excluded) == {"sidechain": 1, "attachment": 1}
+    assert dict(account.excluded) == {
+        "sidechain": 1, "attachment": 1, "file-history-snapshot": 1}
     assert dict(account.dropped) == {
         "no-role": 1, "tool-use-only": 1, "tool-result-without-id": 1,
         "no-content": 1, "unparsable-line": 2}
@@ -173,6 +175,39 @@ def test_every_adapter_reports_its_drops_with_the_shared_codes(tmp_path):
     for name, dropped in expect.items():
         account = transcript.from_file_detailed(cases[name])["account"]
         assert dict(account.dropped) == dropped, name
+
+
+def test_kimi_rows_with_empty_text_are_dropped_as_no_content(tmp_path):
+    p = _kimi_path(tmp_path)
+    p.write_text(_jsonl(
+        _row(type="metadata", protocol_version="1"),
+        _row(type="prompt.accepted", input=[]),
+        _row(type="context.append_loop_event",
+             event={"type": "content.part",
+                    "part": {"type": "text", "text": "  "}}),
+    ), encoding="utf-8")
+    account = transcript.from_file_detailed(p)["account"]
+    assert dict(account.dropped) == {"no-role": 1, "no-content": 2}
+    assert account.admitted == 0
+
+
+def test_the_messages_only_reader_agrees_with_the_accounted_one(tmp_path):
+    text = _CLAUDE
+    assert transcript._from_jsonl(text) == transcript._from_jsonl_accounted(
+        text)[0]
+
+
+def test_hook_door_skips_a_session_store_that_answered_empty(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(transcript, "from_session", lambda s: [])
+    monkeypatch.setattr(transcript, "from_session_detailed",
+                        lambda s: transcript.SessionRead([], "empty"))
+    monkeypatch.setattr(hooks, "_chat", _boom_chat)
+    hooks.on_session_end(session_id="S-store", completed=True,
+                         interrupted=False, model="m", platform="cli")
+    logged = _log(tmp_path)
+    assert "skipped serialize for S-store" in logged
+    assert "empty-transcript" in logged and "error:" not in logged
 
 
 def test_plain_text_and_markdown_blob_are_fully_admitted(tmp_path):
@@ -385,3 +420,116 @@ def test_from_session_detailed_tells_unavailable_from_empty(monkeypatch):
     got = transcript.from_session_detailed("s")
     assert got.status == "ok" and len(got.messages) == 2
     assert transcript.from_session("s") == got.messages
+
+
+# ---- bookkeeping rows: named exclusions, and a skip when nothing else is there --
+
+BOOKKEEPING = (
+    "session-owner", "file-history-snapshot", "file-history-delta",
+    "last-prompt", "ai-title", "mode", "permission-mode", "queue-operation",
+    "system", "summary", "pr-link", "bridge-session", "cost-state",
+    "tools-used", "atis-latch", "api-request", "api-request-blob",
+    "api-request-shape",
+)
+
+
+@pytest.mark.parametrize("kind", BOOKKEEPING)
+def test_a_known_bookkeeping_row_type_is_a_named_exclusion(kind):
+    assert transcript.excluded_reason({"type": kind}) == kind
+    assert kind in transcript.EXCLUDED_ROWS
+
+
+def test_a_bookkeeping_type_never_hides_a_row_that_carries_a_role():
+    row = {"type": "system", "message": {"role": "user", "content": "hi"}}
+    assert transcript.excluded_reason(row) is None
+    assert transcript.excluded_reason({"type": ["unhashable"]}) is None
+    assert transcript.excluded_reason({"type": "something-new"}) is None
+
+
+def test_an_exclusion_that_sits_between_turns_keeps_coverage_available(tmp_path):
+    p = tmp_path / "t.jsonl"
+    p.write_text(_jsonl(
+        _row(type="user", uuid="u1", message={"role": "user", "content": "a"}),
+        _row(type="session-owner", sessionId="x"),
+        _row(type="assistant", uuid="u2",
+             message={"role": "assistant", "content": "b"})), encoding="utf-8")
+    detailed = transcript.from_file_detailed(p)
+    assert detailed["coverage"]["available"] is True
+    assert dict(detailed["account"].excluded) == {"session-owner": 1}
+
+
+def test_require_readable_skips_only_when_every_row_was_excluded():
+    only = _account(rows=2, excluded={"session-owner": 2})
+    with pytest.raises(serializer.NoConversation) as skip:
+        serializer.require_readable([], only)
+    assert "no-conversation" in str(skip.value)
+    assert isinstance(skip.value, serializer.TooShortError)
+    mixed = _account(rows=3, excluded={"session-owner": 2},
+                     dropped={"no-role": 1})
+    with pytest.raises(serializer.UnreadableTranscript):
+        serializer.require_readable([], mixed)
+    tools = [{"role": "tool", "content": "x", "id": "t", "tool_result": True}]
+    with pytest.raises(serializer.UnreadableTranscript):
+        serializer.require_readable(tools, _account(rows=1, admitted=1))
+
+
+def test_cli_door_skips_a_file_of_bookkeeping_rows_only(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_chat", _boom_chat)
+    rc = cli._run_serialize(FIXTURES / "claude_session_owner_only.jsonl",
+                            PROJECT)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "skipped serialize" in out and "no-conversation" in out
+    assert "session-owner=2" in out
+    assert "error:" not in out + _log(tmp_path)
+    assert "too short" not in out
+
+
+def test_hook_door_skips_a_file_of_bookkeeping_rows_only(tmp_path, monkeypatch):
+    path = tmp_path / "S-owner.jsonl"
+    path.write_text((FIXTURES / "claude_session_owner_only.jsonl").read_text(
+        encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(transcript, "from_session", lambda s: [])
+    monkeypatch.setattr(hooks, "_chat", _boom_chat)
+    hooks.on_session_end(session_id="S-owner", completed=True,
+                         interrupted=False, model="m", platform="cli",
+                         transcript_path=str(path))
+    logged = _log(tmp_path)
+    assert "skipped serialize for S-owner" in logged
+    assert "no-conversation" in logged
+    assert "error:" not in logged and "too short" not in logged
+
+
+def test_one_unknown_row_among_bookkeeping_rows_is_still_a_failure(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_chat", _boom_chat)
+    rc = cli._run_serialize(
+        FIXTURES / "claude_session_owner_with_unknown_row.jsonl", PROJECT)
+    out = capsys.readouterr()
+    assert rc == 1
+    assert "error: unreadable-transcript" in out.out + out.err
+    path = tmp_path / "S-mixed.jsonl"
+    path.write_text((FIXTURES / "claude_session_owner_with_unknown_row.jsonl"
+                     ).read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(transcript, "from_session", lambda s: [])
+    monkeypatch.setattr(hooks, "_chat", _boom_chat)
+    hooks.on_session_end(session_id="S-mixed", completed=True,
+                         interrupted=False, model="m", platform="cli",
+                         transcript_path=str(path))
+    assert "error: unreadable-transcript" in _log(tmp_path)
+
+
+def test_import_plan_names_a_bookkeeping_only_file_as_no_conversation(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    root = tmp_path / "projects"
+    monkeypatch.setenv("DAIMON_CLAUDE_PROJECTS_DIR", str(root))
+    (root / store.project_slug(PROJECT)).mkdir(parents=True)
+    path = root / store.project_slug(PROJECT) / "S-imp.jsonl"
+    path.write_text((FIXTURES / "claude_session_owner_only.jsonl").read_text(
+        encoding="utf-8"), encoding="utf-8")
+    os.utime(path, (1_782_000_000, 1_782_000_000))
+    plan = importer.plan_import(PROJECT, [path], now=time.time(), log_text="")
+    (skip,) = plan.skipped
+    assert skip.reason.startswith("no-conversation")

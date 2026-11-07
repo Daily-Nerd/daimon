@@ -433,7 +433,7 @@ def _kimi_tool_message(event: dict, daimon_calls: set[str]) -> dict | None:
 
 
 def _from_kimi_wire(numbered: list[tuple[int, dict]],
-                    fates: dict[int, str] | None = None) -> list[dict]:
+                    fates: dict[int, str]) -> list[dict]:
     """Fold a Kimi Code wire event log into conversation messages.
 
     `numbered` pairs each object with its 1-based PHYSICAL line in the raw
@@ -446,8 +446,6 @@ def _from_kimi_wire(numbered: list[tuple[int, dict]],
 
     `fates` (#1292) is the row account: it receives the fate of each line
     this branch reads. A line it does not name is a row with no turn in it."""
-    if fates is None:
-        fates = {}
     objects = [obj for _line, obj in numbered]
     messages: list[dict] = []
     appended = _kimi_appended_texts(objects)
@@ -814,6 +812,33 @@ def _empty_row_reason(obj: dict, mid: str | None) -> str:
 
 # #1178: the rows no capture reads, one stable code per rule, in check order.
 # The codes are a contract: one may be added, never removed or renamed.
+#
+# #1292: the host's own bookkeeping rows are named too, one code per top-level
+# `type`, and the code IS the type. They are the rows a Claude Code transcript
+# holds that are not the conversation (read off the files on one machine, 951
+# of them: a session that was opened and left holds nothing else). Naming them
+# is what lets a file of only these rows be told apart from a file nobody
+# could read: an unknown shape is dropped, never excluded.
+_BOOKKEEPING_ROWS = {
+    "session-owner": "who owns the session: account and organization ids",
+    "file-history-snapshot": "a snapshot of the files the session touched",
+    "file-history-delta": "a change to that file snapshot",
+    "last-prompt": "the host's record of the last prompt typed",
+    "ai-title": "the title the host generated for the session",
+    "mode": "the host's mode switch",
+    "permission-mode": "the host's permission mode switch",
+    "queue-operation": "an operation on the host's prompt queue",
+    "system": "a host notice, not a turn of the conversation",
+    "summary": "the host's title row for a compacted session",
+    "pr-link": "a pull request the session is linked to",
+    "bridge-session": "the host's remote bridge session record",
+    "cost-state": "the host's running cost counters",
+    "tools-used": "the host's list of tools the session used",
+    "atis-latch": "a host latch record",
+    "api-request": "a record of a model API request",
+    "api-request-blob": "the body of a recorded model API request",
+    "api-request-shape": "the shape of a recorded model API request",
+}
 EXCLUDED_ROWS = MappingProxyType({
     "sidechain": "a row the host marks isSidechain (a sub-agent exchange)",
     "meta": "a row the host marks isMeta (host-written, not the person)",
@@ -821,6 +846,8 @@ EXCLUDED_ROWS = MappingProxyType({
                    "inner type: hook and host injections"),
     "compact-summary": ("a row the host marks isCompactSummary: text the "
                         "model wrote, never credited to the person"),
+    **{kind: f"a host bookkeeping row: {meaning}"
+       for kind, meaning in _BOOKKEEPING_ROWS.items()},
 })
 EXCLUDED_CODES = tuple(EXCLUDED_ROWS)
 
@@ -933,6 +960,13 @@ def excluded_reason(obj: dict) -> str | None:
         return "attachment"
     if obj.get("isCompactSummary"):
         return "compact-summary"
+    # #1292: a bookkeeping type is excluded only while the row carries no
+    # role. A row that names a role keeps whatever the loader admitted of it
+    # before, so naming a type can never hide a turn.
+    kind = obj.get("type")
+    if (isinstance(kind, str) and kind in _BOOKKEEPING_ROWS
+            and _role_of(obj) is None):
+        return kind
     return None
 
 

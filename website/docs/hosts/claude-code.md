@@ -146,7 +146,7 @@ injections, two serialize LLM calls). See the install sections above.
 ## Rows a capture never reads
 
 A capture reads the conversation and nothing a host or a hook wrote around it.
-Four rules decide which transcript rows are dropped, each with a stable code:
+These rules decide which transcript rows are excluded, each with a stable code:
 
 | Code | Row dropped |
 |---|---|
@@ -154,6 +154,7 @@ Four rules decide which transcript rows are dropped, each with a stable code:
 | `meta` | `isMeta` is true |
 | `attachment` | the top-level `type` is `attachment`, whatever its inner type |
 | `compact-summary` | `isCompactSummary` is true |
+| `session-owner`, `file-history-snapshot`, `file-history-delta`, `last-prompt`, `ai-title`, `mode`, `permission-mode`, `queue-operation`, `system`, `summary`, `pr-link`, `bridge-session`, `cost-state`, `tools-used`, `atis-latch`, `api-request`, `api-request-blob`, `api-request-shape` | host bookkeeping: the top-level `type` is this name and the row names no role. The code is the type |
 
 Hook output reaches a transcript as attachment rows, daimon's own briefing
 included, so none of it is read back. An attachment row is dropped even when
@@ -186,7 +187,10 @@ carries the same notes. A transcript with rows and no admitted conversation
 is a read failure, not a short session: `daimon serialize` and the session-end
 hook write an `error: unreadable-transcript: ...` line, which `daimon status`
 counts and `daimon heal` retries. A file with no rows at all is a skip,
-`empty-transcript`. A session that is merely short is still the
+`empty-transcript`, and so is a file where every row was excluded and none
+dropped (a session that was opened and left holds only bookkeeping rows):
+`no-conversation`. One row of an unknown shape among them is enough to make
+it a failure again. A session that is merely short is still the
 `transcript too short` skip.
 
 A host can pin its own tests to this:
