@@ -228,6 +228,17 @@ def projects_closed_note(count: int, scoped: bool) -> str:
         f"{count} project(s) have a trust ledger that cannot be read")
 
 
+def stray_dirs_note(count: int, scoped: bool) -> str:
+    """`stray-dirs`: directories in the store that are neither a bucket nor a
+    known store-internal directory. Never read as buckets; named by count only,
+    so the note cannot disclose a name."""
+    if scoped:
+        return marks.warning(
+            "the store holds directories that are not a project")
+    return marks.warning(
+        f"{count} store directory(ies) are not a project and were not read")
+
+
 def sender_skipped_note(count: int, scoped: bool) -> str:
     """`sender-skipped`: foreign buckets left out of an inbox join because
     their requests ledger is not proven."""

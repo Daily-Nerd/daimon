@@ -152,3 +152,83 @@ def test_a_planted_at_directory_is_not_listed_as_a_project(tmp_checkpoint_dir):
     assert requests._bucket_slugs() == ["-good"]
     assert [r["slug"]
             for r in cli_projects.projects_rows()] == ["-good"]
+
+
+# ---- #1294 round 2: a store directory is a bucket iff parse_bucket says so --
+
+
+def _stray_ledger_dir(name="repo.x"):
+    d = config.checkpoint_dir() / name
+    d.mkdir(parents=True)
+    (d / "verification.jsonl").write_text(json.dumps(
+        {"ts": "2026-08-29T10:00:00Z", "check": "receipt",
+         "item_ref": "o-444ddd", "reason": "receipt-invalid"}) + "\n")
+    (d / "requests.jsonl").write_text("")
+    (d / "latest.json").write_text("{}")
+    return d
+
+
+def test_internal_dirs_are_one_typed_set_in_scope():
+    from daimon_briefing import scope
+    assert scope.STORE_INTERNAL_DIRS == frozenset({".partials", ".chunk-cache"})
+    assert scope.classify_dir(".partials") is scope.DirKind.INTERNAL
+    assert scope.classify_dir(".chunk-cache") is scope.DirKind.INTERNAL
+    assert scope.classify_dir("-Users-k-daimon") is scope.DirKind.BUCKET
+    assert scope.classify_dir("repo.x") is scope.DirKind.STRAY
+    assert scope.classify_dir(".other") is scope.DirKind.STRAY
+    assert scope.classify_dir("x@security") is scope.DirKind.STRAY
+
+
+def test_bucket_dirs_splits_buckets_internals_and_strays(tmp_checkpoint_dir):
+    for n in ("-b", "-a", ".partials", ".chunk-cache", "repo.x", ".odd"):
+        (tmp_checkpoint_dir / n).mkdir(parents=True)
+    (tmp_checkpoint_dir / "S-flat.json").write_text("{}")
+    found = store.bucket_dirs()
+    assert [p.name for p in found.buckets] == ["-a", "-b"]
+    assert found.strays == (".odd", "repo.x")
+
+
+def test_the_fold_does_not_read_a_stray_dir_as_a_bucket(
+        tmp_checkpoint_dir, monkeypatch):
+    monkeypatch.setenv("DAIMON_AUTHOR", "ada")
+    from tests.test_recall import _cp
+    blob = _cp("S-dot", questions=[
+        {"text": "the quokka stray bucket claim", "trust": "inferred",
+         "id": "o-444ddd"}], created="2026-08-01T00:00:00Z")
+    blob["author"] = "ada"
+    blob["project_slug"] = "repo.x"
+    tmp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_checkpoint_dir / "S-dot.json").write_text(json.dumps(blob))
+    _stray_ledger_dir("repo.x")
+    import sqlite3
+
+    from daimon_briefing import recall
+    recall.search("quokka stray bucket claim", all_projects=True)
+    conn = sqlite3.connect(str(config.recall_db()))
+    try:
+        rows = conn.execute("SELECT invalidated_by FROM items"
+                            " WHERE item_id = 'o-444ddd'").fetchall()
+    finally:
+        conn.close()
+    assert rows
+    assert all(v is None for (v,) in rows)
+
+
+def test_pending_ledger_scan_skips_a_stray_dir(tmp_checkpoint_dir):
+    from daimon_briefing import pending
+    _stray_ledger_dir("repo.x")
+    (tmp_checkpoint_dir / "-ok").mkdir()
+    assert pending._ledger_bucket_slugs() == ["-ok"]
+
+
+def test_a_stray_dir_is_reported_loudly_and_internals_are_not(
+        tmp_checkpoint_dir):
+    _plant("-good")
+    for n in (".partials", ".chunk-cache"):
+        (tmp_checkpoint_dir / n).mkdir()
+    assert not [n for n in view.projects_notes("-good") if "not a project" in n]
+    (tmp_checkpoint_dir / "repo.x").mkdir()
+    (tmp_checkpoint_dir / "x@security").mkdir()
+    notes = [n for n in view.projects_notes("-good") if "not a project" in n]
+    assert len(notes) == 1 and "2" in notes[0]
+    assert "repo.x" not in notes[0]  # a count, never a name

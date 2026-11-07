@@ -15,6 +15,7 @@ project (pinned by tests/test_scope.py).
 
 from __future__ import annotations
 
+import enum
 import re
 from dataclasses import dataclass
 
@@ -41,3 +42,26 @@ def parse_bucket(name) -> BucketId | None:
     if not isinstance(name, str) or not _BUCKET_RE.fullmatch(name):
         return None
     return BucketId(project=name)
+
+
+# Directories the store itself keeps beside its buckets. Named here, once, as
+# a typed set and never matched by pattern: a new internal directory is added
+# to this set on purpose, and anything else that is not a bucket name is a
+# stray (see `classify_dir`).
+CHUNK_CACHE = ".chunk-cache"
+PARTIALS = ".partials"
+STORE_INTERNAL_DIRS: frozenset[str] = frozenset({CHUNK_CACHE, PARTIALS})
+
+
+class DirKind(enum.Enum):
+    BUCKET = "bucket"      # parse_bucket accepts the name
+    INTERNAL = "internal"  # a known store-internal directory
+    STRAY = "stray"        # neither: never read as a bucket, reported
+
+
+def classify_dir(name: str) -> DirKind:
+    """What a directory directly under the checkpoint dir is. A directory is a
+    bucket if and only if `parse_bucket` accepts its name."""
+    if name in STORE_INTERNAL_DIRS:
+        return DirKind.INTERNAL
+    return DirKind.BUCKET if parse_bucket(name) is not None else DirKind.STRAY

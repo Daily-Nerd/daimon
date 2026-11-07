@@ -26,7 +26,8 @@ import time
 from pathlib import Path
 
 from . import (amendments, config, jsonl, normalize, refutations, relations,
-               requests, ledger_repair, schema, store, surfaces, teamproject, trust)
+               requests, ledger_repair, schema, scope, store, surfaces, teamproject,
+               trust)
 
 # Plaintext-bearing item fields — the same CLASS policy.redact_checkpoint
 # enumerates (its links[].target and active_topic coverage lives in _hashes
@@ -121,7 +122,7 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                     known.append(entry)
                 elif not _is_plaintext_free(entry):
                     unknown.append((entry, None))
-            elif entry.is_dir() and entry.name != ".chunk-cache":
+            elif entry.is_dir() and entry.name != scope.CHUNK_CACHE:
                 for p in entry.iterdir():
                     if not p.is_file():
                         unknown.append((p, entry.name))
@@ -445,10 +446,10 @@ def audit_project(project_dir=None) -> dict:
     incomplete = store.forgotten_incomplete()
     if incomplete:
         from . import view
-        scope = sorted(incomplete & set(view.buckets(slug)))
+        in_scope = sorted(incomplete & set(view.buckets(slug)))
         result["unscannable"].append(
             "cannot prove: the forget set is incomplete ("
-            + (", ".join(scope) or "no bucket in scope") + ")")
+            + (", ".join(in_scope) or "no bucket in scope") + ")")
     # Event ledger: every free-text field hashed WHOLE — catches a field that
     # IS the value verbatim; one merely containing it is undetectable by hash
     # (stated report limitation). `status` on the tombstone row is
@@ -670,7 +671,7 @@ def audit_project(project_dir=None) -> dict:
     # Chunk cache: value-level detection impossible (cache keyed by chunk
     # text, values are substrings). Store-level honesty: entry count + real
     # oldest age — the reaper runs only on WRITES, so never assert bounded.
-    cache_dir = config.checkpoint_dir() / ".chunk-cache"
+    cache_dir = config.checkpoint_dir() / scope.CHUNK_CACHE
     entries, oldest = 0, None
     try:
         for p in cache_dir.iterdir():
@@ -725,7 +726,7 @@ def audit_all() -> list[dict]:
     results: list[dict] = []
     try:
         buckets = sorted(e.name for e in config.checkpoint_dir().iterdir()
-                         if e.is_dir() and e.name != ".chunk-cache")
+                         if e.is_dir() and e.name != scope.CHUNK_CACHE)
     except OSError:
         buckets = []
     for slug in buckets:

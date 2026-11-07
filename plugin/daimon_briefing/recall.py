@@ -191,16 +191,12 @@ def _items(cp: dict):
                    stated)
 
 
-def _bucket_slugs(d: Path) -> dict[str, str]:
+def _bucket_slugs() -> dict[str, str]:
     """session_id -> project slug, derived from the per-project bucket pointers
     (<dir>/<slug>/latest.json|prev-N.json). Fallback attribution for legacy
     flat files written before write_checkpoint stamped project_slug."""
     out: dict[str, str] = {}
-    try:
-        entries = list(d.iterdir())
-    except OSError:
-        return out
-    for child in entries:
+    for child in store.bucket_dirs().buckets:
         try:
             pointers = [p for p in child.iterdir()
                         if p.is_file() and store._POINTER_RE.match(p.name)]
@@ -302,7 +298,7 @@ def _scan_sources():
                 yield sid, author, cp.get("project_slug"), recency, cp
 
     d = config.checkpoint_dir()
-    slug_by_sid = _bucket_slugs(d)
+    slug_by_sid = _bucket_slugs()
     try:
         files = store._session_files(d)
     except OSError:
@@ -602,11 +598,7 @@ def _resolution_marks(entries: list, withheld_ids: set) -> dict:
             by_ref.setdefault((entry.item_id, entry.slug), []).append(
                 entry.rowid)
     out: dict = {}
-    try:
-        dirs = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
-    except OSError:
-        return out
-    for bucket in dirs:
+    for bucket in store.bucket_dirs().buckets:
         # The bucket dir NAME is the slug, and slug munging is idempotent
         # (guarded by test_project_slug_is_idempotent_on_slugs), so it routes
         # store.resolutions exactly like a project dir.
@@ -920,11 +912,7 @@ def _apply_verification_invalidations(conn: sqlite3.Connection) -> None:
     author changed) all stay unmarked. Malformed rows are skipped — a
     wrong invalidation fabricates distrust, a missed one stays quiet."""
     author = config.author()
-    try:
-        buckets = [d for d in config.checkpoint_dir().iterdir() if d.is_dir()]
-    except OSError:
-        return
-    for bucket in buckets:
+    for bucket in store.bucket_dirs().buckets:
         # ONE resolution of latest-by-ts, shared with the cure gate that
         # decides whether a confirmation is worth writing (#839). Two copies
         # would drift, and the write side deciding "currently contradicted"
@@ -1332,11 +1320,7 @@ def _build(conn: sqlite3.Connection, fingerprint: str) -> int:
 
 
 def _closed_buckets(stamp, incomplete) -> list[str]:
-    try:
-        names = sorted(d.name for d in config.checkpoint_dir().iterdir()
-                       if d.is_dir())
-    except OSError:
-        return []
+    names = [d.name for d in store.bucket_dirs().buckets]
     out = []
     for name in names:
         judge = view.judge(name, stamp=stamp, incomplete=incomplete)

@@ -2208,14 +2208,8 @@ def _bucket_slugs() -> list[str]:
     request before it has ever serialized a session, and such a bucket must
     still be discoverable. One `exists()` stat per subdir, so a project with
     checkpoints but no requests ledger costs almost nothing."""
-    root = config.checkpoint_dir()
-    try:
-        entries = sorted(root.iterdir())
-    except OSError:
-        return []
-    return [child.name for child in entries
-            if scope.parse_bucket(child.name) is not None
-            and (child / "requests.jsonl").exists()]
+    return [child.name for child in store.bucket_dirs().buckets
+            if (child / "requests.jsonl").exists()]
 
 
 def _skipped_notes(skipped: int, degraded: int = 0) -> tuple:

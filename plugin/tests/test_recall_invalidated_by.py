@@ -187,30 +187,31 @@ def test_machine_local_evidence_never_brands_a_teammates_copy(
 
 
 def test_fold_reads_and_binds_the_same_bucket(tmp_checkpoint_dir, monkeypatch):
-    """#836 review: bucket names are not slug-idempotent (dots munge to '-'),
-    so the fold must read THE bucket directory it binds — never re-derive a
-    slug from the name and read a sibling bucket's ledger."""
+    """#836 review: the fold must read THE bucket directory it binds, never a
+    sibling bucket's ledger. (#1294: the bucket is a valid slug; a name
+    `project_slug` can never emit is not a bucket at all, see
+    tests/test_scope.py.)"""
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
-    blob = _cp("S-dot", questions=[
-        _item("the quokka dotted bucket claim", "o-333ccc")],
+    blob = _cp("S-us", questions=[
+        _item("the quokka sibling bucket claim", "o-333ccc")],
         created="2026-08-01T00:00:00Z")
     blob["author"] = "ada"
-    blob["project_slug"] = "repo.x"
+    blob["project_slug"] = "repo_x"
     config.checkpoint_dir().mkdir(parents=True, exist_ok=True)
-    (config.checkpoint_dir() / "S-dot.json").write_text(
+    (config.checkpoint_dir() / "S-us.json").write_text(
         json.dumps(blob), encoding="utf-8")
-    _write_ledger("repo.x", [_receipt_row("o-333ccc")])
-    # The sibling the OLD re-slugging read ("repo.x" munges to "repo-x"):
-    # carries different evidence, which must NOT land on repo.x's rows.
+    _write_ledger("repo_x", [_receipt_row("o-333ccc")])
+    # A sibling whose name differs by one character, carrying different
+    # evidence, which must NOT land on repo_x's rows.
     _write_ledger("repo-x", [
         _receipt_row("o-333ccc", reason="receipt-tampered")])
 
-    recall.search("quokka dotted bucket claim", all_projects=True)  # fresh db
+    recall.search("quokka sibling bucket claim", all_projects=True)  # fresh db
     conn = sqlite3.connect(str(config.recall_db()))
     try:
         rows = conn.execute(
             "SELECT invalidated_by FROM items"
-            " WHERE item_id = 'o-333ccc' AND project_slug = 'repo.x'"
+            " WHERE item_id = 'o-333ccc' AND project_slug = 'repo_x'"
         ).fetchall()
     finally:
         conn.close()
