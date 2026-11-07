@@ -176,8 +176,9 @@ def test_on_session_end_gate_counts_non_tool_rows_like_the_cli_door(
         _isolate_daimon_home, tmp_checkpoint_dir, fake_chat_factory, monkeypatch):
     # #750: 12 raw rows but only 5 conversation rows — the raw len() gate let
     # this through, only for serialize_strict's #359 count to refuse it later.
-    # The hook door must trip the SAME gate, before the pipeline is entered.
-    from daimon_briefing import capture, store, transcript
+    # The hook door has no gate of its own (#1292): capture.run's single gate
+    # refuses it, before the model is called, and the hook records the skip.
+    from daimon_briefing import store, transcript
 
     msgs = make_messages(5) + [
         {"role": "tool", "content": "ok", "id": f"t-{i}", "tool_result": True}
@@ -186,14 +187,10 @@ def test_on_session_end_gate_counts_non_tool_rows_like_the_cli_door(
     chat = fake_chat_factory(_valid_json("S-end"))
     monkeypatch.setattr(transcript, "from_session", lambda sid: msgs)
     monkeypatch.setattr(hooks, "_chat", chat)
-
-    def boom(*a, **k):
-        raise AssertionError("capture.run reached despite a too-short gate")
-
-    monkeypatch.setattr(capture, "run", boom)
     hooks.on_session_end(
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
+    assert chat.calls == []
     assert store.read_checkpoint("S-end") is None
     log = _isolate_daimon_home / "logs" / "serialize.log"
     text = log.read_text(encoding="utf-8")
@@ -201,12 +198,12 @@ def test_on_session_end_gate_counts_non_tool_rows_like_the_cli_door(
     assert "error:" not in text  # a skip, never a lying failure
 
 
-def test_on_session_end_zero_parsed_transcript_gets_no_skip_line(
+def test_on_session_end_zero_parsed_transcript_is_a_failure_not_a_skip(
         _isolate_daimon_home, tmp_checkpoint_dir, fake_chat_factory, monkeypatch):
-    # scar 0045: a transcript that parses to 0 messages is the host-format-
-    # drift signature (a 13MB Codex session parsed to 0 and was skipped as
-    # "too short" 9 times) — the official skip line would legitimize the loss
-    # as a policy outcome. No line at all: never a skip record.
+    # scar 0045 / #1292: a session source that yields 0 messages and cannot
+    # say it is merely empty (here the host library is unavailable) is a read
+    # failure: an `error:` line `status` counts, never "too short" and never
+    # silence.
     from daimon_briefing import transcript
 
     chat = fake_chat_factory(_valid_json("S-end"))
@@ -215,14 +212,17 @@ def test_on_session_end_zero_parsed_transcript_gets_no_skip_line(
     hooks.on_session_end(
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
-    log = _isolate_daimon_home / "logs" / "serialize.log"
-    assert not log.exists() or "skipped serialize" not in log.read_text(encoding="utf-8")
+    text = (_isolate_daimon_home / "logs" / "serialize.log").read_text(
+        encoding="utf-8")
+    assert "error: unreadable-transcript" in text
+    assert "skipped serialize" not in text
+    assert chat.calls == []
 
 
-def test_on_session_end_all_tool_rows_transcript_gets_no_skip_line(
+def test_on_session_end_all_tool_rows_transcript_is_a_failure_not_a_skip(
         _isolate_daimon_home, tmp_checkpoint_dir, fake_chat_factory, monkeypatch):
-    # Same scar posture for the n == 0 shape: many raw records, zero
-    # conversation rows reads as a parse/format problem, not a short session.
+    # Same class for the n == 0 shape: many raw records, zero conversation
+    # rows is a parse/format problem, not a short session.
     from daimon_briefing import transcript
 
     msgs = [{"role": "tool", "content": "ok", "id": f"t-{i}", "tool_result": True}
@@ -233,8 +233,10 @@ def test_on_session_end_all_tool_rows_transcript_gets_no_skip_line(
     hooks.on_session_end(
         session_id="S-end", completed=True, interrupted=False, model="m", platform="cli"
     )
-    log = _isolate_daimon_home / "logs" / "serialize.log"
-    assert not log.exists() or "skipped serialize" not in log.read_text(encoding="utf-8")
+    text = (_isolate_daimon_home / "logs" / "serialize.log").read_text(
+        encoding="utf-8")
+    assert "error: unreadable-transcript" in text
+    assert "skipped serialize" not in text
 
 
 def test_on_session_end_too_short_skip_lands_in_the_ledger(

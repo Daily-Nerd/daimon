@@ -63,8 +63,10 @@ def test_the_check_order_is_sidechain_meta_attachment_summary():
     assert transcript.excluded_reason(everything) == "compact-summary"
 
 
-def test_the_codes_are_exactly_the_four_in_order():
-    assert transcript.EXCLUDED_CODES == (
+def test_the_first_four_codes_keep_their_order():
+    # Codes may be added, never removed or renamed (#1292 named the host
+    # bookkeeping types after these four).
+    assert transcript.EXCLUDED_CODES[:4] == (
         "sidechain", "meta", "attachment", "compact-summary")
 
 
@@ -181,6 +183,8 @@ def test_a_file_with_no_conversation_rows_leaves_no_note(tmp_path):
     ])
     detailed = transcript.from_file_detailed(path)
     assert detailed["messages"] == []
+    # Both rows are excluded (an attachment, and the named `mode` bookkeeping
+    # row #1292), so nothing was dropped and no note is written.
     assert detailed["notes"] == []
 
 
@@ -268,7 +272,7 @@ def test_rows_the_loader_drops_do_not_hide_a_summary_first_file(
     detailed = transcript.from_file_detailed(path)
     assert [m["content"] for m in detailed["messages"]] == [
         "after the summary"]
-    assert detailed["notes"] == ["compact-summary-only-context"]
+    assert "compact-summary-only-context" in detailed["notes"]
 
 
 def test_a_tool_result_message_before_the_summary_is_earlier_context(
@@ -302,7 +306,8 @@ def test_kimi_wire_rows_are_not_read_by_the_generic_predicate(tmp_path):
     detailed = transcript.from_file_detailed(path)
     assert [m["content"] for m in detailed["messages"]] == ["kimi prompt text"]
     assert detailed["coverage"]["reason"] == "source_binding_unavailable"
-    assert detailed["notes"] == []
+    # The wire header is the one row with no turn in it (#1292).
+    assert detailed["notes"] == ["rows-dropped: no-role=1"]
 
 
 def test_windsurf_rows_are_not_read_by_the_generic_predicate(tmp_path):

@@ -53,7 +53,7 @@ _DOORS = frozenset({None, DOOR_IMPORT})
 def run(session_id: str, messages, *, project, chat, deadline,
         transcript_path=None, transcript_sha=None,
         escalate: bool = False, capture_host=None, coverage=None,
-        door: str | None = None) -> Path | None:
+        door: str | None = None, account=None) -> Path | None:
     """Serialize `messages` into a checkpoint routed to `project` (used AS-IS;
     None => global pointer only — the caller decides routing, same contract
     as the old cli._run_serialize).
@@ -62,6 +62,12 @@ def run(session_id: str, messages, *, project, chat, deadline,
     stamps the code-owned `capture_door` on the checkpoint and changes
     nothing else in the pipeline (tests/test_capture_parity.py pins that).
     None, the default, stamps nothing. Any other value raises ValueError.
+
+    `account` (#1292) is the loader's `transcript.RowAccount` for `messages`
+    (None when the source keeps none). With it this function is the ONE place
+    that tells a transcript nobody could read from a short one, for every
+    door: rows and no conversation raise `serializer.UnreadableTranscript`,
+    zero rows raise `serializer.EmptyTranscript`.
 
     Returns store.write_checkpoint's result: the checkpoint path, or None
     when the write boundary refused (kill switch, #421) — each caller renders
@@ -73,6 +79,7 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # the admission HERE, before the model is called: the run would cost
     # tokens and then be refused at the write anyway, and a refusal must
     # cost nothing. `store.write_checkpoint` stays the enforcing point.
+    serializer.require_readable(messages, account)
     serializer.require_enough_messages(messages)
     store.admission_preflight(project)
     source_ref = provenance.capture_source_ref(
