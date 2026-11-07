@@ -1,0 +1,5 @@
+{"role": "user", "content": [{"type": "text", "text": "Run the tests please"}]}
+{"role": "assistant", "content": [{"type": "text", "text": "Running them."}, {"type": "tool_use", "id": "tu1", "name": "bash", "input": {"command": "pytest"}}]}
+{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu1", "content": "3 passed"}]}
+{"role": "assistant", "content": [{"type": "text", "text": "All 3 pass."}]}
+{"role": "assistant", "content": [{"type": "tool_use", "id": "tu2", "name": "bash", "input": {"command": "ls"}}]}

@@ -426,8 +426,11 @@ def plan_import(
             continue
         messages = detailed["messages"]
         try:
+            # #1292: the capture's own gates, in its order, so the plan names
+            # an unreadable file the way the run would fail it.
+            serializer.require_readable(messages, detailed["account"])
             serializer.require_enough_messages(messages)
-        except serializer.TooShortError as exc:
+        except (serializer.TooShortError, serializer.UnreadableTranscript) as exc:
             skipped.append(Skipped(sid, path, str(exc)))
             continue
         ended = capture.session_end_stamp(path)

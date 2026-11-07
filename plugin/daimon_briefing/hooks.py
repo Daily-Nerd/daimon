@@ -117,12 +117,15 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 )
                 return
         coverage = None
+        account = None
+        file_failed = False
         session_messages = transcript.from_session(session_id)
         if transcript_path:
             try:
                 detailed = transcript.from_file_detailed(transcript_path)
             except (OSError, UnicodeError, ValueError):
                 detailed = None
+                file_failed = True
             if detailed is None:
                 messages = session_messages
             else:
@@ -130,6 +133,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 if session_messages and file_messages == session_messages:
                     messages = file_messages
                     coverage = detailed["coverage"]
+                    account = detailed["account"]
                 elif session_messages:
                     # The path can be an auxiliary host artifact while the
                     # host's authoritative transcript is SessionDB. Do not
@@ -138,29 +142,21 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 else:
                     messages = file_messages
                     coverage = detailed["coverage"]
+                    account = detailed["account"]
                 if messages is file_messages:
                     ledger._append_transcript_notes(
                         session_id, detailed["notes"])
         else:
             messages = session_messages
-        if not messages:
-            # scar 0045: 0 parsed messages is the host-format-drift signature,
-            # never a short session — the official skip line would legitimize
-            # the loss as a policy outcome. Bare return, no skip record.
-            return
-        # #750: the SAME non-tool count serialize_strict gates on — raw len()
-        # here let a tool-heavy transcript pass this door only to be refused
-        # inside the pipeline. And a genuine skip is RECORDED, the way the CLI
-        # door records its (cli.__init__ TooShortError branch): a bare return
-        # left the session invisible to `daimon stats`. n == 0 stays scar-0045
-        # territory (rows parsed, zero conversation) — no skip line either.
-        n = serializer.conversation_message_count(messages)
-        if n < config.min_messages():
-            if n >= 1:
-                ledger._append_serialize_log(
-                    f"skipped serialize for {session_id}: transcript too short "
-                    f"({n} < {config.min_messages()} messages)")
-            return
+        if not messages and account is None and not file_failed:
+            # #1292: no file account to speak for the read, so ask the session
+            # store why it came back empty. Only an `empty` answer is a
+            # statement about the session (a skip, `empty-transcript`); a
+            # store that is unavailable or raised is a failed read.
+            if transcript.from_session_detailed(session_id).status == "empty":
+                account = transcript.RowAccount(0, 0, {}, {})
+        # No gate of its own (#1292): whether this read is empty, unreadable or
+        # too short is capture.run's one decision, the same for every door.
         root = config.resolve_project_root(config.project_dir())
         try:
             # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
@@ -180,7 +176,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
                 session_id, messages, project=root, chat=_chat,
                 deadline=deadline, transcript_path=transcript_path,
                 transcript_sha=transcript_sha, capture_host=platform,
-                coverage=coverage,
+                coverage=coverage, account=account,
             )
         except jsonl.Refused as exc:
             # D10.4: an admission refused before the model was called. Ledgered
@@ -195,10 +191,22 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
             _ledger_failure(session_id, exc, time.monotonic() - start,
                             transcript_path)
             return
-        except serializer.TooShortError:
-            # Unreachable while both doors share conversation_message_count
-            # (#750); kept defensive. No ledger append here — a drift could
-            # carry n == 0, and scar 0045 forbids recording that as a skip.
+        except serializer.UnreadableTranscript as exc:
+            # #1292, scar 0045: rows that parse to no conversation are a read
+            # failure. Ledgered as the ordinary failed serialize the CLI door
+            # leaves, so `status` counts it and `heal` retries it when the
+            # host handed us a transcript file that still exists.
+            log.warning("daimon: unreadable transcript for session %s: %s",
+                        session_id, exc)
+            _ledger_failure(session_id, exc, time.monotonic() - start,
+                            transcript_path)
+            return
+        except serializer.TooShortError as exc:
+            # A genuine skip (too short, or an empty transcript) is RECORDED,
+            # the way the CLI door records its own (#750): a bare return left
+            # the session invisible to `daimon stats`.
+            ledger._append_serialize_log(
+                f"skipped serialize for {session_id}: {exc}")
             log.info("daimon: no checkpoint produced for session %s (skip)", session_id)
             return
         if out is None:

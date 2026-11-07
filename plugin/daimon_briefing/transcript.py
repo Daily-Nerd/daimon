@@ -31,7 +31,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import NamedTuple
+from typing import Mapping, NamedTuple
 
 from . import config
 
@@ -54,16 +54,35 @@ def _load_session_db():
         return None
 
 
-def from_session(session_id: str) -> list[dict]:
-    """Read a session transcript by id. Returns [] when hermes is unavailable/empty."""
+class SessionRead(NamedTuple):
+    """`from_session_detailed`'s answer. `status` says why `messages` is what
+    it is: `ok` (messages read), `empty` (the store answered: no messages),
+    `unavailable` (the host library is not importable here) or `failed` (the
+    read raised). Only `empty` is a statement about the session; the other
+    two are statements about the reader (#1292)."""
+    messages: list
+    status: str
+
+
+def from_session_detailed(session_id: str) -> SessionRead:
+    """Read a session transcript by id and say why it came back empty, if it
+    did. Never raises."""
     db = _load_session_db()
     if db is None:
-        return []
+        return SessionRead([], "unavailable")
     try:
         msgs = db.get_messages_as_conversation(session_id)
     except Exception:
-        return []
-    return msgs or []
+        return SessionRead([], "failed")
+    if not msgs:
+        return SessionRead([], "empty")
+    return SessionRead(msgs, "ok")
+
+
+def from_session(session_id: str) -> list[dict]:
+    """Read a session transcript by id. Returns [] when hermes is
+    unavailable/empty; `from_session_detailed` tells those apart."""
+    return from_session_detailed(session_id).messages
 
 
 def _text_of(content) -> str:
@@ -413,7 +432,8 @@ def _kimi_tool_message(event: dict, daimon_calls: set[str]) -> dict | None:
     return msg
 
 
-def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
+def _from_kimi_wire(numbered: list[tuple[int, dict]],
+                    fates: dict[int, str] | None = None) -> list[dict]:
     """Fold a Kimi Code wire event log into conversation messages.
 
     `numbered` pairs each object with its 1-based PHYSICAL line in the raw
@@ -422,7 +442,12 @@ def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
 
     Total for this format: an unrecognized event type contributes nothing and
     never raises, so a Kimi release that adds events keeps parsing. A log with
-    no message-bearing events yields [] — never the raw-blob fallback."""
+    no message-bearing events yields [] — never the raw-blob fallback.
+
+    `fates` (#1292) is the row account: it receives the fate of each line
+    this branch reads. A line it does not name is a row with no turn in it."""
+    if fates is None:
+        fates = {}
     objects = [obj for _line, obj in numbered]
     messages: list[dict] = []
     appended = _kimi_appended_texts(objects)
@@ -457,14 +482,19 @@ def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
                 continue
             text = _kimi_text(msg.get("content"))
             if not text:
+                fates[line_no] = _dropped("no-content")
                 continue
             flush()
+            fates[line_no] = ADMITTED
             messages.append({"role": role, "content": text,
                              "id": f"kimi-L{line_no}"})
         elif typ in _KIMI_MIRROR_TYPES:
             text = _kimi_text(obj.get("input") if "input" in obj
                               else obj.get("content"))
-            if not text or appended.get(text):
+            if not text:
+                fates[line_no] = _dropped("no-content")
+                continue
+            if appended.get(text):
                 continue
             # `prompt.accepted` and `turn.prompt` mirror EACH OTHER too, so the
             # fallback keys on the prompt id both carry (text alone would drop
@@ -474,6 +504,7 @@ def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
                 continue
             mirrored.add(key)
             flush()
+            fates[line_no] = ADMITTED
             messages.append({"role": "user", "content": text,
                              "id": f"kimi-L{line_no}"})
         elif typ == "context.append_loop_event":
@@ -489,7 +520,11 @@ def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
                         if not buf:
                             buf_start_line = line_no
                         buf.append(text)
+                        fates[line_no] = ADMITTED
+                    else:
+                        fates[line_no] = _dropped("no-content")
             elif etype == "tool.call":
+                fates[line_no] = _dropped("tool-use-only")
                 if _is_daimon_tool_use({"name": event.get("name"),
                                         "input": event.get("args")}):
                     call_id = str(event.get("toolCallId") or "").strip()
@@ -499,7 +534,10 @@ def _from_kimi_wire(numbered: list[tuple[int, dict]]) -> list[dict]:
                 flush()
                 tool_msg = _kimi_tool_message(event, daimon_calls)
                 if tool_msg is not None:
+                    fates[line_no] = ADMITTED
                     messages.append(tool_msg)
+                else:
+                    fates[line_no] = _dropped("tool-result-without-id")
     flush()
     return messages
 
@@ -541,7 +579,15 @@ def _objects_of(text: str) -> list[dict]:
 
 def _from_jsonl(text: str, speaker_line: str | None = None,
                 kimi: bool = False) -> list[dict]:
-    """Parse a JSONL agent transcript into conversation messages.
+    """The messages of `_from_jsonl_accounted`; see there."""
+    return _from_jsonl_accounted(text, speaker_line, kimi)[0]
+
+
+def _from_jsonl_accounted(text: str, speaker_line: str | None = None,
+                          kimi: bool = False
+                          ) -> tuple[list[dict], "RowAccount"]:
+    """Parse a JSONL agent transcript into conversation messages, and account
+    for every non-empty line of it (#1292).
 
     Claude Code exposes stable-enough user/assistant rows today. Codex also
     exposes a `transcript_path` to hooks, but its docs explicitly say the format
@@ -551,9 +597,19 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
 
     `kimi` forces the Kimi Code branch for a file whose PATH says it is a wire
     log even though its header is gone (see `_is_kimi_wire_path`).
+
+    The account is built in the same pass that builds the messages, by the
+    branch that wins, and with the same `excluded_reason` the coverage
+    sidecar uses (scar 0149): each branch records the fate of the lines it
+    reads in `fates`, and `_row_account` buckets whatever it did not name as
+    a row with no turn in it.
     """
     numbered = _numbered_objects_of(text)
     objects = [obj for _line, obj in numbered]
+    nonempty = sum(1 for line in text.splitlines() if line.strip())
+
+    def done(messages: list[dict], fates: dict[int, str]):
+        return messages, _row_account(nonempty, numbered, fates)
 
     # #988: Kimi Code writes an event log, not a message list, so its branch
     # runs first and is total — a wire log must never fall through to the
@@ -561,14 +617,16 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
     # #1064: the numbered form, not `objects` — `_from_kimi_wire` keys its
     # message ids on physical line number.
     if kimi or _is_kimi_wire(objects):
-        return _from_kimi_wire(numbered)
+        fates: dict[int, str] = {}
+        return done(_from_kimi_wire(numbered, fates), fates)
 
     # Current Codex rollouts emit each visible turn twice: once as an
     # `event_msg` and once as a nested `response_item`. Prefer the event stream
     # when present so platform-injected developer context and duplicate turns
     # never reach the serializer.
     codex_messages: list[dict] = []
-    for obj in objects:
+    codex_fates: dict[int, str] = {}
+    for line_no, obj in numbered:
         if obj.get("type") != "event_msg":
             continue
         payload = obj.get("payload")
@@ -579,7 +637,10 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
             str(payload_type or "")
         )
         content = payload.get("message")
+        if role:
+            codex_fates[line_no] = _dropped("no-content")
         if role and isinstance(content, str) and content.strip():
+            codex_fates[line_no] = ADMITTED
             codex_messages.append({"role": role, "content": content.strip()})
             continue
         # Codex CLI 0.147.0 (#622) dropped user_message/agent_message events:
@@ -598,6 +659,7 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
         )
         if role is None:
             continue
+        codex_fates[line_no] = _dropped("no-content")
         blocks = item.get("content")
         if not isinstance(blocks, list):
             continue
@@ -612,9 +674,10 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
                 parts.append(block_text.strip())
         joined = "\n".join(parts)
         if joined:
+            codex_fates[line_no] = ADMITTED
             codex_messages.append({"role": role, "content": joined})
     if codex_messages:
-        return codex_messages
+        return done(codex_messages, codex_fates)
 
     # Windsurf Cascade's native transcript (#70): rows carry
     # {type, status, <payload-key>} and the payload key does NOT always equal
@@ -627,12 +690,14 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
     # canceled lines are dropped; done AND error both serialize (a
     # failed-but-emitted response is still context).
     windsurf_messages: list[dict] = []
-    for obj in objects:
+    windsurf_fates: dict[int, str] = {}
+    for line_no, obj in numbered:
         obj_type = obj.get("type")
         if obj_type not in ("user_input", "planner_response"):
             continue
         if "status" not in obj:
             continue
+        windsurf_fates[line_no] = _dropped("no-content")
         if obj.get("status") == "canceled":
             continue
         role = "user" if obj_type == "user_input" else "assistant"
@@ -642,22 +707,26 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
         text_key = "user_response" if obj_type == "user_input" else "response"
         payload_text = payload.get(text_key)
         if isinstance(payload_text, str) and payload_text.strip():
+            windsurf_fates[line_no] = ADMITTED
             windsurf_messages.append(
                 {"role": role, "content": payload_text.strip()})
     if windsurf_messages:
-        return windsurf_messages
+        return done(windsurf_messages, windsurf_fates)
 
     messages: list[dict] = []
+    fates = {}
     daimon_uses = _daimon_tool_use_ids(objects)  # #512 provenance prepass
     delim = (speaker_line if speaker_line is not None
              else config.speaker_line_delimiter())
-    for obj in objects:
-        if excluded_reason(obj) is not None:
+    for line_no, obj in numbered:
+        excluded = excluded_reason(obj)
+        if excluded is not None:
+            fates[line_no] = f"excluded:{excluded}"
             continue
 
         role = _role_of(obj)
         if role is None:
-            continue
+            continue  # no fate named: a row with no role (`_row_account`)
         # #358: Claude Code rows carry a stable per-message `uuid` —
         # keep it as the message id so verbatim items can bind to the
         # exact transcript entry their quote came from. A discriminating
@@ -686,6 +755,7 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
             said = obj.get("said_by")
             if isinstance(said, str) and said.strip():
                 msg["said_by"] = said.strip()
+            fates[line_no] = ADMITTED
             messages.append(msg)
             continue
         # #359: a row whose ONLY payload is tool_result blocks used to be
@@ -709,8 +779,37 @@ def _from_jsonl(text: str, speaker_line: str | None = None,
                 # key on this, never on the rendered shape.
                 if use_ids & daimon_uses:
                     tool_msg["daimon_output"] = True
+                fates[line_no] = ADMITTED
                 messages.append(tool_msg)
-    return messages
+                continue
+        fates[line_no] = _dropped(_empty_row_reason(obj, mid))
+    return done(messages, fates)
+
+
+def _block_types(obj: dict) -> set[str]:
+    """The `type` of every content block in a row, wherever the row keeps its
+    content: under `message` (Claude Code's wrapper) or at the top level (a
+    plain Messages-API row)."""
+    kinds: set[str] = set()
+    msg = obj.get("message")
+    for holder in (msg if isinstance(msg, dict) else {}, obj):
+        content = holder.get("content")
+        if isinstance(content, list):
+            kinds.update(str(b.get("type")) for b in content
+                         if isinstance(b, dict))
+    return kinds
+
+
+def _empty_row_reason(obj: dict, mid: str | None) -> str:
+    """Why a row with a role carried no admitted turn (#1292): a tool result
+    that has no host id to be cited by (kept out by design, #359), a row of
+    tool calls only, or nothing at all."""
+    kinds = _block_types(obj)
+    if "tool_result" in kinds and mid is None:
+        return "tool-result-without-id"
+    if "tool_use" in kinds:
+        return "tool-use-only"
+    return "no-content"
 
 
 # #1178: the rows no capture reads, one stable code per rule, in check order.
@@ -724,6 +823,93 @@ EXCLUDED_ROWS = MappingProxyType({
                         "model wrote, never credited to the person"),
 })
 EXCLUDED_CODES = tuple(EXCLUDED_ROWS)
+
+# #1292: the rows a loader reads and does not admit, one stable code per
+# reason. Together with EXCLUDED_ROWS they close the account: every non-empty
+# line of a transcript is admitted, excluded (a code above) or dropped (a code
+# here). The codes are a contract like the ones above: one may be added, never
+# removed or renamed.
+DROP_REASONS = MappingProxyType({
+    "no-role": ("a row that carries no conversational turn for its adapter: "
+                "no user or assistant role, or an event type the adapter "
+                "does not read"),
+    "no-content": "a row with a turn and no text in it",
+    "tool-result-without-id": ("a tool result with no host id to be cited by "
+                               "(kept out by design, #359)"),
+    "tool-use-only": "a row of tool calls and no text",
+    "unparsable-line": "a non-empty line that is not a JSON object",
+})
+DROP_CODES = tuple(DROP_REASONS)
+ADMITTED = "admitted"
+
+
+def _dropped(reason: str) -> str:
+    return f"dropped:{reason}"
+
+
+class RowAccount(NamedTuple):
+    """Where every non-empty line of a transcript went (#1292).
+
+    `rows` is the number of non-empty lines; `admitted`, the values of
+    `excluded` (keyed by an `EXCLUDED_ROWS` code) and the values of `dropped`
+    (keyed by a `DROP_REASONS` code) sum to it. The loader builds it in the
+    same pass that builds the messages, so nothing downstream has to guess
+    whether an empty read was an empty file or a file nobody could read."""
+    rows: int
+    admitted: int
+    excluded: Mapping[str, int]
+    dropped: Mapping[str, int]
+
+    def drop_notes(self) -> list[str]:
+        """One `rows-dropped: <reason>=<n>` transcript note per reason that
+        dropped a row, in `DROP_CODES` order."""
+        return [f"rows-dropped: {code}={self.dropped[code]}"
+                for code in DROP_CODES if self.dropped.get(code)]
+
+
+def _row_account(rows: int, numbered: list[tuple[int, dict]],
+                 fates: dict[int, str]) -> RowAccount:
+    """Close the account of a JSONL transcript: the fate each branch named
+    for a line, `no-role` for a parsed line it named none for, and
+    `unparsable-line` for the non-empty lines that never became an object."""
+    admitted = 0
+    excluded = dict.fromkeys(EXCLUDED_CODES, 0)
+    dropped = dict.fromkeys(DROP_CODES, 0)
+    for line_no, _obj in numbered:
+        kind, _, code = fates.get(line_no, _dropped("no-role")).partition(":")
+        if kind == ADMITTED:
+            admitted += 1
+        elif kind == "excluded":
+            excluded[code] += 1
+        else:
+            dropped[code] += 1
+    dropped["unparsable-line"] += rows - len(numbered)
+    return RowAccount(
+        rows, admitted,
+        MappingProxyType({k: n for k, n in excluded.items() if n}),
+        MappingProxyType({k: n for k, n in dropped.items() if n}))
+
+
+def _text_account(messages: list[dict],
+                  lines: list[tuple[bool, str | None]]) -> RowAccount:
+    """The account of a markdown or plain-text transcript. `lines` holds one
+    `(has_content, role)` pair per non-empty line, where `role` is the turn
+    the line sits in (None before the first role marker)."""
+    admitted = no_role = no_content = 0
+    for has_content, role in lines:
+        if role is None:
+            no_role += 1
+        elif has_content:
+            admitted += 1
+        else:
+            no_content += 1
+    if messages and not admitted:
+        # The blob fallback: no marker produced a turn, the whole text is one.
+        admitted, no_role, no_content = len(lines), 0, 0
+    dropped = {k: n for k, n in (("no-role", no_role),
+                                 ("no-content", no_content)) if n}
+    return RowAccount(len(lines), admitted, MappingProxyType({}),
+                      MappingProxyType(dropped))
 
 SUMMARY_FIRST_NOTE = "compact-summary-only-context"
 
@@ -1016,19 +1202,30 @@ def from_file(path) -> list[dict]:
 
 def _from_file_text(p: Path, text: str) -> list[dict]:
     """Parse one already-read file snapshot."""
+    return _read_snapshot(p, text)[0]
+
+
+def _read_snapshot(p: Path, text: str) -> tuple[list[dict], RowAccount]:
+    """Parse one already-read file snapshot into messages and the account of
+    its non-empty lines (#1292): the one reader every file path goes through,
+    so the account and the messages come from the same pass."""
 
     if p.suffix == ".jsonl":
-        return _from_jsonl(text, kimi=_is_kimi_wire_path(p))
+        return _from_jsonl_accounted(text, kimi=_is_kimi_wire_path(p))
 
     messages: list[dict] = []
+    lines: list[tuple[bool, str | None]] = []
     current_role = None
     buf: list[str] = []
+    turn_lines = 0
 
     def flush():
-        if current_role is not None:
-            content = "\n".join(buf).strip()
-            if content:
-                messages.append({"role": current_role, "content": content})
+        nonlocal turn_lines
+        content = "\n".join(buf).strip()
+        if current_role is not None and content:
+            messages.append({"role": current_role, "content": content})
+        lines.extend([(bool(content), current_role)] * turn_lines)
+        turn_lines = 0
 
     for line in text.splitlines():
         m = _ROLE_RE.match(line)
@@ -1038,13 +1235,15 @@ def _from_file_text(p: Path, text: str) -> list[dict]:
             buf = [line[m.end():]]
         else:
             buf.append(line)
+        if line.strip():
+            turn_lines += 1
     flush()
 
     if not messages:
         blob = text.strip()
         if blob:
             messages.append({"role": "user", "content": blob})
-    return messages
+    return messages, _text_account(messages, lines)
 
 
 def _claude_coverage(text: str, messages: list[dict]) -> dict:
@@ -1100,7 +1299,7 @@ def from_file_detailed(path) -> dict:
     if not p.exists():
         raise FileNotFoundError(p)
     text = p.read_text(encoding="utf-8")
-    messages = _from_file_text(p, text)
+    messages, account = _read_snapshot(p, text)
     notes: list[str] = []
     if p.suffix != ".jsonl":
         coverage = {"version": 1, "adapter": "generic", "available": False,
@@ -1122,7 +1321,9 @@ def from_file_detailed(path) -> dict:
             coverage = _claude_coverage(text, messages)
             if _summary_opens(objects):
                 notes.append(SUMMARY_FIRST_NOTE)
-    return {"messages": messages, "coverage": coverage, "notes": notes}
+    notes.extend(account.drop_notes())
+    return {"messages": messages, "coverage": coverage, "notes": notes,
+            "account": account}
 
 
 class Admitted(NamedTuple):

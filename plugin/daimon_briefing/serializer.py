@@ -120,6 +120,19 @@ class TooShortError(SerializeError):
     pass
 
 
+class EmptyTranscript(TooShortError):
+    """A transcript with no rows at all (#1292): a skip with its own code,
+    `empty-transcript`, never worded as a short session. A `TooShortError` so
+    every door that already treats that as a skip does the same here."""
+
+
+class UnreadableTranscript(SerializeError):
+    """A transcript with rows and no admitted conversation (#1292): the
+    loader could not read the file, which is a failure to repair and not a
+    short session. A `SerializeError`, so the CLI door writes an `error:`
+    line that `status` counts and `heal` retries."""
+
+
 class LLMCallError(SerializeError):
     pass
 
@@ -2778,6 +2791,34 @@ def conversation_message_count(messages) -> int:
     refused by the other."""
     return sum(1 for m in messages or []
                if not (isinstance(m, dict) and m.get("tool_result")))
+
+
+def require_readable(messages, account) -> None:
+    """The one gate that tells an unreadable transcript from a short one
+    (#1292), applied before `require_enough_messages` by every door through
+    `capture.run` (and by the import plan, which spends nothing).
+
+    A read with conversation passes. Without any, `account` (the loader's
+    `transcript.RowAccount`, None when the source kept none) decides:
+    zero rows is `EmptyTranscript`; rows present, or no account at all, is
+    `UnreadableTranscript`. Scar 0045: rows that parse to zero messages are a
+    parse failure, never a short session."""
+    if conversation_message_count(messages) > 0:
+        return
+    if account is not None and account.rows == 0:
+        raise EmptyTranscript("empty-transcript: the transcript has no rows")
+    if account is None:
+        raise UnreadableTranscript(
+            "unreadable-transcript: no conversation could be read from the "
+            "session source")
+    dropped = ", ".join(f"{code}={n}" for code, n in account.dropped.items())
+    excluded = ", ".join(f"{code}={n}" for code, n in account.excluded.items())
+    detail = "; ".join(part for part in (
+        f"dropped {dropped}" if dropped else "",
+        f"excluded {excluded}" if excluded else "") if part)
+    raise UnreadableTranscript(
+        f"unreadable-transcript: {account.rows} rows, none read as "
+        f"conversation" + (f" ({detail})" if detail else ""))
 
 
 def require_enough_messages(messages) -> None:

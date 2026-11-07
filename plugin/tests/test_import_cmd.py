@@ -515,8 +515,9 @@ def test_two_kimi_sessions_plan_as_two_ids_and_write_two_checkpoints(
     assert cli.main(_argv([a, b])) == 0
     out = capsys.readouterr().out
     assert "import plan for import-cmd (kimi): 2 sessions" in out
-    assert "k-aaaa  note: project from --project (kimi records none)" in out
-    assert "k-bbbb  note: project from --project (kimi records none)" in out
+    for sid in ("k-aaaa", "k-bbbb"):
+        line = next(ln for ln in out.splitlines() if f"  {sid}  note:" in ln)
+        assert "project from --project (kimi records none)" in line
     assert len(chat.calls) == 2
     assert store.read_checkpoint("k-aaaa") is not None
     assert store.read_checkpoint("k-bbbb") is not None

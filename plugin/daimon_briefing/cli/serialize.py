@@ -190,6 +190,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
         detailed = transcript.from_file_detailed(path)
         messages = detailed["messages"]
         coverage = detailed["coverage"]
+        account = detailed["account"]
         _append_transcript_notes(session_id, detailed["notes"])
     except FileNotFoundError:
         msg = f"error: transcript not found: {path}"
@@ -242,7 +243,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
                               transcript_path=path,
                               transcript_sha=transcript_sha,
                               escalate=escalate, coverage=coverage,
-                              door=door)
+                              door=door, account=account)
         except serializer.TooShortError as exc:
             msg = f"skipped serialize for {session_id}: {exc}"
             print(msg)
