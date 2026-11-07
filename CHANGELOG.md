@@ -5,6 +5,39 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.0](https://github.com/Daily-Nerd/daimon/compare/v0.63.1...v0.64.0) (2026-11-07)
+
+
+### Features
+
+* **requests:** derive a wall-clock overdue state for asks the sender still has open ([182d72c](https://github.com/Daily-Nerd/daimon/commit/182d72c29b65505f9ffa5b4955012a98e02ebfb7))
+* **requests:** wall-clock overdue state for open requests, visible to the sender ([899833f](https://github.com/Daily-Nerd/daimon/commit/899833fa3627fe95e5b3ca3762f9624b07fc3acd))
+* **worldcheck:** run world evidence on the MCP, host API and Hermes briefing paths ([80223bc](https://github.com/Daily-Nerd/daimon/commit/80223bca7061615e84252977dd1130eeeaf6b829))
+
+
+### Bug Fixes
+
+* **checks:** report a path that needs shell expansion as shell-expansion, not file-missing ([6af736b](https://github.com/Daily-Nerd/daimon/commit/6af736bdcb6e48d03b1909883c28f9f8a685dc19))
+* **checks:** report a path that needs shell expansion as shell-expansion, not file-missing ([91178f4](https://github.com/Daily-Nerd/daimon/commit/91178f41f2196fbda3630c421a311a62cda61b5e))
+
+
+### Documentation
+
+* **claims:** publish the quote stitch rate with its re-run method ([b3770da](https://github.com/Daily-Nerd/daimon/commit/b3770dac79e790144280bb6a73b768fab81f19e3))
+* point backends-tested, configuration and team at their site pages ([a5fcc29](https://github.com/Daily-Nerd/daimon/commit/a5fcc2991b1b552c3875ce1dca13be92434f681d))
+* point backends-tested, configuration and team at their site pages instead of copying them ([c4c7b3b](https://github.com/Daily-Nerd/daimon/commit/c4c7b3b2ab7e0f627c081d91cfc3e532b5a4b565))
+* **readme:** say what daimon does and what it is not on the first screen ([753cdb2](https://github.com/Daily-Nerd/daimon/commit/753cdb2601f5956c7abc2d66c4ee79433fd42fb4))
+* **requests:** count the four request panels the brief carries ([39dfd32](https://github.com/Daily-Nerd/daimon/commit/39dfd3297375b58ed2f78b1fe811e9800273841c))
+* **requests:** document the overdue state and DAIMON_REQUEST_OVERDUE_DAYS ([d36e8a5](https://github.com/Daily-Nerd/daimon/commit/d36e8a5ce6e293de249e9645c877ea89793eb904))
+* **scars:** record why a tilde in a checked path is not expanded ([aae25ce](https://github.com/Daily-Nerd/daimon/commit/aae25ce0660c2b879d890e761f3b010434bc4c96))
+* **site:** carry the root-only sections onto the site and publish the stitch rate ([ade7e16](https://github.com/Daily-Nerd/daimon/commit/ade7e1633d90d7eed50f1e94387eeaf1c3b2dcb8))
+* **site:** carry the tenant scope, speaker, scar harvest and team gate sections the site pages lacked ([797e1d7](https://github.com/Daily-Nerd/daimon/commit/797e1d77ec247029bf961f629a9986e4c9047d29))
+* **website:** say what daimon does and what it is not in the landing hero ([b6c46c5](https://github.com/Daily-Nerd/daimon/commit/b6c46c5ccac07b243a8018902b5e4cda5b695d2f))
+* **website:** say what daimon does and what it is not in the landing hero ([0794630](https://github.com/Daily-Nerd/daimon/commit/07946307ccc5731a93e738379519190606706ab1)), closes [#1273](https://github.com/Daily-Nerd/daimon/issues/1273)
+* **worldcheck:** evidence is recorded by whichever briefing path ran the check, not only the CLI ([17df406](https://github.com/Daily-Nerd/daimon/commit/17df40611b828510a51ae0bbd5aa9e09a09b3c45))
+* **worldcheck:** MCP and Hermes briefing paths carry world evidence, with the cost stated ([e6dd056](https://github.com/Daily-Nerd/daimon/commit/e6dd056d00f0d3f227f5504e48d1f90d7354d9da))
+* **worldcheck:** put the noted-line placeholder in code so MDX does not read it as a tag ([24cd873](https://github.com/Daily-Nerd/daimon/commit/24cd8733d9cb8bebcec3fa7355e3fa20750ff071))
+
 ## [0.63.1](https://github.com/Daily-Nerd/daimon/compare/v0.63.0...v0.63.1) (2026-10-30)
 
 
