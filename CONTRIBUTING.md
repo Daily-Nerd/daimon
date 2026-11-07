@@ -66,3 +66,7 @@ for example `Request overdue state for open requests (#1281)`; the `type:*`
 label on the PR carries the type. Any way of merging is then safe, the merge
 button included. To verify a merge commit that already landed, run
 `uv run python scripts/merge_pr.py <number> --check`.
+
+Dependabot PRs (branch `dependabot/*`) are exempt from the title check: the bot
+owns the title and rewrites it on every rebase, and its `ci` type has no
+changelog section, so the merge body cannot add a duplicate line.

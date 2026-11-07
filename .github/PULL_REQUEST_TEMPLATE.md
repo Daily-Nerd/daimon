@@ -17,6 +17,8 @@ CI gates on this PR (pr-validation.yml):
   as "Request overdue state for open requests (#1281)"; the type:* label
   carries the type. release-please reads the branch commits, not this title
   and not this body.
+  Dependabot PRs (branch dependabot/*) are exempt: the bot owns and rewrites
+  its title, and its `ci` type has no changelog section.
 - branch named type/description (lowercase), where type is one of:
   feat fix chore docs style refactor perf test build ci revert
   NOT the content area: `research/foo` fails. A PR's head branch cannot be
