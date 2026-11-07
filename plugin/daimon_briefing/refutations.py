@@ -33,6 +33,9 @@ from typing import NamedTuple
 
 from . import (channels, clock, config, jsonl, normalize, policy, redact, scope,
                store, surfaces)
+from .authority import channels as known_channels
+from .authority import of_channel, of_row
+from .authority import table as authority_table
 from .surfaces import WritePosture, Writer
 
 
@@ -78,13 +81,17 @@ AUTHORITIES = frozenset({"agent", "human", "mechanical"})
 # the `mechanical` tier `channels.py` itself does not carry (#581's future
 # automatic activation; `relations.py` never needed it and does not gain it
 # for free by importing the same base).
-CHANNEL_AUTHORITY = channels.merged_authority({"mechanical": "mechanical"})
-CHANNELS = frozenset(CHANNEL_AUTHORITY)
+#
+# #1301: the table itself lives in `authority.py`, the one owner of the tier a
+# row carries. These two names stay bound to it for importers that pin them;
+# nothing in the package reads a tier through them.
+CHANNEL_AUTHORITY = authority_table("refutations")
+CHANNELS = known_channels("refutations")
 CHANNEL_LABEL = channels.CHANNEL_LABEL
 
 
 def _channel_of(row: dict) -> str:
-    """A row's channel as a lookup key for CHANNEL_AUTHORITY / CHANNEL_LABEL.
+    """A row's channel as a lookup key for CHANNEL_LABEL.
 
     Rows are read off disk, so the field can be absent or non-str. Neither map
     carries an empty-string key, so an unusable channel misses on "" exactly
@@ -164,7 +171,7 @@ _CHECK_HOST_ROOT_RE = re.compile(r"(?:^|[^\w/])(?:~/|\$HOME/|\$\{HOME\}/|"
 # `_policy`, stored on the founding row, pinned at ratify by `policy_sha256`
 # mirroring `check_sha256`, gated in the fold the identical way. `requests.py`
 # owns `KINDS` (`{"info", "work"}`), which this module cannot import
-# (`requests.py` already imports `CHANNEL_AUTHORITY`/`CHANNEL_LABEL` from here,
+# (`requests.py` already imports `CHANNEL_LABEL` from here,
 # so the reverse import would be a cycle), so it is mirrored here. The
 # sender-slug shape is not mirrored: `scope.parse_bucket` owns it for both
 # modules (#1294). `by` has exactly one member today (`requests.py` grants no other
@@ -665,7 +672,7 @@ def _stamp(event: str, refutation_id: str, channel: str,
             f"channel must be one of: {', '.join(sorted(CHANNELS))}")
     # Derived, never accepted: there is no way to name one channel and claim
     # the authority of another.
-    authority = CHANNEL_AUTHORITY[channel]
+    authority = of_channel("refutations", channel)
     order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
@@ -967,7 +974,7 @@ def _fold_row(out: dict, row: dict) -> None:
             return  # duplicate logical assertion, first writer wins
         state = (
             "active" if row.get("ratified") is True
-            and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
+            and of_row("refutations", row) == "human" else "candidate")
         out[ref_id] = {
             "refutation_id": ref_id,
             # #693: polarity is DERIVED from the founding event name at
@@ -980,13 +987,13 @@ def _fold_row(out: dict, row: dict) -> None:
             "anchors": list(row.get("anchors") or []),
             "revisit_when": str(row.get("revisit_when") or ""),
             "evidence": list(row.get("evidence") or []),
-            "asserted_by": row.get("authority"),
+            "asserted_by": of_row("refutations", row),
             "asserted_author": row.get("author"),
             # Who authored the CURRENT text — distinct from asserted_by
             # so human-ratified agent prose renders as exactly that.
             # DERIVED from the channel, never read from the row's own
             # authority claim: this is a rendered authority label.
-            "text_authored_by": CHANNEL_AUTHORITY.get(_channel_of(row)),
+            "text_authored_by": of_row("refutations", row),
             "activation": (CHANNEL_LABEL.get(_channel_of(row))
                            if state == "active" else None),
             "activation_channel": (row.get("channel")
@@ -1013,7 +1020,7 @@ def _fold_row(out: dict, row: dict) -> None:
     # resurrected by revise; both stay visible in the raw audit.
     if is_ruling and event == "revised" and (
             (current["state"] == "active"
-             and CHANNEL_AUTHORITY.get(_channel_of(row)) != "human")
+             and of_row("refutations", row) != "human")
             or current["state"] == "overturned"):
         return
     # #1090: a `ratified` row on a ruling that is ALREADY active and carries
@@ -1037,7 +1044,7 @@ def _fold_row(out: dict, row: dict) -> None:
     applies_proposal = (
         is_ruling and event == "ratified" and current["state"] == "active"
         and isinstance(current.get("revision_proposed"), dict)
-        and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human")
+        and of_row("refutations", row) == "human")
     if applies_proposal:
         proposal = current["revision_proposed"]
         proposed_verdict = str(proposal.get("verdict") or "")
@@ -1159,7 +1166,7 @@ def _fold_row(out: dict, row: dict) -> None:
         # carrying a verdict_key activates only the text it displayed; a
         # row with NO key is unbound and activates normally (every
         # pre-existing ledger row is absent-key).
-        elif current["state"] != "overturned" and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
+        elif current["state"] != "overturned" and of_row("refutations", row) == "human":
             current["state"] = "active"
             current["activation"] = CHANNEL_LABEL.get(_channel_of(row))
             current["activation_channel"] = row.get("channel")
@@ -1170,7 +1177,7 @@ def _fold_row(out: dict, row: dict) -> None:
         # a mechanical row on a ruling stays in the raw audit, inert.
         if (current["state"] != "overturned"
                 and current.get("polarity") != "ruling"
-                and CHANNEL_AUTHORITY.get(_channel_of(row)) == "mechanical"):
+                and of_row("refutations", row) == "mechanical"):
             current["state"] = "active"
             current["activation"] = "mechanically-activated"
             current["activation_channel"] = "mechanical"
@@ -1209,12 +1216,11 @@ def _fold_row(out: dict, row: dict) -> None:
         # replace-by-key-presence contract above means a human revising
         # only scope must not relabel agent-authored text as human.
         if "verdict" in row or "subject" in row:
-            current["text_authored_by"] = CHANNEL_AUTHORITY.get(
-                _channel_of(row))
+            current["text_authored_by"] = of_row("refutations", row)
         was_active = current["state"] == "active"
         current["state"] = (
             "active" if row.get("ratified") is True
-            and CHANNEL_AUTHORITY.get(_channel_of(row)) == "human" else "candidate")
+            and of_row("refutations", row) == "human" else "candidate")
         current["activation"] = (
             CHANNEL_LABEL.get(_channel_of(row))
             if current["state"] == "active" else None)
@@ -1233,7 +1239,7 @@ def _fold_row(out: dict, row: dict) -> None:
         # #693: latest-wins; the active text and its render are untouched.
         if current["state"] == "active":
             current["revision_proposed"] = {
-                "by": row.get("authority"),
+                "by": of_row("refutations", row),
                 "evidence": list(row.get("evidence") or []),
                 "note": str(row.get("note") or ""),
                 "subject": str(row.get("subject") or ""),
@@ -1247,12 +1253,12 @@ def _fold_row(out: dict, row: dict) -> None:
     elif event == "overturn-proposed":
         if current["state"] == "active":
             current["overturn_proposed"] = {
-                "by": row.get("authority"),
+                "by": of_row("refutations", row),
                 "evidence": list(row.get("evidence") or []),
                 "note": str(row.get("note") or ""),
             }
     elif event == "overturned":
-        if CHANNEL_AUTHORITY.get(_channel_of(row)) == "human":
+        if of_row("refutations", row) == "human":
             current["state"] = "overturned"
             current["activation"] = None
             current["activation_channel"] = None
@@ -1536,7 +1542,7 @@ def assert_refutation(*, subject: str, verdict: str, scope: str,
     subject, _ = redact.redact_text(subject)
     verdict, _ = redact.redact_text(verdict)
     scope, _ = redact.redact_text(scope)
-    if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
+    if ratified and of_channel("refutations", channel) != "human":
         raise RefutationError(
             "activating with --ratify requires a human channel; this call "
             f"arrived through {channel!r}")
@@ -1772,7 +1778,7 @@ def _guard_open_proposals(refutation_id: str, event: str,
         current_check_sha = str(
             (record.get("check") or {}).get("sha256") or "")
     verdicts = [r for r in rows
-                if CHANNEL_AUTHORITY.get(_channel_of(r)) == "human"
+                if of_row("refutations", r) == "human"
                 and r.get("event") in ("ratified", "overturned", "revised")
                 and not (r.get("event") == "ratified"
                          and str(r.get("verdict_key") or "")
@@ -1843,7 +1849,7 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
     subject, _ = redact.redact_text(subject)
     verdict, _ = redact.redact_text(verdict)
     scope, _ = redact.redact_text(scope)
-    if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
+    if ratified and of_channel("refutations", channel) != "human":
         raise RefutationError(
             "activating with --ratify requires a human channel; this call "
             f"arrived through {channel!r}")
@@ -1996,7 +2002,7 @@ def retire(ruling_id: str, *, channel: str, evidence=(), note: str = "",
             f"{ruling_id} is a refutation; use `daimon refute overturn`")
     if current["state"] == "overturned":
         raise RefutationError(f"{ruling_id} is already retired")
-    event = ("overturned" if CHANNEL_AUTHORITY.get(channel) == "human"
+    event = ("overturned" if of_channel("refutations", channel) == "human"
              else "overturn-proposed")
     if event == "overturn-proposed":
         _guard_open_proposals(ruling_id, event, project_dir=project_dir)
@@ -2018,7 +2024,7 @@ def ratify(refutation_id: str, *, channel: str, note: str = "",
     # is the one that must not be self-declarable.  The caller names the
     # channel it OBSERVED; authority is derived from that, so an agent cannot
     # reach this state by describing itself differently.
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("refutations", channel) != "human":
         raise RefutationError(
             "ratification requires a human channel; this call arrived "
             f"through {channel!r}")
@@ -2112,7 +2118,7 @@ def revise(refutation_id: str, *, channel: str, evidence,
     if current is None:
         _guard_layer_only_id(refutation_id, project_dir)  # #1094
         raise RefutationError(f"unknown refutation: {refutation_id}")
-    if ratified and CHANNEL_AUTHORITY.get(channel) != "human":
+    if ratified and of_channel("refutations", channel) != "human":
         raise RefutationError(
             "activating a revision requires a human channel; this call "
             f"arrived through {channel!r}")
@@ -2133,7 +2139,7 @@ def revise(refutation_id: str, *, channel: str, evidence,
                 f"{refutation_id} is retired; propose a new ruling instead "
                 "of reviving it")
         if current["state"] == "active":
-            if CHANNEL_AUTHORITY.get(channel) != "human":
+            if of_channel("refutations", channel) != "human":
                 event = "revision-proposed"
                 _guard_open_proposals(refutation_id, event,
                                       project_dir=project_dir)
@@ -2237,7 +2243,7 @@ def overturn(refutation_id: str, *, channel: str, evidence=(), note: str = "",
             f"{refutation_id} is a ruling; use retire()")
     if current["state"] == "overturned":
         raise RefutationError(f"{refutation_id} is already overturned")
-    event = ("overturned" if CHANNEL_AUTHORITY.get(channel) == "human"
+    event = ("overturned" if of_channel("refutations", channel) == "human"
              else "overturn-proposed")
     row = _stamp(event, refutation_id, channel)
     row["reason"] = _close_reason(current)

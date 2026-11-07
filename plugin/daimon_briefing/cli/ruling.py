@@ -12,7 +12,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import (briefing, buckets, checks, checks_sync, config, normalize,
+from .. import (authority, briefing, buckets, checks, checks_sync, config, normalize,
                 refutations, render, store)
 from ._ledger import (
     _check_args,
@@ -60,7 +60,7 @@ def _cmd_ruling_propose(args) -> int:
     # governs from above, the render consequence, and a confirm — before
     # anything is written. A declined confirm writes nothing at all, the
     # same posture `revise`'s own confirm holds for an active ruling's text.
-    if args.ratify and channel == "cli-tty":
+    if args.ratify and authority.of_channel("refutations", channel) == "human":
         # Ceremony text goes to stderr under --json, the same split ratify's
         # own ceremony already holds, so stdout stays parseable.
         ceremony = sys.stderr if args.json else sys.stdout
@@ -176,7 +176,7 @@ def _cmd_ruling_ratify(args) -> int:
     if record.get("polarity") != "ruling":
         print(f"{args.ruling_id} is a refutation; use `daimon refute ratify`")
         return 1
-    if channel != "cli-tty":
+    if authority.of_channel("refutations", channel) != "human":
         # Never invoke a writer to harvest its error string.
         print("ruling not ratified: ratification requires a human channel; "
               f"this call arrived through {channel!r}")
@@ -350,7 +350,7 @@ def _cmd_ruling_revise(args) -> int:
                 "--request-policy and --no-request-policy are mutually "
                 "exclusive")))
         return 1
-    if (record["state"] == "active" and channel == "cli-tty"
+    if (record["state"] == "active" and authority.of_channel("refutations", channel) == "human"
             and (args.verdict is not None or args.subject is not None
                  or check is not None or request_policy is not None
                  or clear_request_policy)):
@@ -757,7 +757,7 @@ def _cmd_ruling_check_try(args) -> int:
     except refutations.RefutationError as exc:
         print(_refusal_message("check not run", exc))
         return 1
-    if channel != "cli-tty":
+    if authority.of_channel("refutations", channel) != "human":
         # Never invoke the runner to harvest its error string, and never
         # execute a body to discover the caller was not allowed to ask.
         print("check not run: a dry run executes the check body, so it "

@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-from . import checks_runtime, config, refutations
+from . import authority, checks_runtime, config, refutations
 
 
 # ---- reading the firing log (#943 slice 5) --------------------------------
@@ -235,7 +235,7 @@ def try_run(ruling_id: str, command: str, *, channel: str, cwd=None,
     makes the liveness surface report a check that never guarded an action),
     not the manifest, and not a body under ~/.daimon/checks, where the hook
     could not tell it from an armed one."""
-    if refutations.CHANNEL_AUTHORITY.get(channel) != "human":
+    if authority.of_channel("refutations", channel) != "human":
         raise refutations.RefutationError(
             "a dry run executes the check body, so it requires a human "
             f"channel; this call arrived through {channel!r}")

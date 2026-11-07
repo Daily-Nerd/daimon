@@ -58,6 +58,11 @@ class Target(NamedTuple):
     checkpoint: dict | None = None
     session_id: str = ""
     reason: str = ""
+    # The tier of the tombstone rows (#1293): what the CLI observed of the
+    # write path. The library never reads the terminal (#1301), so a Target
+    # nobody observed for is an agent's, not a person's: doubt resolves away
+    # from the human tier.
+    source: str = "agent"
 
 
 class Planned(NamedTuple):
@@ -159,7 +164,7 @@ def write_tombstones(target: Target) -> jsonl.Reached:
     deletion exemption to the kill switch applies (#421)."""
     key = target.content_key
     status = f"forgotten:{key}"
-    source = store.observed_event_source()  # #1293: forget is agent-reachable
+    source = target.source  # #1293: forget is agent-reachable
     standing = store.project_standing(target.project).get(key, store.Standing())
     specs: list = []
     if target.item_id and target.item_id not in standing.ids:

@@ -6,11 +6,11 @@ reaches through its namespace. Every name is re-exported from `cli`.
 
 import functools
 import json
-import sys
 
 import daimon_briefing.cli as _cli
 
 from .. import relations, render, view
+from . import _observe
 
 
 def _relations_channel() -> str:
@@ -22,11 +22,12 @@ def _relations_channel() -> str:
     would only advertise a path that always fails. A verdict has to show an
     interactive terminal; anything else is refused, not downgraded.
     """
-    if not sys.stdin.isatty():
+    channel = _observe.channel()
+    if channel is None:
         raise relations.RelationError(
             "relation verdicts are human-only and need an interactive "
             "terminal; there is no agent path to confirm, reject, or retract")
-    return "cli-tty"
+    return channel
 
 
 @_cli.guarded

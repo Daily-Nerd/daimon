@@ -33,7 +33,6 @@ import os
 import re
 import secrets
 import stat
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -3372,38 +3371,22 @@ def forget_hit_stats(project_dir=None) -> dict:
     return out
 
 
-# Event-ledger `source` values whose authority tier is HUMAN. Declared here,
-# beside the writer that stamps the field, so consumers derive one view of
-# "a person decided this" instead of each hardcoding a literal — the same
-# single-declaration shape surfaces.py uses for delete strategies.
-#
-# `ui` and `cli-tty` are peers of `cli`, not replacements: the ledger is
-# append-only and every row already written says `cli`, so the set widens and
-# never renames. `cli-tty` is the observed interactive CLI channel; `cli` is
-# retained as the legacy human source.
-# It matches refutations.CHANNEL_AUTHORITY["ui"] == "human", which is the
-# same claim in the refutation ledger's own vocabulary. The two vocabularies
-# stay separate on purpose — that ledger's channels distinguish `cli-tty`
-# from `cli-agent`, a split this ledger expresses through `source="agent"`.
-#
-# Widening this set widens WHO counts, never WHAT counts: callers must still
-# filter on `kind` themselves (scar 0025 — kind never isolates a fold on its
-# own), or forget's tombstones and log's freeform rows ride in as decisions.
-HUMAN_EVENT_SOURCES = frozenset({"cli", "cli-tty", "ui"})
+# Which event-ledger `source` values are HUMAN is `authority.py`'s answer
+# (#1301): `authority.of_row("events", row)`. Widening what counts as human
+# widens WHO counts, never WHAT counts: callers must still filter on `kind`
+# themselves (scar 0025 - kind never isolates a fold on its own), or forget's
+# tombstones and log's freeform rows ride in as decisions.
 
 
-def observed_event_source() -> str:
-    """The tier of an events row written from this process's stdin: `cli-tty`
-    when a terminal is attached, `agent` otherwise. The tier is a property of
-    the write path daimon observed (#1293), never a default a caller can fall
-    into, and no caller can claim the human tier by omission or by flag. A
-    missing or unreadable stdin reads as no terminal: doubt resolves away from
-    the human tier."""
-    try:
-        return "cli-tty" if sys.stdin is not None and sys.stdin.isatty() \
-            else "agent"
-    except (OSError, ValueError):
-        return "agent"
+def observed_event_source(attended: bool) -> str:
+    """The `source` of an events row, given what its caller OBSERVED of the
+    write path: `cli-tty` when a terminal was attached, `agent` otherwise
+    (#1293). The tier is a property of the observed write path, never a
+    default a caller can fall into, and no caller can claim the human tier by
+    omission or by flag. The library does not look at stdin to answer this
+    (#1301): `cli/_observe.py` is the one reading of the terminal and hands
+    the observation in."""
+    return "cli-tty" if attended else "agent"
 
 
 def tombstone_refs(resolutions) -> frozenset:
@@ -3557,10 +3540,10 @@ def append_event(item_ref: str, status: str, note: str = "",
     refused unless the caller is the forget path.
 
     `source` (#1293) is the authority tier of the row and has no default: a
-    default that is a member of HUMAN_EVENT_SOURCES turns every omission into
+    default that is a member of `authority.HUMAN_EVENT_SOURCES` turns every omission into
     a person's act. A human path passes the tier it observed (`cli-tty`), a
     machine path names itself (`agent`, `serializer`), and
-    `observed_event_source` is the one reading of the terminal."""
+    `cli/_observe.py` is the one reading of the terminal."""
     return append_events(
         [{"item_ref": item_ref, "status": status, "note": note, "kind": kind,
           "source": source, "item_text": item_text}],

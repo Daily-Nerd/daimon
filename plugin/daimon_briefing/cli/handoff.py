@@ -9,6 +9,7 @@ import daimon_briefing.cli as _cli
 
 from .. import render, store
 from ..surfaces import Writer
+from . import _observe
 
 
 # #523: a baton is small on purpose — "do X first, beware Y", not a second
@@ -30,7 +31,7 @@ def _cmd_handoff(args) -> int:
             return 1
         if not store.append_event("", "cleared", note="", kind="handoff",
                                   project_dir=project, writer=Writer.HUMAN,
-                                  source=store.observed_event_source()):
+                                  source=_observe.event_source()):
             print("error: handoff not recorded (daimon disabled or project "
                   "unknown)", file=sys.stderr)
             return 1
@@ -67,7 +68,7 @@ def _cmd_handoff(args) -> int:
               f"new baton:\n  {prior['note']}", file=sys.stderr)
     if not store.append_event("", "active", note=text, kind="handoff",
                               project_dir=project, writer=Writer.HUMAN,
-                              source=store.observed_event_source()):
+                              source=_observe.event_source()):
         print("error: handoff not recorded (daimon disabled or project "
               "unknown)", file=sys.stderr)
         return 1
@@ -89,7 +90,7 @@ def _cmd_log(args) -> int:
     ok = store.append_event("", args.status, note=args.text,
                             kind=args.kind, project_dir=project,
                             writer=Writer.HUMAN,
-                            source=store.observed_event_source())
+                            source=_observe.event_source())
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1

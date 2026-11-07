@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import daimon_briefing.cli as _cli
 
 from .. import (
+    authority,
     capture,
     config,
     jsonl,
@@ -625,7 +626,7 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
             status = str(evt.get("status") or "")
             kind = str(evt.get("kind") or "")
             ts = str(evt.get("ts") or "")
-            if (source in store.HUMAN_EVENT_SOURCES and kind == "resolution"
+            if (authority.of_row("events", evt) == "human" and kind == "resolution"
                     and store.is_resolved(evt)):
                 human += 1
                 human_stamps.append(ts)

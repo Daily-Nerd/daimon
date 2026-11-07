@@ -5,12 +5,12 @@ garbage in a bucket ledger and re-runs forget over the result. `daimon trust
 repair` is the same verb for the trust ledger.
 """
 
-import sys
 
 import daimon_briefing.cli as _cli
 
 from .. import ledger as _ledger
 from .. import ledger_repair, render, store
+from . import _observe
 
 
 def _report_lines(report: ledger_repair.Report) -> list:
@@ -57,7 +57,7 @@ def _report_lines(report: ledger_repair.Report) -> list:
 def _approve_rulings(rulings: list) -> str:
     """The #693 gate forget holds, for the re-scrub: a human at a terminal
     may say y; anything else is refused and pointed at `ruling retire`."""
-    if not sys.stdin.isatty():
+    if not _observe.attended():
         return ledger_repair.refusal_for(rulings)
     render.render_ledger_lines(
         ["WARNING: the re-scrub removes ACTIVE ruling(s): "
