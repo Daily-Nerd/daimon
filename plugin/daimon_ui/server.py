@@ -1,5 +1,4 @@
 import json
-import re
 from dataclasses import dataclass
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,10 +15,9 @@ from . import reader
 # the view (`view`, `schema`, `api`, pinned by tests/test_read_layers.py); the
 # engine boundary lives here in dispatch only.
 from daimon_briefing import (config, display, inspector, recall, refutations,
-                             view)
+                             scope, view)
 
 _PAGE = Path(__file__).parent / "page.html"
-_SLUG_RE = re.compile(r"^[\w-]+$")
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -84,12 +82,12 @@ class _Handler(BaseHTTPRequestHandler):
         }}
 
     def _resolve_slug(self, params):
-        """Slug is accepted only if it matches ^[\\w-]+$ AND names a bucket this
+        """Slug is accepted only if it is a bucket name per `scope.parse_bucket` AND names a bucket this
         caller may open: `view.bucket_exists`, the one existence check and the
         one tenant rule (#899), a stat and not a scan. Never joined to a path
         before that double-check passes."""
         raw = params.get("project", [self.default_slug])[0]
-        if not _SLUG_RE.fullmatch(raw or ""):
+        if scope.parse_bucket(raw or "") is None:
             return None
         if not view.bucket_exists(raw, self.default_slug):
             return None

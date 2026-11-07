@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import (config, jsonl, normalize, policy, receipts, redact, schema,
-               serializer, surfaces, teamproject)
+               scope, serializer, surfaces, teamproject)
 from .surfaces import Writer
 
 log = logging.getLogger("daimon_briefing")
@@ -2307,6 +2307,8 @@ def list_buckets(only=None) -> list[dict]:
     for child in entries:
         if only is not None and child.name not in only:
             continue
+        if scope.parse_bucket(child.name) is None:
+            continue  # not a project bucket name (#1294)
         latest = child / _LATEST
         try:
             mtime = latest.stat().st_mtime

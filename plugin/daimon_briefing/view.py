@@ -31,7 +31,7 @@ from typing import Any, Iterator, Literal, Mapping, NamedTuple, NoReturn
 from . import (amendments, carry, config, display, index_locate, jsonl,
                multihash, normalize, provenance, refutations)
 from . import relations as relation_ledger
-from . import requests, schema, store, surfaces, trust
+from . import requests, schema, scope, store, surfaces, trust
 from .jsonl import Health
 from .surfaces import ReadPosture
 
@@ -323,6 +323,8 @@ def _bucket(project):
 
 
 def _is_bucket(name: str) -> bool:
+    if scope.parse_bucket(name) is None:
+        return False
     try:
         (config.checkpoint_dir() / name / store._LATEST).stat()
     except OSError:
