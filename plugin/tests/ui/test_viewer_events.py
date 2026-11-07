@@ -50,7 +50,7 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 def _break_trust(root):
@@ -89,7 +89,7 @@ def _get(base, path):
 
 def test_a_forgotten_value_and_its_key_are_in_no_activity_row(base):
     store.append_event(A, "resolved", note=HIDE, item_text=HIDE,
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _forget(HIDE)
     got = _get(base, "/api/activity")
     blob = json.dumps(got)
@@ -105,7 +105,7 @@ def test_a_forgotten_value_and_its_key_are_in_no_activity_row(base):
 
 def test_a_quarantined_note_and_item_text_read_as_the_marker(base):
     store.append_event(A, "resolved", note=HIDE, item_text=HIDE,
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     rec = _quarantine(HIDE)
     got = _get(base, "/api/activity")
     [res] = [r for r in got["rows"] if r["kind"] == "resolution"]
@@ -125,7 +125,7 @@ def test_a_session_row_takes_its_topic_from_the_judged_read(base):
 
 def test_an_unreadable_trust_ledger_keeps_notes_and_masks_item_text(base, two):
     store.append_event(A, "resolved", note=KEEP, item_text="a closed goal",
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _break_trust(two)
     got = _get(base, "/api/activity")
     assert any("trust.jsonl" in n for n in got["notes"])
@@ -146,7 +146,7 @@ def test_a_clean_store_has_no_notes(base):
 @pytest.mark.parametrize("status", ["resolved", "resolved-agent-verified",
                                     "done"])
 def test_ledger_follows_the_kernels_resolution_fold(base, status):
-    store.append_event(A, status, note="closed", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(A, status, note="closed", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     got = _get(base, "/api/ledger")
     [row] = [r for g in got["groups"] for r in g["rows"] if r["id"] == A]
     assert row["last_event"]["kind"] == "resolved"
@@ -154,8 +154,8 @@ def test_ledger_follows_the_kernels_resolution_fold(base, status):
 
 def test_ledger_totals_count_one_resolution_per_resolved_ref(base):
     walk_events = _get(base, "/api/ledger")["totals"]["events"]
-    store.append_event(A, "resolved-agent-verified", project_dir=PROJECT, writer=Writer.HUMAN)
-    store.append_event(A, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(A, "resolved-agent-verified", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
+    store.append_event(A, "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     assert _get(base, "/api/ledger")["totals"]["events"] == walk_events + 1
 
 
@@ -168,7 +168,7 @@ def test_a_forget_is_counted_nowhere_in_the_ledger(base):
     key = normalize.content_key("some unrelated forgotten value")
     for ref in ("i-gone", "i-gone-too"):
         store.append_event(ref, f"forgotten:{key}", kind="tombstone",
-                           tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                           tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     after = _get(base, "/api/ledger")
     assert after["totals"] == before["totals"]
     [row] = [r for g in after["groups"] for r in g["rows"] if r["id"] == B]
@@ -178,8 +178,8 @@ def test_a_forget_is_counted_nowhere_in_the_ledger(base):
 
 
 def test_ledger_reopened_item_is_not_resolved(base):
-    store.append_event(A, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
-    store.append_event(A, "reopened", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(A, "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
+    store.append_event(A, "reopened", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     got = _get(base, "/api/ledger")
     [row] = [r for g in got["groups"] for r in g["rows"] if r["id"] == A]
     assert row["last_event"]["kind"] != "resolved"
@@ -250,7 +250,7 @@ def test_grid_check_rows_come_through_the_view(base):
 
 def test_biography_resolution_is_the_kernels_with_a_judged_note(base):
     store.append_event(A, "resolved-agent-verified", note=HIDE,
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     rec = _quarantine(HIDE)
     got = _get(base, f"/api/biography?id={A}")
     [res] = [e for e in got["events"] if e["kind"] == "resolved"]
@@ -259,7 +259,7 @@ def test_biography_resolution_is_the_kernels_with_a_judged_note(base):
 
 
 def test_biography_forgotten_resolution_note_reads_as_absent(base):
-    store.append_event(A, "resolved", note=HIDE, project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(A, "resolved", note=HIDE, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _forget(HIDE)
     [res] = [e for e in _get(base, f"/api/biography?id={A}")["events"]
              if e["kind"] == "resolved"]

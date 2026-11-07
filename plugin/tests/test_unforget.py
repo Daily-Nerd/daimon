@@ -121,7 +121,7 @@ def test_one_append_lifts_the_id_the_siblings_and_the_key_ref(
     assert sum(store.is_key_ref(r["item_ref"]) for r in rows) == 1
     for row in rows:
         assert row["status"] == store.LIFT_STATUS and row["kind"] == "lift"
-        assert row["source"] == "cli" and row["note"] == "was wrong to forget"
+        assert row["source"] == "cli-tty" and row["note"] == "was wrong to forget"
     assert KEY not in store.forgotten_content_keys(PROJECT)
     assert store.project_standing(PROJECT) == {}
     assert "the row your teammates already folded stays" in out
@@ -177,7 +177,7 @@ def test_a_legacy_one_row_tombstone_lifts_with_a_single_row(
     decision, _ = _seed()
     assert store.append_event(
         decision, f"forgotten:{KEY}", kind="tombstone", project_dir=PROJECT,
-        allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
     assert _unforget(decision) == 0
     capsys.readouterr()
     lifts = [r for r in _events_rows() if r.get("kind") == "lift"]
@@ -336,13 +336,13 @@ def test_the_key_of_an_id_is_read_from_its_last_tombstone_row(
     assert forget.key_of(PROJECT, "r-000000000000") == ""
     # still found after a legacy reopen replaced the id's latest event
     store.append_event(decision, "reopen", project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     assert forget.key_of(PROJECT, decision) == KEY
 
 
 def test_a_lift_with_nothing_standing_writes_nothing(tmp_checkpoint_dir):
     _seed()
-    assert forget.lift(PROJECT, KEY) == forget.Lifted((), True)
+    assert forget.lift(PROJECT, KEY, source="cli-tty") == forget.Lifted((), True)
     assert [r for r in _events_rows() if r.get("kind") == "lift"] == []
 
 

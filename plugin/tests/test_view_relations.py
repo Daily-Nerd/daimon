@@ -52,7 +52,7 @@ def _edge(frm, to, sid_from="S-1", sid_to="S-1"):
 def _forget_id(item_id):
     store.append_event(item_id, "forgotten:" + normalize.content_key("x" + item_id),
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
 
 
 def test_the_join_returns_each_endpoint_text(tmp_checkpoint_dir):

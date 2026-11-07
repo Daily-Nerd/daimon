@@ -314,7 +314,7 @@ def _forget_layer_match(directory):
     assert store.append_event(
         "o-layer-forget", "forgotten:" + normalize.content_key(FORGOTTEN_MATCH),
         kind="tombstone", tombstone=True, project_dir=str(directory),
-        writer=Writer.HUMAN)
+        source="cli", writer=Writer.HUMAN)
 
 
 def test_check_sync_says_a_layer_ruling_is_not_as_ratified(

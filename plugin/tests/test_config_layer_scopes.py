@@ -49,7 +49,7 @@ def _legacy_bucket_with_active_ruling(directory: Path) -> None:
 
 
 def _legacy_bucket_without_ruling(directory: Path) -> None:
-    store.append_event("item-1", "resolved", project_dir=str(directory), writer=Writer.HUMAN)
+    store.append_event("item-1", "resolved", project_dir=str(directory), source="cli", writer=Writer.HUMAN)
     slug = store.project_slug(str(directory))
     (config.checkpoint_dir() / slug / "root").unlink()
 

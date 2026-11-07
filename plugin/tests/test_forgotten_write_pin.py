@@ -30,7 +30,7 @@ def forgotten_id(tmp_checkpoint_dir):
     item_id = next(i["id"] for _f, i in schema.iter_items(body))
     store.append_event(item_id, f"forgotten:{normalize.content_key(LOOP)}",
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     assert item_id in view.judge(store.project_slug(PROJECT)).snap.forgotten_ids
     return item_id
 

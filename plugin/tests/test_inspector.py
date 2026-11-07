@@ -449,7 +449,7 @@ def test_forgotten_event_remains_inspectable_after_plaintext_is_gone(
     monkeypatch.setenv("DAIMON_AUTHOR", "alice")
     assert store.append_event(
         _ITEM_ID, "forgotten:" + "a" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 
@@ -661,7 +661,7 @@ def test_source_disclosure_caps_message_count_and_reports_unavailable(
     # this assertion is testing the unrelated no-occurrence-at-all shape.
     assert store.append_event(
         "o-fedcba", "resolved",
-        project_dir=_PROJECT, allow_disabled=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, source="cli", writer=Writer.HUMAN)
     unavailable = inspector.inspect_item(
         _PROJECT, "o-fedcba", include_source=True,
         resolver=_resolver(tmp_path, projects))
@@ -700,7 +700,7 @@ def test_source_disclosure_is_withheld_when_project_holds_a_forget_tombstone(
     # The tombstone below is for a DIFFERENT item entirely.
     assert store.append_event(
         "o-elsewhere", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     withheld = inspector.inspect_item(
         _PROJECT, _ITEM_ID, include_source=True, resolver=resolver)
@@ -720,10 +720,10 @@ def test_source_refusal_publishes_a_reason_and_no_count(
     _write_checkpoint("S-containing", [_item()])
     assert store.append_event(
         "o-one", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
     assert store.append_event(
         "o-two", "forgotten:" + "c" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
@@ -766,7 +766,7 @@ def test_source_disclosure_withheld_path_still_redacts_the_item_text(
     ])
     assert store.append_event(
         "o-elsewhere", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID, include_source=True)
 
@@ -785,7 +785,7 @@ def test_why_cli_source_flag_prints_withheld_line_when_project_forgot(
     _write_checkpoint("S-containing", [_item()])
     assert store.append_event(
         "o-elsewhere", "forgotten:" + "b" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     assert cli.main([
         "why", _ITEM_ID, "--project", _PROJECT, "--source",
@@ -1326,7 +1326,7 @@ def test_forgotten_team_only_item_is_not_resurrected(
     _write_team_checkpoint("S-team-forgotten", [_item(quote=None)])
     assert store.append_event(
         _ITEM_ID, "forgotten:" + "a" * 64,
-        project_dir=_PROJECT, allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        project_dir=_PROJECT, allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     result = inspector.inspect_item(_PROJECT, _ITEM_ID)
 

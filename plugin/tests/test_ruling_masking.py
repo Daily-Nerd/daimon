@@ -261,7 +261,7 @@ def test_an_inherited_rule_whose_text_was_forgotten_is_left_out(
     assert store.append_event(
         "o-x", "forgotten:" + normalize.content_key(m.FORGOTTEN),
         kind="tombstone", tombstone=True, project_dir=str(work),
-        writer=Writer.HUMAN)
+        source="cli", writer=Writer.HUMAN)
     rid = _ruling(str(repo), subject="child", scope="child", ratify=False)
     m.human(monkeypatch)
     capsys.readouterr()

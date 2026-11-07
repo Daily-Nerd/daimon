@@ -40,7 +40,7 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 def _bucket():
@@ -238,7 +238,7 @@ def test_open_sessions_live_drops_a_closed_loop(tmp_checkpoint_dir):
     cp = _cp("S-1", "2026-08-01T00:00:00Z", questions=[KEEP])
     cp["working_context"]["open_questions"][0]["id"] = "o-aaaaaaaaaaaa"
     store.write_checkpoint("S-1", cp, project_dir=PROJECT, writer=Writer.HUMAN)
-    store.append_event("o-aaaaaaaaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaaaaaaaa", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     kept = view.open_sessions(PROJECT, ["S-1"], live=False)["S-1"]
     dropped = view.open_sessions(PROJECT, ["S-1"], live=True)["S-1"]
     assert (len(kept.checkpoint["working_context"]["open_questions"]),

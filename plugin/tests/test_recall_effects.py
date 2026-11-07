@@ -296,7 +296,7 @@ def test_telemetry_count_drops_a_term_whose_key_is_forgotten(
     _seed()
     key = normalize.content_key("zebrafish")
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=PROJECT, tombstone=True, source="cli", writer=Writer.HUMAN)
     effects_commit.commit(Effects(telemetry=(Telemetry([], {
         "query_terms": ["zebrafish", "pelican"],
         "surface": "recall-search", "via": "cli"}),)))

@@ -561,7 +561,7 @@ def test_event_scrub_redacts_exactly_the_registry_event_prose(
     from daimon_briefing import normalize
 
     value = "an event note that must go"
-    store.append_event("o-111aaa", "resolved", note=value, project_dir=_P, writer=Writer.HUMAN)
+    store.append_event("o-111aaa", "resolved", note=value, project_dir=_P, source="cli", writer=Writer.HUMAN)
     _with_prose(monkeypatch, "events.jsonl", ())
     assert store.scrub_event_fields(normalize.content_key(value),
                                     project_dir=_P) == 0

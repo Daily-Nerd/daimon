@@ -99,7 +99,7 @@ def test_candidates_never_reach_the_wire(rel_proj, rel_srv):
 
 def test_erased_chains_are_dropped_and_counted_nowhere(rel_proj, rel_srv):
     store.append_event(rel_proj["ids"][1], "forgotten:deadbeef01234567",
-                       kind="tombstone", project_dir=rel_proj["proj"], tombstone=True, writer=Writer.HUMAN)
+                       kind="tombstone", project_dir=rel_proj["proj"], tombstone=True, source="cli", writer=Writer.HUMAN)
     out = _get(rel_srv, f"/api/relations?id={rel_proj['ids'][0]}")
     assert out["rows"] == []
     assert out["withheld"] == 0           # H7: a forgotten edge is never counted

@@ -54,7 +54,7 @@ def test_case_a_forgotten_item_never_reaches_the_brief(tmp_path):
     with adapter._env(env):
         # tombstone the value BEFORE capture (value-keyed forget, #402)
         store.append_event("x-000000", f"forgotten:{normalize.content_key(secret)}",
-                           project_dir=proj, tombstone=True, writer=Writer.HUMAN)
+                           project_dir=proj, tombstone=True, source="cli", writer=Writer.HUMAN)
         # one benign item that DOES match the query + the forbidden one alongside it
         store.write_checkpoint(
             "a1", _cp("migration rollback runbook overview", decisions=[secret]),
@@ -105,7 +105,7 @@ def test_case_c_trust_downgraded_item_is_withheld_from_the_brief(tmp_path):
         cp = store.read_latest_body(proj, route=store.Route.OWN_ELSE_GLOBAL,
                                     admit=store.Admit.ANY)
         item_id = cp["working_context"]["recent_decisions"][0]["id"]
-        store.append_event(item_id, "superseded-by:d-newid1", project_dir=proj, writer=Writer.HUMAN)
+        store.append_event(item_id, "superseded-by:d-newid1", project_dir=proj, source="cli", writer=Writer.HUMAN)
         results = recall.search(query, project_dir=proj, limit=50)
 
     # recall STILL returns the row (ranked down, flagged) — the raw retriever leaks

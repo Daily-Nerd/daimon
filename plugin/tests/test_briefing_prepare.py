@@ -65,13 +65,13 @@ def _plant(name, data, project=PROJECT):
 
 def _withhold_three():
     ids = _ids()
-    store.append_event(ids[T_RESOLVED], "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(ids[T_RESOLVED], "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     trust.propose(text=T_QUARANTINED, kind="question", reason="made up",
                   evidence=["issue:1"], channel="cli-tty",
                   project_dir=PROJECT)
     key = normalize.content_key(T_FORGOTTEN)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 # ---- the view and its facts ------------------------------------------------
@@ -96,7 +96,7 @@ def test_a_forgotten_value_is_counted_nowhere(tmp_checkpoint_dir):
     _write()
     key = normalize.content_key(T_FORGOTTEN)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     got = briefing.prepare(PROJECT, NOW)
     assert (got.suppressed, got.quarantined) == (0, 0)
     assert T_FORGOTTEN not in _texts(got.checkpoint)
@@ -249,7 +249,7 @@ def test_an_unreadable_trust_ledger_closes_every_item_and_says_so(
 
 def test_a_degraded_ledger_adds_a_note_and_keeps_the_items(tmp_checkpoint_dir):
     _write()
-    store.append_event("o-zzzzzz", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-zzzzzz", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _plant("events.jsonl", (store.config.checkpoint_dir()
                             / store.project_slug(PROJECT)
                             / "events.jsonl").read_bytes()
@@ -338,7 +338,7 @@ def test_prepare_stamps_false_leaves_the_marks_off(tmp_checkpoint_dir):
     _write()
     ids = _ids()
     store.append_event(ids[T_KEPT], "supersede-candidate:o-eeeeee",
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     stamped = briefing.prepare(PROJECT, NOW)
     plain = briefing.prepare(PROJECT, NOW, stamps=False)
     kept = [i for i in stamped.checkpoint["working_context"]["recent_decisions"]
@@ -461,5 +461,5 @@ def test_a_reopen_event_refreshes_the_stale_age(tmp_checkpoint_dir):
                             "carried_from": "S-prev", "first_seen": old}])
     item_id = _ids()["an old carried loop"]
     assert briefing.prepare(PROJECT, time.time()).stale_items
-    store.append_event(item_id, "reopened", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(item_id, "reopened", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     assert briefing.prepare(PROJECT, time.time()).stale_items == []

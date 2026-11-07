@@ -841,7 +841,7 @@ def _cmd_unforget(args) -> int:
                              held=key in view.machine_sets()[0])
     dry_run = getattr(args, "dry_run", False)
     lifted = forget.lift(project, key, reason=args.reason or "",
-                         dry_run=dry_run)
+                         source="cli-tty", dry_run=dry_run)
     if dry_run:
         print(f"would lift {len(lifted.refs)} ref(s) on this machine; "
               "nothing was written")

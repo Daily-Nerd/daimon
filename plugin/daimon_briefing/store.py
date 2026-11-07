@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import stat
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -3362,6 +3363,20 @@ def forget_hit_stats(project_dir=None) -> dict:
 HUMAN_EVENT_SOURCES = frozenset({"cli", "cli-tty", "ui"})
 
 
+def observed_event_source() -> str:
+    """The tier of an events row written from this process's stdin: `cli-tty`
+    when a terminal is attached, `agent` otherwise. The tier is a property of
+    the write path daimon observed (#1293), never a default a caller can fall
+    into, and no caller can claim the human tier by omission or by flag. A
+    missing or unreadable stdin reads as no terminal: doubt resolves away from
+    the human tier."""
+    try:
+        return "cli-tty" if sys.stdin is not None and sys.stdin.isatty() \
+            else "agent"
+    except (OSError, ValueError):
+        return "agent"
+
+
 def tombstone_refs(resolutions) -> frozenset:
     """The refs of a `fold_resolutions` result whose latest event is a forget
     tombstone that still stands: the one id rule `view.forgotten_ids` and
@@ -3466,7 +3481,7 @@ def project_standing(project_dir=None) -> dict:
 
 
 def _event_row(item_ref: str, status: str, note: str = "",
-               kind: str = "resolution", source: str = "cli",
+               kind: str = "resolution", *, source: str,
                item_text: str = "") -> dict:
     """The one builder of an events row, so every writer of the ledger admits
     its row the same way. The scrub runs through policy.admit_row (#431): the
@@ -3488,10 +3503,10 @@ def _event_row(item_ref: str, status: str, note: str = "",
 
 
 def append_event(item_ref: str, status: str, note: str = "",
-                 kind: str = "resolution", source: str = "cli",
-                 project_dir=None, item_text: str = "",
-                 allow_disabled: bool = False,
-                 tombstone: bool = False, *, writer: Writer) -> bool:
+                 kind: str = "resolution", project_dir=None,
+                 item_text: str = "", allow_disabled: bool = False,
+                 tombstone: bool = False, *, source: str,
+                 writer: Writer) -> bool:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. The ONE exception is
@@ -3510,7 +3525,13 @@ def append_event(item_ref: str, status: str, note: str = "",
     case-insensitively), and only forget writes one, AFTER which it scrubs
     the value everywhere. A free-form `resolve --status` or `log --status`
     that reached here would tombstone with no scrub, so the status is
-    refused unless the caller is the forget path."""
+    refused unless the caller is the forget path.
+
+    `source` (#1293) is the authority tier of the row and has no default: a
+    default that is a member of HUMAN_EVENT_SOURCES turns every omission into
+    a person's act. A human path passes the tier it observed (`cli-tty`), a
+    machine path names itself (`agent`, `serializer`), and
+    `observed_event_source` is the one reading of the terminal."""
     return append_events(
         [{"item_ref": item_ref, "status": status, "note": note, "kind": kind,
           "source": source, "item_text": item_text}],

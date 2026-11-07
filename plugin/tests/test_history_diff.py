@@ -509,7 +509,7 @@ def test_a_residue_copy_withheld_by_the_forget_set_is_absent_on_both_sides(
     _write("S-2", "2026-09-01T11:00:00Z", decisions=[_item("a later fact")])
     store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(OLD),
                        kind="tombstone", tombstone=True, project_dir=_PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     payload = _diff_json(capsys)
     assert [r["change"] for r in payload["changes"]] == ["added"]
     assert OLD not in json.dumps(payload)
@@ -533,7 +533,7 @@ def test_a_restated_rows_forgotten_old_wording_is_not_named(
     _restated_pair()
     store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(OLD),
                        kind="tombstone", tombstone=True, project_dir=_PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     payload = _diff_json(capsys)
     blob = json.dumps(payload)
     assert OLD not in blob and normalize.content_key(OLD) not in blob

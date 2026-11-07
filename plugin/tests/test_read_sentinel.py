@@ -137,6 +137,8 @@ TTY_MODULES = {
     "cli/amend.py", "cli/_ledger.py", "cli/configure_cmd.py",
     "cli/ledger_cmd.py", "cli/lifecycle.py", "cli/relations_cmd.py",
     "cli/request.py", "cli/trust.py", "host_detect.py", "render.py",
+    # #1293: the one reading of the terminal for an events row's tier
+    "store.py",
 }
 # LLM briefing is an egress path: the text it sends is the kept, post-view
 # text, so the axis is listed (and its accessor pinned) but never driven.
@@ -1512,7 +1514,7 @@ def restated(tmp_path, monkeypatch):
     def forget_elsewhere(text):
         store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(text),
                            kind="tombstone", tombstone=True,
-                           project_dir=project, writer=Writer.HUMAN)
+                           project_dir=project, source="cli", writer=Writer.HUMAN)
 
     w.quarantine, w.forget_elsewhere = quarantine, forget_elsewhere
     return w

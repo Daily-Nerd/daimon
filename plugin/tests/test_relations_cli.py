@@ -174,7 +174,7 @@ def test_list_leaves_out_an_edge_touching_a_forgotten_item_and_counts_nothing(
     doomed = seeded["item_ids"][0]
     store.append_event(doomed, "forgotten:deadbeef01234567",
                        kind="tombstone", project_dir=PROJECT, tombstone=True,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     assert cli.main(["relations", "list"]) == 0
     out = capsys.readouterr().out
     assert seeded["rel_id"] not in out
@@ -184,7 +184,7 @@ def test_list_leaves_out_an_edge_touching_a_forgotten_item_and_counts_nothing(
 def test_list_json_leaves_the_edge_out_and_prints_no_count(seeded, capsys):
     store.append_event(seeded["item_ids"][0], "forgotten:deadbeef",
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     capsys.readouterr()
     assert cli.main(["relations", "list", "--json"]) == 0
     out = capsys.readouterr().out

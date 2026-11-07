@@ -159,19 +159,20 @@ def write_tombstones(target: Target) -> jsonl.Reached:
     deletion exemption to the kill switch applies (#421)."""
     key = target.content_key
     status = f"forgotten:{key}"
+    source = store.observed_event_source()  # #1293: forget is agent-reachable
     standing = store.project_standing(target.project).get(key, store.Standing())
     specs: list = []
     if target.item_id and target.item_id not in standing.ids:
         specs.append({"item_ref": target.item_id, "status": status,
-                      "note": target.reason, "kind": "tombstone"})
+                      "note": target.reason, "kind": "tombstone", "source": source})
     if not standing.key_refs:
         specs.append({"item_ref": store.new_key_ref(), "status": status,
-                      "kind": "tombstone"})
+                      "kind": "tombstone", "source": source})
     for sibling in target.item_ids:
         if sibling and sibling != target.item_id \
                 and sibling not in standing.ids:
             specs.append({"item_ref": sibling, "status": status,
-                          "kind": "tombstone"})
+                          "kind": "tombstone", "source": source})
     if not specs:
         return jsonl.Reached(())
     ok = store.append_events(
@@ -234,7 +235,7 @@ def key_of(project, item_id: str) -> str:
     return ""
 
 
-def lift(project, key: str, *, reason: str = "", source: str = "cli",
+def lift(project, key: str, *, reason: str = "", source: str,
          dry_run: bool = False) -> Lifted:
     """Lift a forgotten key on EVERY standing ref that carries it, in one
     append: the ids, the siblings and the key refs. Lifting only one would

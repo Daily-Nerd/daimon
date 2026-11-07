@@ -42,7 +42,7 @@ def _quarantine(project, text, kind="decision"):
 
 def _forget_value(project, text, item_id="d-gone00"):
     store.append_event(item_id, f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=project, source="cli", writer=Writer.HUMAN)
 
 
 def _ids(project):
@@ -494,7 +494,7 @@ def test_a_resolution_naming_a_withheld_id_is_generic(tmp_checkpoint_dir):
                            project_dir=project, writer=Writer.HUMAN)
     ids = _ids(project)
     store.append_event(ids[VISIBLE], f"superseded-by:{ids[QUARANTINED]}",
-                       project_dir=project, writer=Writer.HUMAN)
+                       project_dir=project, source="cli", writer=Writer.HUMAN)
     recall.rebuild()
     assert {r[0]: r[2:] for r in _rows()}[VISIBLE] == (
         ids[QUARANTINED], "resolution")

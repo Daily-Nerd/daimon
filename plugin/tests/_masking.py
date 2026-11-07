@@ -39,7 +39,7 @@ def forget(text=FORGOTTEN):
     assert store.append_event(
         "o-masking", "forgotten:" + normalize.content_key(text),
         kind="tombstone", tombstone=True, project_dir=PROJECT,
-        writer=Writer.HUMAN)
+        source="cli", writer=Writer.HUMAN)
 
 
 def run(capsys, *argv):

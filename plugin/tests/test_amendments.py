@@ -476,7 +476,7 @@ def test_cli_amend_resolved_item_refused(project, capsys):
     from daimon_briefing import cli, store
     store.write_checkpoint("S-1", _checkpoint_with_item(),
                            project_dir=project, writer=Writer.HUMAN)
-    store.append_event(ITEM, "resolved", project_dir=project, writer=Writer.HUMAN)
+    store.append_event(ITEM, "resolved", project_dir=project, source="cli", writer=Writer.HUMAN)
     rc = cli.main(["amend", ITEM, "--change", "progressed",
                    "--evidence", "q", "--by", "agent", "--project", project])
     assert rc == 1

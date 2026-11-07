@@ -51,7 +51,7 @@ def _d(text=TEXT_D, item_id=DID):
 def _forget_id(item_id, text):
     store.append_event(item_id, "forgotten:" + normalize.content_key(text),
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind, item_id=""):
@@ -347,7 +347,7 @@ def test_a_tombstone_only_id_is_forgotten_and_carries_no_key(window):
 def test_a_lifted_tombstone_is_not_announced(window):
     _forget_id(GONE, "a value no checkpoint holds any more")
     assert store.append_event(GONE, "reopen", project_dir=PROJECT,
-                              writer=Writer.HUMAN)
+                              source="cli", writer=Writer.HUMAN)
     assert isinstance(view.lookup_many(PROJECT, [GONE])[GONE], view.Absent)
 
 

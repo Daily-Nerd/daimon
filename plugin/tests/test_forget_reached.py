@@ -315,7 +315,7 @@ def test_the_forget_dry_run_writes_nothing_and_needs_no_proven_events(
 
 def _event_with_the_value():
     store.append_event(ITEM, "resolved", item_text=VALUE, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     return store._events_path(PROJECT)
 
 

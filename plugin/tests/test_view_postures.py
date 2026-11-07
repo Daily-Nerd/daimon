@@ -62,7 +62,7 @@ def test_the_snapshot_reports_every_registry_ledger(tmp_checkpoint_dir):
 
 
 def test_a_degraded_ledger_is_noted_with_the_repair_hint(tmp_checkpoint_dir):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _plant("events.jsonl", b'{"kind": "resolution", "item_ref": "o-bb')
     snap = view.snapshot(PROJECT)
     assert snap.notes() == (
@@ -169,7 +169,7 @@ def test_notes_are_capped_at_five_lines_then_a_count(tmp_checkpoint_dir):
 
 
 def test_notes_never_carry_a_value_or_a_path(tmp_checkpoint_dir):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _plant("events.jsonl", SECRET.encode() + b"\n")
     joined = "\n".join(view.snapshot(PROJECT).notes())
     assert SECRET not in joined
@@ -286,7 +286,7 @@ def test_a_cold_snapshot_reads_events_twice_and_every_other_ledger_once(
     machine-wide forget walk then reads each bucket's events ledger again,
     this one's included: that second read is the true cost, named here, and
     it is paid once per process while the stats hold."""
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     own = _own_reads(monkeypatch)
     view.snapshot(PROJECT)
     names = sorted(p.name for p in own())
@@ -296,7 +296,7 @@ def test_a_cold_snapshot_reads_events_twice_and_every_other_ledger_once(
 
 def test_a_warm_snapshot_reads_each_registry_ledger_of_the_bucket_once(
         tmp_checkpoint_dir, monkeypatch):
-    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaa", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     view.forgotten_keys()                     # warm the machine-wide memo
     own = _own_reads(monkeypatch)
     view.snapshot(PROJECT)

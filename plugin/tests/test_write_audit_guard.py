@@ -820,7 +820,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["resolve", ctx["ids"][_T_FORGET], "--note", "obsolete"], 0)
         assert store.append_event(
             ctx["ids"][_T_FORGET], "resolved", item_text=_T_FORGET,
-            project_dir=proj, writer=Writer.HUMAN)
+            project_dir=proj, source="cli", writer=Writer.HUMAN)
         run(["forget", ctx["ids"][_T_FORGET], "--reason", "stale"], 0)
 
     def r_unforget():

@@ -39,7 +39,7 @@ def _write(text=SECRET, item_id=ITEM):
 def _tombstone(item_ref, text=SECRET):
     store.append_event(item_ref, "forgotten:" + normalize.content_key(text),
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
 
 
 def _quarantine():

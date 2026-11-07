@@ -28,11 +28,11 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 def _event(ref="o-aaaaaaaaaaaa", status="resolved", **kw):
-    assert store.append_event(ref, status, project_dir=PROJECT, **kw, writer=Writer.HUMAN)
+    assert store.append_event(ref, status, project_dir=PROJECT, **{"source": "cli", **kw}, writer=Writer.HUMAN)
 
 
 def _ledger(name):

@@ -56,7 +56,7 @@ def _all_texts(cp):
 def _forget(text):
     key = normalize.content_key(text)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind):
@@ -145,7 +145,7 @@ def test_a_closed_snapshot_empties_every_field(tmp_checkpoint_dir):
 def test_live_drops_resolved_loops_and_counts_them(tmp_checkpoint_dir):
     _write()
     item_id = _raw_latest()["working_context"]["open_questions"][0]["id"]
-    store.append_event(item_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     kept = view.open(PROJECT, live=False)
     dropped = view.open(PROJECT, live=True)
     assert S_QUESTION in _all_texts(kept.checkpoint) and kept.suppressed == 0
@@ -156,7 +156,7 @@ def test_live_drops_resolved_loops_and_counts_them(tmp_checkpoint_dir):
 def test_withheld_beats_suppressed(tmp_checkpoint_dir):
     _write()
     item_id = _raw_latest()["working_context"]["open_questions"][0]["id"]
-    store.append_event(item_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _forget(S_QUESTION)
     got = view.open(PROJECT, live=True)
     assert got.suppressed == 0

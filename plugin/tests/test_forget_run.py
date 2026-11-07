@@ -96,7 +96,7 @@ def _lock_bucket(locked, bucket):
     # The ledger already exists, so the tombstone can still be appended to it;
     # what the locked directories stop is replacing a checkpoint file.
     store.append_event("i-seed", "reopened", project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     locked(bucket)
     locked(config.checkpoint_dir())
 

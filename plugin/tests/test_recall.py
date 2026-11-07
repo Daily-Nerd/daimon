@@ -402,7 +402,7 @@ def test_search_notices_an_event_resolved_after_the_index_was_built(
     hits = recall.search("gannet", project_dir="/repo/fp-ev")
     assert hits and hits[0]["superseded_by"] is None
 
-    store.append_event("o-111aaa", "resolved", project_dir="/repo/fp-ev", writer=Writer.HUMAN)
+    store.append_event("o-111aaa", "resolved", project_dir="/repo/fp-ev", source="cli", writer=Writer.HUMAN)
 
     hits = recall.search("gannet", project_dir="/repo/fp-ev")
     assert hits and hits[0]["superseded_by"] == "resolved"
@@ -1169,7 +1169,7 @@ def test_suggest_promotes_live_row_over_higher_weighted_resolution(
         }], created=stamp),
         project_dir="/repo/x", writer=Writer.HUMAN
     )
-    store.append_event("o-res00001", "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event("o-res00001", "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
                          limit=5, now=now)
@@ -1295,7 +1295,7 @@ def test_suggest_candidate_limit_tiers_before_truncating(
             }], created=stamp),
             project_dir="/repo/x", writer=Writer.HUMAN
         )
-        store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+        store.append_event(item_id, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     store.write_checkpoint(
         "S-live", _cp125("S-live", decisions=[{
             "text": "gateway cache mentioned briefly",
@@ -1367,7 +1367,7 @@ def test_suggest_tier_preserves_superseded_order(tmp_checkpoint_dir, monkeypatch
         }], created=stamp),
         project_dir="/repo/x", writer=Writer.HUMAN
     )
-    store.append_event("o-res00002", "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event("o-res00002", "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     out = recall.suggest("debugging the litellm gateway cache pinning again",
                          project_dir="/repo/x", current_session="S-now",
                          limit=5, now=now)
@@ -1809,7 +1809,7 @@ def test_resolve_event_invalidates_index_without_manual_rebuild(tmp_checkpoint_d
     iid = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
                                  admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
 
     # NO manual rebuild: the event append alone must stale the fingerprint
     hits = recall.search("walrus", project_dir="/repo/x")
@@ -1823,11 +1823,11 @@ def test_reopen_event_revives_item_without_manual_rebuild(tmp_checkpoint_dir, mo
     iid = store.read_latest_body(project_dir="/repo/x", route=store.Route.OWN,
                                  admit=store.Admit.ANY)[
         "working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     hits = recall.search("narwhal", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "resolved"
 
-    store.append_event(iid, "reopened", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "reopened", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     hits = recall.search("narwhal", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
@@ -1889,7 +1889,7 @@ def test_free_form_resolving_status_marks_resolved(tmp_checkpoint_dir):
     # record a lifecycle fact") — the --status help's own example must not
     # diverge between brief and recall
     iid = _one_question_bucket("wombat question pending", "S-lv1")
-    store.append_event(iid, "shipped in 0.9", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "shipped in 0.9", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     hits = recall.search("wombat", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "resolved"
 
@@ -1897,23 +1897,23 @@ def test_free_form_resolving_status_marks_resolved(tmp_checkpoint_dir):
 def test_reopen_prefix_status_revives(tmp_checkpoint_dir):
     # help text: "a status starting with 'reopen' revives the item"
     iid = _one_question_bucket("gecko question pending", "S-lv2")
-    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
-    store.append_event(iid, "reopen-was-wrong", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
+    store.append_event(iid, "reopen-was-wrong", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     hits = recall.search("gecko", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
 
 def test_reopen_status_is_case_insensitive(tmp_checkpoint_dir):
     iid = _one_question_bucket("heron question pending", "S-lv3")
-    store.append_event(iid, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
-    store.append_event(iid, "Reopened", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
+    store.append_event(iid, "Reopened", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     hits = recall.search("heron", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] is None
 
 
 def test_superseded_by_status_still_carries_target_id(tmp_checkpoint_dir):
     iid = _one_question_bucket("osprey question pending", "S-lv4")
-    store.append_event(iid, "superseded-by:o-9f3a2b", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(iid, "superseded-by:o-9f3a2b", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     hits = recall.search("osprey", project_dir="/repo/x")
     assert hits and hits[0]["superseded_by"] == "o-9f3a2b"
 
@@ -2055,7 +2055,7 @@ def test_rebuild_drops_forgotten_items_from_index(tmp_checkpoint_dir, monkeypatc
                                 admit=store.Admit.ANY)
     iid = cp["working_context"]["recent_decisions"][0]["id"]
     store.append_event(iid, "forgotten:deadbeef1234", kind="tombstone",
-                       project_dir="/repo/x", tombstone=True, writer=Writer.HUMAN)
+                       project_dir="/repo/x", tombstone=True, source="cli", writer=Writer.HUMAN)
     recall.rebuild()
     hits = recall.search("sqlite", all_projects=True)
     assert not any("recall index" in h["text"] for h in hits)
@@ -2309,7 +2309,7 @@ def test_rebuild_drops_locally_forgotten_value_from_foreign(tmp_checkpoint_dir, 
     forgotten_text = "Adopt the flamingo cache for ingest"
     store.append_event(
         "d-dead02", f"forgotten:{normalize.content_key(forgotten_text)}",
-        kind="tombstone", project_dir="/repo/x", tombstone=True, writer=Writer.HUMAN)
+        kind="tombstone", project_dir="/repo/x", tombstone=True, source="cli", writer=Writer.HUMAN)
     remote = _clone_remote(toml_text=_GRANT_X)
     _write_clone_team_file(
         remote, "grace", "S-g",

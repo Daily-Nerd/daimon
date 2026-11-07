@@ -88,7 +88,7 @@ def test_a_forgotten_loop_is_no_target(tmp_checkpoint_dir, capsys):
     item_id = _id(Q1)
     key = normalize.content_key(Q1)
     store.append_event(item_id, f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     rc, out, err = _propose(capsys, item_id, "--by", "agent")
     assert rc == 1 and "no open-loop item" in out
     assert "forgotten" not in out + err

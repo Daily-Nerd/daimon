@@ -79,7 +79,7 @@ def test_a_forgotten_failing_quote_is_not_audited_or_printed(
         _verbatim("a good decision", GOOD), _verbatim(HIDDEN_TEXT, BAD)])
     key = normalize.content_key(HIDDEN_TEXT)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir="/p/A", writer=Writer.HUMAN)
+                       tombstone=True, project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     rc, out = _run(capsys, "--project", "/p/A", "--json")
     report = json.loads(out)
     assert rc == 0 and report["checkable"] == 1 and report["failures"] == []

@@ -154,7 +154,7 @@ def test_forget_without_a_team_has_nothing_to_publish_and_exits_0(
 def _forget_locally(key=KEY, ref="o-1"):
     store.append_event(ref, f"forgotten:{key}", kind="tombstone",
                        tombstone=True, project_dir=PROJECT,
-                       writer=__import__("daimon_briefing.surfaces",
+                       source="cli", writer=__import__("daimon_briefing.surfaces",
                                          fromlist=["Writer"]).Writer.HUMAN)
 
 

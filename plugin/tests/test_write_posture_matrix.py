@@ -117,7 +117,7 @@ QROW = {"version": 1, "ts": "2026-10-09T12:00:00Z", "order": 1,
 def _writers():
     return {
         "events.jsonl": lambda w: store.append_event(
-            "o-1", "resolved", project_dir=PROJECT, writer=w),
+            "o-1", "resolved", project_dir=PROJECT, source="cli", writer=w),
         "trust.jsonl": lambda w: trust.append(
             dict(ROW), project_dir=PROJECT, writer=w),
         "refutations.jsonl": lambda w: refutations.append(
