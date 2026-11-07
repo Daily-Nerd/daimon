@@ -108,16 +108,20 @@ jobs:
             exit 1
           fi
 
-      # The title names the PR in the list and, while the repo setting
-      # merge_commit_title=PR_TITLE holds, it is also the merge commit subject
-      # on main. release-please reads the branch commits for the changelog,
-      # not the title; this is a readability rule so the PR list reads like
-      # the changelog the branch introduces.
-      - name: Check Conventional PR Title
+      # #1285: the repo setting merge_commit_message=PR_TITLE writes the PR
+      # title into the merge commit body. release-please splits a commit
+      # message wherever a blank line is followed by `type(scope):`, so a
+      # title shaped like a conventional commit becomes one more changelog
+      # line next to the one from the branch commit, and the change is listed
+      # twice. Whichever way the PR is merged, the title must not parse. The
+      # type is carried by the type:* label, not by the title. The match is
+      # case-insensitive and takes any word before the colon, because the
+      # parser accepts any word as a type.
+      - name: Check PR Title Is Not A Conventional Commit
         run: |
           title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
-          if ! grep -qE '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._-]+\))?!?: .+' <<<"$title"; then
-            echo "::error::PR title must be a conventional commit: type(scope): description"
+          if grep -qiE '^[A-Za-z]+(\([^)]*\))?!?:' <<<"$title"; then
+            echo "::error::PR title must not start with type(scope): because the merge commit body is the PR title, release-please would read it as a second commit and list the change twice. Drop the prefix, since the type:* label carries the type. Example: Request overdue state for open requests (#1281)"
             exit 1
           fi
 

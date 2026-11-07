@@ -240,3 +240,56 @@ def test_conventional_commits_with_blank_line_bodies_parse(repo, runner, parser_
     _collect(repo, runner)
     res = _parse(repo, runner, parser_prefix)
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+# #1285: the merge commit body is the PR title (merge_commit_message=PR_TITLE),
+# and release-please splits that body on a blank line followed by a type. A
+# title that parses therefore lists the change a second time. The gate rejects
+# every title shaped like a conventional commit header.
+TITLE_STEP = "Check PR Title Is Not A Conventional Commit"
+
+
+@pytest.fixture
+def title_gate(tmp_path, repo, runner):
+    """Run the title step with a stand-in `gh` that returns a chosen title."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "gh"
+    fake.write_text('#!/bin/sh\nprintf \'%s\\n\' "$FAKE_TITLE"\n', encoding="utf-8")
+    fake.chmod(0o755)
+
+    def run(title):
+        return runner(TITLE_STEP, _main(repo), _main(repo), {
+            "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_TITLE": title, "PR": "1", "REPO": "o/r"})
+
+    return run
+
+
+@pytest.mark.parametrize("title", [
+    "feat(serialize): record capture cost (#1243)",
+    "fix: honour DAIMON_LOG_DIR",
+    "ci(pr-validation)!: reject parseable titles",
+    "Fix: mixed case type",
+    "FEAT(Scope): shouting",
+    "chore(deps-dev): bump a thing",
+    "wibble: any word before a colon parses as a header",
+])
+def test_a_title_shaped_like_a_conventional_commit_fails(title_gate, title):
+    res = title_gate(title)
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "::error::" in res.stdout
+    assert "type:*" in res.stdout and "label" in res.stdout
+
+
+@pytest.mark.parametrize("title", [
+    "Request overdue state for open requests (#1281)",
+    "Require PR titles that release-please cannot parse (#1285)",
+    "Fix the overdue state: requests no longer vanish",
+    "feat is not a prefix here (#2)",
+    "(scope): not a type word",
+    "",
+])
+def test_a_plain_title_passes(title_gate, title):
+    res = title_gate(title)
+    assert res.returncode == 0, res.stdout + res.stderr

@@ -53,13 +53,16 @@ as itself and release-please reads each one: the subject becomes a changelog
 line, and a `!` in the subject or a `BREAKING CHANGE:` footer in the body is
 what marks a breaking change. The PR convention check runs release-please's
 own parser over every branch commit, so write each subject as
-`type(scope): description`, to the same bar as a PR title. The PR title and
-body are not read for the changelog.
+`type(scope): description`. The PR title and body are not a changelog
+source of their own.
 
-The merge commit itself must not be read either, or the PR is listed twice.
-GitHub's merge button writes the PR title under a blank line in the merge
-commit body, and release-please parses that line as one more commit. No repo
-setting removes it, so the maintainer merges with
-`uv run python scripts/merge_pr.py <number>`, which merges with the default
-subject and an empty body and then checks the commit that landed. The same
-script with `--check` verifies a PR merged by hand.
+The PR title is the one text that must NOT look like that. With the merge
+commit message set to the PR title, GitHub's merge button writes the title
+under a blank line in the merge commit body, and release-please parses a
+`type(scope):` line there as one more commit, so the PR would be listed twice.
+The PR convention check therefore fails a title that starts with a word, an
+optional scope, an optional `!` and a colon, in any case. Write a plain title,
+for example `Request overdue state for open requests (#1281)`; the `type:*`
+label on the PR carries the type. Any way of merging is then safe, the merge
+button included. To verify a merge commit that already landed, run
+`uv run python scripts/merge_pr.py <number> --check`.

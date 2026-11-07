@@ -183,3 +183,29 @@ def test_workflow_error_messages_carry_no_em_dash():
     for line in WORKFLOW.read_text(encoding="utf-8").splitlines():
         if "::error::" in line:
             assert "—" not in line, line
+
+
+# #1285: the merge commit body is the PR title, and release-please splits that
+# body, so a title shaped like a conventional commit lists the change twice.
+# The gate rejects such titles; the contributor text must say the same thing,
+# or an author follows the old advice and fails the check.
+TITLE_RULE_RE = re.compile(r"\^\[A-Za-z\]\+\(\\\(\[\^\)\]\*\\\)\)\?!\?:")
+
+
+def test_the_gate_rejects_a_conventional_shaped_title():
+    body = WORKFLOW.read_text(encoding="utf-8")
+    assert "Check PR Title Is Not A Conventional Commit" in body
+    assert "Check Conventional PR Title" not in body
+    assert TITLE_RULE_RE.search(body), "title regex not found in the workflow"
+
+
+@pytest.mark.parametrize("path", [TEMPLATE, REPO / "CONTRIBUTING.md"])
+def test_contributor_text_states_the_title_rule_and_its_reason(path):
+    text = path.read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    assert "type(scope):" in flat
+    assert "type:*" in flat, "say that the label carries the type"
+    assert "merge commit" in flat and "release-please" in flat
+    assert not re.search(r"conventional title", flat, re.IGNORECASE)
+    assert "same bar as a PR title" not in flat
+    assert "scripts/merge_pr.py <number>`, which merges" not in flat
