@@ -180,6 +180,27 @@ conversación del archivo, la captura arranca sin ese contexto. Entonces
 `serialize.log` recibe una línea, `note for <sesión>:
 compact-summary-only-context`, y `admitted_messages` lleva la misma nota.
 
+Cada línea no vacía de una transcripción termina en exactamente un grupo:
+admitida, excluida (un código de arriba) o descartada con uno de estos
+códigos:
+
+| Código | Fila descartada |
+|---|---|
+| `no-role` | la fila no trae un turno que el adaptador lea: sin rol user o assistant, o un tipo de evento que no conoce |
+| `no-content` | un turno sin texto |
+| `tool-result-without-id` | un resultado de herramienta sin id del anfitrión con el cual citarlo |
+| `tool-use-only` | una fila de llamadas a herramientas y sin texto |
+| `unparsable-line` | una línea no vacía que no es un objeto JSON |
+
+Cuando una captura descartó filas, `serialize.log` recibe una línea por motivo,
+`note for <sesión>: rows-dropped: <motivo>=<n>`, y `admitted_messages` lleva
+las mismas notas. Una transcripción con filas y sin conversación admitida es
+una falla de lectura, no una sesión corta: `daimon serialize` y el hook de fin
+de sesión escriben una línea `error: unreadable-transcript: ...`, que `daimon
+status` cuenta y `daimon heal` reintenta. Un archivo sin ninguna fila es un
+salto, `empty-transcript`. Una sesión que simplemente es corta sigue siendo el
+salto `transcript too short`.
+
 Un anfitrión puede atar sus propios tests a esto:
 
 ```python
