@@ -13,6 +13,7 @@ import pytest
 _SCRIPTS_DIR = Path(__file__).parents[2] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+import merge_pr  # noqa: E402
 from merge_pr import conventional_lines, main  # noqa: E402
 
 # The shape GitHub writes under MERGE_MESSAGE + PR_TITLE, the repo setting.
@@ -69,3 +70,34 @@ def test_check_and_dry_run_are_mutually_exclusive():
     with pytest.raises(SystemExit) as exc:
         main(["7", "--check", "--dry-run"])
     assert exc.value.code == 2
+
+
+def test_verify_blames_the_title_gate_not_the_button(monkeypatch, capsys):
+    # #1285: the button is safe because the PR title gate rejects parseable
+    # titles. A conventional line in the merge commit therefore means that
+    # gate was bypassed, and the message must say so instead of telling the
+    # author to use this script.
+    monkeypatch.setattr(
+        merge_pr, "_merge_commit_message", lambda n: ("abc1234def", _BUTTON_MESSAGE)
+    )
+    assert merge_pr.verify(1243) == 1
+    out = capsys.readouterr().out
+    assert "PR title" in out and "gate" in out
+    assert "scripts/merge_pr.py" not in out
+
+
+def test_verify_passes_a_plain_title_body(monkeypatch, capsys):
+    monkeypatch.setattr(
+        merge_pr,
+        "_merge_commit_message",
+        lambda n: ("abc1234def", "Merge pull request #1 from o/b\n\nRequest overdue state (#1281)"),
+    )
+    assert merge_pr.verify(1) == 0
+    assert "ok:" in capsys.readouterr().out
+
+
+def test_docstring_no_longer_calls_the_script_required():
+    doc = merge_pr.__doc__ or ""
+    assert "Why this exists" not in doc
+    assert "button cannot produce" not in doc
+    assert "PR title" in doc and "--check" in doc

@@ -10,9 +10,13 @@ CI gates on this PR (pr-validation.yml):
   - scars-only PRs, whose human sign-off happened at promotion
   Mixed changes never receive an issue bypass.
 - exactly one type:* label on the PR
-- conventional title, type(scope): description. PRs merge with a merge
-  commit, so the title names the PR (and the merge commit) but release-please
-  reads the branch commits, not the title and not this body.
+- a title that does NOT start with type(scope): (a word, optional scope,
+  optional !, then a colon; any case). The merge commit body is the PR title,
+  and release-please reads a body line of that shape as a second commit, so
+  the change would be listed twice in the changelog. Write a plain title such
+  as "Request overdue state for open requests (#1281)"; the type:* label
+  carries the type. release-please reads the branch commits, not this title
+  and not this body.
 - branch named type/description (lowercase), where type is one of:
   feat fix chore docs style refactor perf test build ci revert
   NOT the content area: `research/foo` fails. A PR's head branch cannot be
