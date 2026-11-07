@@ -603,6 +603,56 @@ def test_a_missing_file_is_file_missing(tmp_path):
     assert got.cause == "file-missing"
 
 
+@pytest.mark.parametrize("token", [
+    "$f", "${f}", '"$HOME/x"', "$(mktemp)", '"$(mktemp -p /t)"', "`mktemp`",
+    "~/x", "~someone/x", "*.md", "body-?.md", "[ab].md",
+], ids=["param", "braced", "quoted-home", "subst", "quoted-subst",
+        "backtick", "tilde", "tilde-user", "star", "question", "bracket"])
+def test_a_path_that_needs_shell_expansion_is_not_file_missing(token,
+                                                               tmp_path):
+    """#1282: daimon reads the command before the shell expands it, so a
+    token like `$f` names no file it could ever open. Calling that
+    file-missing sends the reader looking for a file that is there."""
+    got = _resolve(f"gh issue create --body-file {token}", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "shell-expansion"
+    assert "--body-file" in got.reason
+    assert "pass a literal path" in got.reason
+
+
+def test_the_expansion_rule_covers_every_flag_that_names_a_path(tmp_path):
+    for command in (
+            "gh release create v1 --notes-file $f",
+            "gh issue create -F $f",
+            "gh issue create -F$f",
+            "gh api x -F body=@$f",
+            "gh api x -F @$f",
+            "gh issue create --body-file=$f"):
+        got = _resolve(command, tmp_path)
+        assert isinstance(got, rt.Unresolved), command
+        assert got.cause == "shell-expansion", command
+
+
+def test_the_expansion_message_keeps_the_token_verbatim(tmp_path):
+    got = _resolve("gh issue create --body-file '$f'", tmp_path)
+    assert "($f)" in got.reason
+
+
+def test_a_literal_existing_path_still_resolves(tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("hello", encoding="utf-8")
+    got = _resolve(f"gh issue create --body-file {body}", tmp_path)
+    assert isinstance(got, rt.Subject)
+    assert "hello" in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_literal_missing_path_is_still_file_missing(tmp_path):
+    got = _resolve("gh issue create --body-file nope.md", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+
+
 def test_an_unreadable_file_is_file_unreadable(tmp_path):
     if os.getuid() == 0:
         pytest.skip("root reads anything; the mode bit proves nothing")
@@ -696,7 +746,7 @@ def test_the_first_failure_wins_and_no_subject_file_is_left_behind(
 
 def test_every_cause_the_resolver_emits_is_a_declared_cause():
     assert {"file-missing", "file-unreadable", "file-oversize", "file-binary",
-            "stdin-pipe", "arg-form-unparsed"} <= rt.CAUSES
+            "stdin-pipe", "arg-form-unparsed", "shell-expansion"} <= rt.CAUSES
 
 
 def test_resolve_never_raises_on_a_command_that_is_not_a_string(tmp_path):
@@ -1040,7 +1090,7 @@ def test_a_cause_outside_the_declared_set_is_recorded_without_its_text():
 
 @pytest.mark.parametrize("cause", sorted(
     {"file-missing", "no-manifest", "no-match", "manifest-unreadable",
-     "check-timeout", "body-hash-mismatch"}))
+     "check-timeout", "body-hash-mismatch", "shell-expansion"}))
 def test_the_causes_a_hook_actually_emits_survive_the_projection(cause):
     rt.log_firing({"ruling_id": "r-1", "outcome": "unresolved",
                    "cause": cause, "duration_ms": 1})
