@@ -232,7 +232,7 @@ def test_another_project_that_forgot_the_value_keeps_it_withheld(
     # another project on this machine forgot the same value (a second forget
     # of it by the verb is refused: the value already reads as forgotten)
     assert forget.write_tombstones(
-        forget.Target(KEY, "i-other", ("i-other",), OTHER)).reached
+        forget.Target(KEY, "i-other", ("i-other",), OTHER, source="cli-tty")).reached
     capsys.readouterr()
     other_bytes = store._events_path(store._resolved(OTHER)).read_bytes()
     assert _unforget(decision) == 4
@@ -268,7 +268,7 @@ def test_a_ledger_that_cannot_be_proven_is_exit_4_with_no_name(
         tmp_checkpoint_dir, tty, capsys):
     decision, _ = _forgotten(tty)
     assert forget.write_tombstones(
-        forget.Target(KEY, "i-other", ("i-other",), OTHER)).reached
+        forget.Target(KEY, "i-other", ("i-other",), OTHER, source="cli-tty")).reached
     capsys.readouterr()
     other = store._events_path(store._resolved(OTHER))
     mode = other.stat().st_mode
@@ -350,7 +350,7 @@ def test_a_second_unforget_still_says_another_project_withholds_the_value(
         tmp_checkpoint_dir, tty, capsys):
     decision, _ = _forgotten(tty)
     assert forget.write_tombstones(
-        forget.Target(KEY, "i-other", ("i-other",), OTHER)).reached
+        forget.Target(KEY, "i-other", ("i-other",), OTHER, source="cli-tty")).reached
     assert _unforget(decision) == 4
     capsys.readouterr()
     before = store._events_path(store._resolved(PROJECT)).read_bytes()
@@ -365,7 +365,7 @@ def test_a_retry_after_exit_4_cannot_turn_green_while_a_ledger_is_unproven(
         tmp_checkpoint_dir, tty, capsys):
     decision, _ = _forgotten(tty)
     assert forget.write_tombstones(
-        forget.Target("0123456789abcdef", "i-other", ("i-other",), OTHER)).reached
+        forget.Target("0123456789abcdef", "i-other", ("i-other",), OTHER, source="cli-tty")).reached
     other = store._events_path(store._resolved(OTHER))
     mode = other.stat().st_mode
     other.chmod(0)

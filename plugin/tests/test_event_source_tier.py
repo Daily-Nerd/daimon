@@ -110,18 +110,6 @@ def test_forget_tombstones_carry_the_tier_the_cli_observed(
     assert rows and all(r["source"] == "cli-tty" for r in rows)
 
 
-def test_a_target_nobody_observed_for_is_an_agents(tmp_checkpoint_dir,
-                                                   monkeypatch):
-    """The library never reads the terminal: a Target built without the
-    CLI's observation writes the lowest tier, even with a terminal attached."""
-    _tty(monkeypatch, True)
-    target = forget.Target("k" * 64, "o-aaaaaaaaaaaa", ("o-aaaaaaaaaaaa",),
-                           PROJECT)
-    assert forget.write_tombstones(target).reached
-    rows = _rows("tombstone")
-    assert rows and all(r["source"] == "agent" for r in rows)
-
-
 def test_lift_has_no_default_source():
     param = inspect.signature(forget.lift).parameters["source"]
     assert param.default is inspect.Parameter.empty
@@ -169,3 +157,15 @@ def test_every_append_events_spec_literal_names_its_source():
     missing = [f"{p.relative_to(PACKAGE)}:{n.lineno}" for p, n, keys in specs
                if "source" not in keys]
     assert missing == []
+
+
+def test_a_target_requires_the_observed_source():
+    """No default tier: a caller that skips the observation fails loudly
+    instead of writing a tier nobody observed (the #1296 shape)."""
+    with pytest.raises(TypeError):
+        forget.Target("k" * 64)
+    with pytest.raises(TypeError):
+        forget.Target("k" * 64, "o-aaaaaaaaaaaa", ("o-aaaaaaaaaaaa",), PROJECT)
+    param = inspect.signature(forget.Target).parameters["source"]
+    assert param.default is inspect.Parameter.empty
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY

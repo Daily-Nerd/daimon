@@ -800,7 +800,7 @@ def _cmd_forget(args) -> int:
         content_hash, str(target["id"]), ids, project,
         str(target.get("text") or ""),
         checkpoint if isinstance(checkpoint, dict) else None, sid,
-        args.reason or "", _observe.event_source()),
+        args.reason or "", source=_observe.event_source()),
         approve_rulings=_approve_forget)
     if outcome.refusal:
         print(outcome.refusal)

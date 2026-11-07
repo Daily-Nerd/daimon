@@ -22,7 +22,7 @@ command keeps everything that talks to a person.
 from __future__ import annotations
 
 import importlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from . import jsonl, normalize, refutations, schema, store, surfaces
@@ -42,7 +42,8 @@ class Unreached(NamedTuple):
     unscannable: str = ""
 
 
-class Target(NamedTuple):
+@dataclass(frozen=True)
+class Target:
     """What one forget is about."""
     content_key: str
     # The id the person named; "" when the forget is finished from a standing
@@ -58,11 +59,12 @@ class Target(NamedTuple):
     checkpoint: dict | None = None
     session_id: str = ""
     reason: str = ""
-    # The tier of the tombstone rows (#1293): what the CLI observed of the
-    # write path. The library never reads the terminal (#1301), so a Target
-    # nobody observed for is an agent's, not a person's: doubt resolves away
-    # from the human tier.
-    source: str = "agent"
+    # The tier of the tombstone rows (#1293): what the caller OBSERVED of the
+    # write path. Required and keyword-only, with no default, the shape #1296
+    # gave `store.append_event`: a default, even the lowest tier, lets a new
+    # caller skip the observation silently. The library never reads the
+    # terminal (#1301); the CLI hands the observation in.
+    source: str = field(kw_only=True)
 
 
 class Planned(NamedTuple):
