@@ -724,6 +724,8 @@ def audit_all() -> list[dict]:
     sentence project A forgot is not residue (shipped deletion is per-bucket,
     recall.py:479; the union governs only the inbound foreign gate)."""
     results: list[dict] = []
+    # Invariant (#1294): the residue audit must see EVERY directory, a stray
+    # included, so it does not go through `store.bucket_dirs`.
     try:
         buckets = sorted(e.name for e in config.checkpoint_dir().iterdir()
                          if e.is_dir() and e.name != scope.CHUNK_CACHE)

@@ -170,7 +170,10 @@ def _stray_ledger_dir(name="repo.x"):
 
 def test_internal_dirs_are_one_typed_set_in_scope():
     from daimon_briefing import scope
-    assert scope.STORE_INTERNAL_DIRS == frozenset({".partials", ".chunk-cache"})
+    assert scope.CURRENT_INTERNAL_DIRS == frozenset({".chunk-cache"})
+    assert scope.RETIRED_INTERNAL_DIRS == frozenset({".partials"})
+    assert scope.STORE_INTERNAL_DIRS == (
+        scope.CURRENT_INTERNAL_DIRS | scope.RETIRED_INTERNAL_DIRS)
     assert scope.classify_dir(".partials") is scope.DirKind.INTERNAL
     assert scope.classify_dir(".chunk-cache") is scope.DirKind.INTERNAL
     assert scope.classify_dir("-Users-k-daimon") is scope.DirKind.BUCKET

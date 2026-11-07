@@ -1706,6 +1706,9 @@ def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
     forget would be work without effect."""
     if not config.team_apply_forget():
         return []
+    # Invariant (#1294): a forget must reach EVERY directory, a stray included.
+    # This walk deliberately does not go through `bucket_dirs`; over-reaching
+    # is fail-safe, under-reaching leaves plaintext behind.
     project_dir = _resolved(project_dir)
     if all_projects:
         try:

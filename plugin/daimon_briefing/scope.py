@@ -45,12 +45,19 @@ def parse_bucket(name) -> BucketId | None:
 
 
 # Directories the store itself keeps beside its buckets. Named here, once, as
-# a typed set and never matched by pattern: a new internal directory is added
-# to this set on purpose, and anything else that is not a bucket name is a
-# stray (see `classify_dir`).
+# typed sets and never matched by pattern: a new internal directory is added
+# on purpose, and anything else that is not a bucket name is a stray (see
+# `classify_dir`).
 CHUNK_CACHE = ".chunk-cache"
+CURRENT_INTERNAL_DIRS: frozenset[str] = frozenset({CHUNK_CACHE})
+# RETIRED: names daimon wrote in a past version and no longer writes. `.partials`
+# held chunk partials across heals (#316, 6e18433) and was replaced by
+# `.chunk-cache` (#348, 0e5db26); stores of users who ran that version still
+# carry the (empty) directory, so it is not a stray.
 PARTIALS = ".partials"
-STORE_INTERNAL_DIRS: frozenset[str] = frozenset({CHUNK_CACHE, PARTIALS})
+RETIRED_INTERNAL_DIRS: frozenset[str] = frozenset({PARTIALS})
+STORE_INTERNAL_DIRS: frozenset[str] = (
+    CURRENT_INTERNAL_DIRS | RETIRED_INTERNAL_DIRS)
 
 
 class DirKind(enum.Enum):
