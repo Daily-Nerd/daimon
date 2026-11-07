@@ -119,8 +119,20 @@ jobs:
       # scripts/merge_pr.py); the match here is wider on purpose, any word
       # and any case before the colon, so a type added upstream later cannot
       # slip through.
+      #
+      # #1288: Dependabot owns its PR title (its commit message, prefix `ci`
+      # from .github/dependabot.yml, rewritten on every rebase) the same way
+      # it owns its branch name, so a gate on that text can only fail it. A
+      # button merge does write `ci: ...` into the merge body, but the
+      # changelog has no `ci` section (release-please hides it by default),
+      # so no second line can appear.
       - name: Check PR Title Is Not A Conventional Commit
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
+          if [[ "$HEAD_REF" == dependabot/* ]]; then
+            exit 0
+          fi
           title="$(gh pr view "$PR" --repo "$REPO" --json title -q .title)"
           if grep -qiE '^[A-Za-z]+(\([^)]*\))?!?:' <<<"$title"; then
             echo "::error::PR title must not start with type(scope): because the merge commit body is the PR title, release-please would read it as a second commit and list the change twice. Drop the prefix, since the type:* label carries the type. Example: Request overdue state for open requests (#1281)"

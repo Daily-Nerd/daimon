@@ -251,17 +251,22 @@ TITLE_STEP = "Check PR Title Is Not A Conventional Commit"
 
 @pytest.fixture
 def title_gate(tmp_path, repo, runner):
-    """Run the title step with a stand-in `gh` that returns a chosen title."""
+    """Run the title step with a stand-in `gh` that returns a chosen title.
+
+    HEAD_REF is the PR's head branch, which the workflow passes in as env the
+    same way the branch-name step receives it.
+    """
     bindir = tmp_path / "bin"
     bindir.mkdir()
     fake = bindir / "gh"
     fake.write_text('#!/bin/sh\nprintf \'%s\\n\' "$FAKE_TITLE"\n', encoding="utf-8")
     fake.chmod(0o755)
 
-    def run(title):
+    def run(title, head_ref="fix/some-change"):
         return runner(TITLE_STEP, _main(repo), _main(repo), {
             "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
-            "FAKE_TITLE": title, "PR": "1", "REPO": "o/r"})
+            "FAKE_TITLE": title, "PR": "1", "REPO": "o/r",
+            "HEAD_REF": head_ref})
 
     return run
 
@@ -293,3 +298,35 @@ def test_a_title_shaped_like_a_conventional_commit_fails(title_gate, title):
 def test_a_plain_title_passes(title_gate, title):
     res = title_gate(title)
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+# #1288: Dependabot owns its PR title (its commit message, prefix `ci` from
+# .github/dependabot.yml, rewritten on every rebase), exactly as it owns its
+# branch name. A gate may only judge text a person can change, so the title
+# step skips dependabot/* branches. A human branch with the same title still
+# fails: the exemption is the branch owner, not the title shape.
+DEPENDABOT_BRANCH = "dependabot/github_actions/github-actions-0a1b2c3d4e"
+
+
+@pytest.mark.parametrize("title", [
+    "ci: bump astral-sh/setup-uv from 6 to 7",
+    "ci(deps): bump the github-actions group with 2 updates",
+    "Bump a thing (#1)",
+])
+def test_a_dependabot_branch_passes_whatever_the_title(title_gate, title):
+    res = title_gate(title, head_ref=DEPENDABOT_BRANCH)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "::error::" not in res.stdout
+
+
+@pytest.mark.parametrize("head_ref", [
+    "fix/x",
+    "ci/bump-a-thing",
+    "not-dependabot/x",
+    "dependabot",
+    "feat/dependabot/x",
+])
+def test_a_human_branch_with_a_ci_title_still_fails(title_gate, head_ref):
+    res = title_gate("ci: bump a thing", head_ref=head_ref)
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "::error::" in res.stdout
