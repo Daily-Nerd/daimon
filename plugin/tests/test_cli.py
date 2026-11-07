@@ -4261,7 +4261,7 @@ def test_cli_brief_team_withholds_a_teammate_item_the_reader_resolved(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj, writer=Writer.HUMAN)
+                       project_dir=proj, source="cli", writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4311,7 +4311,7 @@ def test_cli_brief_team_header_only_path_withholds_and_says_so(
         },
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }), encoding="utf-8")
-    store.append_event("r-0000000000bb", "resolved", project_dir=proj, writer=Writer.HUMAN)
+    store.append_event("r-0000000000bb", "resolved", project_dir=proj, source="cli", writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4337,7 +4337,7 @@ def test_team_briefings_with_an_events_fold_that_raises_withhold_nothing(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj, writer=Writer.HUMAN)
+                       project_dir=proj, source="cli", writer=Writer.HUMAN)
 
     real = store.fold_resolutions
     calls = [0]
@@ -4420,7 +4420,7 @@ def test_cli_brief_team_withheld_note_counts_the_teammates_item(
     store.write_checkpoint("a-1", copy.deepcopy(sample_checkpoint), project_dir=proj, writer=Writer.HUMAN)
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj, writer=Writer.HUMAN)
+                       project_dir=proj, source="cli", writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -4446,7 +4446,7 @@ def test_cli_brief_team_resolved_item_does_not_take_a_capped_slot(
     monkeypatch.setenv("DAIMON_AUTHOR", "ada")
     ids = _teammate_decision_ids(proj)
     store.append_event(ids["Single-pass for Slice 1, chunking is Slice 2"], "resolved",
-                       project_dir=proj, writer=Writer.HUMAN)
+                       project_dir=proj, source="cli", writer=Writer.HUMAN)
 
     assert cli.main(["brief", "--team", "--project", proj]) == 0
     out = capsys.readouterr().out
@@ -6070,7 +6070,7 @@ def test_candidate_emission_skips_forgotten_value(tmp_checkpoint_dir, monkeypatc
     # never tombstoned, so the human-speaks-once gate cannot save us here.
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
-                       project_dir=project, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=project, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     pairs = [("r-old0001", "r-new0001", _FORGOTTEN_TEXT),
              ("r-old0002", "r-new0002", _CONTROL_TEXT)]
@@ -6161,7 +6161,7 @@ def test_serialize_supersede_candidate_never_leaks_forgotten_text(
     # human-speaks-once gate blocks the pair.
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(_FORGOTTEN_TEXT)}",
-                       project_dir=project, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=project, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     # 3. New session supersedes BOTH prev decisions by free-text target.
     # Native texts share no salient vocabulary with prev texts (no twin
@@ -6394,7 +6394,7 @@ def test_brief_withholds_resolved_item_and_notes_suppression(
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6463,7 +6463,7 @@ def test_brief_reverify_restores_stored_tag_on_stale_carried_item(
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][0]["id"]
-    store.append_event(item_id, "reopened", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "reopened", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6535,7 +6535,7 @@ def test_status_suppressed_lists_withheld_item(tmp_checkpoint_dir, sample_checkp
                                      admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][1]
     item_id = item["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6584,10 +6584,10 @@ def test_status_suppressed_never_lists_a_forgotten_item(
                                      route=store.Route.OWN,
                                      admit=store.Admit.ANY)
     item = written["working_context"]["open_questions"][1]
-    store.append_event(item["id"], "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item["id"], "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     key = normalize.content_key(item["text"])
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir="/repo/x", writer=Writer.HUMAN)
+                       tombstone=True, project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     rc = cli.main(["status", "--suppressed", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6624,7 +6624,7 @@ def test_status_suppressed_lists_withheld_strong_belief(tmp_checkpoint_dir, samp
                                      admit=store.Admit.ANY)
     item = written["epistemic_snapshot"]["strong_beliefs"][0]
     item_id = item["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -6661,7 +6661,7 @@ def test_a_live_question_sharing_a_resolved_ones_vocabulary_survives_the_brief(
     first = store.read_latest_body(project_dir=P, route=store.Route.OWN,
                                    admit=store.Admit.ANY)
     closed_id = first["working_context"]["open_questions"][0]["id"]
-    store.append_event(closed_id, "resolved", project_dir=P, writer=Writer.HUMAN)
+    store.append_event(closed_id, "resolved", project_dir=P, source="cli", writer=Writer.HUMAN)
     merged = capture.carry_forward(_q_checkpoint("S2", live), P)
     store.write_checkpoint("S2", merged, project_dir=P, writer=Writer.HUMAN)
     assert cli.main(["brief", "--project", P]) == 0
@@ -6687,7 +6687,7 @@ def test_status_suppressed_names_an_inherited_identity_with_the_live_wording(
     first = store.read_latest_body(project_dir=P, route=store.Route.OWN,
                                    admit=store.Admit.ANY)
     closed_id = first["working_context"]["open_questions"][0]["id"]
-    store.append_event(closed_id, "resolved", project_dir=P, writer=Writer.HUMAN)
+    store.append_event(closed_id, "resolved", project_dir=P, source="cli", writer=Writer.HUMAN)
     merged = capture.carry_forward(_q_checkpoint("S2", reworded), P)
     store.write_checkpoint("S2", merged, project_dir=P, writer=Writer.HUMAN)
     assert cli.main(["status", "--suppressed", "--project", P]) == 0
@@ -6721,7 +6721,7 @@ def test_brief_shows_annotation_and_status_lists_subsection(
     item_id = item["id"]
     # new-id must be serializer-shaped (kind initial + hex slice) — withhold's
     # #14 shape gate refuses anything else, so the fixture uses a real shape.
-    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
 
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
@@ -6751,7 +6751,7 @@ def test_transient_field_never_persisted(tmp_checkpoint_dir, sample_checkpoint, 
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["recent_decisions"][0]["id"]
-    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "supersede-candidate:r-9f3a2b", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
 
     rc = cli.main(["brief", "--project", "/repo/x"])
     assert rc == 0
@@ -8396,9 +8396,9 @@ def test_stats_events_reports_line_count_and_fold_time(
     # line for the CURRENT project and times a full read+fold at stats time.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
-    store.append_event("o-a", "reopened", project_dir="/p/A", writer=Writer.HUMAN)  # same ref, later line
-    store.append_event("o-b", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-a", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
+    store.append_event("o-a", "reopened", project_dir="/p/A", source="cli", writer=Writer.HUMAN)  # same ref, later line
+    store.append_event("o-b", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     rc = cli.main(["stats", "--json"])
     assert rc == 0
     ev = json.loads(capsys.readouterr().out)["events"]
@@ -8413,8 +8413,8 @@ def test_stats_events_scoped_to_current_project(
     # the section reports ONLY the current project's log — another project's
     # events must not leak into the count.
     from daimon_briefing import store
-    store.append_event("o-a", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
-    store.append_event("o-b", "resolved", project_dir="/p/OTHER", writer=Writer.HUMAN)
+    store.append_event("o-a", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
+    store.append_event("o-b", "resolved", project_dir="/p/OTHER", source="cli", writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["stats", "--json"])
     assert rc == 0
@@ -8750,7 +8750,7 @@ def test_stats_resolutions_human_excludes_forget_and_log_events(
     # asserting it via a hand-picked literal.
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
-    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A", tombstone=True, writer=Writer.HUMAN)
+    store.append_event("o-a", "forgotten:abc123", kind="tombstone", project_dir="/p/A", tombstone=True, source="cli", writer=Writer.HUMAN)
     assert cli.main(["log", "--text", "an ordinary log line", "--kind", "note",
                      "--project", "/p/A"]) == 0
     capsys.readouterr()
@@ -10040,7 +10040,7 @@ def test_reverify_human_path_records_observed_tty_source(
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
     assert store.resolutions(project_dir="/p/A")[iid]["source"] == "cli-tty"
 
@@ -10050,7 +10050,7 @@ def test_reverify_refuses_without_evidence_when_no_anchor(tmp_checkpoint_dir, ca
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid]) == 1
     out = capsys.readouterr().out
     assert "without evidence" in out
@@ -10063,7 +10063,7 @@ def test_reverify_with_evidence_reopens(tmp_checkpoint_dir, capsys, monkeypatch)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid, "--evidence", "checked release page"]) == 0
     r = store.resolutions(project_dir="/p/A")
     assert not store.is_resolved(r[iid])
@@ -10079,7 +10079,7 @@ def test_reverify_anchor_live_reopens_without_evidence(tmp_checkpoint_dir, tmp_p
     ]}}
     store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
     assert cli.main(["reverify", iid]) == 0
     r = store.resolutions(project_dir="/p/A")
@@ -10098,7 +10098,7 @@ def test_reverify_anchor_live_and_evidence_combined_note(tmp_checkpoint_dir, cap
     ]}}
     store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.anchor, "check", lambda a, p: "live")
     assert cli.main(["reverify", iid, "--evidence", "saw it work"]) == 0
     r = store.resolutions(project_dir="/p/A")
@@ -10115,7 +10115,7 @@ def test_reverify_anchor_drifted_still_refused_without_evidence(tmp_checkpoint_d
     ]}}
     store.write_checkpoint("S1", cp, project_dir="/p/A", writer=Writer.HUMAN)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     monkeypatch.setattr(cli.anchor, "check", lambda a, p: "hard")
     assert cli.main(["reverify", iid]) == 1
     r = store.resolutions(project_dir="/p/A")
@@ -10166,7 +10166,7 @@ def test_reverify_still_refuses_resolved_item_without_evidence(tmp_checkpoint_di
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     cp = _write_cp_with_ids(store)
     iid = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(iid, "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     assert cli.main(["reverify", iid]) == 1
     out = capsys.readouterr().out
     assert "without evidence" in out
@@ -10449,7 +10449,7 @@ def test_cli_brief_slug_withholds_resolved_items(tmp_checkpoint_dir, sample_chec
                                      admit=store.Admit.ANY)
     iid = written["working_context"]["open_questions"][0]["id"]
     q_text = written["working_context"]["open_questions"][0]["text"]
-    store.append_event(iid, "resolved", project_dir="/p/B", writer=Writer.HUMAN)
+    store.append_event(iid, "resolved", project_dir="/p/B", source="cli", writer=Writer.HUMAN)
 
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     rc = cli.main(["brief", "--slug", store.project_slug("/p/B")])
@@ -12008,7 +12008,7 @@ def test_status_suppressed_prints_the_note_a_resolution_carried(
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
     store.append_event(item_id, "resolved", note="shipped in 0.9",
-                       project_dir="/repo/x", writer=Writer.HUMAN)
+                       project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     assert cli.main(["status", "--suppressed", "--project", "/repo/x"]) == 0
     out = capsys.readouterr().out
     assert "resolved" in out

@@ -156,7 +156,7 @@ def test_a_forgotten_residue_row_is_in_no_line_and_no_count(
     _write()
     key = normalize.content_key(DEC)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     rc, out, _err = _run(capsys, "strangler pattern gateway")
     assert rc == 1
     assert out.splitlines()[0] == "no item matches 'strangler pattern gateway'"
@@ -229,7 +229,7 @@ def test_a_forgotten_exact_id_is_no_match_on_every_channel(
     item_id = _id(DEC)
     store.append_event(item_id, "forgotten:" + normalize.content_key("other"),
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     before = store.ledger_file(PROJECT, "events.jsonl").read_bytes()
     _tty(monkeypatch, human)
     for extra in ([], ["--dry-run"]):

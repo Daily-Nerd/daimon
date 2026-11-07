@@ -42,7 +42,7 @@ def _quarantine(text=Q, kind="decision", project=PROJECT):
 def _forget(text=F, project=PROJECT):
     key = normalize.content_key(text)
     store.append_event("i-gone", f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=project, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=project, source="cli", writer=Writer.HUMAN)
 
 
 def _ruling(verdict, project=PROJECT):
@@ -231,7 +231,7 @@ def _closed_world(handoff=False):
     _ruling("never ship a Friday deploy")
     if handoff:
         store.append_event("", "active", note="pick up the migration",
-                           kind="handoff", project_dir=PROJECT, writer=Writer.HUMAN)
+                           kind="handoff", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _close()
 
 
@@ -464,7 +464,7 @@ def test_the_trailer_counts_resolved_and_quarantined_apart_and_never_forgotten(
     cp = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
                                 admit=store.Admit.ANY)
     loop = cp["working_context"]["open_questions"][0]["id"]
-    store.append_event(loop, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(loop, "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _quarantine()
     _forget()
     _, out = _brief(capsys, monkeypatch)

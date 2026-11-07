@@ -288,7 +288,7 @@ def test_the_audit_scans_every_cache_of_the_audited_store(home, tmp_path,
             {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT, writer=Writer.HUMAN)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=PROJECT, tombstone=True, source="cli", writer=Writer.HUMAN)
     recall.rebuild()
     live = config.recall_db()
     live.parent.mkdir(parents=True, exist_ok=True)
@@ -455,7 +455,7 @@ def _audited_store(monkeypatch, tmp_path):
             {"text": KEEPER, "trust": "inferred"}]}}, project_dir=PROJECT, writer=Writer.HUMAN)
     key = normalize.content_key(CANARY)
     store.append_event("i-x", f"forgotten:{key}", kind="tombstone",
-                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=PROJECT, tombstone=True, source="cli", writer=Writer.HUMAN)
     recall.rebuild()
     return ckpt, key
 

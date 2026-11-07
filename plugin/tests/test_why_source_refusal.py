@@ -37,7 +37,7 @@ def _excerpt(**kw):
 def _forget_elsewhere(project=OTHER, text="a value another project forgot"):
     store.append_event("o-elsewhere", "forgotten:" + normalize.content_key(text),
                        kind="tombstone", tombstone=True, project_dir=project,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
 
 
 def test_with_no_set_the_window_is_offered(written):

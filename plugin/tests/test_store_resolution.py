@@ -174,7 +174,7 @@ def test_verification_written_from_a_subdir_is_read_from_the_root(
 def test_event_written_from_a_subdir_is_read_from_the_root(
         tmp_checkpoint_dir, repo_and_sub):
     repo, sub = repo_and_sub
-    assert store.append_event("i-1", "resolved", project_dir=str(sub), writer=Writer.HUMAN)
+    assert store.append_event("i-1", "resolved", project_dir=str(sub), source="cli", writer=Writer.HUMAN)
 
     assert "i-1" in store.resolutions(project_dir=str(repo))
 
@@ -266,7 +266,7 @@ def test_a_slug_survives_every_public_entry_point(tmp_checkpoint_dir, tmp_path,
     on this path comes back as the slug itself."""
     monkeypatch.chdir(tmp_path)
     slug = "-Users-x-proj"
-    store.append_event("i-1", "resolved", project_dir=slug, writer=Writer.HUMAN)
+    store.append_event("i-1", "resolved", project_dir=slug, source="cli", writer=Writer.HUMAN)
     store.append_verification("i-1", "verbatim", "no match", project_dir=slug)
     store.record_forget_hits([{"text": "a value"}], project_dir=slug)
     store.resolutions(project_dir=slug)
@@ -357,10 +357,11 @@ def _public_entry_points(sub: str):
                                           project_dir=sub)),
         ("forget_hit_stats", lambda: store.forget_hit_stats(project_dir=sub)),
         ("append_event",
-         lambda: store.append_event("i-1", "resolved", project_dir=sub, writer=Writer.HUMAN)),
+         lambda: store.append_event("i-1", "resolved", project_dir=sub, source="cli", writer=Writer.HUMAN)),
         ("append_events",
          lambda: store.append_events(
-             [{"item_ref": "i-1", "status": "resolved"}], project_dir=sub,
+             [{"item_ref": "i-1", "status": "resolved", "source": "cli"}],
+             project_dir=sub,
              writer=Writer.HUMAN)),
         ("admission_state", lambda: store.admission_state(sub)),
         ("emitters_open", lambda: store.emitters_open(sub)),

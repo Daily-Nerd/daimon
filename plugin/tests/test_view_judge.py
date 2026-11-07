@@ -24,7 +24,7 @@ def _write(project, decisions, sid="S-1"):
 
 def _forget_id(project, item_id, text="the text at forget time"):
     store.append_event(item_id, f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=project, source="cli", writer=Writer.HUMAN)
 
 
 def _quarantine(project, text, kind="decision"):
@@ -71,7 +71,7 @@ def test_a_later_reopen_lifts_the_forgotten_id(tmp_checkpoint_dir):
     slug = _write("/p/j-reopen", [{"text": "other words", "id": "d-bbbbbb"}])
     _forget_id("/p/j-reopen", "d-bbbbbb")
     time.sleep(1.1)
-    store.append_event("d-bbbbbb", "reopened", project_dir="/p/j-reopen", writer=Writer.HUMAN)
+    store.append_event("d-bbbbbb", "reopened", project_dir="/p/j-reopen", source="cli", writer=Writer.HUMAN)
     assert view.judge(slug).snap.forgotten_ids == frozenset()
 
 
@@ -129,7 +129,7 @@ def test_a_forget_in_another_bucket_drops_the_memo(tmp_checkpoint_dir):
     assert view.judge(a).empty is True
     store.append_event(
         "d-bbbbbb", f"forgotten:{normalize.content_key('shared sentence')}",
-        kind="tombstone", tombstone=True, project_dir="/p/j-y", writer=Writer.HUMAN)
+        kind="tombstone", tombstone=True, project_dir="/p/j-y", source="cli", writer=Writer.HUMAN)
     judge = view.judge(a)
     assert normalize.content_key("shared sentence") in judge.snap.forgotten
     assert judge.empty is False
@@ -177,7 +177,7 @@ def test_judge_of_no_bucket_judges_the_forgotten_set_only(tmp_checkpoint_dir):
     slug = _write("/p/j-set", [{"text": "kept words", "id": "d-aaaaaa"}])
     store.append_event(
         "d-aaaaaa", f"forgotten:{normalize.content_key('kept words')}",
-        kind="tombstone", tombstone=True, project_dir="/p/j-set", writer=Writer.HUMAN)
+        kind="tombstone", tombstone=True, project_dir="/p/j-set", source="cli", writer=Writer.HUMAN)
     for nobody in (None, "no-such-bucket"):
         judge = view.judge(nobody)
         assert judge.snap.closed is False

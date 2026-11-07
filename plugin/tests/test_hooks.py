@@ -694,7 +694,7 @@ def test_pre_llm_call_withholds_resolved_item(tmp_checkpoint_dir, sample_checkpo
                                      route=store.Route.OWN_ELSE_GLOBAL,
                                      admit=store.Admit.ANY)
     item_id = written["working_context"]["open_questions"][1]["id"]
-    store.append_event(item_id, "resolved", project_dir="/repo/x", writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir="/repo/x", source="cli", writer=Writer.HUMAN)
     out = hooks.pre_llm_call(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",

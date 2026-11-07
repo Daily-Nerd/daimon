@@ -270,7 +270,7 @@ def build_world(tmp_path, monkeypatch) -> World:
             store.append_event(
                 item_id,
                 "forgotten:" + normalize.content_key("a different value"),
-                kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
+                kind="tombstone", tombstone=True, project_dir=project, source="cli", writer=Writer.HUMAN)
             world.ids["idforgot"] = item_id
 
     # a key row nothing else names, written by hand with the independent byte
@@ -341,8 +341,8 @@ def _write_ledger_prose(world: World, project: str) -> None:
     q, t, c = TEXTS["question"], TEXTS["topic"], TEXTS["contradiction"]
     # events: note, item_text, status (free-form)
     assert store.append_event(world.ids["question"], "reopen", note=c,
-                              item_text=q, project_dir=project, writer=Writer.HUMAN)
-    assert store.append_event("i-prose-status", t, project_dir=project, writer=Writer.HUMAN)
+                              item_text=q, project_dir=project, source="cli", writer=Writer.HUMAN)
+    assert store.append_event("i-prose-status", t, project_dir=project, source="cli", writer=Writer.HUMAN)
     # refutations / rulings: subject, verdict, scope, revisit_when, note
     world.ruling_id = refutations.assert_ruling(
         subject=t, verdict=q, scope=c, evidence=["issue:693"],
@@ -458,7 +458,7 @@ def _write_forgotten_prose(world: World, project: str) -> None:
     store.append_event(
         "o-peer-forgot", "forgotten:" + normalize.content_key(f),
         kind="tombstone", tombstone=True, project_dir=world.peer,
-        writer=Writer.HUMAN)
+        source="cli", writer=Writer.HUMAN)
 
 
 def _write_peer_requests(world: World, tmp_path, project: str) -> None:

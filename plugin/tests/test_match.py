@@ -45,7 +45,7 @@ def _forget(text):
     key = normalize.content_key(text)
     store.append_event(f"i-gone-{key[:6]}", f"forgotten:{key}",
                        kind="tombstone", tombstone=True, project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind):

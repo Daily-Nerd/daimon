@@ -181,7 +181,7 @@ def test_a_forgotten_key_survives_a_reopen_on_the_id(tmp_checkpoint_dir,
     assert key in store.forgotten_content_keys(_A)
     # a later reopen replaces the latest event of the ID, but the key stands
     # on a ref of its own that no reopen reaches
-    store.append_event(x_id, "reopen", project_dir=_A, writer=Writer.HUMAN)
+    store.append_event(x_id, "reopen", project_dir=_A, source="cli", writer=Writer.HUMAN)
     assert key in store.forgotten_content_keys(_A)
 
 
@@ -191,8 +191,8 @@ def test_a_legacy_one_row_tombstone_is_lifted_by_a_reopen(tmp_checkpoint_dir):
     key = normalize.content_key(_S)
     assert store.append_event(
         "i-legacy", f"forgotten:{key}", kind="tombstone", project_dir=_A,
-        allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
     assert key in store.forgotten_content_keys(_A)
     store.append_event("i-legacy", "reopen", project_dir=_A,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     assert key not in store.forgotten_content_keys(_A)

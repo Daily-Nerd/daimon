@@ -48,7 +48,7 @@ def _seed():
 
 
 def _resolve(item_id, status="resolved", **kw):
-    store.append_event(item_id, status, project_dir=PROJECT, **kw, writer=Writer.HUMAN)
+    store.append_event(item_id, status, project_dir=PROJECT, **{"source": "cli", **kw}, writer=Writer.HUMAN)
 
 
 def _quarantine(text, kind="question"):
@@ -59,7 +59,7 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 def test_nothing_suppressed_is_empty(tmp_checkpoint_dir):

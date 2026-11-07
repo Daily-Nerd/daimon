@@ -43,7 +43,7 @@ def _write(project, texts, sid=None):
 
 def _forget(project, text):
     store.append_event("d-aaaaaa", "forgotten:" + normalize.content_key(text),
-                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=project, source="cli", writer=Writer.HUMAN)
 
 
 def _events(project):

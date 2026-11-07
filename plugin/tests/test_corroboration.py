@@ -303,7 +303,7 @@ def test_a_demotion_does_not_let_the_same_session_re_emit(tmp_checkpoint_dir):
     # vote — re-earning corroboration with no new evidence.
     item_id = _seed_origin()
     assert _emit([(item_id, ORIGIN, "ada")]) == 1
-    store.append_event(item_id, "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event(item_id, "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     assert store.corroborations(project_dir=PROJECT)[item_id]["origins"] == set()
     assert _emit([(item_id, ORIGIN, "ada")]) == 0
 
@@ -737,7 +737,7 @@ def test_a_forgotten_claim_is_never_corroborated_end_to_end(
     _seed_prev()
     store.append_event("o-sibling1",
                        f"forgotten:{normalize.content_key(_PREV_TEXT)}",
-                       project_dir=E2E_PROJECT, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=E2E_PROJECT, tombstone=True, source="cli", writer=Writer.HUMAN)
 
     monkeypatch.setattr(cli, "_chat",
                         fake_chat_factory(_extraction(session, _PREV_TEXT)))

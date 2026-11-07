@@ -175,7 +175,7 @@ def test_exemption_is_narrow_default_paths_still_refuse(
     store.write_checkpoint("S1", _cp("S1", "2026-07-01T00:00:00Z", [_S]),
                            project_dir=_A, writer=Writer.HUMAN)
     monkeypatch.setenv("DAIMON_DISABLE", "1")
-    assert store.append_event("r-x", "resolved", project_dir=_A, writer=Writer.HUMAN) is False
+    assert store.append_event("r-x", "resolved", project_dir=_A, source="cli", writer=Writer.HUMAN) is False
     assert store.write_checkpoint("S2", _cp("S2", "2026-07-02T00:00:00Z", [_T]),
                                   project_dir=_A, writer=Writer.HUMAN) is None
 

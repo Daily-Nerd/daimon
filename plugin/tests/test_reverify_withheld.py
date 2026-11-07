@@ -103,7 +103,7 @@ def test_a_forgotten_id_is_not_a_write_target(tmp_checkpoint_dir, capsys):
     item_id = _id(Q1)
     key = normalize.content_key(Q1)
     store.append_event(item_id, f"forgotten:{key}", kind="tombstone",
-                       tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     before = _events()
     rc, out, err = _run(capsys, item_id, "--evidence", "x")
     assert rc == 1 and out.strip() == f"no item found with id {item_id!r}"

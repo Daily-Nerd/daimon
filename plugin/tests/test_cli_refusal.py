@@ -87,7 +87,7 @@ def test_a_healthy_ledger_is_untouched_by_the_handler(tmp_checkpoint_dir):
 
 @pytest.mark.parametrize("call", [
     pytest.param(lambda: store.append_event(
-        "o-1", "resolved", project_dir=PROJECT, writer=Writer.HUMAN),
+        "o-1", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN),
         id="events"),
     pytest.param(lambda: trust.append(
         {"event": "proposed"}, project_dir=PROJECT, writer=Writer.HUMAN),
@@ -114,9 +114,9 @@ def test_the_cli_run_alone_surfaces_the_refusal(tmp_checkpoint_dir):
     with jsonl.surface_refusals():
         with pytest.raises(jsonl.Refused):
             store.append_event("o-1", "resolved", project_dir=PROJECT,
-                               writer=Writer.HUMAN)
+                               source="cli", writer=Writer.HUMAN)
     assert store.append_event("o-1", "resolved", project_dir=PROJECT,
-                              writer=Writer.HUMAN) is False
+                              source="cli", writer=Writer.HUMAN) is False
 
 
 def test_an_emitter_is_skipped_never_refused(tmp_checkpoint_dir):

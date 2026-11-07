@@ -41,7 +41,7 @@ def health_runs(tmp_path_factory):
                 "trust": "inferred"}, "recent_decisions": [],
                 "open_questions": []},
             "epistemic_snapshot": {}}, project_dir=other, writer=Writer.HUMAN)
-        store.append_event("o-other-1", "resolved", project_dir=other, writer=Writer.HUMAN)
+        store.append_event("o-other-1", "resolved", project_dir=other, source="cli", writer=Writer.HUMAN)
         requests.open_request(
             to=store.project_slug(world.project), ask="please review this",
             why="it blocks us", channel="cli-agent", project_dir=other)

@@ -140,7 +140,7 @@ def test_why_of_a_tombstone_only_id_says_forgotten_and_never_its_key(
     key = normalize.content_key("a value no checkpoint holds any more")
     store.append_event("d-aaaaaaaaaaaa", "forgotten:" + key,
                        kind="tombstone", tombstone=True,
-                       project_dir=tmp_path / "proj", writer=Writer.HUMAN)
+                       project_dir=tmp_path / "proj", source="cli", writer=Writer.HUMAN)
     out = _get(engine_srv, "/api/why?id=d-aaaaaaaaaaaa")
     assert out["ok"] is True
     assert out["item"]["text"] == {"state": "withheld", "reason": "forgotten"}

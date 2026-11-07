@@ -136,7 +136,7 @@ def test_the_append_gate_still_refuses_a_forgotten_status_from_other_writers(
         project_dir=PROJECT, writer=Writer.HUMAN) is False
     assert store.append_event(
         "i-1", f"forgotten:{KEY}", project_dir=PROJECT,
-        writer=Writer.HUMAN) is False
+        source="cli", writer=Writer.HUMAN) is False
 
 
 # ---- a reopen on the id no longer lifts the value ----------------------------
@@ -147,7 +147,7 @@ def test_a_reopen_on_the_id_leaves_the_value_withheld(tmp_checkpoint_dir):
     assert KEY in store.forgotten_content_keys(PROJECT)
     for ref in (decision, question):
         store.append_event(ref, "reopen", project_dir=PROJECT,
-                           writer=Writer.HUMAN)
+                           source="cli", writer=Writer.HUMAN)
     assert KEY in store.forgotten_content_keys(PROJECT)
     assert KEY in store.all_forgotten_content_keys()
     standing = store.project_standing(PROJECT)[KEY]
@@ -161,10 +161,10 @@ def test_a_legacy_one_row_tombstone_is_still_lifted_by_a_reopen(
     decision, _ = _seed()
     assert store.append_event(
         decision, f"forgotten:{KEY}", kind="tombstone", project_dir=PROJECT,
-        allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
     assert KEY in store.forgotten_content_keys(PROJECT)
     store.append_event(decision, "reopen", project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     assert KEY not in store.forgotten_content_keys(PROJECT)
 
 
@@ -174,7 +174,7 @@ def test_a_torn_key_row_degrades_the_ledger_and_the_id_row_still_withholds(
         tmp_checkpoint_dir):
     decision, _ = _seed()
     store.append_event(decision, "resolved", project_dir=PROJECT,
-                       writer=Writer.HUMAN)         # creates the ledger
+                       source="cli", writer=Writer.HUMAN)         # creates the ledger
     path = store._events_path(store._resolved(PROJECT))
     good = {"ts": "2099-01-01T00:00:00Z", "kind": "tombstone",
             "item_ref": decision, "status": f"forgotten:{KEY}",

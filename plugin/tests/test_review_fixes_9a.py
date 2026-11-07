@@ -150,7 +150,7 @@ def test_a_free_form_status_is_not_a_tombstone_for_the_id_rule(
                                  admit=store.Admit.ANY)
     item_id = got["working_context"]["recent_decisions"][0]["id"]
     assert store.append_event(item_id, "forgotten about it",
-                              project_dir="/p/ff", writer=Writer.HUMAN)
+                              project_dir="/p/ff", source="cli", writer=Writer.HUMAN)
     assert view.judge(slug).snap.forgotten_ids == frozenset()
     kept = view.open(slug, live=False).checkpoint
     assert [d["text"] for d in
@@ -160,7 +160,7 @@ def test_a_free_form_status_is_not_a_tombstone_for_the_id_rule(
 def test_a_real_tombstone_withholds_by_id(tmp_checkpoint_dir):
     slug = _write("/p/rt", ["kept words here"])
     store.append_event("d-aaaaaa", "forgotten:" + "0" * 16,
-                       kind="tombstone", tombstone=True, project_dir="/p/rt", writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir="/p/rt", source="cli", writer=Writer.HUMAN)
     assert view.judge(slug).snap.forgotten_ids == frozenset({"d-aaaaaa"})
 
 
@@ -170,7 +170,7 @@ def test_the_index_marks_a_free_form_forgotten_status_as_resolved(
     got = store.read_latest_body(project_dir="/p/ffi", route=store.Route.OWN,
                                  admit=store.Admit.ANY)
     item_id = got["working_context"]["recent_decisions"][0]["id"]
-    store.append_event(item_id, "forgotten about it", project_dir="/p/ffi", writer=Writer.HUMAN)
+    store.append_event(item_id, "forgotten about it", project_dir="/p/ffi", source="cli", writer=Writer.HUMAN)
     recall.rebuild()
     conn = sqlite3.connect(str(config.recall_db()))
     try:

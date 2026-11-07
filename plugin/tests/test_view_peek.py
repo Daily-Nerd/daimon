@@ -35,7 +35,7 @@ def _write(project, topic, sid="S-1"):
 
 def _forget(project, text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=project, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=project, source="cli", writer=Writer.HUMAN)
 
 
 def _quarantine(project, text, kind="topic"):

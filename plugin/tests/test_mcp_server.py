@@ -334,7 +334,7 @@ def test_recall_tool_marks_a_resolved_row(tmp_checkpoint_dir, monkeypatch):
         {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
          "id": "o-mee111"}])
     store.write_checkpoint("S-res", cp, project_dir="/p/A", writer=Writer.HUMAN)
-    store.append_event("o-mee111", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-mee111", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, is_err = _result(out)
@@ -475,7 +475,7 @@ def test_recall_tool_status_matches_the_cli_text_mode_wording(
         {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
          "id": "o-mee111"}])
     store.write_checkpoint("S-res", cp, project_dir="/p/A", writer=Writer.HUMAN)
-    store.append_event("o-mee111", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-mee111", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, _ = _result(out)
@@ -502,7 +502,7 @@ def test_recall_tool_status_field_is_not_persisted_to_telemetry(
         {"text": "meerkat burrow mapping plan colony", "trust": "inferred",
          "id": "o-mee111"}])
     store.write_checkpoint("S-res", cp, project_dir="/p/A", writer=Writer.HUMAN)
-    store.append_event("o-mee111", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-mee111", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
 
     _, out = rpc(_init(), _call("daimon_recall", {"query": "meerkat"}))
     text, is_err = _result(out)

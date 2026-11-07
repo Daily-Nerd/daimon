@@ -35,7 +35,7 @@ def test_a_candidate_row_has_no_item_text_at_all(tmp_checkpoint_dir):
 def test_the_forget_gate_still_skips_a_forgotten_value(tmp_checkpoint_dir):
     store.append_event("r-gone0001",
                        f"forgotten:{normalize.content_key(OLD)}",
-                       project_dir=PROJECT, tombstone=True, writer=Writer.HUMAN)
+                       project_dir=PROJECT, tombstone=True, source="cli", writer=Writer.HUMAN)
     pairs = [("r-old0001", "r-new0001", OLD),
              ("r-old0002", "r-new0002", OTHER)]
     n = capture._emit_supersede_candidates(

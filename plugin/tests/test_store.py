@@ -1016,7 +1016,7 @@ def test_read_team_foreign_cannot_reassert_forgotten_value(tmp_checkpoint_dir, s
     forgotten_text = "Adopt the D-007 prompt for the serializer"
     store.append_event(
         "d-dead01", f"forgotten:{normalize.content_key(forgotten_text)}",
-        kind="tombstone", project_dir="/repo/x", tombstone=True, writer=Writer.HUMAN)
+        kind="tombstone", project_dir="/repo/x", tombstone=True, source="cli", writer=Writer.HUMAN)
     remote = _clone_remote()
     _foreign_file(remote, "grace", "S-g", _stamped(sample_checkpoint, "S-g", 1),
                   logical="core/x")
@@ -1348,7 +1348,7 @@ def test_append_event_writes_jsonl_line(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     assert store.append_event("o-abc123", "resolved", note="shipped",
-                              project_dir="/p/A", writer=Writer.HUMAN) is True
+                              project_dir="/p/A", source="cli", writer=Writer.HUMAN) is True
     slug = store.project_slug("/p/A")
     lines = (tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()
     evt = json.loads(lines[0])
@@ -1362,7 +1362,7 @@ def test_append_event_writes_jsonl_line(tmp_checkpoint_dir, monkeypatch):
 def test_append_event_respects_kill_switch(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import store
     monkeypatch.setenv("DAIMON_DISABLE", "1")
-    assert store.append_event("o-abc123", "resolved", project_dir="/p/A", writer=Writer.HUMAN) is False
+    assert store.append_event("o-abc123", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN) is False
     slug = store.project_slug("/p/A")
     assert not (tmp_checkpoint_dir / slug / "events.jsonl").exists()
 
@@ -1583,7 +1583,7 @@ def test_handoff_event_never_resolves_an_item(tmp_checkpoint_dir):
     # handoff was recorded.
     from daimon_briefing import store
     assert store.append_event("", "active", note="baton", kind="handoff",
-                              project_dir="/p/A", writer=Writer.HUMAN) is True
+                              project_dir="/p/A", source="cli", writer=Writer.HUMAN) is True
     res = store.resolutions(project_dir="/p/A")
     assert res == {}
 
@@ -1721,7 +1721,7 @@ def test_resolutions_invalid_utf8_bytes_cost_only_their_own_line(
 def test_append_event_stores_item_text_when_given(tmp_checkpoint_dir):
     from daimon_briefing import store
     store.append_event("o-abc", "resolved", project_dir="/p/A",
-                       item_text="the exact loop wording", writer=Writer.HUMAN)
+                       item_text="the exact loop wording", source="cli", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
     assert evt["item_text"] == "the exact loop wording"
@@ -1729,7 +1729,7 @@ def test_append_event_stores_item_text_when_given(tmp_checkpoint_dir):
 
 def test_append_event_omits_empty_item_text(tmp_checkpoint_dir):
     from daimon_briefing import store
-    store.append_event("o-abc", "resolved", project_dir="/p/A", writer=Writer.HUMAN)
+    store.append_event("o-abc", "resolved", project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     evt = json.loads((tmp_checkpoint_dir / slug / "events.jsonl").read_text().splitlines()[0])
     assert "item_text" not in evt
@@ -1815,7 +1815,7 @@ def test_append_event_redacts_note_and_item_text(tmp_checkpoint_dir):
     from daimon_briefing import store
     store.append_event("o-a", "resolved", note="key was AKIAIOSFODNN7EXAMPLE",
                        item_text="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.x",
-                       project_dir="/p/A", writer=Writer.HUMAN)
+                       project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
     assert "AKIAIOSFODNN7EXAMPLE" not in raw and "eyJhbGci" not in raw
@@ -1828,7 +1828,7 @@ def test_append_event_redacts_status(tmp_checkpoint_dir):
     # must not escape to events.jsonl.
     from daimon_briefing import store
     store.append_event("o-a", "blocked-on:AKIAIOSFODNN7EXAMPLE",
-                       project_dir="/p/A", writer=Writer.HUMAN)
+                       project_dir="/p/A", source="cli", writer=Writer.HUMAN)
     slug = store.project_slug("/p/A")
     raw = (tmp_checkpoint_dir / slug / "events.jsonl").read_text()
     assert "AKIAIOSFODNN7EXAMPLE" not in raw
@@ -2459,7 +2459,7 @@ def test_record_forget_hits_records_root_on_first_write(tmp_checkpoint_dir):
 
 def test_append_event_records_root_on_first_write(tmp_checkpoint_dir):
     proj = "/repo/event-root"
-    store.append_event("item-1", "resolved", project_dir=proj, writer=Writer.HUMAN)
+    store.append_event("item-1", "resolved", project_dir=proj, source="cli", writer=Writer.HUMAN)
     assert store.bucket_root(proj) == proj
 
 
@@ -2470,7 +2470,7 @@ def test_first_writer_across_entry_points_wins(tmp_checkpoint_dir, sample_checkp
     first = "/repo/shared bucket"
     second = "/repo/shared-bucket"
     assert store.project_slug(first) == store.project_slug(second)
-    store.append_event("item-1", "resolved", project_dir=first, writer=Writer.HUMAN)
+    store.append_event("item-1", "resolved", project_dir=first, source="cli", writer=Writer.HUMAN)
     store.write_checkpoint("S-shared", sample_checkpoint, project_dir=second, writer=Writer.HUMAN)
     assert store.bucket_root(first) == first
 

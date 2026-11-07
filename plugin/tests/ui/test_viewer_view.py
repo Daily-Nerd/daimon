@@ -52,7 +52,7 @@ def _quarantine(text, kind="question"):
 
 def _forget(text):
     store.append_event("i-gone", f"forgotten:{normalize.content_key(text)}",
-                       kind="tombstone", tombstone=True, project_dir=PROJECT, writer=Writer.HUMAN)
+                       kind="tombstone", tombstone=True, project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
 
 
 def _break_trust(tmp_checkpoint_dir):
@@ -212,7 +212,7 @@ def test_diff_never_shows_a_withheld_item(base):
 def test_diff_shows_an_item_closed_by_any_resolving_status_as_resolved(
         base, status):
     store.append_event("o-aaaaaaaaaaaa", status, note="closed by the owner",
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     got = _diff(base)
     assert [r["item"]["id"] for r in got["resolved"]] == ["o-aaaaaaaaaaaa"]
     assert got["resolved"][0]["note"] == "closed by the owner"
@@ -220,8 +220,8 @@ def test_diff_shows_an_item_closed_by_any_resolving_status_as_resolved(
 
 
 def test_diff_keeps_a_reopened_item_gone_not_resolved(base):
-    store.append_event("o-aaaaaaaaaaaa", "resolved", project_dir=PROJECT, writer=Writer.HUMAN)
-    store.append_event("o-aaaaaaaaaaaa", "reopened", project_dir=PROJECT, writer=Writer.HUMAN)
+    store.append_event("o-aaaaaaaaaaaa", "resolved", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
+    store.append_event("o-aaaaaaaaaaaa", "reopened", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     got = _diff(base)
     assert got["resolved"] == []
     assert [i["id"] for i in got["gone"]] == ["o-aaaaaaaaaaaa"]
@@ -229,7 +229,7 @@ def test_diff_keeps_a_reopened_item_gone_not_resolved(base):
 
 def test_a_quarantined_resolution_note_reads_as_the_marker(base):
     store.append_event("o-aaaaaaaaaaaa", "resolved", note=HIDE,
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     rec = _quarantine(HIDE)
     got = _diff(base)
     assert [r["note"] for r in got["resolved"]] == [
@@ -239,7 +239,7 @@ def test_a_quarantined_resolution_note_reads_as_the_marker(base):
 
 def test_a_forgotten_resolution_note_reads_as_absent(base):
     store.append_event("o-aaaaaaaaaaaa", "resolved", note=HIDE,
-                       project_dir=PROJECT, writer=Writer.HUMAN)
+                       project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     _forget(HIDE)
     got = _diff(base)
     assert [r["note"] for r in got["resolved"]] == [None]

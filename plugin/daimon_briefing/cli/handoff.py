@@ -29,7 +29,8 @@ def _cmd_handoff(args) -> int:
             print("error: --clear takes no text", file=sys.stderr)
             return 1
         if not store.append_event("", "cleared", note="", kind="handoff",
-                                  project_dir=project, writer=Writer.HUMAN):
+                                  project_dir=project, writer=Writer.HUMAN,
+                                  source=store.observed_event_source()):
             print("error: handoff not recorded (daimon disabled or project "
                   "unknown)", file=sys.stderr)
             return 1
@@ -65,7 +66,8 @@ def _cmd_handoff(args) -> int:
               "never surfaces again; fold anything still relevant into the "
               f"new baton:\n  {prior['note']}", file=sys.stderr)
     if not store.append_event("", "active", note=text, kind="handoff",
-                              project_dir=project, writer=Writer.HUMAN):
+                              project_dir=project, writer=Writer.HUMAN,
+                              source=store.observed_event_source()):
         print("error: handoff not recorded (daimon disabled or project "
               "unknown)", file=sys.stderr)
         return 1
@@ -86,7 +88,8 @@ def _cmd_log(args) -> int:
     project = _cli._resolve_project(args.project)
     ok = store.append_event("", args.status, note=args.text,
                             kind=args.kind, project_dir=project,
-                            writer=Writer.HUMAN)
+                            writer=Writer.HUMAN,
+                            source=store.observed_event_source())
     if not ok:
         print("event not written (daimon disabled or project unknown)")
         return 1

@@ -240,7 +240,7 @@ def test_a_chmod_reaches_every_memo_without_clearing_a_cache(
     broken = _write("/p/round-broken", ["words"])
     _write("/p/round-fine", ["other words"])
     events = _bucket("/p/round-broken") / "events.jsonl"
-    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-broken", writer=Writer.HUMAN)
+    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-broken", source="cli", writer=Writer.HUMAN)
     assert store.forgotten_incomplete() == frozenset()      # memo warm
     assert view.judge(broken).index_closed is False         # judge memo warm
     assert view.snapshot("/p/round-fine").notes() == ()
@@ -258,7 +258,7 @@ def test_a_chmod_reaches_every_memo_without_clearing_a_cache(
 
 def test_the_stamps_change_on_a_chmod(tmp_checkpoint_dir):
     _write("/p/round-stamp", ["words"])
-    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-stamp", writer=Writer.HUMAN)
+    store.append_event("o-aaaaaa", "resolved", project_dir="/p/round-stamp", source="cli", writer=Writer.HUMAN)
     path = _bucket("/p/round-stamp") / "events.jsonl"
     key, stamp = view._stat_key(path), store.forgotten_stamp()
     time.sleep(0.01)

@@ -45,7 +45,7 @@ def _legacy_tombstone(item_id, key):
     also what a forget that crashed right after its first write leaves."""
     assert store.append_event(
         item_id, f"forgotten:{key}", kind="tombstone", project_dir=PROJECT,
-        allow_disabled=True, tombstone=True, writer=Writer.HUMAN)
+        allow_disabled=True, tombstone=True, source="cli", writer=Writer.HUMAN)
 
 
 def _resume(*extra):
@@ -103,7 +103,7 @@ def test_resume_after_a_crash_writes_the_key_row_and_scrubs_what_was_left(
     assert len(standing.key_refs) == 1 and standing.ids == (ids[VALUE],)
     # a reopen on the id can no longer lift the value
     store.append_event(ids[VALUE], "reopen", project_dir=PROJECT,
-                       writer=Writer.HUMAN)
+                       source="cli", writer=Writer.HUMAN)
     assert KEY in store.forgotten_content_keys(PROJECT)
     assert KEY not in out and VALUE not in out and "forgotten-key" not in out
 
@@ -140,7 +140,7 @@ def test_a_lifted_forget_is_not_finished_again(tmp_checkpoint_dir, tty,
     ids = _seed(VALUE)
     _legacy_tombstone(ids[VALUE], KEY)
     store.append_event(ids[VALUE], "reopened", project_dir=PROJECT,
-                       writer=Writer.HUMAN)       # the legacy lift
+                       source="cli", writer=Writer.HUMAN)       # the legacy lift
     capsys.readouterr()
     before = _events_bytes()
     assert _resume() == 0
@@ -215,7 +215,7 @@ def test_resume_asks_before_it_removes_an_active_ruling(
     assert store.append_event(
         "i-gone", f"forgotten:{key}", kind="tombstone",
         project_dir=RULING_PROJECT, allow_disabled=True, tombstone=True,
-        writer=Writer.HUMAN)
+        source="cli", writer=Writer.HUMAN)
     from daimon_briefing import refutations
     monkeypatch.setattr("builtins.input", lambda prompt="": "n")
     assert cli.main(["forget", "--resume", "--project", RULING_PROJECT]) == 1
@@ -323,7 +323,7 @@ def test_resume_dry_run_names_the_active_rulings_without_asking(
     assert store.append_event(
         "i-gone", f"forgotten:{key}", kind="tombstone",
         project_dir=RULING_PROJECT, allow_disabled=True, tombstone=True,
-        writer=Writer.HUMAN)
+        source="cli", writer=Writer.HUMAN)
 
     def no_prompt(*_a, **_k):
         raise AssertionError("a preview asks nobody")
