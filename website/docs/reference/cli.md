@@ -206,9 +206,10 @@ nobody ever writes into another project's ledger.
 | `daimon request list` | This project's own sent requests, undecided first. A recipient whose request ledger cannot be read is skipped and counted in one warning line (stderr with `--json`). Each row shows when it last moved and `OVERDUE` once nothing has moved it for `DAIMON_REQUEST_OVERDUE_DAYS` (default 7). `--json` for machines, and each row also carries `last_movement_at`, `age_seconds` and `overdue`. |
 | `daimon request inbox` | Requests addressed TO this project, from every sender, undecided first, including ones the briefing panel dropped for attention. A sender whose request ledger cannot be read is skipped and counted in one warning line (stderr with `--json`); the briefing panel and the MCP `requests_inbox` tool say the same. `--json` for machines. |
 
-Two panels ride the same-project CLI `brief` only — never `--slug`, the
+Four panels ride the same-project CLI `brief` only — never `--slug`, the
 global-pointer fallback, or MCP. The recipient sees "Requests waiting on
-you"; the sender sees "Decisions on requests you sent". Each is capped at 3
+you" and "Requests you accepted and still owe"; the sender sees "Decisions
+on requests you sent" and "Requests you sent that nobody is moving". Each is capped at 3
 cards with a loud `+N more …` overflow line naming the command that shows
 the rest — never a silent drop. Suppression is recipient-side attention
 only: the sender's panel still reads a suppressed request as "surfaced,

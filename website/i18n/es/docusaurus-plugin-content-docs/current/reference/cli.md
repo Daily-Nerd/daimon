@@ -209,9 +209,10 @@ proyecto.
 | `daimon request list` | Las solicitudes enviadas por este proyecto, primero las que siguen sin decidir. Un destinatario cuyo ledger de solicitudes no se puede leer se omite y se cuenta en una línea de aviso (por stderr con `--json`). Cada fila muestra cuándo se movió por última vez y `OVERDUE` cuando nada la movió durante `DAIMON_REQUEST_OVERDUE_DAYS` días (por defecto 7). `--json` para máquinas, y cada fila suma `last_movement_at`, `age_seconds` y `overdue`. |
 | `daimon request inbox` | Solicitudes que otros proyectos dirigieron a este, de cualquier remitente, primero las que siguen sin decidir, incluidas las que el panel de briefing dejó fuera de la atención. Un remitente cuyo ledger de solicitudes no se puede leer se omite y se cuenta en una línea de aviso (por stderr con `--json`); el panel del briefing y la herramienta MCP `requests_inbox` dicen lo mismo. `--json` para máquinas. |
 
-Dos paneles viajan solo con el `brief` de CLI del mismo proyecto — nunca con
+Cuatro paneles viajan solo con el `brief` de CLI del mismo proyecto — nunca con
 `--slug`, el fallback al puntero global, ni por MCP. El destinatario ve
-"Requests waiting on you"; el remitente ve "Decisions on requests you sent".
+"Requests waiting on you" y "Requests you accepted and still owe"; el remitente
+ve "Decisions on requests you sent" y "Requests you sent that nobody is moving".
 Cada uno tiene un tope de 3 tarjetas con una línea de desborde bien visible
 (`+N more …`) que nombra el comando para ver el resto — nunca un descarte
 silencioso. La supresión es solo atención del lado del destinatario: el
