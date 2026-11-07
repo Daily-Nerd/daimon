@@ -80,9 +80,10 @@ daimon request list    # las solicitudes que este proyecto envió
 daimon request inbox   # las solicitudes dirigidas A este proyecto
 ```
 
-Las dos aceptan `--json`. El propio briefing lleva dos paneles chicos con
-los mismos datos: "solicitudes esperando por vos" del lado del destinatario,
-y "decisiones sobre solicitudes que enviaste" del lado del emisor, cada uno
+Las dos aceptan `--json`. El propio briefing lleva cuatro paneles chicos con
+los mismos datos: "solicitudes esperando por vos" y "solicitudes que aceptaste
+y todavía debés" del lado del destinatario, y "decisiones sobre solicitudes que
+enviaste" y "solicitudes que enviaste y nadie mueve" del lado del emisor, cada uno
 con un tope y una línea de exceso bien visible en vez de un descarte
 silencioso. El [servidor MCP](../reference/mcp.md) expone la vista del
 destinatario en modo solo lectura, como la herramienta `requests_inbox`;

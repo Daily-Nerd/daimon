@@ -292,6 +292,18 @@ def stale_days() -> float:
         return 7.0
 
 
+def request_overdue_days() -> float:
+    """Wall-clock days without any movement (#1281) before a request its
+    sender still has open reads `overdue`: opened, revised, accepted, replied
+    to or claimed done, whichever came last. Default 7.0 days;
+    DAIMON_REQUEST_OVERDUE_DAYS overrides, garbage falls back to the default
+    (the `stale_days` shape)."""
+    try:
+        return max(0.0, float(_get("DAIMON_REQUEST_OVERDUE_DAYS") or "7.0"))
+    except ValueError:
+        return 7.0
+
+
 def max_briefing_decisions() -> int:
     """Cap on decisions shown in the briefing (render-time view). Default 10; 0 =
     unbounded. The checkpoint keeps ALL decisions — this bounds only the injected

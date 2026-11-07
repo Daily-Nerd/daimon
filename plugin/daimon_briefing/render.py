@@ -204,12 +204,17 @@ def _no_checkpoint_lines(project_dir, worldcheck_project, snap=None,
         worldcheck_project, snap=snap)
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, snap=snap)
                   if worldcheck_project is not None else [])
-    request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines, notes=notes)
+    overdue_lines = briefing.overdue_panel_lines(
+        worldcheck_project, snap=snap,
+        shown_ids={c.request_id for c in verdict_cards})
+    (request_lines, verdict_lines, owed_lines,
+     overdue_lines) = briefing.drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines, overdue_lines, notes=notes)
     closed = snap is not None and snap.closed
     blocks = [blk for blk in ([briefing.GREETING] if closed else [],
                               list(notes), rulings, decision_count_block,
-                              request_lines, verdict_lines, owed_lines)
+                              request_lines, verdict_lines, owed_lines,
+                              overdue_lines)
               if blk]
     # Point at the real flow (#29): checkpoints come from the hooks; bare
     # `serialize` dead-ends (it needs a transcript path).
@@ -240,9 +245,14 @@ def _panel_lines(project_dir, worldcheck_project, snap=None, notes=()):
         worldcheck_project, snap=snap)
     owed_lines = (briefing.owed_panel_lines(worldcheck_project, snap=snap)
                   if worldcheck_project is not None else [])
-    request_lines, verdict_lines, owed_lines = briefing.drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines, notes=notes)
+    overdue_lines = briefing.overdue_panel_lines(
+        worldcheck_project, snap=snap,
+        shown_ids={c.request_id for c in verdict_cards})
+    (request_lines, verdict_lines, owed_lines,
+     overdue_lines) = briefing.drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines, overdue_lines, notes=notes)
     return (rulings, decision_count, request_lines, verdict_lines, owed_lines,
+            overdue_lines,
             {"request": request_cards, "verdict": verdict_cards})
 
 
@@ -341,12 +351,13 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
             _print_trailer(trailer)
             return _manifest(llm_cards)
         (rulings, decision_count, request_lines, verdict_lines, owed_lines,
-         cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
+         overdue_lines, cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
         # #204: degrade verbatim labels when the receipt can't be locally
         # confirmed. Cheap check (sidecar + byte match).
         degraded = briefing.receipt_degraded(checkpoint)
         _rich_brief(b, degraded, rulings, request_lines, verdict_lines,
-                    owed_lines, decision_count, loops_pointer, notes)
+                    owed_lines, decision_count, loops_pointer, notes,
+                    overdue_lines=overdue_lines)
         _print_drift(drift)
         _print_teammates(teammates)
         _print_trailer(trailer)
@@ -388,7 +399,7 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
              end="")
         return _manifest(cards)
     (rulings, decision_count, request_lines, verdict_lines, owed_lines,
-     cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
+     overdue_lines, cards) = _panel_lines(project_dir, worldcheck_project, snap, notes)
     # #204: degrade verbatim labels when the receipt can't be locally
     # confirmed. Cheap check (sidecar + byte match).
     degraded = briefing.receipt_degraded(checkpoint)
@@ -402,8 +413,8 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     sel = briefing.select(
         b, briefing.effective_budget(), degraded=degraded, rulings=rulings,
         request_lines=request_lines, verdict_lines=verdict_lines,
-        owed_lines=owed_lines, decision_count=decision_count,
-        reserved=reserved, teammate_blocks=_teammate_blocks(teammates or ()),
+        owed_lines=owed_lines, overdue_lines=overdue_lines,
+        decision_count=decision_count, reserved=reserved, teammate_blocks=_teammate_blocks(teammates or ()),
         teammate_header=_TEAMMATES_HEADER, loops_pointer=loops_pointer,
         notes=notes, cards=cards)
     body = briefing.render_selection(sel)
@@ -460,7 +471,8 @@ def _print_drift(drift) -> None:
 def _rich_brief(b: dict, degraded: bool = False, rulings=(),
                 request_lines=(), verdict_lines=(), owed_lines=(),
                 decision_count: str | None = None,
-                loops_pointer: bool = True, notes=()) -> None:
+                loops_pointer: bool = True, notes=(),
+                overdue_lines=()) -> None:
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
@@ -511,6 +523,14 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             body.append(f"{line}\n", style="bold")
         console.print(Panel(body, title=owed_lines[0],
                             border_style="magenta", title_align="left"))
+    if overdue_lines:
+        # #1281: the sender's overdue asks, the same shape as the panels
+        # above and its own border color for the same reason.
+        body = Text()
+        for line in overdue_lines[1:]:
+            body.append(f"{line}\n", style="bold")
+        console.print(Panel(body, title=overdue_lines[0],
+                            border_style="yellow", title_align="left"))
     # #1128: the rich path runs the same select as the plain one, with no
     # budget (a TTY is never captured or spilled), so it gets the same
     # section order, the same decision cap and the same notes.

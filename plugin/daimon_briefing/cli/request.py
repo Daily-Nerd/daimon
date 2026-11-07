@@ -18,7 +18,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import config, render, requests, store, view
+from .. import clock, config, render, requests, store, view
 from ._ledger import _snap
 
 # Verdicts land under their own verb names; the ledger's event vocabulary
@@ -261,6 +261,19 @@ def _cmd_request_inbox(args) -> int:
     return _print_listing(args, rows, got.notes,
                           "no requests addressed to this project",
                           lambda row: _inbox_lines(row, project_dir=project))
+
+
+def _list_lines(row: dict, project, now_ns: int) -> list:
+    """`_request_lines` plus the #1281 age line: when the record last moved,
+    and OVERDUE once the sender-side threshold has passed."""
+    lines = _request_lines(row, project_dir=project)
+    age = requests.age_seconds(row, now_ns)
+    if age is not None:
+        flag = " (OVERDUE)" if requests.is_overdue(row, now_ns) else ""
+        after_header = 2 if row.get("title") else 1
+        lines.insert(after_header,
+                     f"  Age: last moved {int(age // 86_400)}d ago{flag}")
+    return lines
 
 
 def _print_listing(args, rows, notes, empty_line, lines_of) -> int:
@@ -712,9 +725,15 @@ def _cmd_request_list(args) -> int:
     project = _cli._resolve_project(args.project)
     got = requests.listed(project)
     _cli._note_usage("request:list")
-    return _print_listing(args, _masked(project, got.rows), got.notes,
+    # #1281: liveness is derived here, on read, from one clock reading shared
+    # by every row, so the rows of a listing agree on what "now" is. The three
+    # keys are additions; every existing field keeps its value and shape.
+    now = clock.now_ns()
+    rows = [{**row, **requests.liveness(row, now)}
+            for row in _masked(project, got.rows)]
+    return _print_listing(args, rows, got.notes,
                           "no requests for this project",
-                          lambda row: _request_lines(row, project_dir=project))
+                          lambda row: _list_lines(row, project, now))
 
 
 def register(sub, fmt) -> None:

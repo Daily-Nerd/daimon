@@ -26,7 +26,8 @@ from typing import Any, NamedTuple
 # don't apply here). checks_runtime is the #943 stdlib-only runtime module —
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
-from . import (capture, checks_host, checks_runtime, config, display, ledger,
+from . import (capture, checks_host, checks_runtime, clock, config, display,
+               ledger,
                llm, marks, pending, receipts, refutations, requests, schema,
                scoring, store)
 # Imported as constants, not as the module.
@@ -1886,6 +1887,51 @@ def verdict_panel(project_dir=None, *, snap=None):
     return lines, tuple(cards)
 
 
+# ---- #1281: the sender-side overdue panel ----------------------------------
+
+_OVERDUE_PANEL_HEADER = "Requests you sent that nobody is moving:"
+
+
+def overdue_panel_lines(project_dir=None, *, snap=None,
+                        shown_ids=frozenset()) -> list[str]:
+    """#1281: the sender's OVERDUE panel ([] when nothing this project sent
+    has sat still past `DAIMON_REQUEST_OVERDUE_DAYS`, or `project_dir` is
+    None). Fail-open skeleton furniture like its siblings, capped at
+    RENDER_CAP with a counted overflow, ONE line per ask.
+
+    `shown_ids` are the requests the verdict panel printed in this same brief
+    (its cards' ids): an accepted or needs-info ask already there is not
+    repeated. The line carries the sender's own headline and the recipient's
+    slug, the same two things the verdict panel prints; it adds no
+    recipient-written text (scar 0055). The age is derived on read from the
+    injected clock, so it needs no stamp and no card."""
+    if project_dir is None:
+        return []
+    try:
+        entry = requests.overdue_renderable(project_dir=project_dir,
+                                            shown_ids=shown_ids)
+    except Exception:
+        return []
+    rows = entry.get("rows") or []
+    notes = list(entry.get("notes") or ())
+    if not rows:
+        return notes
+    now = clock.now_ns()
+    rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
+    lines = [_OVERDUE_PANEL_HEADER]
+    for row in rows:
+        age = requests.age_seconds(row, now)
+        days = int(age // 86_400) if age is not None else 0
+        lines.append(f"! {row['request_id']}  {requests.headline(row)}  "
+                     f"[{row.get('state') or 'open'}, {days}d, "
+                     f"to {row.get('to') or '?'}]")
+    overflow = entry.get("overflow") or 0
+    if overflow:
+        lines.append(f"  (+{overflow} more overdue — daimon request list)")
+    lines.extend(notes)
+    return lines
+
+
 def drop_repeated_notes(*blocks, notes=()) -> list:
     """The panel blocks with each warning line kept once, at its first
     appearance: the three request panels read the same joins, so a sender
@@ -1909,7 +1955,7 @@ def drop_repeated_notes(*blocks, notes=()) -> list:
 def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
                  decision_count: str | None = None, *,
-                 max_bytes: int | None = None,
+                 max_bytes: int | None = None, overdue_lines=(),
                  loops_pointer: bool = True, notes=()) -> str:
     """The deterministic briefing text: a thin wrapper over `select` and
     `render_selection` (#1128), kept so its many call sites keep working.
@@ -1931,7 +1977,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     budget = effective_budget(max_bytes)
     sel = select(b, budget, degraded=degraded, rulings=rulings,
                  request_lines=request_lines, verdict_lines=verdict_lines,
-                 owed_lines=owed_lines, decision_count=decision_count,
+                 owed_lines=owed_lines, overdue_lines=overdue_lines,
+                 decision_count=decision_count,
                  loops_pointer=loops_pointer, notes=notes)
     text = render_selection(sel)
     _log_render_size(text, budget)
@@ -2212,7 +2259,7 @@ _TEAMMATE_FLOOR = 2
 # The panels in print order, with the command that lists what a collapsed
 # panel hid.
 _PANEL_POINTERS = ("daimon request inbox", "daimon request list",
-                   "daimon request inbox")
+                   "daimon request inbox", "daimon request list")
 
 
 def _decision_floor(cap: int) -> int:
@@ -2382,6 +2429,7 @@ def _split_decisions(decisions, cap, now):
 def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
            request_lines=(), verdict_lines=(), owed_lines=(),
            decision_count: str | None = None, reserved: int = 0,
+           overdue_lines=(),
            teammate_blocks=(), teammate_header: str = "",
            loops_pointer: bool = True, full_quotes: bool = False,
            notes=(), cards=None) -> Selection:
@@ -2480,7 +2528,8 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
     line_cache: dict = {}
     panel_sets = [(list(request_lines), _PANEL_POINTERS[0], "request"),
                   (list(verdict_lines), _PANEL_POINTERS[1], "verdict"),
-                  (list(owed_lines), _PANEL_POINTERS[2], "owed")]
+                  (list(owed_lines), _PANEL_POINTERS[2], "owed"),
+                  (list(overdue_lines), _PANEL_POINTERS[3], "overdue")]
 
     def build_selection(n_dropped, floor_keep, collapse, overage=0):
         seq = cands
@@ -2773,8 +2822,12 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     verdict_lines, verdict_cards = verdict_panel(worldcheck_project, snap=snap)
     owed_lines = (owed_panel_lines(worldcheck_project, snap=snap)
                   if worldcheck_project is not None else [])
-    request_lines, verdict_lines, owed_lines = drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines, notes=notes)
+    overdue_lines = overdue_panel_lines(
+        worldcheck_project, snap=snap,
+        shown_ids={c.request_id for c in verdict_cards})
+    (request_lines, verdict_lines, owed_lines,
+     overdue_lines) = drop_repeated_notes(
+        request_lines, verdict_lines, owed_lines, overdue_lines, notes=notes)
     if cards_out is not None:
         # Both panels print whole on this path: the caller stamps from these.
         cards_out.update(request=request_cards, verdict=verdict_cards)
@@ -2783,7 +2836,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     skeleton_blocks = [blk for blk in (head, list(notes), rulings,
                                        decision_count_block,
                                        request_lines, verdict_lines,
-                                       owed_lines) if blk]
+                                       owed_lines, overdue_lines) if blk]
     if b is None:
         # #693/#694/#766: a ruling ratified, a request addressed, a verdict
         # decided, or a decision now waiting — before the first real
@@ -2803,6 +2856,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
         sel = select(b, effective_budget(), degraded=degraded,
                      rulings=rulings, request_lines=request_lines,
                      verdict_lines=verdict_lines, owed_lines=owed_lines,
+                     overdue_lines=overdue_lines,
                      decision_count=decision_count,
                      loops_pointer=loops_pointer, full_quotes=True,
                      notes=notes)
@@ -2826,6 +2880,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                         "falling back to the deterministic render")
     return render_plain(b, degraded, rulings, request_lines, verdict_lines,
                         owed_lines, decision_count,
+                        overdue_lines=overdue_lines,
                         loops_pointer=loops_pointer, notes=notes)
 
 

@@ -74,9 +74,10 @@ daimon request list    # this project's own sent requests
 daimon request inbox   # requests addressed TO this project
 ```
 
-Both take `--json`. The briefing itself carries two small panels drawn from
-the same data: the recipient's "requests waiting on you," and the sender's
-"decisions on requests you sent," each capped with a loud overflow line
+Both take `--json`. The briefing itself carries four small panels drawn from
+the same data: the recipient's "requests waiting on you" and "requests you
+accepted and still owe," and the sender's "decisions on requests you sent"
+and "requests you sent that nobody is moving," each capped with a loud overflow line
 rather than a silent drop. The [MCP server](../reference/mcp.md) exposes the
 recipient's view read-only, as the `requests_inbox` tool; no request-writing
 verb is reachable over MCP, and `daimon_brief` itself never carries request
