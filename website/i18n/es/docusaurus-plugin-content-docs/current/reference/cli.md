@@ -206,7 +206,7 @@ proyecto.
 | `daimon request suppress <id> [--note]` | Saca una solicitud del panel de briefing propio del destinatario. Solo humano; el registro sigue en `list`/`inbox`, y cualquier decisión posterior lo revierte. |
 | `daimon request done <id> --evidence "<cita>"` | Reporta la solicitud como satisfecha. Cualquier canal; el reclamo de un agente se renderiza como `done (claimed, unverified)` hasta que el próximo fin de sesión del destinatario verifica byte a byte la cita de evidencia contra su transcripción. Un `done` humano se renderiza sin más. En una solicitud `work` que nadie aceptó todavía, el `done` de un agente registra el reclamo y deja la solicitud en la cola de decisión, a la espera de `accept` o `reject`, en lugar de cerrarla. |
 | `daimon request reply <id> --note "<texto>" [--evidence "<puntero>"]` | Le manda al remitente una nota de avance sobre una solicitud que aceptaste, sin cerrarla. Cualquier canal; la nota de un agente le llega marcada como `Reply (agent, unverified)`. No mueve ningún estado y solo funciona sobre una solicitud aceptada; en cualquier otro estado se rechaza con el verbo que corresponde (`accept --note`, `needs-info --note`, `done`). El remitente ve la última respuesta en el briefing y en el aviso en vivo, incluso cuando la decisión ya salió del panel. |
-| `daimon request list` | Las solicitudes enviadas por este proyecto, primero las que siguen sin decidir. Un destinatario cuyo ledger de solicitudes no se puede leer se omite y se cuenta en una línea de aviso (por stderr con `--json`). `--json` para máquinas. |
+| `daimon request list` | Las solicitudes enviadas por este proyecto, primero las que siguen sin decidir. Un destinatario cuyo ledger de solicitudes no se puede leer se omite y se cuenta en una línea de aviso (por stderr con `--json`). Cada fila muestra cuándo se movió por última vez y `OVERDUE` cuando nada la movió durante `DAIMON_REQUEST_OVERDUE_DAYS` días (por defecto 7). `--json` para máquinas, y cada fila suma `last_movement_at`, `age_seconds` y `overdue`. |
 | `daimon request inbox` | Solicitudes que otros proyectos dirigieron a este, de cualquier remitente, primero las que siguen sin decidir, incluidas las que el panel de briefing dejó fuera de la atención. Un remitente cuyo ledger de solicitudes no se puede leer se omite y se cuenta en una línea de aviso (por stderr con `--json`); el panel del briefing y la herramienta MCP `requests_inbox` dicen lo mismo. `--json` para máquinas. |
 
 Dos paneles viajan solo con el `brief` de CLI del mismo proyecto — nunca con
@@ -221,6 +221,20 @@ sesiones del destinatario sin decisión; una ya decidida sale del panel del
 remitente después de 2 sesiones del remitente. La atención decae — los
 registros nunca se eliminan, y ambos siguen totalmente visibles en
 `list`/`inbox`.
+
+`stale` cuenta sesiones del destinatario, así que una solicitud a un proyecto
+que nadie abre nunca llega ahí. El remitente tiene una segunda señal, de
+reloj: una solicitud que sigue abierta de su lado (open, needs-info, o
+accepted sin `done`) pasa a `overdue` cuando nada la movió durante
+`DAIMON_REQUEST_OVERDUE_DAYS` días. Moverla es abrirla, revisarla,
+aceptarla, pedir más información, responderle o reclamarla como hecha; un
+brief que solo mostró la tarjeta no cuenta. Se deriva al leer, nunca se
+escribe, y no necesita ninguna sesión del lado del destinatario. El brief
+del remitente lista las solicitudes vencidas en un panel titulado "Requests
+you sent that nobody is moving", con tope de 3 y una línea de desborde
+contada, y omite las que el panel "Decisions on requests you sent" ya
+muestra. Nada corre en un temporizador: un script que quiera perseguirlas
+puede consultar `daimon request list --json` y actuar sobre `overdue`.
 
 Una solicitud abierta con `--kind info` no debe un accept, así que nunca
 aparece en `daimon decide` ni en el panel "Requests waiting on you" del

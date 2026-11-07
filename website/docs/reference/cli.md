@@ -203,7 +203,7 @@ nobody ever writes into another project's ledger.
 | `daimon request suppress <id> [--note]` | Drop a request out of the recipient's own briefing panel. Human-only; the record stays in `list`/`inbox`, and any later decision reverses it. |
 | `daimon request done <id> --evidence "<quote>"` | Report the ask as satisfied. Either channel; an agent's claim renders `done (claimed, unverified)` until the recipient's next session-end byte-checks the evidence quote against its transcript. A human `done` renders plainly. On a `work` request no person has accepted yet, an agent's `done` records the claim and leaves the request in the decision queue, awaiting `accept` or `reject`, instead of closing it. |
 | `daimon request reply <id> --note "<text>" [--evidence "<pointer>"]` | Send the sender a progress note on a request you accepted, without closing it. Either channel; an agent's note reaches the sender labeled `Reply (agent, unverified)`. It moves no state and works only on an accepted request; any other state is refused with the verb that fits (`accept --note`, `needs-info --note`, `done`). The sender sees the latest reply in the briefing and the live nudge, even after the decision itself aged out of the panel. |
-| `daimon request list` | This project's own sent requests, undecided first. A recipient whose request ledger cannot be read is skipped and counted in one warning line (stderr with `--json`). `--json` for machines. |
+| `daimon request list` | This project's own sent requests, undecided first. A recipient whose request ledger cannot be read is skipped and counted in one warning line (stderr with `--json`). Each row shows when it last moved and `OVERDUE` once nothing has moved it for `DAIMON_REQUEST_OVERDUE_DAYS` (default 7). `--json` for machines, and each row also carries `last_movement_at`, `age_seconds` and `overdue`. |
 | `daimon request inbox` | Requests addressed TO this project, from every sender, undecided first, including ones the briefing panel dropped for attention. A sender whose request ledger cannot be read is skipped and counted in one warning line (stderr with `--json`); the briefing panel and the MCP `requests_inbox` tool say the same. `--json` for machines. |
 
 Two panels ride the same-project CLI `brief` only — never `--slug`, the
@@ -216,6 +216,19 @@ undecided". An unanswered request renders `stale` after 3 recipient
 sessions pass with no decision; a decided one leaves the sender's panel
 after 2 sender sessions. Attention decays — records never delete, and both
 stay fully visible in `list`/`inbox`.
+
+`stale` counts recipient sessions, so an ask to a project nobody opens never
+reaches it. The sender has a second, wall-clock signal for that: a request
+it still has open (open, needs-info, or accepted with no `done`) reads
+`overdue` once nothing has moved it for `DAIMON_REQUEST_OVERDUE_DAYS` days.
+Moving means opened, revised, accepted, answered with needs-info, replied to,
+or claimed done; a brief that merely showed the card does not count. It is
+derived when read, never written, and needs no session on the recipient's
+side. The sender's brief lists the overdue asks in a panel headed "Requests
+you sent that nobody is moving", capped at 3 with a counted overflow line,
+and leaves out any ask the "Decisions on requests you sent" panel already
+shows. Nothing runs on a timer: a script that wants to chase them can poll
+`daimon request list --json` and act on `overdue`.
 
 A request opened with `--kind info` owes no accept, so it never appears in
 `daimon decide` or the recipient's "Requests waiting on you" panel above —
