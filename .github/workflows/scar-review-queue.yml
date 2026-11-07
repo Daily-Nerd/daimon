@@ -1,0 +1,70 @@
+name: Scar review queue
+
+# One rolling issue, labelled scar-review-queue, that lists every scar
+# needing a person: orphans, partial rot, symbol drift, unreachable evidence,
+# revivals and passed review_after dates. Recipe from Scar's docs
+# (website/docs/agents.md, "Review queue"). The issue is rewritten from
+# `scar lint --review-queue` on every run, closed when the queue is empty and
+# reopened when it is not. Do not edit it by hand.
+#
+# The output carries only id, title, path, state and a suggested command, each
+# value from a scar file inside a code span (scar-cli 0.27.2), so nothing in
+# it can mention a user or link an issue. This repo is public, so the titles
+# and paths in the issue are public, as they already are in .scars/.
+#
+# Differences from the recipe, both repo conventions: actions are pinned by
+# SHA like ci.yml, and scar-cli is pinned exactly (#774) so the queue's
+# definition only changes with a commit here.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0   # evidence-reachability checks need full history
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Build the queue
+        # Keep lint's exit code, but let the next step run first: each run
+        # step is bash -e, so a bare failure would skip the issue sync.
+        run: |
+          set +e
+          uvx --from scar-cli==0.27.2 scar lint --review-queue > queue.md
+          echo "status=$?" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Sync the rolling issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          label=scar-review-queue
+          gh label create "$label" --color BFD4F2 --description "Rolling Scar review queue" --force
+          issue=$(gh issue list --label "$label" --state all --limit 1 --json number,state)
+          number=$(jq -r '.[0].number // empty' <<<"$issue")
+          state=$(jq -r '.[0].state // empty' <<<"$issue")
+          if [ -s queue.md ]; then
+            if [ -z "$number" ]; then
+              gh issue create --title "Scar review queue" --label "$label" --body-file queue.md
+            else
+              gh issue edit "$number" --body-file queue.md
+              if [ "$state" = "CLOSED" ]; then gh issue reopen "$number"; fi
+            fi
+          elif [ -n "$number" ] && [ "$state" = "OPEN" ]; then
+            gh issue close "$number" --comment "Review queue is empty."
+          fi
+
+      - name: Fail the job if lint failed
+        if: env.status != '0'
+        run: exit 1
