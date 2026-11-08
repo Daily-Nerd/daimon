@@ -48,12 +48,18 @@ use it.
 
 from __future__ import annotations
 
+import atexit
 import enum
+import logging
 import os
 import shutil
+import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 POSTURE_ENV = "DAIMON_GIT_POSTURE"
 
@@ -128,6 +134,7 @@ def _reset() -> None:
     """Back to an unconfigured process. Test hook (conftest calls it)."""
     global _configured
     _configured = None
+    _warned.clear()
 
 
 _SEALED_MESSAGE = (
@@ -166,9 +173,52 @@ def _spawn_async(argv, env, cwd, stdin):
 # ---- argv and env, built in one place -------------------------------------
 
 
-def _argv(*args, path=None, options=()) -> list[str]:
-    """`git [-C path] [options...] args...`"""
-    head = ["git"]
+_scratch: str | None = None
+
+
+def _scratch_root() -> str | None:
+    """A private, daimon-owned directory (mode 0700) created once per process
+    and removed at exit. None when one cannot be made."""
+    global _scratch
+    if _scratch is None:
+        try:
+            root = tempfile.mkdtemp(prefix="daimon-hostgit-")
+        except OSError:
+            return None
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
+        _scratch = root
+    return _scratch
+
+
+def _hooks_dir() -> str:
+    """The empty directory every git call names as `core.hooksPath`, so no
+    hook can run whatever a repository's own config says. git treats a
+    hooksPath with no such hook file as "no hook"; `/dev/null` behaves the same
+    on git 2.50 (checked), so it is the fallback when no scratch dir exists."""
+    root = _scratch_root()
+    if root is None:
+        return os.devnull
+    path = os.path.join(root, "no-hooks")
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+    except OSError:
+        return os.devnull
+    return path
+
+
+def _hardening(*, sidecar: bool = False) -> list[str]:
+    """The `-c` options in front of EVERY git subcommand hostgit runs: no
+    filesystem-monitor program, no hooks. Team sidecar calls (which fetch and
+    push) also refuse the `ext::` transport."""
+    out = ["-c", "core.fsmonitor=false", "-c", f"core.hooksPath={_hooks_dir()}"]
+    if sidecar:
+        out += ["-c", "protocol.ext.allow=never"]
+    return out
+
+
+def _argv(*args, path=None, options=(), sidecar=False) -> list[str]:
+    """`git <hardening> [-C path] [options...] args...`"""
+    head = ["git", *_hardening(sidecar=sidecar)]
     if path is not None:
         head += ["-C", str(path)]
     return [*head, *options, *(str(a) for a in args)]
@@ -307,15 +357,86 @@ def _run_sidecar(argv, timeout) -> subprocess.CompletedProcess:
             argv, 124, stdout="", stderr=f"git timed out after {timeout}s")
 
 
+_warned: set[tuple[str, str]] = set()
+
+
+def _dir_problem(label: str, path) -> str | None:
+    """Why `path` is not a directory only the current user can change, or None.
+    lstat, so a symlink is never followed."""
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        return f"{label} {path} is not readable ({exc.strerror or exc})"
+    if stat.S_ISLNK(st.st_mode):
+        return f"{label} {path} is a symlink"
+    if not stat.S_ISDIR(st.st_mode):
+        return f"{label} {path} is not a directory"
+    if st.st_uid != os.getuid():
+        return f"{label} {path} is not owned by the current user"
+    if st.st_mode & 0o022:
+        return f"{label} {path} is writable by group or others"
+    return None
+
+
+def sidecar_problem(path) -> str | None:
+    """Why `path` is not a trustworthy team sidecar, or None when it is: a real
+    directory whose `.git` is a real directory, both owned by the current user
+    and neither writable by group or others. POSIX ownership only: where there
+    is no uid (Windows) the check has nothing to say."""
+    if not hasattr(os, "getuid"):
+        return None
+    return (_dir_problem("sidecar", path)
+            or _dir_problem("sidecar .git", os.path.join(path, ".git")))
+
+
+def is_sidecar(path) -> bool:
+    return sidecar_problem(path) is None
+
+
+def _refuse_or_warn(path, problem: str, *, sealed: bool, argv):
+    """AMBIENT logs the problem once per (path, problem) and lets the call run;
+    SEALED answers a synthetic rc 125 and nothing is spawned."""
+    if sealed:
+        return subprocess.CompletedProcess(
+            argv, 125, stdout="", stderr=f"refused: {problem}")
+    key = (str(path), problem)
+    if key not in _warned:
+        _warned.add(key)
+        log.warning("hostgit: %s", problem)
+    return None
+
+
+def _guard_sidecar(path, *, sealed: bool, argv=()):
+    problem = sidecar_problem(path)
+    if problem is None:
+        return None
+    return _refuse_or_warn(path, problem, sealed=sealed, argv=list(argv))
+
+
+def _guard_clone(dest, *, sealed: bool, argv=()):
+    """A clone's destination does not exist yet, so the directory it lands in
+    is what gets checked."""
+    if not hasattr(os, "getuid"):
+        return None
+    problem = _dir_problem("team directory", os.path.dirname(os.fspath(dest)))
+    if problem is None:
+        return None
+    return _refuse_or_warn(dest, problem, sealed=sealed, argv=list(argv))
+
+
 def sidecar(path, *args, timeout: float = SIDECAR_TIMEOUT,
             options=()) -> subprocess.CompletedProcess:
     """One git call pinned to the team sidecar at `path` (`git -C path ...`).
     `options` are global options placed before the command (`-c k=v`)."""
     _gate()
-    return _run_sidecar(_argv(*args, path=path, options=options), timeout)
+    argv = _argv(*args, path=path, options=options, sidecar=True)
+    refused = _guard_sidecar(path, sealed=posture() is Posture.SEALED, argv=argv)
+    return refused if refused is not None else _run_sidecar(argv, timeout)
 
 
 def clone(url, dest, *, timeout: float) -> subprocess.CompletedProcess:
     """`git clone -- url dest`: the sidecar's birth, no repo exists to pin yet."""
     _gate()
-    return _run_sidecar(_argv("clone", "--", url, dest), timeout)
+    argv = _argv("clone", "--", url, dest, sidecar=True)
+    refused = _guard_clone(dest, sealed=posture() is Posture.SEALED, argv=argv)
+    return refused if refused is not None else _run_sidecar(argv, timeout)

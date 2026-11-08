@@ -709,6 +709,9 @@ def team_status() -> list[dict]:
             # clone's .gitattributes lacks; a pull that lands two appends to
             # one ledger conflicts there.
             "union_rules_missing": missing_union_rules(sidecar),
+            # Why this clone fails hostgit's ownership check (not a real
+            # directory, not owned by this user, writable by others), or None.
+            "ownership_warning": hostgit.sidecar_problem(sidecar),
         })
     return rows
 

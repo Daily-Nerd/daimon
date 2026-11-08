@@ -693,6 +693,19 @@ def test_cli_team_status_silent_when_apply_forget_not_armed(
     assert "DAIMON_TEAM_APPLY_FORGET" not in capsys.readouterr().out
 
 
+def test_cli_team_status_names_a_sidecar_that_fails_the_ownership_check(
+        bare_remote, capsys):
+    dest = teamsync.init(str(bare_remote))
+    assert cli.main(["team", "status"]) == 0
+    assert "writable by group or others" not in capsys.readouterr().out
+    (dest / ".git").chmod(0o775)
+    assert cli.main(["team", "status"]) == 0
+    out = capsys.readouterr().out
+    assert f"warning: sidecar .git {dest / '.git'} is writable by group or others" in out
+    rows = teamsync.team_status()
+    assert "writable" in rows[0]["ownership_warning"]
+
+
 def test_cli_team_status_shows_armed_even_with_no_git(monkeypatch, capsys):
     """The env var is machine-wide and does not depend on git being on
     PATH, so this early-return branch must carry the armed line too."""

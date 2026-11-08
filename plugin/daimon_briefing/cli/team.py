@@ -179,6 +179,10 @@ def _cmd_team_status(args) -> int:
                 f"{len(missing)} published ledger glob(s); run `daimon team "
                 "sync`, which writes and commits them, or a pull that lands "
                 "two appends to one ledger conflicts")
+        # A clone that fails the ownership check (symlink, someone else's,
+        # writable by group or others) is named here, with the reason.
+        if row.get("ownership_warning"):
+            lines.append(f"  warning: {row['ownership_warning']}")
         # #279: scope is default-closed — an empty allowlist means the remote
         # receives nothing, which must be visible, not a silent surprise.
         scope = row.get("scope") or []

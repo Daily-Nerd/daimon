@@ -39,7 +39,15 @@ class Recorder:
 def rec(monkeypatch):
     recorder = Recorder()
     monkeypatch.setattr(hostgit, "_spawn", recorder)
+    # The recorder tests name made-up paths; ownership has its own tests.
+    monkeypatch.setattr(hostgit, "_guard_sidecar", lambda *a, **k: None)
+    monkeypatch.setattr(hostgit, "_guard_clone", lambda *a, **k: None)
     return recorder
+
+
+def H(*, sidecar=False):
+    """The hardening options every git argv carries."""
+    return hostgit._hardening(sidecar=sidecar)
 
 
 # ---- posture --------------------------------------------------------------
@@ -98,15 +106,15 @@ def test_reset_clears_a_configured_posture():
 PROJECT_CASES = [
     # (label, call, expected argv, expected timeout, expected cwd)
     ("project", lambda: hostgit.project("/p"),
-     ["git", "-C", "/p", "rev-parse", "--show-toplevel"], 2, None),
+     ["git", *H(), "-C", "/p", "rev-parse", "--show-toplevel"], 2, None),
     ("branch", lambda: hostgit.branch("/p"),
-     ["git", "-C", "/p", "rev-parse", "--abbrev-ref", "HEAD"], 2, None),
+     ["git", *H(), "-C", "/p", "rev-parse", "--abbrev-ref", "HEAD"], 2, None),
     ("origin_url", lambda: hostgit.origin_url("/p"),
-     ["git", "-C", "/p", "remote", "get-url", "origin"], 5, None),
+     ["git", *H(), "-C", "/p", "remote", "get-url", "origin"], 5, None),
     ("remote_listing", lambda: hostgit.remote_listing("/p"),
-     ["git", "-C", "/p", "remote", "-v"], 2, None),
+     ["git", *H(), "-C", "/p", "remote", "-v"], 2, None),
     ("user_name", lambda: hostgit.user_name("/cwd"),
-     ["git", "config", "user.name"], 2, "/cwd"),
+     ["git", *H(), "config", "user.name"], 2, "/cwd"),
 ]
 
 
@@ -133,13 +141,14 @@ def test_origin_url_timeout_is_the_callers(rec):
 def test_pathlike_inputs_become_strings_in_argv(rec, tmp_path):
     rec.answer("x\n")
     hostgit.origin_url(tmp_path)
-    assert rec.calls[0]["argv"][2] == str(tmp_path)
+    assert rec.calls[0]["argv"][1 + len(H()) + 1] == str(tmp_path)
 
 
 def test_sidecar_argv_pins_cwd_with_dash_c_and_passes_args_through(rec):
     hostgit.sidecar("/s", "status", "--porcelain", "--", "a", timeout=7)
     got = rec.calls[0]
-    assert got["argv"] == ["git", "-C", "/s", "status", "--porcelain", "--", "a"]
+    assert got["argv"] == ["git", *H(sidecar=True), "-C", "/s", "status",
+                           "--porcelain", "--", "a"]
     assert got["timeout"] == 7
     assert got["stdin"] is subprocess.DEVNULL
 
@@ -147,7 +156,8 @@ def test_sidecar_argv_pins_cwd_with_dash_c_and_passes_args_through(rec):
 def test_sidecar_leading_options_sit_between_dash_c_and_the_command(rec):
     hostgit.sidecar("/s", "commit", "-m", "m", options=["-c", "user.name=A"])
     assert rec.calls[0]["argv"] == [
-        "git", "-C", "/s", "-c", "user.name=A", "commit", "-m", "m"]
+        "git", *H(sidecar=True), "-C", "/s", "-c", "user.name=A", "commit",
+        "-m", "m"]
 
 
 def test_sidecar_default_timeout_is_the_local_plumbing_budget(rec):
@@ -155,10 +165,11 @@ def test_sidecar_default_timeout_is_the_local_plumbing_budget(rec):
     assert rec.calls[0]["timeout"] == hostgit.SIDECAR_TIMEOUT == 15
 
 
-def test_clone_has_no_dash_c_and_ends_options_before_the_url(rec):
+def test_clone_has_no_dash_C_and_ends_options_before_the_url(rec):
     hostgit.clone("https://h/r.git", "/dest", timeout=60)
     got = rec.calls[0]
-    assert got["argv"] == ["git", "clone", "--", "https://h/r.git", "/dest"]
+    assert got["argv"] == ["git", *H(sidecar=True), "clone", "--",
+                           "https://h/r.git", "/dest"]
     assert got["timeout"] == 60
 
 
@@ -320,3 +331,42 @@ def test_checkout_and_refused_are_plain_frozen_values():
     with pytest.raises(Exception):
         c.root = "/x"  # type: ignore[misc]
     assert Path(hostgit.__file__).name == "hostgit.py"
+
+
+# ---- every public git function carries the hardening options ---------------
+
+EVERY_CALL = [
+    ("project", lambda: hostgit.project("/p"), False),
+    ("origin_url", lambda: hostgit.origin_url("/p"), False),
+    ("branch", lambda: hostgit.branch("/p"), False),
+    ("remote_listing", lambda: hostgit.remote_listing("/p"), False),
+    ("user_name", lambda: hostgit.user_name("/p"), False),
+    ("sidecar", lambda: hostgit.sidecar("/s", "status"), True),
+    ("sidecar_options", lambda: hostgit.sidecar(
+        "/s", "commit", options=["-c", "user.name=A"]), True),
+    ("clone", lambda: hostgit.clone("u", "/d", timeout=1), True),
+]
+
+
+@pytest.mark.parametrize("label,call,is_sidecar", EVERY_CALL,
+                         ids=[c[0] for c in EVERY_CALL])
+def test_every_git_argv_carries_fsmonitor_and_hooks_off_before_the_subcommand(
+        rec, label, call, is_sidecar):
+    rec.answer("x\n")
+    call()
+    argv = rec.calls[0]["argv"]
+    assert argv[0] == "git"
+    assert argv[1:5] == ["-c", "core.fsmonitor=false", "-c",
+                         f"core.hooksPath={hostgit._hooks_dir()}"]
+    assert ("protocol.ext.allow=never" in argv) is is_sidecar
+    first_plain = next(i for i, a in enumerate(argv[1:], 1)
+                       if not a.startswith("-") and argv[i - 1] != "-c"
+                       and argv[i - 1] != "-C")
+    assert argv.index("core.fsmonitor=false") < first_plain
+
+
+def test_the_hooks_directory_is_one_private_empty_directory():
+    path = Path(hostgit._hooks_dir())
+    assert path.is_dir() and list(path.iterdir()) == []
+    assert (path.stat().st_mode & 0o777) == 0o700
+    assert hostgit._hooks_dir() == str(path)  # one per process
