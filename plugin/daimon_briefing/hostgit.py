@@ -44,6 +44,23 @@ Two postures, chosen once per process by `configure(posture=...)` or the
       empty-gitdir         .git is not shaped like a main gitdir
       commondir            the gitdir carries a commondir pointer
       unreadable           an entry could not be inspected
+      worktree-config      the gitdir holds a config.worktree file
+      alternates           the gitdir holds an objects/info/alternates file
+      config-unreadable    the one-file config listing failed or timed out
+      config-key:<key>     the config holds <key> (section and name lowercased,
+                           subsection as written), which is not in
+                           CONFIG_ALLOWLIST; the first such key in file order
+
+  The last three are the CONFIG GATE. A repository's config is data, never
+  behaviour: after the shape check, `project()` lists the one file
+  (`git config --file <gitdir>/config --no-includes --list -z`, run from a
+  private empty directory with no GIT_DIR so git reads nothing of the
+  repository while starting up, hardening options) and refuses on any key outside CONFIG_ALLOWLIST (an
+  allowlist, not a denylist: `include.*`, `filter.*`, `diff.*`, `merge.*`,
+  `core.sshCommand`, `core.fsmonitor`, `alias.*`, `url.*` and the rest are
+  refused by not being listed). No Checkout exists before the gate passed, so
+  no caller can skip it. The verdict is memoized per (gitdir, config mtime,
+  size, inode); a changed config is listed again. AMBIENT runs no gate.
 
   The ceiling is exclusive: the ceiling directory itself is never adopted as a
   checkout, so a host should pass the directory that CONTAINS its projects, not
@@ -56,7 +73,9 @@ Two postures, chosen once per process by `configure(posture=...)` or the
   `git config --file <gitdir>/config --no-includes`, so only that one file
   counts. The branch comes from `<gitdir>/HEAD`; `user_name` spawns nothing.
   Tradeoffs: a linked worktree or submodule (`.git` file) is refused; `url.*
-  .insteadOf` rewrites do not apply to the URL read from the file.
+  .insteadOf` rewrites do not apply to the URL read from the file; a
+  repository whose config uses anything outside the allowlist (a filter, an
+  alias, a proxy) is refused, not served with that key ignored.
 
 `project()` returns a `Checkout(root, gitdir)` already, so the strict posture
 can fill `gitdir` with a validated path without reshaping a single caller. In
@@ -91,6 +110,32 @@ POSTURE_ENV = "DAIMON_GIT_POSTURE"
 PROJECT_TIMEOUT = 2      # seconds: a project read must never stall a hook
 ORIGIN_TIMEOUT = 5       # seconds: remote lookup default (callers may pass theirs)
 SIDECAR_TIMEOUT = 15     # seconds: local plumbing in a team sidecar
+
+
+# The sealed config gate: the ONLY keys a repository's own config may carry.
+# `<name>` stands for one or more characters (a remote or branch name, which
+# may itself contain dots). Everything not listed is refused.
+CONFIG_ALLOWLIST: tuple[str, ...] = (
+    "core.repositoryformatversion", "core.filemode", "core.bare",
+    "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode",
+    "core.symlinks", "user.name", "user.email", "pull.rebase",
+    "init.defaultbranch",
+    "remote.<name>.url", "remote.<name>.fetch", "remote.<name>.pushurl",
+    "branch.<name>.remote", "branch.<name>.merge", "branch.<name>.rebase",
+)
+CONFIG_ALLOWLIST_EXACT: frozenset[str] = frozenset(
+    k for k in CONFIG_ALLOWLIST if "<name>" not in k)
+CONFIG_ALLOWLIST_PATTERNS: tuple[str, ...] = tuple(
+    k for k in CONFIG_ALLOWLIST if "<name>" in k)
+_PATTERN_ENDS = tuple(tuple(k.split("<name>")) for k in CONFIG_ALLOWLIST_PATTERNS)
+
+
+def config_key_allowed(key: str) -> bool:
+    """True when `key` (as `git config --list` prints it) is in the allowlist."""
+    if key in CONFIG_ALLOWLIST_EXACT:
+        return True
+    return any(len(key) > len(head) + len(tail) and key.startswith(head)
+               and key.endswith(tail) for head, tail in _PATTERN_ENDS)
 
 
 class Posture(enum.Enum):
@@ -169,6 +214,7 @@ def _reset() -> None:
     _ceiling = None
     _warned.clear()
     _refusal_log.clear()
+    _gate_memo.clear()
 
 
 # ---- the spawn seam -------------------------------------------------------
@@ -414,14 +460,112 @@ def _sealed_head_branch(co: Checkout) -> str | None:
     return None
 
 
+# ---- SEALED: the config gate ----------------------------------------------
+
+_CONFIG_MEMO_CAP = 512
+# (gitdir, config mtime_ns, size, inode) -> refusal code, or None for "passed".
+_gate_memo: dict[tuple[str, int, int, int], str | None] = {}
+
+_CONFIG_SIBLINGS = (("config.worktree", "worktree-config"),
+               (os.path.join("objects", "info", "alternates"), "alternates"))
+
+
+def _present(path: str) -> bool:
+    """Whether `path` exists (lstat). Anything but "no such entry" is an error
+    the caller must treat as a refusal, never as absence."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return True
+
+
+def _listing_cwd() -> str | None:
+    """A dedicated empty directory inside the scratch root, or None."""
+    root = _scratch_root()
+    if root is None:
+        return None
+    path = os.path.join(root, "config-cwd")
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+    except OSError:
+        return None
+    return path
+
+
+def _listing_env() -> dict[str, str]:
+    """The sealed pins minus every repository pin, plus a ceiling at the
+    scratch root, so discovery can never walk up into a repository."""
+    env = {k: os.environ[k] for k in _SEALED_PASS if k in os.environ}
+    env.update({
+        "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_ATTR_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_CEILING_DIRECTORIES": str(_scratch_root()),
+    })
+    return env
+
+
+def _listing_verdict(co: Checkout) -> str | None:
+    """The listing runs OUTSIDE the repository (no GIT_DIR, scratch cwd, ceiling
+    at the scratch root) so git never reads the config it is vetting while it
+    starts up; a scratch directory that cannot be made fails closed."""
+    cwd = _listing_cwd()
+    if cwd is None:
+        return "config-unreadable"
+    argv = _argv("config", "--file", os.path.join(str(co.gitdir), "config"),
+                 "--no-includes", "--list", "-z")
+    try:
+        done = _spawn(argv, _listing_env(), cwd, PROJECT_TIMEOUT)
+    except _SPAWN_FAILURES:
+        return "config-unreadable"
+    if done.returncode != 0:
+        return "config-unreadable"
+    for entry in done.stdout.split("\0"):
+        if not entry:
+            continue
+        key = entry.split("\n", 1)[0]
+        if not config_key_allowed(key):
+            return f"config-key:{key}"
+    return None
+
+
+def _config_gate(co: Checkout) -> str | None:
+    """The refusal code for a shape-valid checkout whose config is not data
+    only, or None. Runs the one-file listing at most once per config state."""
+    git = str(co.gitdir)
+    try:
+        for rel, code in _CONFIG_SIBLINGS:
+            if _present(os.path.join(git, rel)):
+                return code
+        cfg = os.path.join(git, "config")
+        try:
+            st = os.lstat(cfg)
+        except (FileNotFoundError, NotADirectoryError):
+            return None  # no config file: nothing to take from it
+    except OSError:
+        return "unreadable"
+    key = (git, st.st_mtime_ns, st.st_size, st.st_ino)
+    if key not in _gate_memo:
+        if len(_gate_memo) >= _CONFIG_MEMO_CAP:
+            _gate_memo.clear()
+        _gate_memo[key] = _listing_verdict(co)
+    return _gate_memo[key]
+
+
 # ---- project checkouts ----------------------------------------------------
 
 
 def project(path) -> Checkout | Refused:
     """The checkout `path` belongs to. AMBIENT: git's own answer for the
-    work-tree top. SEALED: the validated checkout, or a `Refused` code."""
+    work-tree top. SEALED: the validated checkout whose config passed the
+    allowlist gate, or a `Refused` code. No Checkout leaves here ungated."""
     if _sealed():
-        return _seal(path)
+        co = _seal(path)
+        if isinstance(co, Refused):
+            return co
+        code = _config_gate(co)
+        return co if code is None else _refuse(os.fspath(path), code)
     out = _read(_argv("rev-parse", "--show-toplevel", path=path),
                 timeout=PROJECT_TIMEOUT)
     top = (out or "").strip()
