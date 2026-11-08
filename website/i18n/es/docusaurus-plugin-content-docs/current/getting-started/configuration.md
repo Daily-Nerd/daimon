@@ -215,7 +215,7 @@ Para un host que corre un solo home de daimon con un directorio de proyecto por 
 | Variable | Default | Qué hace |
 |---|---|---|
 | `DAIMON_TENANT_SCOPED` | off | Cuando es verdadero, quien llama no puede elegir un alcance. `--slug` y `--all-projects` en `recall`, `brief`, `why` y `decide`, `--all` en `audit privacy`, `--global-fallback` en `brief`, y un `--project` que nombre otro bucket en cualquier verbo se rechazan con un error claro, y `DAIMON_BRIEF_GLOBAL_FALLBACK` se ignora. `daimon decide` no muestra conteos de otros proyectos, `daimon status` no muestra puntero global, y una lectura nunca cae al checkpoint de otro proyecto. Las herramientas MCP rechazan de la misma forma cualquier `slug`, `all_projects` o ruta `project` fuera del bucket propio de quien llama (`DAIMON_MODEL_CROSS_PROJECT` no puede levantarlo), y `daimon projects` lista solo el bucket propio de quien llama. Se rechaza, nunca se reduce en silencio: quien pidió un alcance y recibió el suyo en su lugar leería la respuesta como completa. |
-| `DAIMON_GIT_POSTURE` | `ambient` | Cómo consulta daimon a git sobre el directorio de un proyecto. `ambient` deja que git responda como siempre. `sealed` es para hosts cuyos directorios de proyecto son escritos por alguien de menor confianza: daimon encuentra el checkout por su cuenta bajo un techo (el home por defecto), fija el directorio git, lee solo el archivo de config propio del checkout con los includes apagados, toma la rama de `HEAD`, nunca le pregunta a git por `user.name`, y rechaza un `.git` que sea un archivo, un symlink o un puntero a otro directorio. Un checkout cuya config tenga algo fuera de una lista corta de claves permitidas (nada de `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` y similares), o que tenga un archivo `config.worktree` o `objects/info/alternates`, se rechaza antes de que git corra sobre él. `daimon status` lista un proyecto rechazado y las escrituras hacia él se rechazan. |
+| `DAIMON_GIT_POSTURE` | `ambient` | Cómo consulta daimon a git sobre el directorio de un proyecto. `ambient` deja que git responda como siempre. `sealed` es para hosts cuyos directorios de proyecto son escritos por alguien de menor confianza: daimon encuentra el checkout por su cuenta bajo un techo (el home por defecto), fija el directorio git, lee solo el archivo de config propio del checkout con los includes apagados, toma la rama de `HEAD`, nunca le pregunta a git por `user.name`, y rechaza un `.git` que sea un archivo, un symlink o un puntero a otro directorio. Un checkout cuya config tenga algo fuera de una lista corta de claves permitidas (nada de `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` y similares), o que tenga un archivo `config.worktree` o `objects/info/alternates`, se rechaza antes de que git corra sobre él. Un host puede declarar por su cuenta el slug y la URL de origen de un proyecto con `declare` en vez de dejar que daimon los derive; la raíz declarada igual pasa las verificaciones de arriba. `daimon status` lista un proyecto rechazado y las escrituras hacia él se rechazan. |
 | `DAIMON_EXTRA_READ_SLUGS` | sin definir | Slugs separados por comas que esta sesión puede leer junto al suyo, de forma ambiental, sin que intervenga ningún argumento de quien llama. Alcanza por igual a `recall`, `why` y a la ruta de sugerencias proactivas. Solo lectura: ninguna ruta de escritura acepta un slug y una sesión nunca escribe en un alcance listado. Un acierto de un alcance listado nombra su proyecto de origen. Pensada para un alcance compartido cuyo contenido ya era visible para todos en él; defínela solo donde una sesión sea una persona. |
 
 `DAIMON_MODEL_CROSS_PROJECT`, la contraparte del lado MCP, está en la tabla de Núcleo de arriba.
@@ -280,6 +280,39 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Periodo de silencio tras la última actividad de Windsurf antes de que un finalizador con debounce serialice el estado final del transcript de la trayectoria — cubre sesiones cuyos últimos turnos caen dentro de la ventana del throttle. Acepta valores fraccionarios; `0` desactiva el finalizador. |
 | `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
 | `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
+
+## Hosts que embeben daimon: la superficie git sellada
+
+Un programa que embebe daimon y trabaja en directorios escritos por alguien de
+menor confianza elige la postura sellada (`DAIMON_GIT_POSTURE=sealed`, o
+`hostgit.configure(posture="sealed", ceiling=...)` antes de la primera lectura
+de proyecto) y hace todo su git a través de `daimon_briefing.hostgit`. Estas
+llamadas existen solo bajo esa postura, salvo `project`, que responde en ambas.
+
+| Llamada | Qué hace |
+|---|---|
+| `project(path)` | El checkout al que pertenece `path`, o un código de rechazo. Corre la verificación de forma y la compuerta de la lista de claves de config antes de devolver un checkout. |
+| `run(checkout, *args)` | Una llamada a git sobre un checkout que devolvió `project`, de una tabla fija de subcomandos (`diff`, `show`, `log`, `diff-tree`, `diff-index`, `diff-files`, `status`, `init`, `rev-parse`, `ls-files`, `ls-tree`, `cat-file`, `symbolic-ref`, `for-each-ref`, `rev-list`, `add`). La compuerta corre de nuevo en cada llamada. Un checkout rechazado responde con código 125, un cuelgue con 124. |
+| `init(path)` | Crea un repositorio con un directorio de plantillas vacío y devuelve `project(path)`. |
+| `fetch_local(lead, member, branch, member_name)` | Trae la rama del clon del miembro al lead como `refs/members/<member_name>/<branch>`, solo transporte local, sin tags ni submódulos. Ambos repositorios pasan la compuerta. |
+| `declare(root, slug=..., origin_url=...)` | Declara la identidad de un proyecto una vez por proceso. También expuesto como `api.declare_project`. Es un dato: la raíz igual pasa la compuerta. |
+
+Códigos de rechazo: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
+`gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
+`worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (una
+clave de config fuera de la lista permitida), `checkout-changed`, `init-failed`.
+
+Para mantener las llamadas a git en un solo lugar, el censo se corre sobre el
+propio árbol del host desde un test:
+
+```python
+from daimon_briefing import testing
+
+testing.assert_single_git_owner(host_module_paths, allowlist)
+```
+
+`testing.git_spawn_sites(paths)` devuelve los sitios que encontró, como
+`{(módulo, función, primitiva): números de línea}`.
 
 ## Cosecha de scars
 
