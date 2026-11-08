@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **requests:** require the receiving project's consent before an agent answers an info ask ([cf08dc3](https://github.com/Daily-Nerd/daimon/commit/cf08dc355147309c0fbd6216400ff201bc02107b))
 * **requests:** start receiver consent at the release instant ([9e83b2c](https://github.com/Daily-Nerd/daimon/commit/9e83b2cd3a89008877883c0a2b239a821517caf0))
 
 ## [0.64.2](https://github.com/Daily-Nerd/daimon/compare/v0.64.1...v0.64.2) (2026-11-08)
