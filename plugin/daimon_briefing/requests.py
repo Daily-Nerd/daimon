@@ -126,13 +126,13 @@ _CLI_CHANNELS = frozenset({"cli-agent", "cli-tty"})
 # side would be exactly the assertion the wedge principle forbids.
 _SENDER_MOVABLE = frozenset({"open", "needs-info"})
 # Receiver consent for `info` asks starts at this `order` (ns since the epoch,
-# 2026-11-07T06:00:00Z). An agent verdict (`accepted`, `done`) on an `info`
+# 2026-11-08T02:00:00Z). An agent verdict (`accepted`, `done`) on an `info`
 # ask whose row is ordered BEFORE it keeps the state the old rule gave it, so
 # refolding a ledger written earlier never changes a past verdict. From this
 # order on the same rule as `work` applies: an agent's `accepted` lands only
 # under a `verb=accept` ruling of the receiving project, and an agent's `done`
 # on an ask nobody has accepted stays a pending claim.
-RECEIVER_CONSENT_FROM_NS = 1_794_031_200_000_000_000
+RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
 # #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
 # `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
 # reopen an accepted record, which is exactly the assertion the wedge
