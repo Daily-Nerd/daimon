@@ -68,14 +68,13 @@ the CLI appends them.
 import hashlib
 import json
 import re
-import shutil
 import subprocess
 import time
 from collections import namedtuple
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, receipts, serializer, store
+from . import config, hostgit, receipts, serializer, store
 
 # Aggregate wall-clock budget for ALL probes together (sub-second by
 # contract). Probes run in parallel, so this bounds the render delay, not a
@@ -93,12 +92,13 @@ MAX_PROBES = 5
 # splits history. `unknown` is a sentinel for a skip no branch explained: a
 # test pins it at zero across every skip fixture.
 SKIP_REASONS = frozenset({
-    "cap", "deadline", "no-gh", "no-remote", "probe-error", "exit-nonzero",
-    "unparseable", "unanswerable", "unknown"})
+    "cap", "deadline", "git-refused", "no-gh", "no-remote", "probe-error",
+    "exit-nonzero", "unparseable", "unanswerable", "unknown"})
 
 # `_remote_state` answers that stop the PR/issue class, and the reason each
 # one is reported under. "github" is absent: it lets the probes run.
-_REMOTE_SKIP_REASON = {"no-remote": "no-remote", "git-failed": "probe-error"}
+_REMOTE_SKIP_REASON = {"no-remote": "no-remote", "git-failed": "probe-error",
+                       "git-refused": "git-refused"}
 
 # #833: per-item aggregate rollup precedence — an item is what its strongest
 # outcome says it is, and "skipped" never decides when another outcome
@@ -226,7 +226,8 @@ def _claim_key(cls, claim):
 # (`gh` answers {"state": ...}, vitni answers {"valid": ...}) while sharing ONE
 # parallel fan-out — separate runners would let one class's slow probe
 # serialize behind the other's entire budget.
-Probe = namedtuple("Probe", "argv stdin parse")
+# `via_gh` probes are spawned by hostgit (the only module that runs gh).
+Probe = namedtuple("Probe", "argv stdin parse via_gh", defaults=(False,))
 
 # Repo-LOCAL ref: "#N" optionally preceded by an explicit "PR"/"pull
 # request"/"issue" kind word. The lookbehind rejects any word char (or
@@ -498,23 +499,23 @@ def last_receipt_probe() -> dict:
 
 def _gh_path():
     """Seam for tests; None -> no gh on PATH -> skip everything silently."""
-    return shutil.which("gh")
+    return hostgit.gh_path()
 
 
 def _remote_state(project) -> str:
-    """What `git remote -v` says about `project`, three ways (#1181):
+    """What `git remote -v` says about `project`, four ways (#1181):
     "github" (a GitHub remote), "no-remote" (git ANSWERED and listed none),
     "git-failed" (git is missing, slow past 2 s, or exited non-zero, which
-    says nothing about remotes). The skip reason depends on the difference."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(project), "remote", "-v"],
-            capture_output=True, text=True, timeout=2)
-    except Exception:
+    says nothing about remotes), "git-refused" (the SEALED git posture
+    refused the checkout, so no remote was read). The skip reason depends on
+    the difference."""
+    if (hostgit.posture() is hostgit.Posture.SEALED
+            and isinstance(hostgit.project(project), hostgit.Refused)):
+        return "git-refused"
+    listing = hostgit.remote_listing(project)
+    if listing is None:
         return "git-failed"
-    if proc.returncode != 0:
-        return "git-failed"
-    return "github" if "github.com" in proc.stdout else "no-remote"
+    return "github" if "github.com" in listing else "no-remote"
 
 
 def _github_repo(project) -> bool:
@@ -537,36 +538,12 @@ def _probe_path(project, relpath):
     return "EXISTS" if target.exists() else "MISSING"
 
 
-def _git_common_dir(project):
-    """The git dir whose refs/heads is authoritative for `project`, or None.
-    In a linked WORKTREE `.git` is a file pointing at <common>/worktrees/<x>,
-    whose refs live back in the common dir — reading the worktree dir instead
-    would report every branch gone for anyone working out of a worktree."""
-    dot = Path(project) / ".git"
-    if dot.is_file():
-        text = dot.read_text(encoding="utf-8", errors="replace").strip()
-        if not text.startswith("gitdir:"):
-            return None
-        gitdir = Path(text.split(":", 1)[1].strip())
-        if not gitdir.is_absolute():
-            gitdir = Path(project) / gitdir
-        common = gitdir / "commondir"
-        if common.is_file():
-            rel = common.read_text(encoding="utf-8", errors="replace").strip()
-            if rel:
-                gitdir = gitdir / rel
-        dot = gitdir.resolve()
-    # No refs/heads means this is not a readable repo (or not a repo at all):
-    # answering MISSING there would fabricate a contradiction for every claim.
-    return dot if (dot / "refs" / "heads").is_dir() else None
-
-
 def _probe_branch(project, name):
     """EXISTS / MISSING for a local branch, read straight off git's on-disk
     refs. Both halves of git's ref storage are consulted: a branch with no
     LOOSE ref file is not gone if packed-refs still carries it (every fresh
     clone packs its refs, so missing this would contradict on sight)."""
-    git = _git_common_dir(project)
+    git = hostgit.refs_dir(project)
     if git is None:
         return None
     if (git / "refs" / "heads" / name).is_file():
@@ -698,13 +675,25 @@ def _gh_probes(plan: dict, project, why: dict) -> dict:
     if reason is not None:
         why.update({key: reason for key in wanted})
         return {}
+    repo_flags: list[str] = []
+    if hostgit.posture() is hostgit.Posture.SEALED:
+        # gh does no repository discovery here: the repo comes from the
+        # validated origin and is named on the command line.
+        repo = hostgit.github_repo(project)
+        if repo is None:
+            why.update({key: "no-remote" for key in wanted})
+            return {}
+        repo_flags = ["--repo", repo]
     probes = {}
     for key, claim in wanted.items():
         if claim.kind == "pr":
-            argv = [gh, "pr", "view", claim.num, "--json", "state,mergedAt"]
+            argv = [gh, "pr", "view", claim.num, "--json", "state,mergedAt",
+                    *repo_flags]
         else:
-            argv = [gh, "issue", "view", claim.num, "--json", "state"]
-        probes[key] = Probe(argv=argv, stdin=None, parse=_parse_gh_state)
+            argv = [gh, "issue", "view", claim.num, "--json", "state",
+                    *repo_flags]
+        probes[key] = Probe(argv=argv, stdin=None, parse=_parse_gh_state,
+                            via_gh=True)
     return probes
 
 
@@ -796,10 +785,13 @@ def _run_probes(probes: dict, cwd, deadline, why: dict) -> dict:
     results: dict = {key: None for key in probes}
     for key, probe in probes.items():
         try:
-            proc = subprocess.Popen(
-                probe.argv, cwd=str(cwd),
-                stdin=subprocess.PIPE if probe.stdin else subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            if probe.via_gh:
+                proc = hostgit.gh_popen(probe.argv, cwd)
+            else:
+                proc = subprocess.Popen(
+                    probe.argv, cwd=str(cwd),
+                    stdin=subprocess.PIPE if probe.stdin else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         except Exception:
             why[key] = "probe-error"
             continue  # spawn failure (gh vanished mid-flight) -> skip

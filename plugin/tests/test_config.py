@@ -1107,12 +1107,12 @@ def _count_git_user_spawns(monkeypatch, name="Memo Tester"):
     calls = {"n": 0}
 
     def fake_run(cmd, *args, **kwargs):
-        if list(cmd) == ["git", "config", "user.name"]:
+        if list(cmd)[-2:] == ["config", "user.name"] and cmd[0] == "git":
             calls["n"] += 1
             return subprocess.CompletedProcess(cmd, 0, stdout=f"{name}\n", stderr="")
         return real_run(cmd, *args, **kwargs)
 
-    monkeypatch.setattr(config.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     return calls
 
 

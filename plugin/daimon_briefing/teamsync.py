@@ -37,19 +37,17 @@ Concurrency (scar 0002 shape): two syncs racing on the same sidecar are
 serialized by git's own index.lock — the loser fails a step, its report carries
 a warning, and the next opportunistic sync retries. No custom locking.
 
-All git via subprocess (stdlib), a timeout on EVERY call, cwd always the
+All git goes through hostgit (stdlib subprocess), a timeout on EVERY call, cwd always the
 sidecar directory.
 """
 
 import json
-import os
 import re
-import shutil
 import subprocess
 import time
 from pathlib import Path
 
-from . import config, store, teamproject
+from . import config, hostgit, store, teamproject
 
 GIT_TIMEOUT = 15        # seconds — local plumbing calls
 NET_TIMEOUT = 60        # seconds — ls-remote / fetch / push / clone touch the network
@@ -136,34 +134,10 @@ def _ensure_union_rules(sidecar) -> bool:
     return True
 
 
-def _run_git(argv, timeout) -> subprocess.CompletedProcess:
-    """Run a git argv NON-INTERACTIVELY and never raise, whatever git does.
-
-    - GIT_TERMINAL_PROMPT=0 + stdin=DEVNULL turn a missing-credential remote
-      into a fast rc != 0 instead of a blocked interactive credential prompt
-      that hangs until the timeout fires.
-    - A TimeoutExpired (a SubprocessError, NOT an OSError — so it would slip
-      past every caller's OSError catch) is converted into a synthetic FAILED
-      CompletedProcess (rc 124, the shell timeout convention). Every caller
-      already maps rc != 0 to the right outcome (offline for sync, TeamError
-      for init/clone), so the documented "never raises" contract holds
-      uniformly under a hung remote, not just under a clean rc != 0."""
-    try:
-        return subprocess.run(
-            argv,
-            capture_output=True, text=True, timeout=timeout,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            stdin=subprocess.DEVNULL,
-        )
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(
-            argv, 124, stdout="", stderr=f"git timed out after {timeout}s",
-        )
-
-
 def _git(cwd, *args, timeout=GIT_TIMEOUT) -> subprocess.CompletedProcess:
-    """One git call, cwd pinned to the sidecar, never raises (rc != 0 or timeout)."""
-    return _run_git(["git", "-C", str(cwd), *args], timeout)
+    """One git call, cwd pinned to the sidecar, never raises (rc != 0 or timeout).
+    Spawned by hostgit: non-interactive, and a hang becomes a failed rc 124."""
+    return hostgit.sidecar(cwd, *args, timeout=timeout)
 
 
 def _last_line(text: str) -> str:
@@ -235,10 +209,9 @@ def _commit(sidecar, message, pathspecs) -> subprocess.CompletedProcess:
     be swept into the append-only team branch. The pathspecs limit the commit
     to the caller's own paths and leave every other index entry exactly as it
     was (git's partial-commit semantics)."""
-    return _run_git(
-        ["git", "-C", str(sidecar), *_identity_extra(sidecar),
-         "commit", "-m", message, "--", *pathspecs],
-        GIT_TIMEOUT,
+    return hostgit.sidecar(
+        sidecar, "commit", "-m", message, "--", *pathspecs,
+        timeout=GIT_TIMEOUT, options=_identity_extra(sidecar),
     )
 
 
@@ -294,7 +267,7 @@ def init(url: str, project_dir=None) -> Path:
     if reserved := teamproject.resolve_error(project_dir):
         raise TeamError(reserved)
     slug = remote_slug(url)
-    if shutil.which("git") is None:
+    if not hostgit.git_available():
         raise TeamError("git not found on PATH — team sync needs git")
     root = config.team_dir()
     dest = root / slug
@@ -304,7 +277,7 @@ def init(url: str, project_dir=None) -> Path:
             "run `daimon team sync`, or remove the directory to re-clone"
         )
     root.mkdir(parents=True, exist_ok=True)
-    proc = _run_git(["git", "clone", "--", url, str(dest)], NET_TIMEOUT)
+    proc = hostgit.clone(url, dest, timeout=NET_TIMEOUT)
     if proc.returncode != 0:
         raise TeamError(f"git clone failed: {_last_line(proc.stderr)}")
     unborn = _head(dest) is None
@@ -656,7 +629,7 @@ def sync() -> list[dict]:
 
 
 def git_available() -> bool:
-    return shutil.which("git") is not None
+    return hostgit.git_available()
 
 
 # ---- status ----
@@ -736,6 +709,9 @@ def team_status() -> list[dict]:
             # clone's .gitattributes lacks; a pull that lands two appends to
             # one ledger conflicts there.
             "union_rules_missing": missing_union_rules(sidecar),
+            # Why this clone fails hostgit's ownership check (not a real
+            # directory, not owned by this user, writable by others), or None.
+            "ownership_warning": hostgit.sidecar_problem(sidecar),
         })
     return rows
 

@@ -20,6 +20,7 @@ from .. import (
     config,
     display,
     effects_commit,
+    hostgit,
     ledger,
     ledger_census,
     llm,
@@ -817,6 +818,10 @@ def _cmd_status(args, fx) -> int:
         "checks": w["checks"],
         "ledgers": w["ledgers"],
     })
+    # SEALED git posture: one line per checkout hostgit refused (empty, and so
+    # silent, in every other run).
+    for path, reason in hostgit.refusals():
+        print(f"git: {path} refused ({reason})")
     return w["rc"]
 
 

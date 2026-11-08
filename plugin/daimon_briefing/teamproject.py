@@ -33,7 +33,6 @@ per process per project dir: one bounded git probe per write/read path.
 """
 
 import re
-import subprocess
 from pathlib import Path
 
 try:
@@ -41,7 +40,7 @@ try:
 except ModuleNotFoundError:  # py3.10: tomli is the conditional runtime dep
     import tomli as tomllib  # type: ignore[no-redef]
 
-from . import config
+from . import config, hostgit
 
 CONFIG_NAME = "daimon-team.toml"
 GIT_TIMEOUT = 5  # seconds — bounded; resolution must never block a write
@@ -172,16 +171,7 @@ def _config_entries() -> list[tuple[tuple[str, ...], set[str]]]:
 def _origin_url(project_dir) -> str | None:
     """`git remote get-url origin` for a working dir, or None on ANY failure
     (no git, not a repo, no remote, timeout). Bounded, never raises."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(project_dir), "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0:
-        return None
-    return proc.stdout.strip() or None
+    return hostgit.origin_url(project_dir, timeout=GIT_TIMEOUT)
 
 
 def resolve(project_dir) -> tuple[str, ...] | None:

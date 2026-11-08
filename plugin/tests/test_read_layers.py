@@ -91,6 +91,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/checks_runtime.py": "write",  # standalone check runtime, mirrored into the hooks
     "daimon_briefing/codex_hooks.py": "write",  # edits Codex hook config
     "daimon_briefing/config.py": "write",  # settings and paths; reads no checkpoint
+    "daimon_briefing/hostgit.py": "write",  # the one module that spawns git/gh or reads a project .git; stdlib only
     "daimon_briefing/configure.py": "write",  # writes ~/.daimon/env
     "daimon_briefing/field_table.py": "write",  # the checkpoint field contract and validator
     "daimon_briefing/forget.py": "write",  # runs every step of the forget registry in phase order
