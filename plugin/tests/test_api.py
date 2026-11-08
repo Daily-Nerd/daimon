@@ -4,7 +4,8 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import (api, briefing, display, heal, heal_host, inspector, marks,
+from daimon_briefing import (api, briefing, display, heal, heal_host, hostgit, inspector,
+                             marks,
                              pending, requests, serialize_liveness, store, surfaces,
                              transcript, view)
 
@@ -16,7 +17,7 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "SERIALIZE_STATES", "LIVE_STATES", "HealPlan", "HealReport",
              "HealTarget", "HealSkip", "heal_plan", "heal_all",
              "RenderedBriefing", "render_briefing", "briefing_text",
-             "BRIEFING_FORMAT")
+             "BRIEFING_FORMAT", "declare_project")
 OWNED = ("Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
@@ -63,6 +64,7 @@ def test_every_name_is_the_source_object():
     assert api.render_briefing is briefing.render_briefing
     assert api.briefing_text is briefing.briefing_text
     assert api.BRIEFING_FORMAT is marks.FORMAT_VERSION
+    assert api.declare_project is hostgit.declare
     assert api.Writer.ADMISSION is surfaces.Writer.ADMISSION
 
 

@@ -38,8 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (config, jsonl, normalize, policy, receipts, redact, schema,
-               scope, serializer, surfaces, teamproject)
+from . import (config, hostgit, jsonl, normalize, policy, receipts, redact,
+               schema, scope, serializer, surfaces, teamproject)
 from .surfaces import Writer
 
 log = logging.getLogger("daimon_briefing")
@@ -58,6 +58,9 @@ def project_slug(project_dir) -> str | None:
     letters and non-Latin scripts all survive; slashes, dots and spaces fold.
     The result can never contain a path separator, so it cannot escape the
     checkpoint dir.
+
+    One exception: under SEALED posture a project root the host declared
+    (`hostgit.declare`) maps to the slug the host stated.
 
     This is NOT the same scheme the Claude CLI uses for `~/.claude/projects`,
     which the docstring claimed until #884. The two agree on slashes, dots and
@@ -88,7 +91,9 @@ def project_slug(project_dir) -> str | None:
     s = str(project_dir).strip()
     if not s:
         return None
-    return re.sub(r"[^\w-]", "-", s) or None
+    # A host that declared this root (SEALED) named its bucket itself; the
+    # slug is already a fixed point of the rule below, so it stays idempotent.
+    return hostgit.declared_slug(s) or re.sub(r"[^\w-]", "-", s) or None
 
 
 def _own_author_dir() -> str:

@@ -10,6 +10,12 @@ modules whose layout may move, and
 `parse_briefing` for the text `daimon brief` prints. Write verbs are not part
 of this surface; callers that write keep importing the write modules.
 
+`declare_project` is `hostgit.declare`: a host under the SEALED git posture
+states a project's root, bucket slug and optional origin URL once per process
+(it raises under the default ambient posture). It is configuration, not a
+write: the declared root still passes the sealed shape check and the config
+allowlist gate.
+
 `project_slug` is `store.project_slug`: the character transform that names a
 bucket. Resolving WHICH directory a value means is `config.resolve_project_dir`
 (#948), which the view's functions apply themselves.
@@ -109,6 +115,7 @@ from .briefing import RenderedBriefing, briefing_text, render_briefing
 from .display import withheld_json, withheld_marker
 from .heal import HealPlan, HealReport, HealSkip, HealTarget
 from .heal_host import heal_all, heal_plan
+from .hostgit import declare as declare_project
 from .inspector import human_lines as why_lines
 from .inspector import inspect_item as why
 from .serialize_liveness import (LIVE_STATES, SERIALIZE_STATES, SerializeRow,
@@ -129,7 +136,7 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "HealPlan",
            "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
            "RenderedBriefing", "render_briefing", "briefing_text",
-           "BRIEFING_FORMAT", "Briefing", "parse_briefing")
+           "BRIEFING_FORMAT", "declare_project", "Briefing", "parse_briefing")
 
 
 @dataclass(frozen=True)
