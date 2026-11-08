@@ -18,6 +18,9 @@ Public surface (kept tiny on purpose; other packages are meant to import it):
     sidecar(path, *args)     -> CompletedProcess   (daimon-owned team clones)
     run(checkout, *args)     -> CompletedProcess   (SEALED only: a sealed
                              Checkout, re-gated, subcommand from RUN_FAMILIES)
+    fetch_local(lead, member, branch, member_name)
+                             -> CompletedProcess   (SEALED only: the member's
+                             branch into the lead as refs/members/<m>/<b>)
     init(path)               -> Checkout | Refused (SEALED only: new repo with
                              an empty template, then gated like any other)
     RUN_FAMILIES             the subcommands run() serves, with the options
@@ -489,17 +492,21 @@ def _present(path: str) -> bool:
     return True
 
 
-def _listing_cwd() -> str | None:
-    """A dedicated empty directory inside the scratch root, or None."""
+def _scratch_subdir(name: str) -> str | None:
+    """A dedicated empty directory `name` inside the scratch root, or None."""
     root = _scratch_root()
     if root is None:
         return None
-    path = os.path.join(root, "config-cwd")
+    path = os.path.join(root, name)
     try:
         os.makedirs(path, mode=0o700, exist_ok=True)
     except OSError:
         return None
     return path
+
+
+def _listing_cwd() -> str | None:
+    return _scratch_subdir("config-cwd")
 
 
 def _listing_env() -> dict[str, str]:
@@ -718,41 +725,150 @@ def _refused_process(argv, code: str) -> subprocess.CompletedProcess:
                                        stderr=f"refused: {code}")
 
 
+def _need_sealed_checkout(checkout) -> None:
+    """The type and posture rules shared by every call that takes a Checkout."""
+    if not isinstance(checkout, Checkout) or checkout.gitdir is None:
+        raise TypeError(
+            "a sealed Checkout that sealed project() returned is required, "
+            f"got {type(checkout).__name__}")
+    if not _sealed():
+        raise RuntimeError("needs SEALED posture: no sealed spawn without a "
+                           "sealed posture")
+
+
+def _regate(checkout: Checkout, argv) -> tuple[Checkout | None,
+                                              subprocess.CompletedProcess | None]:
+    """Re-run the gate on a held Checkout (memoized, so cheap). Returns the
+    fresh Checkout, or a rc 125 process when the checkout is now refused or its
+    gitdir is not the one held. A config can change after `project()` answered,
+    so a held Checkout is never trusted."""
+    fresh = project(checkout.root)
+    if isinstance(fresh, Refused):
+        return None, _refused_process(argv, fresh.reason)
+    if fresh.gitdir != checkout.gitdir:
+        _refuse(checkout.root, "checkout-changed")
+        return None, _refused_process(argv, "checkout-changed")
+    return fresh, None
+
+
 def run(checkout: Checkout, *args, timeout: float = PROJECT_TIMEOUT
         ) -> subprocess.CompletedProcess:
     """One sealed git call on a checkout `project()` returned.
 
     `args[0]` must be a key of RUN_FAMILIES (ValueError otherwise); the table's
     options and flags are put around it. Env is `_sealed_env`, cwd the checkout
-    root. Because a config can change after `project()` answered, the gate is
-    re-run here (memoized, so cheap): a checkout that is now refused, or whose
-    gitdir is not the one held, comes back as rc 125 and spawns nothing more.
-    A hang is rc 124. Raises RuntimeError outside SEALED posture, TypeError for
-    anything but a sealed `Checkout` (a path, a `Refused`, an ambient one)."""
-    if not isinstance(checkout, Checkout) or checkout.gitdir is None:
-        raise TypeError(
-            "run() takes a Checkout that sealed project() returned, got "
-            f"{type(checkout).__name__}")
-    if not _sealed():
-        raise RuntimeError("run() needs SEALED posture: no sealed spawn "
-                           "without a sealed posture")
+    root. The gate is re-run here (see `_regate`): a checkout that is now
+    refused, or whose gitdir is not the one held, comes back as rc 125 and
+    spawns nothing more. A hang is rc 124. Raises RuntimeError outside SEALED
+    posture, TypeError for anything but a sealed `Checkout` (a path, a
+    `Refused`, an ambient one)."""
+    _need_sealed_checkout(checkout)
     name = str(args[0]) if args else ""
     family = RUN_FAMILIES.get(name)
     if family is None:
         raise ValueError(f"subcommand not in RUN_FAMILIES: {name!r}")
     argv = _argv(name, *family.flags, *args[1:], options=family.options)
-    fresh = project(checkout.root)
-    if isinstance(fresh, Refused):
-        return _refused_process(argv, fresh.reason)
-    if fresh.gitdir != checkout.gitdir:
-        _refuse(checkout.root, "checkout-changed")
-        return _refused_process(argv, "checkout-changed")
+    fresh, refused = _regate(checkout, argv)
+    if fresh is None:
+        return refused  # type: ignore[return-value]
+    return _spawn_bounded(argv, _sealed_env(fresh), fresh.root, timeout)
+
+
+def _spawn_bounded(argv, env, cwd, timeout) -> subprocess.CompletedProcess:
+    """`_spawn` with no stdin; a hang is rc 124 (the shell timeout convention),
+    never a raised TimeoutExpired."""
     try:
-        return _spawn(argv, _sealed_env(fresh), fresh.root, timeout,
-                      stdin=subprocess.DEVNULL)
+        return _spawn(argv, env, cwd, timeout, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             argv, 124, stdout="", stderr=f"git timed out after {timeout}s")
+
+
+_REF_FORBIDDEN = frozenset("~^:?*[")
+
+
+def valid_ref_component(text: str) -> str | None:
+    """None when `text` is safe to put in a ref name and an option-free argv,
+    else the rule it breaks. The `git check-ref-format` rules that matter here,
+    plus a leading '-' (never an option) and a ban on '@'. Stricter than git on
+    purpose: every accepted value is accepted by git."""
+    if not isinstance(text, str):
+        return "not a string"
+    if not text:
+        return "empty"
+    if text == "@":
+        return "'@' alone"
+    if text.startswith("-"):
+        return "leading '-'"
+    if text.startswith("/"):
+        return "leading '/'"
+    if text.endswith("/"):
+        return "trailing '/'"
+    if "//" in text:
+        return "'//'"
+    if ".." in text:
+        return "'..'"
+    if "@{" in text:
+        return "'@{'"
+    if "\\" in text:
+        return "backslash"
+    if any(ord(c) < 0x21 or ord(c) == 0x7f for c in text):
+        return "control or space character"
+    if any(c in _REF_FORBIDDEN for c in text):
+        return "forbidden character (~ ^ : ? * [)"
+    if text.endswith("."):
+        return "ends with '.'"
+    for part in text.split("/"):
+        if part.startswith("."):
+            return "component starting with '.'"
+        if part.endswith(".lock"):
+            return "component ending with '.lock'"
+    return None
+
+
+def fetch_local(lead: Checkout, member: Checkout, branch: str,
+                member_name: str, *, timeout: float = SIDECAR_TIMEOUT
+                ) -> subprocess.CompletedProcess:
+    """Fetch `member`'s branch into `lead` as refs/members/<member_name>/<branch>.
+
+    Both arguments are sealed Checkouts, both re-gated like `run()`'s (an
+    allowlisted config on each side, no alternates, no worktree config), and
+    the two must differ. The lead is pinned through the sealed env; the cwd is
+    a private empty directory, neither repository. Only the local file
+    transport can run (`protocol.allow=never`, `protocol.file.allow=always`),
+    no tags, no submodules, no FETCH_HEAD, no auto gc. The member side of a
+    local fetch is `upload-pack` running inside the member repository with the
+    member's own config, which the client cannot override from the command
+    line; the member's allowlist gate is what keeps `uploadpack.*`,
+    `core.alternateRefsCommand` and the like out of that process.
+    `branch` and `member_name` are validated by `valid_ref_component` before
+    anything runs (ValueError naming the argument and the rule). A re-gate
+    refusal is rc 125, a hang rc 124; TypeError / RuntimeError as `run()`."""
+    _need_sealed_checkout(lead)
+    _need_sealed_checkout(member)
+    if lead.root == member.root or lead.gitdir == member.gitdir:
+        raise ValueError("lead and member are the same repository")
+    for label, text in (("branch", branch), ("member_name", member_name)):
+        problem = valid_ref_component(text)
+        if problem is not None:
+            raise ValueError(f"{label} {text!r} is not a safe ref name: "
+                             f"{problem}")
+    argv = _argv(
+        "fetch", "--no-tags", "--recurse-submodules=no",
+        "--no-write-fetch-head", "--no-auto-gc", "--", member.root,
+        f"+refs/heads/{branch}:refs/members/{member_name}/{branch}",
+        options=("-c", "protocol.allow=never",
+                 "-c", "protocol.file.allow=always"))
+    fresh_lead, refused = _regate(lead, argv)
+    if fresh_lead is None:
+        return refused  # type: ignore[return-value]
+    fresh_member, refused = _regate(member, argv)
+    if fresh_member is None:
+        return refused  # type: ignore[return-value]
+    cwd = _scratch_subdir("fetch-cwd")
+    if cwd is None:
+        return _refused_process(argv, "scratch-unavailable")
+    return _spawn_bounded(argv, _sealed_env(fresh_lead), cwd, timeout)
 
 
 def init(path, *, timeout: float = SIDECAR_TIMEOUT) -> Checkout | Refused:
