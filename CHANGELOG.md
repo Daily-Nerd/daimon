@@ -5,6 +5,21 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.2](https://github.com/Daily-Nerd/daimon/compare/v0.64.1...v0.64.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **capture:** fail a transcript that has rows but no admitted conversation ([f472df0](https://github.com/Daily-Nerd/daimon/commit/f472df078a11561d52f392c84321207bef3160e0))
+* **capture:** name the host bookkeeping rows and skip a file made only of them ([ca9d3e7](https://github.com/Daily-Nerd/daimon/commit/ca9d3e775f95058ba22ae9c497939f45f67c5756))
+* **lifecycle:** observe the tier of an event row instead of defaulting it to human ([8845659](https://github.com/Daily-Nerd/daimon/commit/884565984c188e52ff7a4ed1b658af6c628b0962)), closes [#1293](https://github.com/Daily-Nerd/daimon/issues/1293)
+* **requests:** revise and the sender's echo decide on the joined record ([4f0667c](https://github.com/Daily-Nerd/daimon/commit/4f0667c507f1dffd7603477a30085efa6e609d9f))
+
+
+### Documentation
+
+* **hosts:** document the row account and the unreadable-transcript failure ([1049b90](https://github.com/Daily-Nerd/daimon/commit/1049b909aa96ca0b1c38e4dab4e50d63eb61f767))
+
 ## [0.64.1](https://github.com/Daily-Nerd/daimon/compare/v0.64.0...v0.64.1) (2026-11-07)
 
 
