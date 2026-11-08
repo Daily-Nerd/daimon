@@ -465,3 +465,70 @@ def test_ambient_never_runs_the_gate(tmp_path, spy):
     hostgit.configure(posture=hostgit.Posture.AMBIENT)
     hostgit.project(repo)
     assert spy.listings == []
+
+
+# ---- failure branches of the gate ----------------------------------------------
+
+
+def test_no_scratch_directory_fails_the_gate_closed(home, monkeypatch):
+    repo = fake_repo(home / "r")
+    rec = Recorder()
+    monkeypatch.setattr(hostgit, "_spawn", rec)
+    monkeypatch.setattr(hostgit, "_scratch_root", lambda: None)
+    assert hostgit.project(repo) == hostgit.Refused("config-unreadable")
+    assert rec.calls == []  # nothing runs from a directory we could not make
+
+
+def test_a_scratch_cwd_that_cannot_be_made_fails_the_gate_closed(home,
+                                                                monkeypatch):
+    repo = fake_repo(home / "r")
+    rec = Recorder()
+    monkeypatch.setattr(hostgit, "_spawn", rec)
+    real = os.makedirs
+
+    def deny(path, *args, **kwargs):
+        if os.fspath(path).endswith("config-cwd"):
+            raise PermissionError("no")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(hostgit.os, "makedirs", deny)
+    assert hostgit.project(repo) == hostgit.Refused("config-unreadable")
+    assert rec.calls == []
+
+
+@needs_git
+def test_a_gitdir_without_a_config_file_passes_with_no_listing(home, spy):
+    repo = fake_repo(home / "r")
+    (repo / ".git" / "config").unlink()
+    assert isinstance(hostgit.project(repo), hostgit.Checkout)
+    assert spy.listings == []
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="needs a user that permissions apply to")
+def test_a_sibling_entry_that_cannot_be_inspected_refuses_as_unreadable(
+        home, monkeypatch):
+    repo = fake_repo(home / "r")
+    rec = Recorder()
+    monkeypatch.setattr(hostgit, "_spawn", rec)
+    info = repo / ".git" / "objects" / "info"
+    info.mkdir()
+    info.chmod(0)
+    try:
+        assert hostgit.project(repo) == hostgit.Refused("unreadable")
+    finally:
+        info.chmod(0o755)
+    assert rec.calls == []
+
+
+@needs_git
+def test_the_memo_is_bounded_and_an_evicted_config_is_listed_again(
+        home, spy, monkeypatch):
+    monkeypatch.setattr(hostgit, "_CONFIG_MEMO_CAP", 2)
+    repos = [fake_repo(home / f"r{i}") for i in range(3)]
+    for repo in repos:
+        assert isinstance(hostgit.project(repo), hostgit.Checkout)
+    assert len(spy.listings) == 3
+    assert len(hostgit._gate_memo) <= 2
+    assert isinstance(hostgit.project(repos[0]), hostgit.Checkout)
+    assert len(spy.listings) == 4  # evicted, so gated again

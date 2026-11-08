@@ -234,3 +234,11 @@ def test_innocent_code_is_quiet(tmp_path):
 
 def test_paths_used_here_exist():
     assert Path(PLUGIN / HOSTGIT).is_file()
+
+
+def test_an_iterable_of_files_is_named_by_posix_path(tmp_path):
+    path = tmp_path / "m.py"
+    path.write_text("import subprocess\ndef f():\n    subprocess.run(['x'])\n",
+                    encoding="utf-8")
+    found = testing.git_spawn_sites([path])
+    assert found == {(path.as_posix(), "f", "subprocess.run"): (3,)}
