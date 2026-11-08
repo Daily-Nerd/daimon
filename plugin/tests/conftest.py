@@ -86,6 +86,11 @@ def _isolate_daimon_home(tmp_path, monkeypatch):
     # the working directory, so a test that monkeypatches the git answer or
     # chdirs into a repo another test already looked up would read it stale.
     _config._git_user_name_in.cache_clear()
+    # hostgit holds no memo of its own, only a configured posture; a test that
+    # configures one must not leak it into the next.
+    from daimon_briefing import hostgit as _hostgit
+    _hostgit._reset()
+    monkeypatch.delenv(_hostgit.POSTURE_ENV, raising=False)
     # Clear kill switch / overrides that may leak from the host env.
     monkeypatch.delenv("DAIMON_DISABLE", raising=False)
     monkeypatch.delenv("DAIMON_MIN_MESSAGES", raising=False)

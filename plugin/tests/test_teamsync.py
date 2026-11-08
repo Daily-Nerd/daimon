@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from daimon_briefing import cli, config, store, teamproject, teamsync
+from daimon_briefing import cli, config, hostgit, store, teamproject, teamsync
 from daimon_briefing.surfaces import Writer
 
 
@@ -722,7 +722,7 @@ def test_daimon_status_silent_when_team_unused(tmp_path, capsys):
 
 
 def test_cli_team_sync_git_absent_rc0(monkeypatch, capsys):
-    monkeypatch.setattr(teamsync.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(hostgit.shutil, "which", lambda _name: None)
     assert cli.main(["team", "sync"]) == 0
     assert "git not found" in capsys.readouterr().out
 

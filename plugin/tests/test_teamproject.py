@@ -481,7 +481,7 @@ def test_git_probe_failure_resolves_to_flat_era(tmp_path, monkeypatch):
     def boom(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="git", timeout=5)
 
-    monkeypatch.setattr(teamproject.subprocess, "run", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
     assert teamproject.read_candidates(repo) == []
 
 

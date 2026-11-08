@@ -12,7 +12,6 @@ import getpass
 import hashlib
 import logging
 import os
-import subprocess
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -21,7 +20,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import overload
 
-from . import jsonl, scope
+from . import hostgit, jsonl, scope
 
 log = logging.getLogger(__name__)
 
@@ -534,8 +533,8 @@ def _git_user_name() -> str:
     directory, because `author()` is called per stamped ledger row and per
     write, and each spawn costs tens of milliseconds. Failures are memoized
     too: one process stamps ONE identity for one directory and does not flip
-    partway through a run. The git dependency lives HERE in the policy layer,
-    never in store (pure file-ops)."""
+    partway through a run. The memo lives HERE in the policy layer; the git
+    call itself lives in hostgit, and never in store (pure file-ops)."""
     try:
         cwd = os.getcwd()
     except OSError:  # the working directory was deleted under the process
@@ -547,19 +546,7 @@ def _git_user_name() -> str:
 def _git_user_name_in(cwd: str) -> str:
     """The memoized body of `_git_user_name`. Tests clear it with
     `_git_user_name_in.cache_clear()` (see the autouse fixture in conftest)."""
-    try:
-        result = subprocess.run(
-            ["git", "config", "user.name"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            cwd=cwd,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return ""
-    if result.returncode != 0:
-        return ""
-    return result.stdout.strip()
+    return hostgit.user_name(cwd)
 
 
 def author() -> str:
@@ -880,19 +867,8 @@ def _git_toplevel(raw: str) -> str:
     """The forking half of `resolve_project_root`, memoized. Never raises, and
     returns `raw` unchanged on every git failure, so a failure memoizes as
     "this directory is its own root" until the cache is cleared."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", raw, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return raw
-    if result.returncode != 0:
-        return raw
-    top = result.stdout.strip()
-    return top or raw
+    got = hostgit.project(raw)
+    return got.root if isinstance(got, hostgit.Checkout) else raw
 
 
 # The memo controls belong to the public name: a caller holding
@@ -1064,7 +1040,7 @@ def _git_shadowed(start: Path) -> bool:
     current = start
     while True:
         try:
-            if (current / ".git").exists():
+            if hostgit.has_entry(current):
                 return True
         except OSError:
             return True  # unreadable is not a layer either way
@@ -1212,28 +1188,14 @@ def git_branch(project_dir) -> str | None:
     fails "ambiguous argument"), or a DETACHED HEAD (rev-parse --abbrev-ref
     prints the literal "HEAD" for that case, which is not a branch name).
 
-    Lives here, not in store.py: store stays free of the git/subprocess
-    dependency (the same reasoning `resolve_project_root` above documents).
+    Lives here, not in store.py (the git call itself is hostgit.branch): store
+    stays free of the git/subprocess dependency (the same reasoning `resolve_project_root` above documents).
     Short timeout — this runs on every checkpoint write, including from hooks
     on session end, which must never block on a slow/hung git.
     """
     if not project_dir:
         return None
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(project_dir), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    branch = result.stdout.strip()
-    if not branch or branch == "HEAD":
-        return None
-    return branch
+    return hostgit.branch(project_dir)
 
 
 def min_messages() -> int:
