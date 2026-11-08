@@ -63,9 +63,27 @@ def world(tmp_path):
     return ceiling, repo
 
 
+class SealedRecorder(Recorder):
+    """A Recorder that keeps the config-gate listing (`config ... --list -z`,
+    one per checkout, run by `project()`) apart in `listings`, answering it
+    with an empty, allowed config, so `calls` holds only what a test asks for.
+    The gate itself is covered by test_hostgit_config_gate.py."""
+
+    def __init__(self):
+        super().__init__()
+        self.listings: list[dict] = []
+
+    def __call__(self, argv, env, cwd, timeout, stdin=None):
+        if "--list" in argv and "-z" in argv:
+            self.listings.append({"argv": list(argv), "env": env, "cwd": cwd,
+                                  "timeout": timeout})
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        return super().__call__(argv, env, cwd, timeout, stdin)
+
+
 @pytest.fixture
 def rec(monkeypatch):
-    recorder = Recorder()
+    recorder = SealedRecorder()
     monkeypatch.setattr(hostgit, "_spawn", recorder)
     return recorder
 
@@ -89,7 +107,8 @@ def test_the_default_ceiling_is_home(monkeypatch, tmp_path):
 # ---- project(): the protocol ----------------------------------------------
 
 
-def test_project_walks_up_in_python_without_spawning(world, rec):
+def test_project_walks_up_in_python_and_spawns_only_the_config_listing(
+        world, rec):
     ceiling, repo = world
     sub = repo / "plugin" / "deep"
     sub.mkdir(parents=True)
@@ -97,6 +116,7 @@ def test_project_walks_up_in_python_without_spawning(world, rec):
     assert got == hostgit.Checkout(root=str(repo.resolve()),
                                    gitdir=str(repo.resolve() / ".git"))
     assert rec.calls == []
+    assert len(rec.listings) == 1
 
 
 def _refusal_cases(tmp_path):
@@ -209,7 +229,7 @@ def test_a_refused_checkout_answers_with_its_code_and_spawns_nothing(
     assert hostgit.branch(path) is None
     assert hostgit.remote_listing(path) is None
     assert hostgit.refs_dir(path) is None
-    assert rec.calls == []
+    assert rec.calls == [] and rec.listings == []
     assert (str(path), code) in hostgit.refusals()
 
 
@@ -551,17 +571,20 @@ def test_core_worktree_in_the_repo_config_cannot_move_the_answer(tmp_path):
     config.resolve_project_root.cache_clear()
     assert Path(hostgit.project(mine).root).resolve() == victim.resolve()
 
+    # SEALED does not answer at all: the key is outside the config allowlist,
+    # so the checkout is refused before any git runs on it.
     hostgit.configure(posture=SEALED, ceiling=home)
     config.resolve_project_root.cache_clear()
-    sealed = hostgit.project(mine)
-    assert sealed.root == str(mine.resolve())
-    assert config.resolve_project_dir(str(mine)) == str(mine.resolve())
-    assert hostgit.origin_url(mine) == "https://github.com/me/mine.git"
-    assert hostgit.branch(mine) == "main"
+    assert hostgit.project(mine) == hostgit.Refused("config-key:core.worktree")
+    assert hostgit.origin_url(mine) is None
+    assert hostgit.branch(mine) is None
+    # ...and the sibling it pointed at is untouched.
+    assert hostgit.origin_url(victim) == "https://github.com/them/victim.git"
 
 
 @needs_git
-def test_includes_and_worktree_config_are_ignored_by_the_one_file_read(tmp_path):
+def test_includes_and_worktree_config_are_refused_in_sealed_and_followed_in_ambient(
+        tmp_path):
     home = tmp_path / "home"
     mine = _real_repo(home / "mine", "https://github.com/me/mine.git")
     extra = tmp_path / "extra.cfg"
@@ -581,10 +604,12 @@ def test_includes_and_worktree_config_are_ignored_by_the_one_file_read(tmp_path)
     assert hostgit.user_name(mine) in ("Included", "WorktreeName")
 
     hostgit.configure(posture=SEALED, ceiling=home)
-    assert hostgit.origin_url(mine) == "https://github.com/me/mine.git"
-    assert "included" not in hostgit.remote_listing(mine)
-    assert "worktree.git" not in hostgit.remote_listing(mine)
+    assert hostgit.project(mine) == hostgit.Refused("worktree-config")
+    assert hostgit.origin_url(mine) is None
+    assert hostgit.remote_listing(mine) is None
     assert hostgit.user_name(mine) == ""
+    (mine / ".git" / "config.worktree").unlink()
+    assert hostgit.project(mine) == hostgit.Refused("config-key:include.path")
 
 
 @needs_git
