@@ -7,7 +7,7 @@ is the verb between them.
 
 Amendments are not checkpoint items and never ride events.jsonl. That store's
 `source` field is caller-declared and defaults to the human tier
-(HUMAN_EVENT_SOURCES classifies the values, but no write path attests them —
+(authority.HUMAN_EVENT_SOURCES classifies the values, but no write path attests them —
 authority as a caller's claim about itself, the hole refutations.py names),
 it folds latest-wins per ref (a confirmation would overwrite the amendment it
 confirms), and forget reaches its prose only by whole-value match without ever
@@ -41,9 +41,12 @@ from datetime import datetime, timezone
 from . import clock, config, jsonl, normalize, policy, redact, store, surfaces
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself (see the refutations table for the
-# full argument). Importing the table keeps a future channel tier ("ui",
-# "signed") consistent across ledgers instead of forking per module.
-from .refutations import CHANNEL_AUTHORITY, CHANNEL_LABEL
+# full argument). `authority.py` owns the tier a channel carries, which keeps
+# a future channel tier ("ui", "signed") consistent across ledgers instead of
+# forking per module.
+from .authority import channels as known_channels
+from .authority import of_channel, of_row
+from .refutations import CHANNEL_LABEL
 from .surfaces import Writer
 
 VERSION = 1
@@ -151,12 +154,12 @@ def _stamp(event: str, amendment_id: str, channel: str,
         raise AmendmentError(f"unknown amendment event: {event}")
     if not _AMEND_ID_RE.fullmatch(str(amendment_id or "")):
         raise AmendmentError(f"invalid amendment id: {amendment_id!r}")
-    if channel not in CHANNEL_AUTHORITY:
+    if channel not in known_channels("amendments"):
         raise AmendmentError(
-            f"channel must be one of: {', '.join(sorted(CHANNEL_AUTHORITY))}")
+            f"channel must be one of: {', '.join(sorted(known_channels('amendments')))}")
     # Derived, never accepted: no way to name one channel and claim another's
     # authority.
-    authority = CHANNEL_AUTHORITY[channel]
+    authority = of_channel("amendments", channel)
     order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
@@ -249,7 +252,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 continue  # duplicate logical proposal, first writer wins
             state = (
                 "ratified" if row.get("ratified") is True
-                and CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human"
+                and of_row("amendments", row) == "human"
                 else "candidate")
             out[a_id] = {
                 "amendment_id": a_id,
@@ -259,7 +262,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "evidence": str(row.get("evidence") or ""),
                 "evidence_role": None,
                 "note": str(row.get("note") or ""),
-                "proposed_by": row.get("authority"),
+                "proposed_by": of_row("amendments", row),
                 "proposed_channel": row.get("channel"),
                 "proposed_author": row.get("author"),
                 "verdict_label": (CHANNEL_LABEL.get(str(row.get("channel") or ""))
@@ -284,18 +287,18 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             # the quote in the transcript. It never overrides a verdict, and
             # it never yields a settled render — see RENDER_STATES.
             if (current["state"] == "candidate"
-                    and CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "mechanical"):
+                    and of_row("amendments", row) == "mechanical"):
                 current["state"] = "verified"
                 current["evidence_role"] = str(
                     row.get("evidence_role") or "")[:_ROLE_MAX]
                 current["verdict_label"] = "quote-verified"
         elif event == "ratified":
             if (current["state"] in ("candidate", "verified")
-                    and CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human"):
+                    and of_row("amendments", row) == "human"):
                 current["state"] = "ratified"
                 current["verdict_label"] = CHANNEL_LABEL.get(str(row.get("channel") or ""))
         elif event == "rejected":
-            if CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human":
+            if of_row("amendments", row) == "human":
                 current["state"] = "rejected"
                 current["verdict_label"] = None
                 current["note"] = str(row.get("note") or current["note"])
@@ -385,7 +388,7 @@ def propose(*, item_id: str, change: str, evidence: str, channel: str,
             f"change must be one of: {', '.join(sorted(CHANGES))}")
     evidence = _text("evidence", evidence)
     note = _text("note", note, required=False)
-    human = CHANNEL_AUTHORITY.get(channel) == "human"
+    human = of_channel("amendments", channel) == "human"
     if note and not human:
         raise AmendmentError(
             "a note requires a human channel; agent amendments carry only "
@@ -446,7 +449,7 @@ def verify(amendment_id: str, *, role: str, project_dir=None) -> None:
 
 
 def ratify(amendment_id: str, *, channel: str, project_dir=None) -> None:
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("amendments", channel) != "human":
         raise AmendmentError(
             "ratification requires a human channel; this call arrived "
             f"through {channel!r}")
@@ -465,7 +468,7 @@ def ratify(amendment_id: str, *, channel: str, project_dir=None) -> None:
 
 def reject(amendment_id: str, *, channel: str, note: str = "",
            project_dir=None) -> None:
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("amendments", channel) != "human":
         raise AmendmentError(
             "rejection requires a human channel; this call arrived "
             f"through {channel!r}")
@@ -512,7 +515,7 @@ def ratify_many(amendment_ids: list[str], *, channel: str,
     line and a human batching several confirms both need one bad id to sink
     the whole line, never silently ratify the rest. Every id is validated
     against the CURRENT fold before the first append."""
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("amendments", channel) != "human":
         raise AmendmentError(
             "ratification requires a human channel; this call arrived "
             f"through {channel!r}")
@@ -528,7 +531,7 @@ def ratify_many(amendment_ids: list[str], *, channel: str,
 def reject_many(amendment_ids: list[str], *, channel: str, note: str = "",
                project_dir=None) -> None:
     """All-or-nothing multi-id reject (#1087), the `ratify_many` mirror."""
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("amendments", channel) != "human":
         raise AmendmentError(
             "rejection requires a human channel; this call arrived "
             f"through {channel!r}")

@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from .. import config, refutations, render, store, view
-from . import _cap_refusal
+from . import _cap_refusal, _observe
 
 # #920: over-cap `subject`/`verdict`/`scope`/`evidence` name where the
 # overflow belongs, mirroring #916's request-ledger refusal. `anchor`,
@@ -272,13 +272,12 @@ def _refute_channel(args) -> str:
     nothing stronger: `ui` and `signed` are in-process-only, because a channel
     an agent can reach by shelling out is the deleted `--by human` renamed.
     """
-    if getattr(args, "by", None) == "agent":
-        return "cli-agent"
-    if not sys.stdin.isatty():
+    channel = _observe.channel(agent=getattr(args, "by", None) == "agent")
+    if channel is None:
         raise refutations.RefutationError(
             "this is the human path and there is no interactive terminal; "
             "pass --by agent to record a candidate, or run it from a terminal")
-    return "cli-tty"
+    return channel
 
 
 def _check_args(args) -> dict | None:

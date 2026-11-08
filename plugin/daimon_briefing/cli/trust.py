@@ -12,12 +12,11 @@ teammates have published.
 
 import functools
 import json
-import sys
 
 import daimon_briefing.cli as _cli
 
 from .. import config, render, store, trust, view
-from . import _cap_refusal, ledger_cmd
+from . import _cap_refusal, _observe, ledger_cmd
 
 # #920-style destination for an over-cap field: `reason` is the human's own
 # rationale, capped the same way a ruling's `verdict` is — the long form
@@ -50,14 +49,13 @@ def _trust_channel(args) -> str:
     there is refused by `trust._human_transition` itself, the same way
     `daimon ruling ratify --by agent` is refused by the ledger, not hidden
     from the parser."""
-    if getattr(args, "by", None) == "agent":
-        return "cli-agent"
-    if not sys.stdin.isatty():
+    channel = _observe.channel(agent=getattr(args, "by", None) == "agent")
+    if channel is None:
         raise trust.TrustError(
             "this is the human path and there is no interactive terminal; "
             "pass --by agent to record a candidate, or run it from a "
             "terminal")
-    return "cli-tty"
+    return channel
 
 
 def _human_channel() -> bool:
@@ -65,7 +63,7 @@ def _human_channel() -> bool:
     value being judged, so only a person at a terminal is shown it raw. Not
     `lifecycle._human_cli_channel`: that prints a refusal to stdout, which
     would corrupt `--json`."""
-    return sys.stdin.isatty()
+    return _observe.attended()
 
 
 def _masked_records(project, records: list, *, snap, human: bool) -> list:

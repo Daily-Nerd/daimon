@@ -15,7 +15,7 @@ import re
 
 import pytest
 
-from daimon_briefing import (clock, config, normalize, pending, redact,
+from daimon_briefing import (authority, clock, config, normalize, pending, redact,
                              refutations, requests, store)
 
 from ._prepared import FrozenClock
@@ -5041,7 +5041,7 @@ def test_stamp_delivered_carries_the_session_and_stays_mechanical(project):
     row = [r for r in _rows(project) if r["event"] == "delivered"][0]
     assert row["session"] == "S-alpha"
     assert row["channel"] == "mechanical"
-    assert row["authority"] == requests.CHANNEL_AUTHORITY["mechanical"]
+    assert row["authority"] == authority.of_channel("requests", "mechanical")
 
 
 def test_stamp_delivered_refuses_a_blank_session(project):
@@ -6627,7 +6627,7 @@ def test_cli_reply_refuses_wrong_state_empty_unknown_and_over_cap(
 
 
 def test_reply_line_labels_caps_counts_and_marks_stale(project, monkeypatch):
-    monkeypatch.setitem(requests.CHANNEL_AUTHORITY, "relay", "agent")
+    monkeypatch.setitem(authority.table("requests"), "relay", "agent")
     q_id, rdir = _in_state(project, "accepted")
 
     def line():

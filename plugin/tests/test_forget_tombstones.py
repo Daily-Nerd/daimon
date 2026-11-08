@@ -102,7 +102,7 @@ def test_a_second_write_for_the_same_value_adds_no_second_key_row(
         tmp_checkpoint_dir):
     decision, question = _seed()
     target = forget.Target(KEY, decision, (decision, question), PROJECT,
-                           reason="again")
+                           reason="again", source="cli-tty")
     assert forget.write_tombstones(target).reached
     before = len(_tombstone_rows())
     again = forget.write_tombstones(target)
@@ -116,14 +116,14 @@ def test_the_rows_land_while_the_kill_switch_is_on(tmp_checkpoint_dir,
                                                    monkeypatch):
     decision, question = _seed()
     monkeypatch.setenv("DAIMON_DISABLE", "1")
-    target = forget.Target(KEY, decision, (decision, question), PROJECT)
+    target = forget.Target(KEY, decision, (decision, question), PROJECT, source="cli-tty")
     assert forget.write_tombstones(target).reached
     assert len(_tombstone_rows()) == 3
 
 
 def test_an_unknown_project_writes_nothing_and_is_not_reached(
         tmp_checkpoint_dir):
-    got = forget.write_tombstones(forget.Target(KEY, "i-1", ("i-1",), ""))
+    got = forget.write_tombstones(forget.Target(KEY, "i-1", ("i-1",), "", source="cli-tty"))
     assert got.reached is False
 
 

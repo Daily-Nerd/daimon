@@ -47,17 +47,19 @@ from typing import NamedTuple
 from . import (buckets, clock, config, display, jsonl, normalize, policy,
                redact, refutations, scope, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
-# PATH, never a caller's claim about itself. Importing the table keeps a
-# future channel tier ("ui", "signed") consistent across ledgers instead of
-# forking per module.
-from .refutations import CHANNEL_AUTHORITY, CHANNEL_LABEL
+# PATH, never a caller's claim about itself. `authority.py` owns the tier a
+# channel carries, so a future channel tier ("ui", "signed") stays consistent
+# across ledgers instead of forking per module.
+from .authority import channels as known_channels
+from .authority import of_channel, of_row
+from .refutations import CHANNEL_LABEL
 from .surfaces import Writer
 
 VERSION = 1
 # #961: the approval-requirement a request carries. `info` is answerable from
 # the recipient's own artifacts and owes no accept; `work` asks the recipient
 # to change something or spend effort and waits on a person. Two values,
-# never a free string — the same discrete-enum posture CHANNEL_AUTHORITY and
+# never a free string — the same discrete-enum posture the channel table and
 # EVENTS already hold this module to.
 KINDS = frozenset({"info", "work"})
 # The fold's fallback for a row that carries no readable `kind` at all — every
@@ -335,7 +337,7 @@ def _act_author(channel: str, author) -> str:
     value = _scrub("act_author", author, required=False, limit=_LABEL_MAX)
     if not value:
         return ""
-    if CHANNEL_AUTHORITY.get(channel) != "human" or channel in _CLI_CHANNELS:
+    if of_channel("requests", channel) != "human" or channel in _CLI_CHANNELS:
         raise RequestError(
             "a per-act author names the person behind THIS act, and this "
             "channel derives its author from the environment instead — one "
@@ -352,12 +354,12 @@ def _stamp(event: str, request_id: str, channel: str,
         raise RequestError(f"unknown request event: {event}")
     if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
         raise RequestError(f"invalid request id: {request_id!r}")
-    if channel not in CHANNEL_AUTHORITY:
+    if channel not in known_channels("requests"):
         raise RequestError(
-            f"channel must be one of: {', '.join(sorted(CHANNEL_AUTHORITY))}")
+            f"channel must be one of: {', '.join(sorted(known_channels('requests')))}")
     # Derived, never accepted: no way to name one channel and claim another's
     # authority.
-    authority = CHANNEL_AUTHORITY[channel]
+    authority = of_channel("requests", channel)
     # #1026: gated BEFORE the row exists, so a refusal leaves nothing for a
     # caller to append by accident.
     act_author = _act_author(channel, author)
@@ -480,7 +482,7 @@ def _kind_of(row: dict, open_policies: dict[str, frozenset] | None = None) -> st
        status_counts, and both `--json` surfaces cross-bucket).
     2. A `to_human` ask reads as `work` regardless of what is stored.
     3. `kind == "info"` requires the OPENER's channel to carry human
-       authority — the same `CHANNEL_AUTHORITY` lookup the `_HUMAN_ONLY`
+       authority — the same `authority.of_row` lookup the `_HUMAN_ONLY`
        re-check below uses for verdict/suppression events. `open_request`
        already refuses a non-human channel and the `to_human` combination at
        the WRITE boundary, but `requests.append` is public, takes an
@@ -506,7 +508,7 @@ def _kind_of(row: dict, open_policies: dict[str, frozenset] | None = None) -> st
     kind = value if isinstance(value, str) and value in KINDS else DEFAULT_KIND
     if row.get("to_human") is True:
         return DEFAULT_KIND
-    authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+    authority = of_row("requests", row)
     if authority != "human":
         if authority == "agent" and kind == "info" and open_policies:
             open_slug = str(row.get("_origin_slug") or "")
@@ -612,8 +614,7 @@ def _founder_by_id(ordered: list[dict],
             if not str(row.get("ask") or "").strip():
                 continue
             kind = _kind_of(row, open_policies)
-            row_authority = CHANNEL_AUTHORITY.get(
-                str(row.get("channel") or ""))
+            row_authority = of_row("requests", row)
             # #961 slice 5: the ruling id only when THIS founder row is the
             # reason `kind == "info"` — a human-opened info carries none, so
             # `opened_under_ruling` never renders on one (#766's own
@@ -624,7 +625,7 @@ def _founder_by_id(ordered: list[dict],
             founders[q_id] = (kind, str(row.get("_origin_slug") or ""),
                              ruling)
             continue
-        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+        authority = of_row("requests", row)
         if (authority == "human"
                 and _kind_of(row, open_policies) != founders[q_id][0]):
             founders[q_id] = (DEFAULT_KIND, founders[q_id][1], "")
@@ -783,7 +784,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
     for row in ordered:
         q_id = row["request_id"]
         event = row["event"]
-        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+        authority = of_row("requests", row)
         current = out.get(q_id)
         if event == "opened":
             if current is not None:
@@ -958,7 +959,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # explicitly, never on `authority != "human"` alone — that
             # looser test also passes for `mechanical` (a real, valid
             # channel this contract never named) and for any channel
-            # string `CHANNEL_AUTHORITY` does not recognize at all (which
+            # string `authority.of_row` does not recognize at all (which
             # resolves to `authority is None`, also `!= "human"`). Either
             # would otherwise land an accept and then mislabel it
             # `accepted_by: "agent"` in the generic verdict landing below,
@@ -1556,9 +1557,9 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     # written until it runs), but that happens after every check below, so a
     # caller with a bogus channel and `kind="info"` would otherwise be told
     # about `info`'s human-only rule rather than about the typo.
-    if channel not in CHANNEL_AUTHORITY:
+    if channel not in known_channels("requests"):
         raise RequestError(
-            f"channel must be one of: {', '.join(sorted(CHANNEL_AUTHORITY))}")
+            f"channel must be one of: {', '.join(sorted(known_channels('requests')))}")
     if kind not in KINDS:
         raise RequestError(f"kind must be one of: {', '.join(sorted(KINDS))}")
     # `--to-human` stays refused unconditionally and first, before any
@@ -1599,8 +1600,8 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
         row["title"] = title
     if supersedes:
         row["supersedes"] = supersedes
-    if kind == "info" and CHANNEL_AUTHORITY.get(channel) != "human":
-        authority = CHANNEL_AUTHORITY.get(channel)
+    if kind == "info" and of_channel("requests", channel) != "human":
+        authority = of_channel("requests", channel)
         covering = None
         skew = False
         if authority == "agent":
@@ -1760,7 +1761,7 @@ def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
 
 def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
              author: str | None = None, project_dir=None) -> None:
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("requests", channel) != "human":
         state = _STATE_BY_EVENT.get(event, event)
         article = "an" if state[:1] in "aeiou" else "a"
         raise RequestError(
@@ -1850,7 +1851,7 @@ def accept(request_id: str, *, channel: str, note: str = "",
     # The gate, not the value: the human path hands `author` on to
     # `_verdict` -> `_stamp`, which is what actually writes it.
     _act_author(channel, author)
-    authority = CHANNEL_AUTHORITY.get(channel)
+    authority = of_channel("requests", channel)
     if authority != "human":
         # #961 slice 3 review item 6: `authority == "agent"` explicitly,
         # never `!= "human"` alone — that looser test also lets a
@@ -1951,7 +1952,7 @@ def suppress(request_id: str, *, channel: str, note: str = "",
     Human-only because an agent able to mute an addressed ask would hold a
     soft-reject that never appears as one.
     """
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("requests", channel) != "human":
         raise RequestError(
             "suppressing an addressed request requires a human channel; this "
             f"call arrived through {channel!r}")
@@ -2757,7 +2758,7 @@ def latest_reply_line(record: dict) -> str:
         return ""
     latest = replies[-1]
     note = display.shorten(latest.get("note"), _REPLY_LINE_MAX, hard=True)
-    label = ("Reply (agent, unverified)" if latest.get("authority") == "agent"
+    label = ("Reply (agent, unverified)" if of_row("requests", latest) == "agent"
              else "Reply")
     line = f"{label}: {note}"
     if latest.get("revision", 0) < record.get("revision", 0):

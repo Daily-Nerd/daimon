@@ -32,7 +32,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import (amendments, carry, config, normalize, provenance, requests,
+from . import (amendments, authority, carry, config, normalize, provenance, requests,
                schema, serializer, store, transcript)
 from .surfaces import Writer
 
@@ -480,7 +480,8 @@ def _verify_agent_amendments(project, messages) -> int:
         a_id: record["evidence"]
         for a_id, record in amendments.records(project_dir=project).items()
         if record["state"] == "candidate"
-        and record.get("proposed_channel") == "cli-agent"
+        and authority.of_channel(
+            "amendments", record.get("proposed_channel")) == "agent"
     }
     if not pending:
         return 0
@@ -532,8 +533,7 @@ def _verify_agent_request_done(project, messages) -> int:
         rid = str(row.get("request_id") or "")
         if not rid or rid in already_verified:
             continue
-        if requests.CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) \
-                != "agent":
+        if authority.of_row("requests", row) != "agent":
             continue
         evidence = str(row.get("evidence") or "").strip()
         if evidence:

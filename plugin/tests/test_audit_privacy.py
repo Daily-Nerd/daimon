@@ -148,7 +148,7 @@ def test_a_reopened_new_format_tombstone_still_flags_the_value(
     _write("S1", CANARY)
     key = normalize.content_key(CANARY)
     assert forget.write_tombstones(
-        forget.Target(key, "i-x", ("i-x",), PROJECT)).reached
+        forget.Target(key, "i-x", ("i-x",), PROJECT, source="cli-tty")).reached
     store.append_event("i-x", "reopened", project_dir=PROJECT, source="cli", writer=Writer.HUMAN)
     result = privacy.audit_project(project_dir=PROJECT)
     assert any(f["content_hash"] == key for f in result["findings"])

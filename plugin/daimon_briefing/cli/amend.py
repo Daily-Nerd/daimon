@@ -13,7 +13,7 @@ import sys
 import daimon_briefing.cli as _cli
 
 from .. import amendments, briefing, render, schema, store, view
-from . import _cap_refusal
+from . import _cap_refusal, _observe
 
 # #920: over-cap `evidence` gets its OWN destination, distinct from the
 # request and refutation ledgers' "put it in an artifact" wording. `evidence`
@@ -41,13 +41,12 @@ def _amend_channel(args) -> str:
     """The channel this invocation actually arrived through — the
     `_refute_channel` contract restated for the amendment ledger (same
     doctrine, its own error type so refusals stay per-surface)."""
-    if getattr(args, "by", None) == "agent":
-        return "cli-agent"
-    if not sys.stdin.isatty():
+    channel = _observe.channel(agent=getattr(args, "by", None) == "agent")
+    if channel is None:
         raise amendments.AmendmentError(
             "this is the human path and there is no interactive terminal; "
             "pass --by agent to record a candidate, or run it from a terminal")
-    return "cli-tty"
+    return channel
 
 
 @_cli.guarded(writes=True)

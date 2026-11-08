@@ -1,11 +1,11 @@
 """#1293: the authority tier of an events row is OBSERVED from the write path.
 
 `store.append_event` used to default `source` to "cli", a member of
-HUMAN_EVENT_SOURCES, so any caller that omitted it wrote a row that reads as
+the human sources, so any caller that omitted it wrote a row that reads as
 a person's act. The tier is now a required keyword, and the writers that never
 passed one (`handoff`, `log`, forget's tombstones and lift) derive it from
 the same tty observation the other verbs use. Rows already on disk fold as
-before: HUMAN_EVENT_SOURCES is unchanged.
+before: the human sources are unchanged.
 """
 import ast
 import inspect
@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import cli, forget, jsonl, store
+from daimon_briefing import authority, cli, forget, jsonl, store
+from daimon_briefing.cli import _observe
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/event-source-tier"
@@ -41,7 +42,7 @@ def test_a_non_tty_write_never_carries_a_human_tier(
     _tty(monkeypatch, False)
     assert cli.main([*argv, "--project", PROJECT]) == 0
     [row] = _rows()
-    assert row["source"] not in store.HUMAN_EVENT_SOURCES
+    assert authority.of_row("events", row) != "human"
     assert row["source"] == "agent"
 
 
@@ -56,12 +57,12 @@ def test_a_terminal_write_carries_the_observed_tty_tier(
     assert cli.main([*argv, "--project", PROJECT]) == 0
     [row] = _rows()
     assert row["source"] == "cli-tty"
-    assert row["source"] in store.HUMAN_EVENT_SOURCES
+    assert authority.of_row("events", row) == "human"
 
 
 def test_a_missing_stdin_reads_as_no_terminal(monkeypatch):
     monkeypatch.setattr(cli.sys, "stdin", None)
-    assert store.observed_event_source() == "agent"
+    assert _observe.event_source() == "agent"
 
 
 @pytest.mark.parametrize("exc", [ValueError, OSError])
@@ -69,7 +70,15 @@ def test_an_unreadable_stdin_reads_as_no_terminal(monkeypatch, exc):
     def boom():
         raise exc("closed")
     monkeypatch.setattr(cli.sys.stdin, "isatty", boom, raising=False)
-    assert store.observed_event_source() == "agent"
+    assert _observe.event_source() == "agent"
+
+
+def test_the_library_is_handed_the_observation_and_never_looks(monkeypatch):
+    def boom():
+        raise AssertionError("the library must not read stdin")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", boom, raising=False)
+    assert store.observed_event_source(True) == "cli-tty"
+    assert store.observed_event_source(False) == "agent"
 
 
 # ---- the type: no default, so no omission can produce the human tier -------
@@ -91,13 +100,14 @@ def test_a_spec_without_a_source_is_refused_loudly(tmp_checkpoint_dir):
 
 # ---- the siblings: forget's rows were defaulted human too ------------------
 
-def test_forget_tombstones_observe_the_channel(tmp_checkpoint_dir, monkeypatch):
-    _tty(monkeypatch, False)
+def test_forget_tombstones_carry_the_tier_the_cli_observed(
+        tmp_checkpoint_dir, monkeypatch):
+    _tty(monkeypatch, True)
     target = forget.Target("k" * 64, "o-aaaaaaaaaaaa", ("o-aaaaaaaaaaaa",),
-                           PROJECT)
+                           PROJECT, source=_observe.event_source())
     assert forget.write_tombstones(target).reached
     rows = _rows("tombstone")
-    assert rows and all(r["source"] == "agent" for r in rows)
+    assert rows and all(r["source"] == "cli-tty" for r in rows)
 
 
 def test_lift_has_no_default_source():
@@ -147,3 +157,15 @@ def test_every_append_events_spec_literal_names_its_source():
     missing = [f"{p.relative_to(PACKAGE)}:{n.lineno}" for p, n, keys in specs
                if "source" not in keys]
     assert missing == []
+
+
+def test_a_target_requires_the_observed_source():
+    """No default tier: a caller that skips the observation fails loudly
+    instead of writing a tier nobody observed (the #1296 shape)."""
+    with pytest.raises(TypeError):
+        forget.Target("k" * 64)
+    with pytest.raises(TypeError):
+        forget.Target("k" * 64, "o-aaaaaaaaaaaa", ("o-aaaaaaaaaaaa",), PROJECT)
+    param = inspect.signature(forget.Target).parameters["source"]
+    assert param.default is inspect.Parameter.empty
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY

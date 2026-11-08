@@ -34,12 +34,14 @@ from .. import (
 )
 from ..effects import Effects
 from ..surfaces import PHASES, Writer
+from . import _observe
 from ._ledger import refuse_teammate_pair
 
 
 def _human_cli_channel(verb: str, *, agent_path: bool = False) -> str | None:
     """Return the observed human channel, or refuse an unattended write."""
-    if not sys.stdin.isatty():
+    channel = _observe.channel()
+    if channel is None:
         _cli._note_usage(f"{verb}:noninteractive")
         recovery = (
             "pass --by agent --evidence \"<verbatim transcript quote>\""
@@ -50,7 +52,7 @@ def _human_cli_channel(verb: str, *, agent_path: bool = False) -> str | None:
             f"{recovery}"
         )
         return None
-    return "cli-tty"
+    return channel
 
 
 def _withheld_reason(withheld) -> str:
@@ -341,7 +343,8 @@ def _cmd_forget_resume(args) -> int:
         # the key-row upgrade is a tombstone-phase write: `--only` skips it
         if only is None and held.ids and not held.key_refs:
             wrote = forget.write_tombstones(
-                forget.Target(key, held.ids[0], held.ids, project))
+                forget.Target(key, held.ids[0], held.ids, project,
+                              source=_observe.event_source()))
             if wrote.reached:
                 upgraded += 1
             else:
@@ -356,7 +359,8 @@ def _cmd_forget_resume(args) -> int:
     for key, held in store.project_standing(project).items():
         ids = tuple(held.ids)
         outcome = forget.run(
-            forget.Target(key, ids[0] if ids else "", ids, project),
+            forget.Target(key, ids[0] if ids else "", ids, project,
+                          source=_observe.event_source()),
             phases=phases, approve_rulings=lambda _rulings: "")
         for item in outcome.done:
             fn = item.step.fn
@@ -404,7 +408,7 @@ def _approve_forget(rulings: list) -> str:
     standing constraint. A human at a terminal may say y (deletion stays the
     user's call, #421); a non-interactive caller is pointed at the human.
     Returns "" to proceed, else the refusal."""
-    if not sys.stdin.isatty():
+    if not _observe.attended():
         return ("refused: this would remove ACTIVE ruling(s) "
                 + ", ".join(rulings)
                 + " — a human decision. Run it from a terminal, or ask the "
@@ -561,7 +565,7 @@ def _cmd_forget(args) -> int:
     # person's call, a closed one is not (the deletion promise outranks the
     # outage, H6).
     snap = view.judge(store.project_slug(config.resolve_project_dir(project))).snap
-    human = sys.stdin.isatty()
+    human = _observe.attended()
     exact = [it for _, _, it in candidates if it["id"] == args.target]
     target = exact[0] if len(exact) == 1 else None
     verdict = None              # the Withheld a bound exact id carries
@@ -796,7 +800,8 @@ def _cmd_forget(args) -> int:
         content_hash, str(target["id"]), ids, project,
         str(target.get("text") or ""),
         checkpoint if isinstance(checkpoint, dict) else None, sid,
-        args.reason or ""), approve_rulings=_approve_forget)
+        args.reason or "", source=_observe.event_source()),
+        approve_rulings=_approve_forget)
     if outcome.refusal:
         print(outcome.refusal)
         return 1
@@ -841,7 +846,7 @@ def _cmd_unforget(args) -> int:
                              held=key in view.machine_sets()[0])
     dry_run = getattr(args, "dry_run", False)
     lifted = forget.lift(project, key, reason=args.reason or "",
-                         source="cli-tty", dry_run=dry_run)
+                         source=_observe.event_source(), dry_run=dry_run)
     if dry_run:
         print(f"would lift {len(lifted.refs)} ref(s) on this machine; "
               "nothing was written")

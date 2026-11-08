@@ -27,7 +27,10 @@ import json
 import re
 from datetime import datetime, timezone
 
-from . import channels, clock, config, jsonl, policy, provenance, schema, store
+from . import clock, config, jsonl, policy, provenance, schema, store
+from .authority import channels as known_channels
+from .authority import of_channel, of_row
+from .authority import table as authority_table
 from .surfaces import Writer
 
 
@@ -57,9 +60,12 @@ NOTE_CODES = frozenset({""})
 # #1109 Slice 0: the shared four channels now live in `channels.py`,
 # imported unchanged; `serializer`/`lab-import` are this module's own two
 # importer channels, layered on top exactly as before.
-CHANNEL_AUTHORITY = channels.merged_authority(
-    {"serializer": "agent", "lab-import": "agent"})
-CHANNELS = frozenset(CHANNEL_AUTHORITY)
+#
+# #1301: the table lives in `authority.py`; these two names stay bound to it
+# for importers that pin them, and nothing in the package reads a tier
+# through them.
+CHANNEL_AUTHORITY = authority_table("relations")
+CHANNELS = known_channels("relations")
 _EVENT_RANK = {
     # Same-order ambiguity fails toward refusal: a confirm/reject tie lands
     # on rejected (rank strictly after confirmed — the refuter round proved
@@ -151,7 +157,7 @@ def _stamp(event: str, relation_id: str, channel: str,
         "channel": channel,
         # Derived, never accepted: no way to name one channel and claim
         # another's authority.
-        "authority": CHANNEL_AUTHORITY[channel],
+        "authority": of_channel("relations", channel),
         "author": str(config.author() or "")[:_MAX_AUTHOR],
     }
 
@@ -227,7 +233,7 @@ def propose(*, type_: str, from_endpoint, to_endpoint, matched_by,
 
 def _human_transition(event: str, relation_id: str, channel: str,
                       project_dir, now_ns) -> None:
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("relations", channel) != "human":
         raise RelationError(
             f"{event} requires a human channel; this call arrived "
             f"through {channel!r}")
@@ -310,7 +316,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
     for row in ordered:
         rel_id = row["relation_id"]
         event = row["event"]
-        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+        authority = of_row("relations", row)
         current = out.get(rel_id)
         if event == "proposed":
             proposal = {

@@ -43,6 +43,9 @@ from typing import NamedTuple
 
 from . import (channels, clock, config, jsonl, normalize, policy, redact, schema, store,
                surfaces)
+from .authority import channels as known_channels
+from .authority import of_channel, of_row
+from .authority import table as authority_table
 from .surfaces import Writer
 
 VERSION = 1
@@ -53,8 +56,12 @@ STATES = frozenset({"candidate", "active", "dismissed", "released"})
 # `mechanical` tier (there is no automatic quarantine signal, by design —
 # the whole point is that only a human verdict withholds) and no importer
 # channels (`serializer`/`lab-import` belong to `relations.py` alone).
-CHANNEL_AUTHORITY = dict(channels.BASE_CHANNEL_AUTHORITY)
-CHANNELS = frozenset(CHANNEL_AUTHORITY)
+#
+# #1301: the table lives in `authority.py`; these two names stay bound to it
+# for importers that pin them, and nothing in the package reads a tier
+# through them.
+CHANNEL_AUTHORITY = authority_table("trust")
+CHANNELS = known_channels("trust")
 CHANNEL_LABEL = channels.CHANNEL_LABEL
 
 # The recall-index "kind" vocabulary (`schema.ItemField.kind`), reused rather
@@ -203,7 +210,7 @@ def _stamp(event: str, quarantine_id: str, channel: str,
             f"channel must be one of: {', '.join(sorted(CHANNELS))}")
     # Derived, never accepted: no way to name one channel and claim
     # another's authority.
-    authority = CHANNEL_AUTHORITY[channel]
+    authority = of_channel("trust", channel)
     order, event_id = clock.stamp_identity(now_ns, event_id)
     ts = datetime.fromtimestamp(order / 1_000_000_000, timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
@@ -308,7 +315,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             if (current is not None
                     and current["state"] not in ("dismissed", "released")):
                 continue
-            human = (CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+            human = (of_row("trust", row)
                      == "human")
             state = "active" if (row.get("ratified") is True and human) \
                 else "candidate"
@@ -321,7 +328,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "scope_slug": str(row.get("scope_slug") or ""),
                 "reason": str(row.get("reason") or ""),
                 "evidence": list(row.get("evidence") or []),
-                "proposed_by": row.get("authority"),
+                "proposed_by": of_row("trust", row),
                 "proposed_channel": row.get("channel"),
                 "proposed_author": row.get("author"),
                 "activation": (CHANNEL_LABEL.get(str(row.get("channel") or ""))
@@ -345,7 +352,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             continue  # orphan lifecycle event: visible in raw audit, inert
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
-        authority = CHANNEL_AUTHORITY.get(str(row.get("channel") or ""))
+        authority = of_row("trust", row)
         if authority != "human":
             continue  # no agent channel moves state, whatever the event says
         if event == "confirmed" and current["state"] == "candidate":
@@ -407,7 +414,7 @@ class Proposed(str):
 
 
 def _human_row(row: dict) -> bool:
-    return CHANNEL_AUTHORITY.get(str(row.get("channel") or "")) == "human"
+    return of_row("trust", row) == "human"
 
 
 def _is_activation(row: dict) -> bool:
@@ -469,7 +476,7 @@ def propose(*, text, kind: str, reason, evidence, channel: str,
             f"{tid} already exists for this value and kind "
             f"({existing['state']}); `daimon trust confirm {tid}`, "
             f"`daimon trust dismiss {tid}`, or `daimon trust release {tid}`")
-    human = CHANNEL_AUTHORITY.get(channel) == "human"
+    human = of_channel("trust", channel) == "human"
     row = _stamp("quarantined", tid, channel, now_ns=now_ns)
     row.update({
         "value_key": key,
@@ -495,7 +502,7 @@ def _human_transition(event: str, quarantine_id: str, channel: str,
     """Every state-moving verb funnels through here, so the human-channel
     gate lives in exactly one place — mirrors `relations._human_transition`
     and `refutations.ratify`'s own fold-level check."""
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("trust", channel) != "human":
         raise TrustError(
             f"{event} requires a human channel; this call arrived through "
             f"{channel!r}")
@@ -563,7 +570,7 @@ def republish(*, channel: str, project_dir=None):
     exactly where the first would have. Records this bucket does not hold are
     never touched: a pair published from another project or machine is not
     this bucket's to retract. A human act; returns the `store.Published`."""
-    if CHANNEL_AUTHORITY.get(channel) != "human":
+    if of_channel("trust", channel) != "human":
         raise TrustError(
             f"republish requires a human channel; this call arrived through "
             f"{channel!r}")

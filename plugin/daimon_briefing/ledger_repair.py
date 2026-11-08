@@ -147,7 +147,11 @@ def scrub_forgotten_key(content_key: str, *, item_id: str = "",
     not stop the rest."""
     ids = tuple(sorted(({item_id} | set(sibling_ids)) - {""}))
     outcome = forget.run(
-        forget.Target(content_key, item_id, ids, project_dir, text),
+        forget.Target(content_key, item_id, ids, project_dir, text,
+                      # scope="ledgers" runs no tombstone step, so this repair
+                      # writes no events row and there is no write path to
+                      # observe; the lowest tier is the truthful value.
+                      source="agent"),
         scope="ledgers", approve_rulings=approve)
 
     def removed(*fns) -> tuple:

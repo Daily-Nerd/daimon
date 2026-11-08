@@ -222,7 +222,7 @@ def test_a_step_that_raises_is_isolated_and_names_only_its_type(monkeypatch):
         forget.Planned(second, "x/second", False)))
     monkeypatch.setattr(forget, "_resolve", lambda fn: {
         first.fn: _boom, second.fn: _fine}[fn])
-    outcome = forget.run(forget.Target(KEY))
+    outcome = forget.run(forget.Target(KEY, source="cli-tty"))
     assert [d.step.label for d in outcome.done] == ["first", "second"]
     [bad] = outcome.unreached
     assert bad.name == "first" and bad.detail == "ValueError"
@@ -235,14 +235,14 @@ def test_a_result_no_step_should_return_is_unreached_never_clean(monkeypatch):
                         call="bare")
     monkeypatch.setattr(forget, "STEPS", (forget.Planned(odd, "x/odd", False),))
     monkeypatch.setattr(forget, "_resolve", lambda fn: lambda: object())
-    outcome = forget.run(forget.Target(KEY))
+    outcome = forget.run(forget.Target(KEY, source="cli-tty"))
     assert [u.detail for u in outcome.unreached] == ["TypeError"]
 
 
 def test_a_tombstone_that_is_not_written_stops_the_run(tmp_checkpoint_dir):
     """An unknown project has no ledger: nothing is written and nothing after
     the tombstone runs."""
-    outcome = forget.run(forget.Target(KEY, "i-1", ("i-1",), ""))
+    outcome = forget.run(forget.Target(KEY, "i-1", ("i-1",), "", source="cli-tty"))
     assert outcome.refused is True
     assert [d.step.fn for d in outcome.done] == ["forget.write_tombstones"]
 
@@ -284,7 +284,7 @@ def test_a_step_that_judges_nothing_is_unreached(monkeypatch, stub):
                           call="bare")
     monkeypatch.setattr(forget, "STEPS", (forget.Planned(quiet, "x/q", False),))
     monkeypatch.setattr(forget, "_resolve", lambda fn: stub)
-    outcome = forget.run(forget.Target(KEY))
+    outcome = forget.run(forget.Target(KEY, source="cli-tty"))
     assert [u.detail for u in outcome.unreached] == ["unjudged"]
 
 
@@ -297,7 +297,7 @@ def test_the_ruling_gate_is_inside_run_and_refuses_without_an_answer(
     subject = "internal numbers never appear in public posts"
     ruling_id = _rule(channel="cli-tty", ratified=True)
     key = normalize.content_key(subject)
-    target = forget.Target(key, "i-gone", ("i-gone",), RULING_PROJECT)
+    target = forget.Target(key, "i-gone", ("i-gone",), RULING_PROJECT, source="cli-tty")
     bucket = config.checkpoint_dir() / store.project_slug(RULING_PROJECT)
 
     def snapshot():

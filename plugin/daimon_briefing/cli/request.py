@@ -19,6 +19,7 @@ import sys
 import daimon_briefing.cli as _cli
 
 from .. import clock, config, render, requests, store, view
+from . import _observe
 from ._ledger import _snap
 
 # Verdicts land under their own verb names; the ledger's event vocabulary
@@ -91,9 +92,8 @@ def _request_channel(args, *, human_only: bool = False) -> str:
     #895: a verdict verb refuses `--by agent` by design, so its refusal must
     not name that flag as the remedy; the only path that can succeed there
     is a terminal."""
-    if getattr(args, "by", None) == "agent":
-        return "cli-agent"
-    if not sys.stdin.isatty():
+    channel = _observe.channel(agent=getattr(args, "by", None) == "agent")
+    if channel is None:
         if human_only:
             raise requests.RequestError(
                 "this verb is human-only and there is no interactive "
@@ -102,7 +102,7 @@ def _request_channel(args, *, human_only: bool = False) -> str:
             "this is the human path and there is no interactive terminal; "
             "pass --by agent to record it as an agent, or run it from a "
             "terminal")
-    return "cli-tty"
+    return channel
 
 
 def _state_label(record: dict, project_dir=None) -> str:

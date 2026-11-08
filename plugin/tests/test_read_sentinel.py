@@ -134,11 +134,11 @@ OUTPUT_MODES = {
 # Modules that call `.isatty()`: the human-channel and rich-renderer gates.
 # Two-way against a scan; STDIN_TTY and DAIMON_PLAIN x stdout TTY ride on it.
 TTY_MODULES = {
-    "cli/amend.py", "cli/_ledger.py", "cli/configure_cmd.py",
-    "cli/ledger_cmd.py", "cli/lifecycle.py", "cli/relations_cmd.py",
-    "cli/request.py", "cli/trust.py", "host_detect.py", "render.py",
-    # #1293: the one reading of the terminal for an events row's tier
-    "store.py",
+    # #1301: the one reading of the terminal that decides a tier or a channel.
+    # Every CLI verb asks it; no other module may.
+    "cli/_observe.py",
+    # Not tier decisions: an interactive wizard and the renderer/host gates.
+    "cli/configure_cmd.py", "host_detect.py", "render.py",
 }
 # LLM briefing is an egress path: the text it sends is the kept, post-view
 # text, so the axis is listed (and its accessor pinned) but never driven.
