@@ -16,6 +16,12 @@ Public surface (kept tiny on purpose; other packages are meant to import it):
     origin_url(path)         -> str | None
     branch(path)             -> str | None
     sidecar(path, *args)     -> CompletedProcess   (daimon-owned team clones)
+    run(checkout, *args)     -> CompletedProcess   (SEALED only: a sealed
+                             Checkout, re-gated, subcommand from RUN_FAMILIES)
+    init(path)               -> Checkout | Refused (SEALED only: new repo with
+                             an empty template, then gated like any other)
+    RUN_FAMILIES             the subcommands run() serves, with the options
+                             and flags hostgit puts around each
     Refused                  a project read that produced no answer, with a reason
 
 plus the small helpers the current callers need (`user_name`, `remote_listing`,
@@ -47,6 +53,8 @@ Two postures, chosen once per process by `configure(posture=...)` or the
       worktree-config      the gitdir holds a config.worktree file
       alternates           the gitdir holds an objects/info/alternates file
       config-unreadable    the one-file config listing failed or timed out
+      checkout-changed     (run) the gitdir is no longer the one held
+      init-failed          (init) git init failed
       config-key:<key>     the config holds <key> (section and name lowercased,
                            subsection as written), which is not in
                            CONFIG_ALLOWLIST; the first such key in file order
@@ -102,6 +110,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 log = logging.getLogger(__name__)
 
@@ -671,6 +680,109 @@ def refs_dir(path) -> Path | None:
     # No refs/heads means this is not a readable repo (or not a repo at all):
     # answering MISSING there would fabricate a contradiction for every claim.
     return dot if (dot / "refs" / "heads").is_dir() else None
+
+
+# ---- SEALED: run and init -----------------------------------------------------
+
+
+class RunFamily(NamedTuple):
+    """`options` go before the subcommand (`-c k=v`); `flags` right after it."""
+
+    options: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
+
+
+_DIFFS = RunFamily(options=("-c", "diff.external="),
+                   flags=("--no-ext-diff", "--no-textconv",
+                          "--ignore-submodules=all"))
+
+# The subcommands `run()` serves. The key must be argv[1] after the hardening
+# options, so no alias and no option (`-c`, `-C`, `--exec-path`) can stand in
+# for one. Flags were checked against git 2.50.1: `status` rejects
+# `--no-ext-diff` and `--no-textconv`, so it carries only the submodule flag;
+# `init` always re-uses an empty template. A family a host needs and this table
+# lacks is added here with its own test, never passed through untyped.
+RUN_FAMILIES: dict[str, RunFamily] = {
+    "diff": _DIFFS, "show": _DIFFS, "log": _DIFFS, "diff-tree": _DIFFS,
+    "diff-index": _DIFFS, "diff-files": _DIFFS,
+    "status": RunFamily(flags=("--ignore-submodules=all",)),
+    "init": RunFamily(flags=("--template=",)),
+    "rev-parse": RunFamily(), "ls-files": RunFamily(), "ls-tree": RunFamily(),
+    "cat-file": RunFamily(), "symbolic-ref": RunFamily(),
+    "for-each-ref": RunFamily(), "rev-list": RunFamily(), "add": RunFamily(),
+}
+
+
+def _refused_process(argv, code: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(argv, 125, stdout="",
+                                       stderr=f"refused: {code}")
+
+
+def run(checkout: Checkout, *args, timeout: float = PROJECT_TIMEOUT
+        ) -> subprocess.CompletedProcess:
+    """One sealed git call on a checkout `project()` returned.
+
+    `args[0]` must be a key of RUN_FAMILIES (ValueError otherwise); the table's
+    options and flags are put around it. Env is `_sealed_env`, cwd the checkout
+    root. Because a config can change after `project()` answered, the gate is
+    re-run here (memoized, so cheap): a checkout that is now refused, or whose
+    gitdir is not the one held, comes back as rc 125 and spawns nothing more.
+    A hang is rc 124. Raises RuntimeError outside SEALED posture, TypeError for
+    anything but a sealed `Checkout` (a path, a `Refused`, an ambient one)."""
+    if not isinstance(checkout, Checkout) or checkout.gitdir is None:
+        raise TypeError(
+            "run() takes a Checkout that sealed project() returned, got "
+            f"{type(checkout).__name__}")
+    if not _sealed():
+        raise RuntimeError("run() needs SEALED posture: no sealed spawn "
+                           "without a sealed posture")
+    name = str(args[0]) if args else ""
+    family = RUN_FAMILIES.get(name)
+    if family is None:
+        raise ValueError(f"subcommand not in RUN_FAMILIES: {name!r}")
+    argv = _argv(name, *family.flags, *args[1:], options=family.options)
+    fresh = project(checkout.root)
+    if isinstance(fresh, Refused):
+        return _refused_process(argv, fresh.reason)
+    if fresh.gitdir != checkout.gitdir:
+        _refuse(checkout.root, "checkout-changed")
+        return _refused_process(argv, "checkout-changed")
+    try:
+        return _spawn(argv, _sealed_env(fresh), fresh.root, timeout,
+                      stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            argv, 124, stdout="", stderr=f"git timed out after {timeout}s")
+
+
+def init(path, *, timeout: float = SIDECAR_TIMEOUT) -> Checkout | Refused:
+    """Create a repository in the existing directory `path` (below the
+    ceiling, with no `.git` entry yet) and return `project(path)`, so the new
+    repository passes the same gate as any other. Runs outside any repository
+    (no GIT_DIR) with an empty template directory: no template hook, no
+    template config. An existing `.git` entry is never touched; `project()`
+    judges it. Raises RuntimeError outside SEALED posture."""
+    if not _sealed():
+        raise RuntimeError("init() needs SEALED posture: no sealed spawn "
+                           "without a sealed posture")
+    raw = os.fspath(path)
+    if not os.path.isdir(raw):
+        return _refuse(raw, "not-a-dir")
+    real = os.path.realpath(raw)
+    top = ceiling()
+    if real == top or not _below(real, top):
+        return _refuse(raw, "outside-ceiling")
+    no_entry = _lstat(os.path.join(real, ".git")) is None
+    if no_entry:
+        argv = _argv("init", "-q", *RUN_FAMILIES["init"].flags)
+        try:
+            done = _spawn(argv, _listing_env(), real, timeout,
+                          stdin=subprocess.DEVNULL)
+        except _SPAWN_FAILURES:
+            return _refuse(raw, "init-failed")
+        if done.returncode != 0:
+            return _refuse(raw, "init-failed")
+    return project(raw)
 
 
 # ---- gh -------------------------------------------------------------------
