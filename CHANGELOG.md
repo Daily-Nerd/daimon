@@ -5,6 +5,24 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.0](https://github.com/Daily-Nerd/daimon/compare/v0.64.3...v0.65.0) (2026-11-08)
+
+
+### Features
+
+* **hostgit:** sealed posture pins the git directory and refuses redirected checkouts ([db52045](https://github.com/Daily-Nerd/daimon/commit/db52045dd989527efce906e15b62017696953ea8))
+
+
+### Bug Fixes
+
+* **hostgit:** run every git call with hooks and fsmonitor off and check sidecar ownership ([3f0a6f8](https://github.com/Daily-Nerd/daimon/commit/3f0a6f867fc9ebc48e7ba4bcbb2779eb06483a52))
+* **release:** check a release section against git ancestry ([a14c201](https://github.com/Daily-Nerd/daimon/commit/a14c201f3fb6d5dfa9871378be6bc6299cb50b5d)), closes [#1305](https://github.com/Daily-Nerd/daimon/issues/1305)
+
+
+### Documentation
+
+* **hostgit:** list the git posture variable ([0b53666](https://github.com/Daily-Nerd/daimon/commit/0b536669969619d48893524ccf89099bd05ded21))
+
 ## [0.64.3](https://github.com/Daily-Nerd/daimon/compare/v0.64.2...v0.64.3) (2026-11-08)
 
 
