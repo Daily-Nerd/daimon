@@ -259,3 +259,30 @@ jobs:
             echo "::error::Branch name must match type/description (lowercase, a-z0-9._-)"
             exit 1
           fi
+
+  # #1305: release-please builds the changelog section by walking main newest
+  # commit date first and stopping at the previous release commit. PRs merge
+  # with a merge commit, so a branch written before that release commit and
+  # merged after it is never reached and its line is missing. Nothing fails
+  # when that happens (release 0.64.3 shipped one line short). This job asks
+  # git instead: every feat/fix/perf/revert/docs or breaking commit in
+  # <previous tag>..<base branch> must appear in the section the release PR
+  # carries. It reads ancestry, not dates. If a line is missing, add it by
+  # hand to the section on the release PR branch AND to the release PR body
+  # (release-please builds the GitHub release notes from the PR body); a re-run after
+  # release-please refreshes the PR also clears a stale-PR failure.
+  release-changelog:
+    name: Release changelog lists every commit
+    if: ${{ startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-latest
+    steps:
+      # Full history and tags: the check runs git log <tag>..<base>.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Check the section against git ancestry
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/release_changelog_check.py --head "origin/$BASE_REF"
