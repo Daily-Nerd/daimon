@@ -9,7 +9,13 @@ that writes; the way to make writes reproducible lives here instead.
     with testing.deterministic(testing.StepClock(1_700_000_000 * 10**9)):
         ...  # open_request, rulings, amendments: same order, ts, ids every run
 
-A sandbox gives a host test a throwaway store to render against:
+A host that routes its git through `daimon_briefing.hostgit` keeps that true
+with the census, over its own tree:
+
+    testing.assert_single_git_owner(host_modules, allowlist)
+
+(see `git_spawn_sites` for what counts as a site and for the shape of both
+arguments). A sandbox gives a host test a throwaway store to render against:
 
     with testing.sandbox(tmp_path / "daimon", settings={"DAIMON_PROJECT_DIR": p}):
         testing.seed_checkpoint(p, testing.sample_checkpoint("a decision"))
@@ -27,10 +33,11 @@ child confined to the sandbox store, but its LLM backend is whatever the
 sandbox `settings` name: set a stub backend there before running a real target.
 """
 
+import ast
 import copy
 import os
 import secrets
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -41,7 +48,8 @@ from .clock import Clock, StepClock, use as deterministic
 from .surfaces import Writer
 
 __all__ = ["Clock", "StepClock", "deterministic", "Sandbox", "SandboxRequired",
-           "sandbox", "sample_checkpoint", "seed_checkpoint", "seed_ruling"]
+           "sandbox", "sample_checkpoint", "seed_checkpoint", "seed_ruling",
+           "git_spawn_sites", "assert_single_git_owner"]
 
 # Lives in the checkpoint dir: the seeders compare it against the dir the
 # CURRENT config resolves, so a checkpoint dir re-pointed inside the sandbox
@@ -211,3 +219,131 @@ def seed_ruling(project_dir, *, subject: str, verdict: str,
         subject=subject, verdict=verdict, scope=scope,
         evidence=list(evidence), channel="cli-tty", ratified=True,
         project_dir=project)
+
+
+# ---- the hostgit census ----------------------------------------------------
+#
+# `hostgit` is the one module that forks git or gh, builds a git/gh argv, or
+# reads a `.git` entry on a project directory. These two functions are the test
+# that keeps it that way, exported so a host can run it over its own tree.
+#
+# A SITE is (module, enclosing function, primitive). Primitives: a call of
+# `subprocess.run/Popen/call/check_call/check_output`, `os.system`,
+# `os.exec*`, `os.spawn*`, `shutil.which`; the string literal "git" or "gh"
+# inside a list or tuple (an argv); and ".git" as a path segment
+# (`... / ".git"`, `Path(..., ".git")`, `os.path.join(..., ".git")`,
+# `.joinpath(..., ".git")`). Stdlib only: no pytest import.
+
+_SUBPROCESS_CALLS = frozenset({"run", "Popen", "call", "check_call",
+                               "check_output"})
+_ARGV_WORDS = frozenset({"git", "gh"})
+_PATH_BUILDERS = frozenset({"Path", "PurePath", "PosixPath", "join", "joinpath"})
+
+
+def _dotted(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def _is_dot_git(node):
+    return isinstance(node, ast.Constant) and node.value == ".git"
+
+
+class _SiteVisitor(ast.NodeVisitor):
+    def __init__(self):
+        self.stack: list[str] = []
+        self.sites: dict[tuple[str, str], list[int]] = {}
+
+    def _add(self, node, primitive):
+        key = (".".join(self.stack) or "<module>", primitive)
+        self.sites.setdefault(key, []).append(node.lineno)
+
+    def _scope(self, node):
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _scope
+
+    def visit_Call(self, node):
+        name = _dotted(node.func)
+        if name:
+            base, _, attr = name.rpartition(".")
+            if base == "subprocess" and attr in _SUBPROCESS_CALLS:
+                self._add(node, name)
+            elif base == "os" and (attr == "system" or attr.startswith(
+                    ("exec", "spawn"))):
+                self._add(node, name)
+            elif name == "shutil.which":
+                self._add(node, name)
+            if attr in _PATH_BUILDERS and any(_is_dot_git(a) for a in node.args):
+                self._add(node, "path:.git")
+        self.generic_visit(node)
+
+    def visit_BinOp(self, node):
+        if isinstance(node.op, ast.Div) and _is_dot_git(node.right):
+            self._add(node, "path:.git")
+        self.generic_visit(node)
+
+    def _argv_literals(self, node):
+        for elt in node.elts:
+            if isinstance(elt, ast.Constant) and elt.value in _ARGV_WORDS:
+                self._add(node, f"literal:{elt.value}")
+        self.generic_visit(node)
+
+    visit_List = visit_Tuple = _argv_literals
+
+
+def _named_paths(paths) -> dict[str, Path]:
+    if isinstance(paths, Mapping):
+        return {str(key): Path(value) for key, value in paths.items()}
+    return {Path(p).as_posix(): Path(p) for p in paths}
+
+
+def git_spawn_sites(paths: Mapping[str, "os.PathLike[str] | str"]
+                    | Iterable["os.PathLike[str] | str"]
+                    ) -> dict[tuple[str, str, str], tuple[int, ...]]:
+    """Every git/gh spawn, argv or `.git` path site in the given Python files.
+
+    `paths` is a mapping of module name to file (the name is what the sites and
+    the allowlist use, e.g. "pkg/mod.py"), or an iterable of files (named by
+    their posix path). Returns {(module, function, primitive): line numbers}.
+    A file that cannot be parsed raises SyntaxError: a scan that skips a file
+    proves nothing about it."""
+    found: dict[tuple[str, str, str], tuple[int, ...]] = {}
+    for module, path in sorted(_named_paths(paths).items()):
+        visitor = _SiteVisitor()
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8"),
+                                filename=str(path)))
+        for (function, primitive), lines in visitor.sites.items():
+            found[(module, function, primitive)] = tuple(sorted(lines))
+    return found
+
+
+def assert_single_git_owner(paths, allowlist) -> None:
+    """Fail unless the sites found in `paths` equal the `allowlist` exactly.
+
+    `allowlist` is a mapping (or any collection) of (module, function,
+    primitive) sites that are NOT a host git call, each with its reason. Pass
+    every module of the host except the one that owns git. Raises
+    AssertionError naming the sites found but not listed (route them through
+    the owner, or list them with a reason) and the sites listed but missing
+    (stale entries: delete them)."""
+    found = set(git_spawn_sites(paths))
+    listed = set(allowlist)
+    unlisted, stale = sorted(found - listed), sorted(listed - found)
+    problems = []
+    if unlisted:
+        problems.append(
+            "git/gh spawn, argv or .git path outside the single git owner "
+            f"(route it through the owner, or list it with a reason): {unlisted}")
+    if stale:
+        problems.append(f"stale allowlist entries, delete them: {stale}")
+    if problems:
+        raise AssertionError("\n".join(problems))

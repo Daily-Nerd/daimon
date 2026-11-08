@@ -19,17 +19,16 @@ import graph: `daimon_briefing/_hooks/` and the repo's `hook/`. A source file
 that cannot be parsed fails loudly rather than being skipped.
 """
 
-import ast
 from pathlib import Path
+
+import pytest
+
+from daimon_briefing import testing
 
 from .test_read_layers import LAYER, PLUGIN, modules
 
 HOSTGIT = "daimon_briefing/hostgit.py"
 REPO = PLUGIN.parent
-
-SUBPROCESS_CALLS = {"run", "Popen", "call", "check_call", "check_output"}
-ARGV_WORDS = {"git", "gh"}
-PATH_BUILDERS = {"Path", "PurePath", "PosixPath", "join", "joinpath"}
 
 _CLI = "runs the `daimon` CLI as a child process; git is never named"
 _TEAM = "team dir only, never a project dir"
@@ -114,71 +113,6 @@ ALLOWLIST |= {
 }
 
 
-def _dotted(node):
-    parts = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-        return ".".join(reversed(parts))
-    return None
-
-
-def _is_dot_git(node):
-    return isinstance(node, ast.Constant) and node.value == ".git"
-
-
-class _Visitor(ast.NodeVisitor):
-    def __init__(self):
-        self.stack: list[str] = []
-        self.sites: set[tuple[str, str]] = set()
-
-    def _add(self, primitive):
-        self.sites.add((".".join(self.stack) or "<module>", primitive))
-
-    def _scope(self, node):
-        self.stack.append(node.name)
-        self.generic_visit(node)
-        self.stack.pop()
-
-    visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _scope
-
-    def visit_Call(self, node):
-        name = _dotted(node.func)
-        if name:
-            base, _, attr = name.rpartition(".")
-            if base == "subprocess" and attr in SUBPROCESS_CALLS:
-                self._add(name)
-            elif base == "os" and (attr == "system" or attr.startswith(
-                    ("exec", "spawn"))):
-                self._add(name)
-            elif name == "shutil.which":
-                self._add(name)
-            if attr in PATH_BUILDERS and any(_is_dot_git(a) for a in node.args):
-                self._add("path:.git")
-        self.generic_visit(node)
-
-    def visit_BinOp(self, node):
-        if isinstance(node.op, ast.Div) and _is_dot_git(node.right):
-            self._add("path:.git")
-        self.generic_visit(node)
-
-    def _argv_literals(self, node):
-        for elt in node.elts:
-            if isinstance(elt, ast.Constant) and elt.value in ARGV_WORDS:
-                self._add(f"literal:{elt.value}")
-        self.generic_visit(node)
-
-    visit_List = visit_Tuple = _argv_literals
-
-
-def sites_in(source: str) -> set[tuple[str, str]]:
-    visitor = _Visitor()
-    visitor.visit(ast.parse(source))
-    return visitor.sites
-
-
 def _scanned_files():
     files = {key: path for key, path in modules().items() if key != HOSTGIT}
     for directory, prefix in ((PLUGIN / "daimon_briefing" / "_hooks",
@@ -189,26 +123,10 @@ def _scanned_files():
     return files
 
 
-def found_sites():
-    found = set()
-    for key, path in _scanned_files().items():
-        for fn, primitive in sites_in(path.read_text(encoding="utf-8")):
-            found.add((key, fn, primitive))
-    return found
-
-
 def test_only_hostgit_spawns_git_or_names_a_git_argv_outside_the_allowlist():
-    found, listed = found_sites(), set(ALLOWLIST)
-    assert found - listed == set(), (
-        "new process spawn, git/gh argv or .git path outside hostgit.py "
-        "(route it through daimon_briefing.hostgit, or list it with a "
-        f"reason): {sorted(found - listed)}")
-
-
-def test_every_allowlisted_site_still_exists():
-    found, listed = found_sites(), set(ALLOWLIST)
-    assert listed - found == set(), (
-        f"stale allowlist entries, delete them: {sorted(listed - found)}")
+    # Raises on an unlisted site (route it through daimon_briefing.hostgit, or
+    # list it with a reason) and on a listed site that no longer exists.
+    testing.assert_single_git_owner(_scanned_files(), ALLOWLIST)
 
 
 def test_every_allowlist_entry_has_a_reason():
@@ -227,17 +145,36 @@ def test_hostgit_is_a_write_layer_module():
     assert LAYER[HOSTGIT] == "write"
 
 
+def _sites(tmp_path, source: str) -> set[tuple[str, str]]:
+    path = tmp_path / "m.py"
+    path.write_text(source, encoding="utf-8")
+    found = testing.git_spawn_sites({"m.py": path})
+    assert {module for module, _fn, _prim in found} <= {"m.py"}
+    return {(fn, prim) for _module, fn, prim in found}
+
+
 def test_the_exemption_is_not_vacuous_hostgit_really_spawns_git():
-    source = (PLUGIN / HOSTGIT).read_text(encoding="utf-8")
-    primitives = {p for _, p in sites_in(source)}
+    found = testing.git_spawn_sites({HOSTGIT: PLUGIN / HOSTGIT})
+    primitives = {prim for _module, _fn, prim in found}
     assert {"subprocess.run", "subprocess.Popen", "shutil.which",
             "literal:git", "path:.git"} <= primitives
+
+
+def test_the_testing_module_stays_importable_without_pytest():
+    import subprocess
+    import sys
+    code = ("import sys; sys.modules['pytest'] = None; "
+            "from daimon_briefing import testing; "
+            "assert testing.git_spawn_sites and testing.assert_single_git_owner")
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                          text=True, timeout=60, cwd=PLUGIN)
+    assert done.returncode == 0, done.stderr
 
 
 # ---- negative control: the census must be able to fail --------------------
 
 
-def test_negative_control_a_fake_git_spawn_is_found():
+def test_negative_control_a_fake_git_spawn_is_found(tmp_path):
     fake = (
         "import subprocess, os, shutil\n"
         "from pathlib import Path\n"
@@ -248,7 +185,7 @@ def test_negative_control_a_fake_git_spawn_is_found():
         "    os.execv('/bin/x', ['x'])\n"
         "    return (Path(p) / '.git').exists(), Path(p, '.git'), p / '.git'\n"
     )
-    assert sites_in(fake) == {
+    assert _sites(tmp_path, fake) == {
         ("leak", "subprocess.run"), ("leak", "literal:git"),
         ("leak", "subprocess.Popen"), ("leak", "literal:gh"),
         ("leak", "shutil.which"), ("leak", "os.execv"),
@@ -256,25 +193,38 @@ def test_negative_control_a_fake_git_spawn_is_found():
     }
 
 
-def test_negative_control_an_unlisted_site_fails_the_equality(tmp_path):
-    rogue = tmp_path / "rogue.py"
-    rogue.write_text(
+def test_negative_control_a_stray_git_spawn_fails_through_the_exported_check(
+        tmp_path):
+    (tmp_path / "rogue.py").write_text(
         "import subprocess\n"
         "def f():\n"
         "    return subprocess.run(['git', 'status'])\n", encoding="utf-8")
-    found = {("daimon_briefing/rogue.py", fn, prim)
-             for fn, prim in sites_in(rogue.read_text(encoding="utf-8"))}
-    assert found - set(ALLOWLIST) == found != set()
+    paths = {"daimon_briefing/rogue.py": tmp_path / "rogue.py"}
+    with pytest.raises(AssertionError) as raised:
+        testing.assert_single_git_owner(paths, ALLOWLIST)
+    message = str(raised.value)
+    assert "daimon_briefing/rogue.py" in message and "subprocess.run" in message
+    # the same tree passes once the site is listed, and the listed-but-missing
+    # side of the comparison fails when the site goes away
+    listed = {("daimon_briefing/rogue.py", "f", "subprocess.run"): "x",
+              ("daimon_briefing/rogue.py", "f", "literal:git"): "x"}
+    testing.assert_single_git_owner(paths, listed)
+    (tmp_path / "rogue.py").write_text("def f():\n    return 1\n",
+                                       encoding="utf-8")
+    with pytest.raises(AssertionError, match="stale"):
+        testing.assert_single_git_owner(paths, listed)
 
 
 def test_a_syntax_error_in_a_scanned_file_is_loud(tmp_path):
-    import pytest
+    broken = tmp_path / "broken.py"
+    broken.write_text("def broken(:\n", encoding="utf-8")
     with pytest.raises(SyntaxError):
-        sites_in("def broken(:\n")
+        testing.git_spawn_sites({"broken.py": broken})
 
 
-def test_innocent_code_is_quiet():
-    assert sites_in(
+def test_innocent_code_is_quiet(tmp_path):
+    assert _sites(
+        tmp_path,
         "import json\n"
         "def f(p):\n"
         "    s = 'x.git'\n"

@@ -175,7 +175,8 @@ def test_use_restores_the_previous_clock():
 
 def test_testing_exports_are_pinned():
     assert sorted(testing.__all__) == [
-        "Clock", "Sandbox", "SandboxRequired", "StepClock", "deterministic",
+        "Clock", "Sandbox", "SandboxRequired", "StepClock",
+        "assert_single_git_owner", "deterministic", "git_spawn_sites",
         "sample_checkpoint", "sandbox", "seed_checkpoint", "seed_ruling"]
     assert testing.deterministic is clock.use
     assert testing.StepClock is clock.StepClock
