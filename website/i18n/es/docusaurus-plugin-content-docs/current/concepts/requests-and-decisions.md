@@ -35,8 +35,9 @@ Hay dos tipos de pedido:
   esfuerzo, y espera la decisión de una persona ahí antes de contar como
   aceptado.
 - **`info`**: se puede responder con los propios artefactos del
-  destinatario, y no debe ningún accept. Abrir un pedido `info` normalmente
-  requiere un canal humano también del lado del emisor. Un agente solo
+  destinatario. Responder uno expone lo que sabe el proyecto destinatario,
+  así que primero decide su lado (ver `accept` más abajo). Abrir un pedido
+  `info` normalmente requiere un canal humano también del lado del emisor. Un agente solo
   puede abrir uno bajo una [regla](./rulings.md) activa de tipo `verb=open`
   que su propio proyecto ratificó para ese destinatario, y el registro lo
   dice claramente, así que un pedido abierto por una regla nunca parece uno
@@ -50,13 +51,19 @@ Una vez abierta, un puñado de verbos la hacen avanzar:
   visible.
 - **`accept` / `reject` / `needs-info`** son la decisión del destinatario, y
   son solo para humanos: hace falta una terminal interactiva. La única
-  excepción tallada es un pedido `info` dirigido que sigue abierto, o en
-  needs-info, que un agente puede aceptar directamente; un pedido `work`
-  solo lo puede aceptar un agente cuando una
+  excepción tallada vale igual para los dos tipos: un agente solo puede
+  aceptar un pedido `info` o `work` cuando una
   [regla de permiso de solicitud](./rulings.md#los-permisos-de-solicitud-también-son-una-clase-de-regla)
-  activa nombra a ese emisor puntual, y el registro entonces también nombra
-  la regla. `reject` es definitivo para ese registro: el emisor abre una
-  solicitud nueva en vez de volver a pedir.
+  activa del proyecto destinatario (`verb=accept`, el `kind` del pedido,
+  `by=agent`) nombra a ese emisor puntual, y el registro entonces también
+  nombra la regla. Vale en todo canal de agente. Sin esa regla el pedido
+  sigue abierto en la cola de decisiones del propio destinatario, y el
+  rechazo al agente nombra al emisor y la regla que una persona ratificaría.
+  Un `done` de un agente sobre un pedido que nadie aceptó es un reclamo que
+  espera a una persona, igual que en `work`, y `reply` necesita un registro
+  aceptado. Los accepts escritos antes de esta regla conservan su estado.
+  `reject` es definitivo para ese registro: el emisor abre una solicitud
+  nueva en vez de volver a pedir.
 - **`suppress`** saca un pedido del panel de briefing propio del
   destinatario, solo atención, solo humano; el registro sigue totalmente
   visible en `list` e `inbox`, y cualquier decisión posterior revierte la

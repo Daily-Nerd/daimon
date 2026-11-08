@@ -1704,10 +1704,10 @@ def request_panel(project_dir=None, *, snap=None):
 
     #961 slice 3: sourced from `requests.decision_renderable`, not
     `inbox_renderable` — this panel's own header calls it "Requests waiting
-    on you", and a `kind == "info"` ask owes no accept, so it is not one of
-    those any more. `decision_renderable` does the exclusion before its own
-    cap, so a `work` ask never goes missing behind a newer `info` one; see
-    its docstring for why. `inbox_renderable` itself has no production
+    on you", and `decision_renderable` composes exactly the asks that wait
+    on a person (an `info` ask included: its recipient's agent may answer it
+    only after an accept its own person consented to). `inbox_renderable`
+    itself has no production
     caller left as of review round 1: `request inbox` reads
     `requests.inbox_listing`, and the cards this returns are exactly the
     rows it printed, so the brief stamps `surfaced` for those and no other
@@ -1733,12 +1733,11 @@ def request_panel(project_dir=None, *, snap=None):
     rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
     lines = [_REQUEST_PANEL_HEADER]
     for row in rows:
-        # #961 slice 3: no `[info]` marker here any more — `decision_
-        # renderable` already excludes `kind == "info"`, so every row this
-        # loop sees is `work` by construction; the marker lives on
-        # `owed_panel_lines` and the live-delivery lines below, which still
-        # carry `info` rows and still need it.
+        # An `info` ask waits here too, until a person accepts it or a
+        # ruling of this project lets its agent; the marker says which kind.
         marker = "  [blocking]" if row.get("blocking") else ""
+        if row.get("kind") == "info":
+            marker = "  [info]" + marker
         # #978: read from the folded row only, placed after the truncated
         # ask so the id stays in its own span.
         claim_marker = "  [done claimed]" if row.get("done_pending") else ""

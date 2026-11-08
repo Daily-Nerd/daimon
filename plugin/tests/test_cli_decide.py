@@ -101,11 +101,10 @@ def test_an_amendment_id_gets_the_ledger_header_treatment(project):
     assert spans[1] == "a-0f1e2d3c4b5a"
 
 
-def test_decide_never_lists_an_info_request(project, capsys):
-    """#961 slice 3 supersedes slice 2's own expectation here: an `info` ask
-    owes no accept, so it is excluded from `pending.queue`'s request lane
-    entirely (see test_pending.py) and never reaches this command's output
-    at all — not even with a marker."""
+def test_decide_lists_an_info_request_until_its_recipient_decides(
+        project, capsys):
+    """An `info` ask is answered by its recipient's agent only after an
+    accept the recipient's person consented to, so it waits here."""
     requests.open_request(
         to=store.project_slug(project), ask="an info-only ask",
         why="the recipient can read this from its own artifacts",
@@ -113,8 +112,7 @@ def test_decide_never_lists_an_info_request(project, capsys):
 
     assert cli.main(["decide"]) == 0
     out = capsys.readouterr().out
-    assert "an info-only ask" not in out
-    assert "nothing waiting on you" in out.lower()
+    assert "an info-only ask" in out
 
 
 # ---- #961 slice 3 review item 5 --------------------------------------------

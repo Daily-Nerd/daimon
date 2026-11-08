@@ -229,37 +229,33 @@ def test_a_decided_request_is_not_owed(project):
     assert pending.queue(project_dir=project)["rows"] == []
 
 
-def test_an_info_request_never_enters_the_decide_queue(project):
-    """#961 slice 3 supersedes slice 2's own expectation here: an `info` ask
-    owes no accept and is not a decision a human owes, so it is excluded
-    from the request lane entirely — this queue is the DECISION surface,
-    and an `info` ask reaches the agent through `request inbox` and live
-    delivery instead (both untouched by this test)."""
-    requests.open_request(
-        to=store.project_slug(project), ask="an info-only ask",
-        why="the recipient can read this from its own artifacts",
-        channel="cli-tty", kind="info", project_dir=project)
-
-    assert pending.queue(project_dir=project)["rows"] == []
-
-
-def test_an_info_request_alongside_a_work_request_only_the_work_one_shows(
-        project):
-    """The exclusion is per-row, not all-or-nothing: a `work` ask from the
-    same bucket still owes a decision even when an `info` ask sits beside
-    it."""
-    requests.open_request(
-        to=store.project_slug(project), ask="an info-only ask",
-        why="the recipient can read this from its own artifacts",
-        channel="cli-tty", kind="info", project_dir=project)
+def test_an_info_request_waits_in_the_decide_queue(project):
+    """An `info` ask is a decision a human owes until it is accepted: the
+    recipient's agent answers it only under a covering ruling of its own
+    project, or after a person accepts it."""
     q_id = requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="the recipient can read this from its own artifacts",
+        channel="cli-tty", kind="info", project_dir=project)
+
+    assert [r["id"] for r in pending.queue(project_dir=project)["rows"]] \
+        == [q_id]
+
+
+def test_an_info_request_alongside_a_work_request_both_show(project):
+    """One lane for both kinds."""
+    info_id = requests.open_request(
+        to=store.project_slug(project), ask="an info-only ask",
+        why="the recipient can read this from its own artifacts",
+        channel="cli-tty", kind="info", project_dir=project)
+    work_id = requests.open_request(
         to=store.project_slug(project), ask="bump before the docs change",
         why="the tag is referenced", channel="cli-agent",
         project_dir=project)
 
     rows = pending.queue(project_dir=project)["rows"]
 
-    assert [row["id"] for row in rows] == [q_id]
+    assert {row["id"] for row in rows} == {info_id, work_id}
 
 
 # ---- #961 slice 3 review round 2 item 5 ------------------------------------
@@ -481,11 +477,9 @@ def test_a_decided_foreign_request_is_not_counted(project):
     assert counts.get(b, 0) == 0
 
 
-def test_an_info_foreign_request_is_not_counted(project):
-    """#961 slice 3 review item 2: an `info` ask owes no accept and never
-    enters `queue`'s own request lane — the foreign count must agree, or
-    `daimon decide`'s footer sends a person to a project with nothing
-    actually waiting."""
+def test_an_info_foreign_request_is_counted(project):
+    """The foreign count agrees with `queue`'s own request lane, which now
+    carries `info` asks too."""
     b = store.project_slug("/p/B")
     requests.open_request(
         to=b, ask="an info-only ask", why="the recipient can read this",
@@ -493,7 +487,7 @@ def test_an_info_foreign_request_is_not_counted(project):
 
     counts = pending.foreign_counts(project_dir="/p/C")
 
-    assert counts.get(b, 0) == 0
+    assert counts.get(b, 0) == 1
 
 
 def test_a_ruling_covered_work_ask_accepted_by_the_recipients_agent_is_not_counted(
@@ -533,7 +527,7 @@ def test_foreign_counts_matches_the_foreign_projects_own_queue_length(
         project):
     """The count `daimon decide`'s footer names for project B must equal
     what `pending.queue` actually returns when run FROM B: one `info` ask
-    (excluded) and one `work` ask (counted) land on exactly 1, not 2."""
+    and one `work` ask, both counted, land on exactly 2."""
     b = store.project_slug("/p/B")
     requests.open_request(
         to=b, ask="an info-only ask", why="the recipient can read this",
@@ -545,7 +539,7 @@ def test_foreign_counts_matches_the_foreign_projects_own_queue_length(
     counts = pending.foreign_counts(project_dir="/p/C")
     own_queue_len = len(pending.queue(project_dir="/p/B")["rows"])
 
-    assert counts.get(b, 0) == own_queue_len == 1
+    assert counts.get(b, 0) == own_queue_len == 2
 
 
 def test_a_rejected_foreign_request_is_not_counted(project):

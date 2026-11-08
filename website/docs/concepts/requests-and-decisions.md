@@ -33,8 +33,10 @@ Two kinds of ask exist:
 
 - **`work`**, the default: asks the recipient to change something or spend
   effort, and it waits on a person there before it counts as accepted.
-- **`info`**: answerable from the recipient's own existing artifacts, and it
-  owes no accept at all. Opening an `info` ask normally requires a human
+- **`info`**: answerable from the recipient's own existing artifacts.
+  Answering one exposes what the recipient project knows, so the recipient's
+  side decides first (see `accept` below). Opening an `info` ask normally
+  requires a human
   channel on the sender's side too. An agent may open one only under an
   active `verb=open` [ruling](./rulings.md) its own project ratified for
   that recipient, and the record then says so plainly, so a ruling-opened
@@ -48,10 +50,16 @@ Once opened, a handful of verbs move the record forward:
   rewritten.
 - **`accept` / `reject` / `needs-info`** are the recipient's decision, and
   they are human-only: an interactive terminal is required. The one carved
-  exception is an addressed `info` ask still open, or in needs-info, which
-  an agent may accept directly; a `work` ask can only be accepted by an
-  agent when an active [request-policy ruling](./rulings.md#request-policies-are-a-ruling-class-too)
-  names that exact sender, and the record then names the ruling too.
+  exception covers both kinds alike: an agent can accept an `info` or a
+  `work` ask only when an active [request-policy ruling](./rulings.md#request-policies-are-a-ruling-class-too)
+  of the recipient project (`verb=accept`, the ask's `kind`, `by=agent`)
+  names that exact sender, and the record then names the ruling too. This
+  holds on every agent channel. Without such a ruling the ask stays open in
+  the recipient's own decision queue, and the agent's refusal names the
+  sender and the ruling a person would ratify. An agent's `done` on an ask
+  nobody has accepted is a claim waiting for a person, the same as for
+  `work`, and `reply` needs an accepted record. Accepts written before this
+  rule keep their state.
   Rejection is final for that record: the sender opens a new request rather
   than asking again.
 - **`suppress`** drops a request out of the recipient's own briefing panel,

@@ -5,7 +5,7 @@ always present, never budget-dropped. The CLI-only gate (worldcheck_project)
 is exercised in test_cli_brief_requests.py, not here.
 """
 
-from daimon_briefing import briefing, requests, store
+from daimon_briefing import briefing, refutations, requests, store
 
 SENDER = "/p/verdict-brief-sender"
 RECIPIENT = "/p/verdict-brief-recipient"
@@ -57,6 +57,14 @@ def test_panel_excludes_still_open_requests(tmp_checkpoint_dir):
 def test_panel_marks_an_agent_accept_distinctly(tmp_checkpoint_dir):
     """#961 slice 3: the sender's own verdict panel must not read an
     agent-accepted `info` ask the same as an ordinary human accept."""
+    refutations.assert_ruling(
+        subject="info asks from the sender",
+        verdict="agent may accept info asks from the sender",
+        scope="cross-project requests", evidence=["issue:1"],
+        channel="cli-tty", ratified=True,
+        request_policy={"sender": store.project_slug(SENDER),
+                        "kind": "info", "verb": "accept", "by": "agent"},
+        project_dir=RECIPIENT)
     q_id = requests.open_request(
         to=store.project_slug(RECIPIENT), ask="publish the schema",
         why="the client needs it", channel="cli-tty", kind="info",

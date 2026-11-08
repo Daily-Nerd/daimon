@@ -51,24 +51,23 @@ def test_panel_marks_blocking(tmp_checkpoint_dir):
     assert any("blocking" in ln.lower() for ln in lines)
 
 
-def test_panel_excludes_an_info_ask_entirely(tmp_checkpoint_dir):
-    """#961 slice 3: this is the "waiting on you" DECISION panel, and an
-    `info` ask owes no accept — it is not one of those any more, so it does
-    not render here at all (not even with a marker). It still reaches
-    `request inbox` and live delivery, exercised elsewhere."""
+def test_panel_shows_an_info_ask_with_a_marker(tmp_checkpoint_dir):
+    """An `info` ask waits on this project's person until an accept lands
+    (the recipient's agent needs a covering ruling of its own), so the
+    "waiting on you" panel carries it, marked."""
     sender = _seed_sender()
     _ask(sender, channel="cli-tty", kind="info")
-    assert briefing.request_panel_lines(RECIPIENT) == []
+    lines = briefing.request_panel_lines(RECIPIENT)
+    assert any("[info]" in ln for ln in lines)
 
 
-def test_panel_still_shows_a_work_ask_beside_an_excluded_info_one(
-        tmp_checkpoint_dir):
+def test_panel_shows_a_work_ask_beside_an_info_one(tmp_checkpoint_dir):
     sender = _seed_sender()
     _ask(sender, ask="an info-only ask", channel="cli-tty", kind="info")
     _ask(sender, ask="bump the tag before Friday")
     lines = briefing.request_panel_lines(RECIPIENT)
     assert any("bump the tag before Friday" in ln for ln in lines)
-    assert not any("an info-only ask" in ln for ln in lines)
+    assert any("an info-only ask" in ln for ln in lines)
 
 
 def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
@@ -78,12 +77,11 @@ def test_panel_no_marker_for_a_work_ask(tmp_checkpoint_dir):
     assert not any("[info]" in ln for ln in lines)
 
 
-def test_panel_excludes_info_before_the_cap_so_a_work_ask_is_not_hidden(
+def test_panel_cap_counts_info_and_work_asks_alike(
         tmp_checkpoint_dir, use_clock):
-    """The exclusion must run BEFORE `RENDER_CAP`, not after: RENDER_CAP
-    newer `info` asks must never consume every slot and push a real `work`
-    ask out of the panel. Timestamps controlled directly so ordering is
-    deterministic — the sort is newest-first."""
+    """Newest first, one cap for both kinds: RENDER_CAP newer `info` asks
+    fill the panel and the older `work` ask is COUNTED in the overflow line
+    rather than silently dropped."""
     sender = _seed_sender()
     use_clock(clock.StepClock(1_700_000_001 * 10 ** 9))
     requests.open_request(
@@ -95,8 +93,9 @@ def test_panel_excludes_info_before_the_cap_so_a_work_ask_is_not_hidden(
             why="the client needs it", channel="cli-tty", kind="info",
             project_dir=sender)
     lines = briefing.request_panel_lines(RECIPIENT)
-    assert any("a real work ask" in ln for ln in lines)
-    assert not any("info ask" in ln for ln in lines)
+    assert sum("info ask" in ln for ln in lines) == requests.RENDER_CAP
+    assert not any("a real work ask" in ln for ln in lines)
+    assert any("(+1 more waiting" in ln for ln in lines)
 
 
 def test_panel_marks_a_pending_completion_claim(tmp_checkpoint_dir):

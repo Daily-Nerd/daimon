@@ -323,11 +323,13 @@ first, so say what is being asked rather than how the ask begins.
 unverified claim until the quote is byte-checked. `reject`, `needs-info`,
 `suppress` are human-only: print the command, never run it. `accept` is
 the one exception — an agent may run `request accept <id> --by agent`
-directly for an addressed `info` ask still open or needs-info, and the
-record says so; a `work` ask still needs `accept` from a human channel
-like the rest, unless a ruling grants that sender one. An `info` ask never
-reaches `daimon decide` in the first place — it owes no accept, so there
-is nothing there for a person to see.
+only for an ask (`info` or `work`) that an active ruling of this project
+covers for that sender (`verb=accept`, the ask's kind, `by=agent`), and the
+record says so. Otherwise it needs `accept` from a human channel like the
+rest: an `info` ask exposes this project's knowledge to the sender, so a
+person consents first. Until then the ask waits in `daimon decide`, and the
+refusal names the ruling to ratify. `done --evidence` on an ask nobody
+accepted is only a pending claim.
 `daimon decide` lists every human-only command still waiting on a person,
 across this project's ledgers, so say it lands there and stop repeating
 the ask.

@@ -59,13 +59,10 @@ def test_cli_brief_stamps_surfaced_after_the_print(tmp_checkpoint_dir,
     assert set(record["surfaced"]) == {0}
 
 
-def test_cli_brief_stamps_surfaced_only_for_a_work_ask(
+def test_cli_brief_stamps_surfaced_for_a_work_and_an_info_ask(
         tmp_checkpoint_dir, monkeypatch, capsys):
-    """#961 slice 3 review item 1: the panel (`decision_renderable`) never
-    renders an `info` ask, so the stamping loop must not stamp `surfaced`
-    for one either — that would give `is_stale` a phantom anchor for a
-    card that was never shown, decaying the ask before anyone (human or
-    agent) ever saw it."""
+    """The panel renders both kinds, so the stamping loop stamps `surfaced`
+    for both: the card a person was shown is the staleness anchor."""
     recipient = "/p/cbr-recipient-h"
     sender_slug = _seed_checkpoint("/p/cbr-sender-h", "S-cbr-sender-h")
     _seed_checkpoint(recipient, "S-cbr-recipient-h")
@@ -82,7 +79,7 @@ def test_cli_brief_stamps_surfaced_only_for_a_work_ask(
     work_record = requests.recipient_join(project_dir=recipient)[work_id]
     info_record = requests.recipient_join(project_dir=recipient)[info_id]
     assert requests.needs_surfaced_stamp(work_record) is False
-    assert requests.needs_surfaced_stamp(info_record) is True
+    assert requests.needs_surfaced_stamp(info_record) is False
 
 
 def test_cli_brief_stamp_is_write_once_across_repeated_briefs(

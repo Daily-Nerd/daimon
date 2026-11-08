@@ -535,6 +535,13 @@ def _cmd_request_open(args) -> int:
             print(f"resolved {value!r} -> {to}", file=sys.stderr)
         else:
             names = {r["name"] for r in rows}
+    if not requests.recipient_in_scope(to, store.project_slug(project) or ""):
+        # Tenant-scoped home: the recipient is outside this caller's scope.
+        # Refused before the unknown-bucket suggestions below, which would
+        # otherwise list other tenants' buckets.
+        _cli._note_usage("request:open:refused")
+        print(f"request not recorded: {config.TENANT_SCOPE_REFUSAL}")
+        return 1
     if to not in known and not args.anyway:
         # D4: an unknown slug is not a typo the ledger can absorb silently —
         # such a record renders "never surfaced" forever and never decays,
@@ -780,8 +787,8 @@ def register(sub, fmt) -> None:
     rq_open.add_argument(
         "--kind", choices=sorted(requests.KINDS), default=requests.DEFAULT_KIND,
         help="approval requirement: work (default) waits on a person, info "
-             "is answerable from the recipient's own artifacts and owes no "
-             "accept; only a human channel may open one as info")
+             "is answerable from the recipient's own artifacts; only a "
+             "human channel may open one as info")
     rq_open.add_argument(
         "--blocking", action="store_true",
         help="mark the sender as blocked on it; a flag on the record, never "
@@ -826,15 +833,16 @@ def register(sub, fmt) -> None:
     _BY_AGENT_HELP = {
         "accept": (
             "declare yourself an agent; permitted only for an addressed "
-            "`info` ask still open or needs-info — a `work` ask still "
-            "needs `daimon request accept` from a human channel"),
+            "ask (`info` or `work`) an active ruling of this project covers "
+            "for its sender — otherwise it needs `daimon request accept` "
+            "from a human channel"),
     }
     _BY_AGENT_HELP_DEFAULT = (
         "declare yourself an agent; the call then refuses, because this "
         "verb requires a human channel")
     for verb, blurb in (
             ("accept", "accept an addressed request; a human decision, or "
-                       "an agent may accept an addressed `info` ask"),
+                       "an agent under a ruling that covers its sender"),
             ("reject", "reject it with a reason; rejection is final for that "
                        "record, and the sender can open a new one citing it"),
             ("needs-info", "ask the sender for more before deciding"),

@@ -125,6 +125,14 @@ _CLI_CHANNELS = frozenset({"cli-agent", "cli-tty"})
 # human verdict or by a completion claim, and re-opening it from the sender
 # side would be exactly the assertion the wedge principle forbids.
 _SENDER_MOVABLE = frozenset({"open", "needs-info"})
+# Receiver consent for `info` asks starts at this `order` (ns since the epoch,
+# 2026-11-08T02:00:00Z). An agent verdict (`accepted`, `done`) on an `info`
+# ask whose row is ordered BEFORE it keeps the state the old rule gave it, so
+# refolding a ledger written earlier never changes a past verdict. From this
+# order on the same rule as `work` applies: an agent's `accepted` lands only
+# under a `verb=accept` ruling of the receiving project, and an agent's `done`
+# on an ask nobody has accepted stays a pending claim.
+RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
 # #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
 # `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
 # reopen an accepted record, which is exactly the assertion the wedge
@@ -632,9 +640,11 @@ def _founder_by_id(ordered: list[dict],
     return founders
 
 
-def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
+def _covered_by_policy(row: dict, origin_slugs, policies, *,
+                       kind: str) -> bool:
     """#961 slice 4, widened by #1083: whether `row` (an `accepted` event
-    landing on a `work` ask) is authorized by one of the `(sender, kind,
+    landing on an ask of this `kind`, `info` or `work`) is authorized by one
+    of the `(sender, kind,
     verb, by, ruling_id, sha256, active_from, active_until)` INTERVALS in
     `policies` — the set `refutations.request_policy_history` resolved for
     the RECIPIENT this record is addressed to, injected by the caller (one
@@ -685,14 +695,26 @@ def _covered_by_policy(row: dict, origin_slugs, policies) -> bool:
         # #961 slice 5: `_policy_tuple` widened by one field (`to`, index 1,
         # `""` on every `verb=accept` grant) — unpacked and ignored here,
         # the field `_covered_by_open_policy` reads instead.
-        (sender, _to, kind, verb, by, entry_ruling, entry_sha, since,
+        (sender, _to, entry_kind, verb, by, entry_ruling, entry_sha, since,
          until) = entry
-        if (sender in origin_slugs and kind == "work" and verb == "accept"
+        if (sender in origin_slugs and entry_kind == kind
+                and verb == "accept"
                 and by == "agent" and entry_ruling == ruling_id
                 and entry_sha == sha and row_order >= since
                 and (until is None or row_order < until)):
             return True
     return False
+
+
+def _before_receiver_consent(row: dict) -> bool:
+    """Whether `row` was written before receiver consent for `info` asks
+    began (`RECEIVER_CONSENT_FROM_NS`). A row with no readable positive
+    `order` is NOT before it: an unreadable order never buys the old rule."""
+    try:
+        order = int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return False
+    return 0 < order < RECEIVER_CONSENT_FROM_NS
 
 
 def _epoch_of(row: dict, fallback: int) -> int:
@@ -937,56 +959,36 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # row appended off-path or edited on disk claiming an agent
             # channel is fully inert, verdict or suppression alike.
             #
-            # #961 slice 3: ONE exception, carved as narrowly as the set
-            # allows rather than by removing `accepted` from `_HUMAN_ONLY`.
-            # An `accepted` row from a non-human channel lands when the
-            # record's own FOLDED `kind` is `info` and it is still `open`
-            # or `needs-info` — the contract's own words ("permitted only
-            # for info, or for work a ruling covers"; the ruling hook is
-            # slice 4, so only the `info` half applies here). Gated on
+            # Receiver consent (one rule for both kinds). An `accepted` row
+            # from an agent channel lands only when the receiving project
+            # consented to exposing what it knows: an active `verb=accept`
+            # ruling of THIS kind, naming the record's sender, whose id and
+            # hash the INJECTED `policies` set independently confirms for the
+            # row's own `order` (`_covered_by_policy`'s own docstring: the
+            # stamp the row carries about itself is never the gate). `info`
+            # and `work` differ in nothing here: answering an `info` ask
+            # exposes the receiver's knowledge to the sender, so it needs the
+            # same human-ratified cover a `work` accept does. Gated on
             # `current["kind"]`, the value THIS fold already decided for the
             # founder row (`_kind_of`'s own authority check), never on the
-            # accepted ROW's own fields — an `accepted` event carries no
-            # `kind` at all, so there is nothing on the row itself to gate
-            # on. Gating on the record is also what makes a `to_human` ask
-            # inert here for free, with no second condition: `_kind_of`
-            # already forces `to_human` to `work`, so `current["kind"]` can
-            # never read `info` for one. Every other event, and `accepted`
-            # on a `work` record, are unaffected — this narrows one cell of
-            # the table, not the table.
+            # accepted ROW's own fields: an `accepted` event carries no
+            # `kind`. A `to_human` ask is already forced to `work` by
+            # `_kind_of` and is audience-for-a-person, so no ruling reaches
+            # it. `authority == "agent"` explicitly, never `!= "human"`:
+            # that looser test also passes for `mechanical` and for a
+            # channel string `authority.of_row` does not recognize.
             #
-            # #961 slice 3 review item 6: gated on `authority == "agent"`
-            # explicitly, never on `authority != "human"` alone — that
-            # looser test also passes for `mechanical` (a real, valid
-            # channel this contract never named) and for any channel
-            # string `authority.of_row` does not recognize at all (which
-            # resolves to `authority is None`, also `!= "human"`). Either
-            # would otherwise land an accept and then mislabel it
-            # `accepted_by: "agent"` in the generic verdict landing below,
-            # which derives `accepted_by` from the same `authority` this
-            # check reads — a channel this contract never named must never
-            # be able to claim the one it did.
-            covered_info = (event == "accepted" and authority == "agent"
-                           and current["kind"] == "info"
-                           and current["state"] in _SENDER_MOVABLE)
-            # #961 slice 4: the other half of the contract's own sentence —
-            # "or for work a ruling covers". A SECOND, narrower exception,
-            # not a loosening of the one above: `current["kind"] == "work"`
-            # (never "info", already covered), `not current["to_human"]`
-            # (an audience marker `_kind_of` already forces to `work`, so
-            # without this an explicit to_human ask carrying `kind: work`
-            # would otherwise slip through on the kind check alone — see the
-            # design's own worked example), still undecided, and the row's
-            # own ruling stamp independently confirmed by the INJECTED
-            # `policies` set (`_covered_by_policy`'s own docstring: the
-            # stamp is never the gate on its own). `current["from_slug"]`,
-            # never a second lookup into `founders` — #961 slice 4 review
-            # round 2 (C1): one founder resolution, read off the record the
-            # SAME pre-pass already wrote it onto, so this cannot drift
-            # from what `recipient_join` renders as the record's origin.
-            covered_work = False
+            # The one carve-out is by ORDER, not by kind: an agent `accepted`
+            # row on an `info` ask ordered before `RECEIVER_CONSENT_FROM_NS`
+            # was written under the old rule and keeps landing, so refolding
+            # an existing ledger never rewrites a past verdict.
+            covered = False
+            covered_before_rule = (
+                event == "accepted" and authority == "agent"
+                and current["kind"] == "info"
+                and current["state"] in _SENDER_MOVABLE
+                and _before_receiver_consent(row))
             if (event == "accepted" and authority == "agent"
-                    and current["kind"] == "work"
                     and not current["to_human"]
                     and current["state"] in _SENDER_MOVABLE):
                 # #1083: the sender identity a policy must name. A genuinely
@@ -1032,9 +1034,9 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 row_policies = (
                     policies_by_to.get(current["to"], frozenset())
                     if policies_by_to is not None else policies)
-                covered_work = _covered_by_policy(
-                    row, origin_slugs, row_policies)
-            if not (covered_info or covered_work):
+                covered = _covered_by_policy(
+                    row, origin_slugs, row_policies, kind=current["kind"])
+            if not (covered or covered_before_rule):
                 continue
         if event in _STATE_BY_EVENT and current["state"] == "rejected":
             # D6: rejection is terminal for this id. Re-proposal is a NEW
@@ -1213,18 +1215,25 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # is evidence. A row without it never lands.
             continue
         if (event == "done" and authority != "human"
-                and current["kind"] == "work"
-                and current["state"] in _SENDER_MOVABLE):
-            # #978: the #961 amendment's own sentence — an agent answering a
-            # `work` ask stays owed until a person accepts, rejects, or
-            # ratifies a reclassification — was never wired into this fold.
-            # Without this branch the row below falls straight through to
-            # the generic `_STATE_BY_EVENT` landing and moves `open` (or
-            # `needs-info`) directly to `done`, the same one-row escape #972
-            # closed for `kind` itself. `info` records and an already-
-            # `accepted` `work` record are UNCHANGED (both conditions above
-            # exclude them): this branch only narrows what a bare `done`
-            # event does for a `work` ask nobody has decided yet.
+                and current["state"] in _SENDER_MOVABLE
+                and (current["kind"] == "work"
+                     or not _before_receiver_consent(row))):
+            # #978: the #961 amendment's own sentence — an agent answering an
+            # ask stays owed until a person accepts, rejects, or ratifies a
+            # reclassification — was never wired into this fold. Without this
+            # branch the row below falls straight through to the generic
+            # `_STATE_BY_EVENT` landing and moves `open` (or `needs-info`)
+            # directly to `done`, the same one-row escape #972 closed for
+            # `kind` itself. An already-`accepted` record is UNCHANGED (its
+            # state is outside `_SENDER_MOVABLE`): this branch only narrows
+            # what a bare `done` event does for an ask nobody has decided yet.
+            #
+            # Both kinds: answering an `info` ask exposes the receiver's
+            # knowledge, which an agent may only do after an accept that
+            # receiver consent covers, so a `done` that skips the accept is a
+            # claim until a person decides. An `info` row ordered before
+            # `RECEIVER_CONSENT_FROM_NS` was written under the old rule and
+            # keeps landing, so a refold never rewrites a past verdict.
             #
             # `history_count`/`updated_at` still bump — a claim is real
             # activity on the record — but `state` does not move, and
@@ -1301,15 +1310,15 @@ def fold(rows: list[dict], policies=frozenset(), *,
                     else "agent"
                 # #961 slice 4: which ruling authorized THIS accept. Reached
                 # here only when the row already passed the fold's own
-                # coverage gate above, so an agent accept on a `work` record
-                # at this point can only be `covered_work` — there is no
-                # other way for the pair (authority == "agent", kind ==
-                # "work") to have survived to here. None for a human accept
-                # and for the slice-3 `info` exception, neither of which
-                # carries a ruling.
+                # coverage gate above, so an agent accept at this point is
+                # either covered by a ruling or an `info` accept ordered
+                # before receiver consent began (which carries none and
+                # reads None). None for a human accept too.
                 current["accepted_under"] = (
                     str(row.get("under_ruling") or "") or None
-                    if authority == "agent" and current["kind"] == "work"
+                    if authority == "agent" and (
+                        current["kind"] == "work"
+                        or not _before_receiver_consent(row))
                     else None)
             if "note" in row:
                 current["note"] = str(row.get("note") or "")
@@ -1503,6 +1512,18 @@ def renderable(project_dir=None) -> dict:
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
+def recipient_in_scope(to: str, own_slug: str) -> bool:
+    """Whether a caller whose bucket is `own_slug` may address an ask to `to`.
+    Always, off tenant scope. On a tenant-scoped home (DAIMON_TENANT_SCOPED)
+    only its own bucket and the host-declared DAIMON_EXTRA_READ_SLUGS: the
+    same scope every read surface holds, so a tenant cannot address another
+    tenant's project, whose agent would then answer from that tenant's
+    knowledge."""
+    if not config.tenant_scoped():
+        return True
+    return to == own_slug or to in config.extra_read_slugs()
+
+
 def open_request(*, to: str, ask: str, why: str, channel: str,
                  blocking: bool = False, to_human: bool = False,
                  evidence: str = "", supersedes: str = "",
@@ -1574,6 +1595,8 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     if not slug:
         raise RequestError("project unknown; requests are recorded in the "
                            "sender's own bucket")
+    if not recipient_in_scope(to, slug):
+        raise RequestError(config.TENANT_SCOPE_REFUSAL)
     ask = _scrub("ask", ask)
     why = _scrub("why", why)
     evidence = _scrub("evidence", evidence, required=False)
@@ -1777,10 +1800,10 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
                        author=author)
 
 
-def _resolve_covering_ruling(sender: str, project_dir):
+def _resolve_covering_ruling(sender: str, kind: str, project_dir):
     """#961 slice 4: the `(ruling_id, policy_sha256)` of an active ruling
-    that lets THIS project's agent accept a `work` ask from `sender`, or
-    None. Reads this project's OWN rulings — the write boundary and the
+    that lets THIS project's agent accept an ask of `kind` (`info` or `work`)
+    from `sender`, or None. Reads this project's OWN rulings — the write boundary and the
     fold gate are asymmetric only in WHEN each runs, not in what each
     checks: both resolve through `refutations.active_request_policies`, so a
     ruling that stops covering (revised narrower, retired) refuses a NEW
@@ -1791,9 +1814,9 @@ def _resolve_covering_ruling(sender: str, project_dir):
     for entry in refutations.active_request_policies(project_dir=project_dir):
         # #961 slice 5: widened by one field (`to`, index 1) — unpacked and
         # ignored here.
-        entry_sender, _to, kind, verb, by, ruling_id, sha = entry
-        if (entry_sender == sender and kind == "work" and verb == "accept"
-                and by == "agent"):
+        entry_sender, _to, entry_kind, verb, by, ruling_id, sha = entry
+        if (entry_sender == sender and entry_kind == kind
+                and verb == "accept" and by == "agent"):
             return ruling_id, sha
     return None
 
@@ -1802,12 +1825,14 @@ def accept(request_id: str, *, channel: str, note: str = "",
            author: str | None = None, project_dir=None) -> None:
     """Land the addressed request as accepted.
 
-    Human-only for a `work` ask nothing covers, as every verdict verb has
-    always been. An agent channel may record THIS one verdict for two cases
-    the #961 contract's own words carve out: an addressed `info` ask still
-    `open` or `needs-info` (slice 3), or a `work` ask (not `to_human`, which
-    is always audience-for-a-person and never agent-acceptable regardless of
-    any ruling) an active ruling covers for the ask's own sender (slice 4).
+    Human-only for an ask nothing covers, as every verdict verb has always
+    been. An agent channel may record THIS one verdict for an addressed ask
+    (`info` or `work`, not `to_human`, which is always audience-for-a-person
+    and never agent-acceptable regardless of any ruling) still `open` or
+    `needs-info` when an active `verb=accept` ruling of THIS project covers
+    the ask's own sender for the ask's own kind. For `info` that ruling is the
+    receiving project's consent to expose what it knows; the same predicate
+    (`_covered_by_policy`) decides it here and in the fold.
     Checked HERE, at the write boundary, so a caller gets a clear refusal
     naming the human command instead of a silently inert row; the fold
     (`_HUMAN_ONLY`'s own exception) re-checks the identical rule
@@ -1872,13 +1897,17 @@ def accept(request_id: str, *, channel: str, note: str = "",
         stamp = {}
         synthetic = None
         skew = False
-        if current is not None and current.get("state") in _SENDER_MOVABLE:
-            if current.get("kind") == "info":
-                covered = True  # slice 3's own case: no ruling involved
-            elif (current.get("kind") == "work"
-                  and not current.get("to_human")):
+        origin_slug = ""
+        kind = str((current or {}).get("kind") or "")
+        if (current is not None and current.get("state") in _SENDER_MOVABLE
+                and not current.get("to_human")):
+            # One rule for both kinds: the receiving project's own ruling
+            # must cover this sender (`info` ask: answering it exposes this
+            # project's knowledge, so the project's person consents first).
+            if kind in KINDS:
                 origin_slug = str(current.get("from_slug") or "")
-                covering = _resolve_covering_ruling(origin_slug, project_dir)
+                covering = _resolve_covering_ruling(
+                    origin_slug, kind, project_dir)
                 if covering is not None:
                     ruling_id, sha = covering
                     # The dry run: the EXACT row about to land, checked
@@ -1903,22 +1932,40 @@ def accept(request_id: str, *, channel: str, note: str = "",
                     # origin_slug` would silently do SUBSTRING matching on a
                     # bare string instead of set membership.
                     if _covered_by_policy(
-                            synthetic, frozenset({origin_slug}), history):
+                            synthetic, frozenset({origin_slug}), history,
+                            kind=kind):
                         covered = True
                         stamp = {"under_ruling": ruling_id,
                                 "policy_sha256": sha}
                     else:
                         skew = True
         if not covered:
-            detail = (
-                " — an active ruling grants this sender coverage right "
-                "now, but the write would land outside the interval that "
-                "ruling has been active for (commonly a clock skew between "
-                "this machine and the one that ratified it); retry once "
-                "the clocks agree, or"
-                if skew else "; an agent may accept only an addressed "
-                "`info` ask that is still open or needs-info, or a `work` "
-                "ask an active ruling covers for this sender, so")
+            if skew:
+                detail = (
+                    " — an active ruling grants this sender coverage right "
+                    "now, but the write would land outside the interval "
+                    "that ruling has been active for (commonly a clock skew "
+                    "between this machine and the one that ratified it); "
+                    "retry once the clocks agree, or")
+            elif kind == "info" and origin_slug:
+                detail = (
+                    "; an agent accepting an info ask exposes this "
+                    "project's knowledge to "
+                    f"{(current or {}).get('from_label') or origin_slug}, and only "
+                    "this project's human may consent to that: have a human "
+                    "ratify a `verb=accept` `kind=info` `by=agent` ruling "
+                    f"naming sender {origin_slug}, or")
+            elif origin_slug:
+                detail = (
+                    "; an agent may accept an ask only when an active "
+                    "ruling of this project covers it: have a human ratify "
+                    f"a `verb=accept` `kind={kind}` `by=agent` ruling "
+                    f"naming sender {origin_slug}, or")
+            else:
+                detail = (
+                    "; an agent may accept only an addressed ask that is "
+                    "still open or needs-info and that an active ruling of "
+                    "this project covers for its sender, so")
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
                 f"arrived through {channel!r}{detail} this ask needs "
@@ -2554,26 +2601,17 @@ def decision_renderable(project_dir=None) -> dict:
     `inbox_renderable` narrowed to asks that actually owe a person a
     decision. `{"rows": [...], "overflow": N}`.
 
-    `kind == "info"` owes no accept (the contract's own words) and is
-    excluded HERE, before the sort and the RENDER_CAP slice, not by
-    widening or narrowing `_deserves_attention` — that predicate is shared
-    with live delivery (`deliverable`), where an `info` ask must still
-    reach a session mid-turn, and with `inbox_renderable` itself, which
-    still feeds the CLI's `surfaced`-stamping loop for every kind (an
-    `info` ask still needs its own staleness anchor). Splitting into a
-    second composer, rather than a flag on `inbox_renderable`, keeps both
-    callers' existing contracts untouched.
+    Every ask that waits on this project's person, `info` included: an
+    `info` ask is answered by the recipient's agent only after an accept its
+    own person consented to (an active `verb=accept` ruling covering the
+    sender), so until one lands it is a decision a human owes. Composed
+    from `_deserves_attention`, the predicate it shares with live delivery
+    (`deliverable`).
 
-    Filtering before the cap, not after, matters: `inbox_renderable`'s own
-    cap already ran on the mixed set, so post-cap filtering here could let
-    RENDER_CAP `info` rows newer than a `work` row consume every slot and
-    silently hide it — exactly the failure `renderable`'s own docstring
-    calls the one this feature cannot have. Filtering first means the cap
-    only ever counts rows that could actually appear."""
+    The cap counts only rows that could actually appear."""
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
-            if _deserves_attention(r, project_dir=project_dir)
-            and r.get("kind") != "info"]
+            if _deserves_attention(r, project_dir=project_dir)]
     rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
               reverse=True)
     return _with_notes({"rows": rows[:RENDER_CAP],
@@ -2644,34 +2682,16 @@ def is_stale(record: dict, project_dir=None) -> bool:
     is waiting on now is a person's accept or reject, not the recipient
     going quiet.
 
-    #961 slice 3 review item 1: a `kind == "info"` record anchors on its
-    EARLIEST `delivered` stamp of the CURRENT revision instead of
-    `surfaced`, never both. `decision_renderable` (the human decision
-    panel) never renders an `info` ask at all — it owes no accept, so it
-    is not a decision — which means the brief's own `surfaced`-stamping
-    loop no longer stamps one for it either (it now iterates
-    `decision_renderable`'s own rows). Anchoring an `info` record on
-    `surfaced` would therefore measure staleness against a card that was
-    never shown and never will be, decaying the ask before anyone — human
-    or agent — ever saw it. Attention for an `info` ask is the AGENT's,
-    measured by DELIVERY into a live session (live delivery already writes
-    one `delivered` stamp per session, unaffected by this slice); attention
-    for a `work` ask stays the PERSON's, measured by the panel. Never
-    delivered -> no anchor -> never decays, the same posture `surfaced`
-    already has for a `work` ask."""
+    Both kinds anchor on `surfaced`: an `info` ask waits in the same decision
+    panel a `work` ask does (receiver consent), so the card a person was shown
+    is the attention the clock measures."""
     if record.get("state") not in _SENDER_MOVABLE:
         return False
     if record.get("done_pending"):
         return False
-    if record.get("kind") == "info":
-        epoch = (record.get("delivered") or {}).get(record.get("revision")) or {}
-        if not epoch:
-            return False
-        anchor = min(epoch.values())
-    else:
-        anchor = (record.get("surfaced") or {}).get(record.get("revision"))
-        if not anchor:
-            return False
+    anchor = (record.get("surfaced") or {}).get(record.get("revision"))
+    if not anchor:
+        return False
     return store.sessions_since_count(anchor, project_dir) >= STALE_AFTER_SESSIONS
 
 

@@ -203,15 +203,10 @@ def _request_rows(project_dir, slug, joined=None, *, masked=True,
     for rid, record in records.items():
         if record.get("state") not in requests._SENDER_MOVABLE:
             continue
-        # #961 slice 3: an `info` ask owes no accept and is not a decision a
-        # human owes — the contract's own words. Excluded from THIS lane
-        # only, before the render below ever builds a row for it: `request
-        # inbox`, live delivery, and `status_counts` still carry it (this
-        # queue is the one surface that narrows). Not counted toward
-        # `suppressed` — that count is a human's own "not now", a different
-        # fact than a `kind` this record was born with.
-        if record.get("kind") == "info":
-            continue
+        # An `info` ask waits here like a `work` one: the receiving project's
+        # agent may answer it only after an accept its own person consented
+        # to (a covering `verb=accept` ruling), so until one lands it is a
+        # decision a human owes.
         if record.get("suppressed"):
             # `suppress` is human-only, so a suppressed ask is already the
             # owner's own "not now". Counted, never listed.
@@ -731,14 +726,6 @@ def _foreign_request_counts(slug: str | None,
             if not to or to == slug:
                 continue  # this project's own inbox is `queue`'s, not ours
             if record.get("state") not in requests._SENDER_MOVABLE:
-                continue
-            # #961 slice 3 review item 2: the same exclusion `queue`'s own
-            # request lane applies (`_request_rows` above) — an `info` ask
-            # owes no accept, so counting it here would make this count
-            # disagree with what `pending.queue` actually returns when run
-            # FROM that project, sending a person to a bucket with nothing
-            # waiting.
-            if record.get("kind") == "info":
                 continue
             if record.get("suppressed"):
                 continue
