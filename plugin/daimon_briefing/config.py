@@ -945,7 +945,8 @@ def resolve_project_dir(raw: str | None, *,
 class ProjectWriteRefused(Exception):
     """Raised by `resolve_project_dir_for_write` (#1092) when an explicit
     write target silently escaped to `Path.home()` because home is itself a
-    git working tree."""
+    git working tree, and (SEALED git posture) when hostgit refused the
+    target's checkout."""
 
 
 def resolve_read_project(arg: str | None = None) -> str:
@@ -1011,6 +1012,15 @@ def resolve_project_dir_for_write(raw: str | None, *,
         requested_abs = str(Path(text).expanduser().resolve())
     except (OSError, RuntimeError, ValueError):
         return resolved
+    if hostgit.posture() is hostgit.Posture.SEALED:
+        # No bucket is derived from a checkout hostgit refused: the answer
+        # `resolve_project_dir` gave for it is just the directory itself, and
+        # a write must not rest on a checkout nobody validated.
+        got = hostgit.project(requested_abs)
+        if isinstance(got, hostgit.Refused):
+            raise ProjectWriteRefused(
+                f"{raw}: git checkout refused ({got.reason}); "
+                "refusing to write a bucket derived from it")
     if resolved == requested_abs:
         return resolved
     try:

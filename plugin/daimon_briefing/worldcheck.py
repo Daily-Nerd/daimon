@@ -92,12 +92,13 @@ MAX_PROBES = 5
 # splits history. `unknown` is a sentinel for a skip no branch explained: a
 # test pins it at zero across every skip fixture.
 SKIP_REASONS = frozenset({
-    "cap", "deadline", "no-gh", "no-remote", "probe-error", "exit-nonzero",
-    "unparseable", "unanswerable", "unknown"})
+    "cap", "deadline", "git-refused", "no-gh", "no-remote", "probe-error",
+    "exit-nonzero", "unparseable", "unanswerable", "unknown"})
 
 # `_remote_state` answers that stop the PR/issue class, and the reason each
 # one is reported under. "github" is absent: it lets the probes run.
-_REMOTE_SKIP_REASON = {"no-remote": "no-remote", "git-failed": "probe-error"}
+_REMOTE_SKIP_REASON = {"no-remote": "no-remote", "git-failed": "probe-error",
+                       "git-refused": "git-refused"}
 
 # #833: per-item aggregate rollup precedence — an item is what its strongest
 # outcome says it is, and "skipped" never decides when another outcome
@@ -502,10 +503,15 @@ def _gh_path():
 
 
 def _remote_state(project) -> str:
-    """What `git remote -v` says about `project`, three ways (#1181):
+    """What `git remote -v` says about `project`, four ways (#1181):
     "github" (a GitHub remote), "no-remote" (git ANSWERED and listed none),
     "git-failed" (git is missing, slow past 2 s, or exited non-zero, which
-    says nothing about remotes). The skip reason depends on the difference."""
+    says nothing about remotes), "git-refused" (the SEALED git posture
+    refused the checkout, so no remote was read). The skip reason depends on
+    the difference."""
+    if (hostgit.posture() is hostgit.Posture.SEALED
+            and isinstance(hostgit.project(project), hostgit.Refused)):
+        return "git-refused"
     listing = hostgit.remote_listing(project)
     if listing is None:
         return "git-failed"
@@ -669,12 +675,23 @@ def _gh_probes(plan: dict, project, why: dict) -> dict:
     if reason is not None:
         why.update({key: reason for key in wanted})
         return {}
+    repo_flags: list[str] = []
+    if hostgit.posture() is hostgit.Posture.SEALED:
+        # gh does no repository discovery here: the repo comes from the
+        # validated origin and is named on the command line.
+        repo = hostgit.github_repo(project)
+        if repo is None:
+            why.update({key: "no-remote" for key in wanted})
+            return {}
+        repo_flags = ["--repo", repo]
     probes = {}
     for key, claim in wanted.items():
         if claim.kind == "pr":
-            argv = [gh, "pr", "view", claim.num, "--json", "state,mergedAt"]
+            argv = [gh, "pr", "view", claim.num, "--json", "state,mergedAt",
+                    *repo_flags]
         else:
-            argv = [gh, "issue", "view", claim.num, "--json", "state"]
+            argv = [gh, "issue", "view", claim.num, "--json", "state",
+                    *repo_flags]
         probes[key] = Probe(argv=argv, stdin=None, parse=_parse_gh_state,
                             via_gh=True)
     return probes

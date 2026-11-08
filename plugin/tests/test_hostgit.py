@@ -79,20 +79,11 @@ def test_configure_beats_env_and_none_returns_to_env(monkeypatch):
     assert hostgit.posture() is hostgit.Posture.SEALED
 
 
-def test_sealed_is_not_built_yet_and_says_so(rec, monkeypatch):
-    with pytest.raises(NotImplementedError, match="SEALED"):
-        hostgit.configure(posture="sealed")
-    # Selected through the env, every entry point refuses instead of
-    # silently answering as AMBIENT would.
-    monkeypatch.setenv(hostgit.POSTURE_ENV, "sealed")
-    for call in (lambda: hostgit.project("/p"), lambda: hostgit.origin_url("/p"),
-                 lambda: hostgit.branch("/p"), lambda: hostgit.user_name("/p"),
-                 lambda: hostgit.remote_listing("/p"),
-                 lambda: hostgit.sidecar("/p", "status"),
-                 lambda: hostgit.has_entry("/p"), lambda: hostgit.refs_dir("/p")):
-        with pytest.raises(NotImplementedError):
-            call()
-    assert rec.calls == []
+def test_sealed_can_be_configured_and_reset(tmp_path):
+    hostgit.configure(posture="sealed", ceiling=tmp_path)
+    assert hostgit.posture() is hostgit.Posture.SEALED
+    hostgit._reset()
+    assert hostgit.posture() is hostgit.Posture.AMBIENT
 
 
 def test_reset_clears_a_configured_posture():

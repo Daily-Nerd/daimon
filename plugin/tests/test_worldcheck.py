@@ -1963,7 +1963,7 @@ def _skips(cp, project):
 
 def test_skip_reasons_closed_vocabulary():
     assert worldcheck.SKIP_REASONS == frozenset({
-        "cap", "deadline", "no-gh", "no-remote", "probe-error",
+        "cap", "deadline", "git-refused", "no-gh", "no-remote", "probe-error",
         "exit-nonzero", "unparseable", "unanswerable", "unknown"})
 
 
