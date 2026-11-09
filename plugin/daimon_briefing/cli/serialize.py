@@ -6,10 +6,13 @@ tests patch (`_chat`, `_run_serialize`, `_heal_plan`, `_append_retry_log`) are
 reached as `_cli.<name>` at call time. Every name is re-exported from `cli`.
 """
 
+import argparse
 import json
 import logging
+import os
 import sys
 import time
+import traceback
 import uuid
 from pathlib import Path
 
@@ -24,6 +27,7 @@ from .. import (
     ledger,
     llm,
     recall,
+    redact,
     render,
     schema,
     serializer,
@@ -327,8 +331,72 @@ _emit_supersede_candidates = capture._emit_supersede_candidates
 _session_end_stamp = capture._session_end_stamp
 
 
+# EX_TEMPFAIL: a host-run that found a live serialize for its session. The
+# host may retry later; nothing was written.
+EX_TEMPFAIL = 75
+
+
+def _host_name(value: str) -> str:
+    """argparse `type=` for `--host`: the name is validated once, at the edge
+    (exit 2), because it becomes the prefix of a ledger line."""
+    if not ledger.HOST_NAME_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"invalid host name {value!r}: use 1-40 characters of a-z, 0-9 "
+            "and '-', starting with a letter or digit")
+    return value
+
+
+def _record_crash(exc: BaseException) -> None:
+    """Append one redacted crash entry for `exc` to serialize-crash.log. The
+    entry has the shape the excepthook writes (header, then traceback) so
+    `status` reads it the same way. If redaction itself fails the body is
+    left out rather than written raw: a header alone still names the verb and
+    the time, and an unredacted traceback is the worse outcome."""
+    body = ""
+    try:
+        formatted = "".join(traceback.format_exception(type(exc), exc,
+                                                       exc.__traceback__))
+        body, _ = redact.redact_text(formatted)
+    except Exception:  # noqa: BLE001 — see above
+        body = ""
+    ledger.append_crash_record(_cli._crash_header() + "\n" + body)
+
+
+def _run_host(args, project: str) -> int:
+    """`daimon serialize --host <name>` (#1314): the run a host makes itself,
+    after its runtime exits, instead of a hook spawning it.
+
+    The ledger's only view of a run is what the hook writes around the spawn,
+    so this door writes it: refuse a duplicate while a live heartbeat exists
+    for the session (same age rule as the hook's guard, exit 75), announce the
+    run with a spawn line carrying the project and the transcript, stamp the
+    host for provenance, and record any crash that escapes. All of it before
+    the lease and the pipeline, which are unchanged."""
+    host = args.host
+    path = Path(args.transcript).absolute()
+    session = getattr(args, "session", None)
+    session_id = (session or "").strip() or path.stem
+    age = ledger.heartbeat_age(session_id)
+    if age is not None and age <= config.hung_after_seconds():
+        print(f"error: a serialize for {session_id} is already in flight "
+              f"(heartbeat {int(age)}s ago)", file=sys.stderr)
+        ledger.write_host_skip_line(host, session_id)
+        return EX_TEMPFAIL
+    if not os.environ.get("DAIMON_CAPTURE_HOST"):
+        os.environ["DAIMON_CAPTURE_HOST"] = host
+    ledger.write_host_run_marker(host, session_id, project, str(path))
+    try:
+        return _cli._run_serialize(path, project, session=session)
+    except Exception as exc:
+        _record_crash(exc)
+        raise
+
+
 def _cmd_serialize(args) -> int:
-    return _cli._run_serialize(Path(args.transcript), _cli._resolve_project(args.project),
+    project = _cli._resolve_project(args.project)
+    if getattr(args, "host", None):
+        return _run_host(args, project)
+    return _cli._run_serialize(Path(args.transcript), project,
                           session=getattr(args, "session", None))
 
 
@@ -614,6 +682,14 @@ def register(sub, fmt) -> None:
         help="session id for this transcript, overriding the filename (#988: "
              "a host whose transcript is not named for its session, such as "
              "Kimi Code, where every file is `wire.jsonl`)",
+    )
+    p_ser.add_argument(
+        "--host", type=_host_name,
+        help="the name this host gives itself (#1314), for a host that runs "
+             "serialize itself because no hook can: announces the run in "
+             "serialize.log with its project, refuses (exit 75) while a live "
+             "serialize for the session exists, records a crash in "
+             "serialize-crash.log, and stamps DAIMON_CAPTURE_HOST unless set",
     )
     p_ser.set_defaults(func=_cmd_serialize)
 

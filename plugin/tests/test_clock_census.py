@@ -53,6 +53,12 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/ledger.py", "write_import_marker", "datetime.now"):
         "second-resolution ts on a serialize.log spawn-style line, the same "
         "stamp the retry marker above writes, no order or event_id",
+    ("daimon_briefing/ledger.py", "write_host_run_marker", "datetime.now"):
+        "second-resolution ts on a serialize.log spawn-style line, the same "
+        "stamp the retry marker above writes, no order or event_id",
+    ("daimon_briefing/ledger.py", "write_host_skip_line", "datetime.now"):
+        "second-resolution ts on a serialize.log spawn-style line, the same "
+        "stamp the retry marker above writes, no order or event_id",
     ("daimon_briefing/ledger.py", "_stats_capture", "datetime.now"):
         "second-resolution ts on a diagnostic or stats log line, no order "
         "or event_id, never folded (the cutoff default of a stats window)",
