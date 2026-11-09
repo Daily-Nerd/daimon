@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from daimon_briefing import amendments, requests, store
+from daimon_briefing import amendments, requests, store, trust
 from daimon_briefing import pending
 from tests import _masking as m
 
@@ -51,7 +51,7 @@ class NanoClock:
 def _oldest_has_the_largest_id(make_id, count):
     """`count` labels in creation order whose ids DESCEND with age, so a sort
     on a tie that falls back to the id puts the newest record first/cut."""
-    labels = sorted((f"candidate {i}" for i in range(64)),
+    labels = sorted((f"candidate claim number {i}" for i in range(64)),
                     key=make_id, reverse=True)[:count]
     ids = [make_id(label) for label in labels]
     assert ids == sorted(ids, reverse=True)
@@ -305,3 +305,53 @@ def test_amend_list_puts_the_newer_amendment_last(tmp_checkpoint_dir,
 
     assert rc == 0, err
     assert [r["amendment_id"] for r in json.loads(out)] == ids
+
+
+# ------------------------------------------------------------------- trust
+
+def test_trust_list_puts_the_newer_quarantine_last(tmp_checkpoint_dir,
+                                                   use_clock, capsys):
+    use_clock(NanoClock())
+    kind = "decision"
+    texts = _oldest_has_the_largest_id(
+        lambda text: trust.make_id(kind, m.SLUG, trust.value_key(text)), 2)
+    ids = [str(trust.propose(text=text, kind=kind, reason="r",
+                             evidence=["issue:1321"], channel="cli-tty",
+                             project_dir=m.PROJECT))
+           for text in texts]
+    assert ids[0] > ids[1]  # the id tiebreak alone would list the older last
+
+    rc, out, err = m.run(capsys, "trust", "list", "--json")
+
+    assert rc == 0, err
+    assert [r["quarantine_id"] for r in json.loads(out)] == ids
+
+
+def test_trust_records_carry_the_order_of_their_last_row(tmp_checkpoint_dir,
+                                                         use_clock):
+    use_clock(NanoClock())
+    tid = str(trust.propose(text="a quarantined value long enough", kind="decision", reason="r",
+                            evidence=["issue:1321"], channel="cli-agent",
+                            project_dir=SENDER))
+    trust.confirm(tid, channel="cli-tty", project_dir=SENDER)
+    last = [r["order"] for r in trust.events(SENDER)
+            if r["event"] == "confirmed"]
+
+    record = trust.get(tid, project_dir=SENDER)
+
+    assert record["updated_order"] == last[0]
+
+
+def test_trust_rows_without_an_order_fold_as_zero(tmp_checkpoint_dir,
+                                                  use_clock):
+    use_clock(NanoClock())
+    tid = str(trust.propose(text="a quarantined value long enough", kind="decision", reason="r",
+                            evidence=["issue:1321"], channel="cli-tty",
+                            project_dir=SENDER))
+    rows = []
+    for row in trust.events(SENDER):
+        row = dict(row)
+        del row["order"]
+        rows.append(row)
+
+    assert trust.fold(rows)[tid]["updated_order"] == 0
