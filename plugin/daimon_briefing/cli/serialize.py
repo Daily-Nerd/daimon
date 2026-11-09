@@ -38,7 +38,25 @@ from ..ledger import _append_serialize_log, _append_transcript_notes
 from ..surfaces import Writer
 
 
-def _preflight_error(path: Path) -> str | None:
+def _error_line(text: str, path: Path, session: str | None = None,
+                elapsed: int | None = None) -> str:
+    """The one builder of an error result line (#1317):
+    `error: <text>[ (session: <id>)] (transcript: <path>)[ after Ns]`.
+
+    The ledger and the hook library key an error line by its session group
+    when present and by the transcript stem otherwise, so a serialize that was
+    told its session (`--session`, which is how Kimi Code and host-runs name
+    it) must say so on EVERY failure, or the failure lands on the stem (`wire`
+    for every Kimi session). The group sits before the transcript group (the
+    transcript regex swallows what follows the path). A run that was never told
+    its session prints no group and keeps the stem as its key."""
+    named = (session or "").strip()
+    group = f" (session: {named})" if named else ""
+    tail = f" after {elapsed}s" if elapsed is not None else ""
+    return f"error: {text}{group} (transcript: {path}){tail}"
+
+
+def _preflight_error(path: Path, session: str | None = None) -> str | None:
     """Credential pre-flight, mirroring llm.chat's routing (#52): an API key
     and model are required only when the resolved transport is llm-bound.
     The command / claude-cli backends need neither — pre-flight used to demand
@@ -63,11 +81,11 @@ def _preflight_error(path: Path) -> str | None:
             and config.llm_fallback() and llm._resolve_command() is not None):
         return None
     if not config.llm_api_key():
-        return ("error: no LLM API key — set DAIMON_LLM_API_KEY "
-                f"(env or ~/.daimon/env) (transcript: {path})")
+        return _error_line("no LLM API key — set DAIMON_LLM_API_KEY "
+                           "(env or ~/.daimon/env)", path, session)
     if not config.llm_model():
-        return ("error: no LLM model — set DAIMON_LLM_MODEL "
-                f"(env or ~/.daimon/env) (transcript: {path})")
+        return _error_line("no LLM model — set DAIMON_LLM_MODEL "
+                           "(env or ~/.daimon/env)", path, session)
     return None
 
 
@@ -205,7 +223,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # Pre-flight missing credentials so the error names them before any LLM work
     # (a conflated message cost a live debugging round-trip — see PR #12 fallout).
     if _cli._chat is llm.chat:
-        preflight = _preflight_error(path)
+        preflight = _preflight_error(path, session)
         if preflight is not None:
             _print_error(preflight)
             _append_serialize_log(preflight)
@@ -255,22 +273,16 @@ def _run_serialize(transcript_path: Path, project: str | None,
             return 0
         except serializer.SerializeError as exc:
             elapsed = int(time.monotonic() - start)
-            msg = f"error: {exc} (transcript: {path}) after {elapsed}s"
+            msg = _error_line(str(exc), path, session, elapsed)
             _print_error(msg)
             _append_serialize_log(msg)
             return 1
         except jsonl.Refused as exc:
             # D10.4: a refused admission is an ORDINARY failed serialize: the
             # same result line every fold already parses, so `status` counts
-            # it, the briefing names it and `heal` retries it. The session
-            # group sits BEFORE the transcript group (the transcript regex
-            # swallows anything after the path) and is printed only when the
-            # host named the session (`--session`), which keys the line to the
-            # real session rather than to the transcript stem (Kimi, #988).
+            # it, the briefing names it and `heal` retries it.
             elapsed = int(time.monotonic() - start)
-            named = (session or "").strip()
-            group = f" (session: {named})" if named else ""
-            msg = f"error: {exc}{group} (transcript: {path}) after {elapsed}s"
+            msg = _error_line(str(exc), path, session, elapsed)
             _print_error(msg)
             _append_serialize_log(msg)
             return 1
