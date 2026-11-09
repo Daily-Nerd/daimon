@@ -5,6 +5,21 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0](https://github.com/Daily-Nerd/daimon/compare/v0.65.0...v0.66.0) (2026-11-09)
+
+
+### Features
+
+* **hostgit:** fetch a member clone's branch into the lead under sealed rules ([f965049](https://github.com/Daily-Nerd/daimon/commit/f965049eac4806484a4ac37a836ba64084362e79)), closes [#1308](https://github.com/Daily-Nerd/daimon/issues/1308)
+* **hostgit:** hosts declare a project's identity instead of daimon deriving it ([ee569d5](https://github.com/Daily-Nerd/daimon/commit/ee569d535f711655ac3721195cea87567162b874)), closes [#1308](https://github.com/Daily-Nerd/daimon/issues/1308)
+* **hostgit:** refuse sealed checkouts whose config leaves the allowlist ([8378448](https://github.com/Daily-Nerd/daimon/commit/837844877e587d0f85e45b07764122811e298940)), closes [#1308](https://github.com/Daily-Nerd/daimon/issues/1308)
+* **hostgit:** sealed run and init for plumbing on host-declared checkouts ([d918c48](https://github.com/Daily-Nerd/daimon/commit/d918c485506837d4b781d79d00399783e1fc75b7)), closes [#1308](https://github.com/Daily-Nerd/daimon/issues/1308)
+
+
+### Documentation
+
+* **hostgit:** host-facing page for the sealed surface ([276ed41](https://github.com/Daily-Nerd/daimon/commit/276ed41b0e6dcf9ee888cdae7aedd04ad6ae17c5)), closes [#1308](https://github.com/Daily-Nerd/daimon/issues/1308)
+
 ## [0.65.0](https://github.com/Daily-Nerd/daimon/compare/v0.64.3...v0.65.0) (2026-11-08)
 
 
