@@ -996,8 +996,11 @@ def _fold_row(out: dict, row: dict) -> None:
             "activation_author": (
                 row.get("author") if state == "active" else None),
             "activated_at": row.get("ts") if state == "active" else None,
+            "activated_order": (
+                _row_order(row) if state == "active" else None),
             "created_at": row.get("ts"),
             "updated_at": row.get("ts"),
+            "updated_order": _row_order(row),
             "revision": 1,
             "history_count": 1,
         }
@@ -1121,6 +1124,7 @@ def _fold_row(out: dict, row: dict) -> None:
     if not (is_ruling and event in ("revision-proposed",
                                     "overturn-proposed")):
         current["updated_at"] = row.get("ts") or current["updated_at"]
+        current["updated_order"] = _row_order(row)
     if event == "ratified":
         if applies_proposal:
             # #1090: accepting a PENDING PROPOSAL on a ruling that never
@@ -1167,6 +1171,7 @@ def _fold_row(out: dict, row: dict) -> None:
             current["activation_channel"] = row.get("channel")
             current["activation_author"] = row.get("author")
             current["activated_at"] = row.get("ts")
+            current["activated_order"] = _row_order(row)
     elif event == "activated":
         # #693: mechanical activation is a refutation concept (#581);
         # a mechanical row on a ruling stays in the raw audit, inert.
@@ -1178,6 +1183,7 @@ def _fold_row(out: dict, row: dict) -> None:
             current["activation_channel"] = "mechanical"
             current["activation_author"] = row.get("author")
             current["activated_at"] = row.get("ts")
+            current["activated_order"] = _row_order(row)
     elif event == "revised":
         for key in ("subject", "verdict", "scope", "revisit_when"):
             if key in row:
@@ -1225,8 +1231,10 @@ def _fold_row(out: dict, row: dict) -> None:
             row.get("author") if current["state"] == "active" else None)
         if current["state"] == "active" and not was_active:
             current["activated_at"] = row.get("ts")
+            current["activated_order"] = _row_order(row)
         elif current["state"] != "active":
             current["activated_at"] = None
+            current["activated_order"] = None
         current["revision"] += 1
         current.pop("overturn_proposed", None)
         current.pop("revision_proposed", None)
@@ -1272,6 +1280,16 @@ def _fold_row(out: dict, row: dict) -> None:
             current.pop("overturn_proposed", None)
 
 
+def _row_order(row: dict) -> int:
+    """The row's nanosecond `order`; a row written before the stamp existed
+    (or with an unreadable one) counts as 0. `ts` is this value rendered at
+    second resolution, so recency is compared on this, never on `ts`."""
+    try:
+        return int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def fold(rows: list[dict]) -> dict[str, dict]:
     """Fold lifecycle facts into current records, deterministic under
     reorder. The state machine itself lives in `_fold_row` (#961 slice 4
@@ -1285,7 +1303,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             return default
 
     ordered = sorted(rows, key=lambda row: (
-        _integer(row, "order"),
+        _row_order(row),
         _EVENT_RANK.get(str(row.get("event") or ""), 99),
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
@@ -2269,6 +2287,6 @@ def listing(*, states=None, polarity=None, project_dir=None) -> list[dict]:
             if row["state"] in wanted
             and (polarity is None or row.get("polarity") == polarity)]
     rows.sort(key=lambda row: (row.get("state") != "active",
-                               row.get("updated_at") or "",
+                               row.get("updated_order") or 0,
                                row["refutation_id"]))
     return rows
