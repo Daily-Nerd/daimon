@@ -362,7 +362,7 @@ def _current_state(records: dict, item_id: str, exclude_id: str) -> str:
                     and r.get("state") == "ratified"]
         if not ratified:
             return "open"
-        ratified.sort(key=lambda r: r.get("updated_at") or "")
+        ratified.sort(key=amendments.recency)
         return str(ratified[-1].get("change") or "open")
     except Exception:
         return "?"

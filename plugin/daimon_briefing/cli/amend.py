@@ -161,8 +161,7 @@ def _cmd_amend_list(args) -> int:
     _cli._note_usage("amend:list")
     rows = sorted(
         amendments.records(project_dir=project).values(),
-        key=lambda r: (r["state"] != "candidate",
-                       r.get("updated_at") or "", r["amendment_id"]))
+        key=lambda r: (r["state"] != "candidate", *amendments.recency(r)))
     # The quote is a copy of an item's text, so it is masked while the trust
     # ledger cannot be read; the note is the person's own words.
     rows = view.masked(project, "amendments.jsonl", rows)

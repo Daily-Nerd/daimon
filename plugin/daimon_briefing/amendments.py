@@ -217,6 +217,23 @@ def events(project_dir=None, *, rows=None) -> list[dict]:
     return out
 
 
+def _row_order(row: dict) -> int:
+    """The row's nanosecond `order`; a row written before the stamp existed
+    (or with an unreadable one) counts as 0. `ts` is this value rendered at
+    second resolution, so recency is compared on this, never on `ts`."""
+    try:
+        return int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def recency(record: dict) -> tuple[int, str]:
+    """The sort key for readers that order folded amendments by when they
+    last changed: the nanosecond stamp of the last row folded in, the id only
+    to break an exact tie. `updated_at` is the same moment cut to seconds."""
+    return (int(record.get("updated_order") or 0), record["amendment_id"])
+
+
 def fold(rows: list[dict]) -> dict[str, dict]:
     """Fold lifecycle facts into current records, deterministic under reorder.
 
@@ -232,7 +249,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             return default
 
     ordered = sorted(rows, key=lambda row: (
-        _integer(row, "order"),
+        _row_order(row),
         _EVENT_RANK.get(str(row.get("event") or ""), 99),
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
@@ -273,7 +290,11 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 # same test reads the same but carries no narrowing.
                 "created_at": (current["created_at"] if current is not None
                                else row.get("ts")),
+                "created_order": (current["created_order"]
+                                  if current is not None
+                                  else _row_order(row)),
                 "updated_at": row.get("ts"),
+                "updated_order": _row_order(row),
                 "history_count": (current["history_count"] + 1
                                   if current is not None else 1),
             }
@@ -282,6 +303,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             continue  # orphan lifecycle event: visible in raw audit, inert here
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
+        current["updated_order"] = _row_order(row)
         if event == "verified":
             # The one mechanical transition: the session-end byte-check found
             # the quote in the transcript. It never overrides a verdict, and
@@ -370,7 +392,7 @@ def render_groups(folded: dict[str, dict]) -> dict[str, dict]:
         by_item.setdefault(record["item_id"], []).append(record)
     out: dict[str, dict] = {}
     for item_id, rows in by_item.items():
-        rows.sort(key=lambda row: (row.get("created_at") or "",
+        rows.sort(key=lambda row: (int(row.get("created_order") or 0),
                                    row["amendment_id"]))
         out[item_id] = {"rows": rows[-RENDER_CAP:],
                         "overflow": max(0, len(rows) - RENDER_CAP)}
