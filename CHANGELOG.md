@@ -5,6 +5,27 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.0](https://github.com/Daily-Nerd/daimon/compare/v0.66.0...v0.67.0) (2026-11-09)
+
+
+### Features
+
+* **serialize:** a host-run serialize announces itself to the ledger ([860f231](https://github.com/Daily-Nerd/daimon/commit/860f2317099b40786b66729e459f4f53acf2ed9b))
+
+
+### Bug Fixes
+
+* **requests:** the request panels and amendment readers order by the nanosecond stamp, not the rendered second ([10ebf0f](https://github.com/Daily-Nerd/daimon/commit/10ebf0f7f54c8bb2006dd98ee5f19b3a386d9c08))
+* **rulings:** active rulings order by their nanosecond activation stamp, not the rendered second ([b961e9c](https://github.com/Daily-Nerd/daimon/commit/b961e9ca6a80c107584009be1201c9395d9234cb))
+* **serialize:** a missing transcript settles its session as unrecoverable at once ([8e23a61](https://github.com/Daily-Nerd/daimon/commit/8e23a615a8ce9e44ba717a3770c6827297f16b4a))
+* **serialize:** every error line from a named session carries its session id ([3ad2252](https://github.com/Daily-Nerd/daimon/commit/3ad2252a5d7a09c71f76dbffa6e59be0865ef5e9))
+* **trust:** trust list orders by the nanosecond stamp, not the rendered second ([f94f6de](https://github.com/Daily-Nerd/daimon/commit/f94f6de5eef60d6e385cbd244d0be1d3f1d43fc9))
+
+
+### Documentation
+
+* **hosts:** any other runtime, the neutral transcript contract ([fac8dc3](https://github.com/Daily-Nerd/daimon/commit/fac8dc3da465b7469cc650d3c968ca30ff50da50))
+
 ## [0.66.0](https://github.com/Daily-Nerd/daimon/compare/v0.65.0...v0.66.0) (2026-11-09)
 
 
