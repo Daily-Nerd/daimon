@@ -13,6 +13,7 @@ DESTS = {
         "transcript": ("INE", "R6"),
         "project": ("OUT", "R1"),
         "session": ("INE", "R6"),
+        "host": ("INE", "R6"),
     },
     "import": {
         "project": ("OUT", "R1"),

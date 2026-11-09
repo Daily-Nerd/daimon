@@ -116,6 +116,93 @@ def write_import_marker(session_id: str, project: str | None,
         pass
 
 
+# #1314: the spawn-line reason of a serialize a host ran itself. The hook
+# writes its own spawn line for the runs it spawns; a host that runs
+# `daimon serialize --host <name>` has no hook, so the CLI writes the line.
+# Unlike IMPORT_REASON nothing keeps the attempt away from heal: a failed
+# host-run is healed like a failed session-end.
+HOST_RUN_REASON = "host-run"
+
+# The name a host gives itself on `--host`. It becomes the prefix of the spawn
+# line, so it is a closed shape: nothing in it can fake another prefix, a
+# group or a line break.
+HOST_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+
+
+def write_host_run_marker(host: str, session_id: str, project: str | None,
+                          transcript: str) -> None:
+    """Announce a host-run serialize in serialize.log BEFORE it does any work
+    (#1314), in the same spawn-style shape every hook line shares (`project`
+    in the first parens, `(transcript: <path>)` last) so status, hung
+    detection and heal see it and heal can route a failure to the project.
+
+    Best-effort like the other markers: an unwritable log never fails the
+    serialize, it only loses the line."""
+    try:
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {host}: spawned serialize for {session_id} "
+                    f"(reason: {HOST_RUN_REASON}, project: {project or '?'}) "
+                    f"(transcript: {transcript})\n")
+    except OSError:
+        pass
+
+
+def write_host_skip_line(host: str, session_id: str) -> None:
+    """The refusal twin of the spawn line: a host-run found a live serialize
+    for this session and did not start. Host-prefixed and timestamped like the
+    hook's `skipped serialize ... (already in flight)` line, so it matches no
+    result regex: it must not close the classification of the run that is
+    still working. Best-effort."""
+    try:
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (log_dir / "serialize.log").open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {host}: skipped serialize for {session_id} "
+                    "(already in flight)\n")
+    except OSError:
+        pass
+
+
+# The crash sink's cap and keep sizes. The hook library owns the originals
+# (_daimon_hook_lib.CRASH_LOG_MAX_BYTES and CRASH_LOG_KEEP_BYTES, #605) and is
+# stdlib-only by design, so the package cannot import it and the hooks cannot
+# import this: a test pins the two pairs equal.
+CRASH_LOG_MAX_BYTES = 262144
+CRASH_LOG_KEEP_BYTES = 65536
+
+
+def append_crash_record(entry: str) -> None:
+    """Append one crash entry to `<log_dir>/serialize-crash.log`, trimming it
+    first (#1314). A hook-spawned serialize gets this file as its stderr, so
+    its crash lands there for free; a host-run has no such redirect, and this
+    is the CLI doing it for itself. The trim is the hook's: keep the tail,
+    rewrite in place, never raise. Best-effort: a crash record that fails to
+    write must not replace the exception it was recording."""
+    try:
+        log_dir = config.log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / "serialize-crash.log"
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > CRASH_LOG_MAX_BYTES:
+            with path.open("r+b") as f:
+                f.seek(size - CRASH_LOG_KEEP_BYTES)
+                tail = f.read()
+                f.seek(0)
+                f.write(tail)
+                f.truncate()
+        with path.open("a", encoding="utf-8") as f:
+            f.write(entry)
+    except OSError:
+        pass
+
+
 # Hook spawn line: `<iso-stamp> <hook>: spawned serialize for <id> (...)`,
 # where <hook> is `session-end` (Claude), `codex-stop` (Codex), or
 # `gemini-session-end` (Gemini — must be listed BEFORE a bare `session-end`
@@ -132,7 +219,11 @@ _SPAWN_RE = re.compile(
     r"^(\S+) (?:gemini-session-end|codex-session-end|kimi-session-end|"
     r"session-end|codex-stop|kimi-stop|"
     r"windsurf-cascade|"
-    r"windsurf-finalizer|session-start|import): "
+    r"windsurf-finalizer|session-start|import|"
+    # #1314: a host-run line names its host freely, so the name is a class and
+    # the line must say it is a host-run. The lookahead keeps group 2 the id.
+    r"[a-z0-9][a-z0-9-]{0,39}(?=: spawned serialize for \S+ "
+    r"\(reason: host-run, project: )): "
     r"(?:spawned|retry|started) serialize for (\S+)"
 )
 # Child stdout/stderr land in the log RAW (no timestamp): the serialize
@@ -1023,7 +1114,9 @@ _STATS_HOST_RE = re.compile(
     r"^\S+ (gemini-session-end|codex-session-end|kimi-session-end|"
     r"session-end|codex-stop|kimi-stop|"
     r"windsurf-cascade|"
-    r"windsurf-finalizer): "
+    r"windsurf-finalizer|"
+    r"[a-z0-9][a-z0-9-]{0,39}(?=: spawned serialize for \S+ "
+    r"\(reason: host-run, project: )): "
     r"spawned serialize for "
 )
 

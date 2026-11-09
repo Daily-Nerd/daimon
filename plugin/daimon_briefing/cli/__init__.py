@@ -572,6 +572,15 @@ from . import (  # noqa: E402
 )
 
 
+def _crash_header() -> str:
+    """The `--- crash <iso> pid=N cmd=<verb> ---` line that opens one crash
+    entry. One writer: the excepthook below and the host-run crash record
+    (#1314) both open their entries with it, and `status` anchors on it."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "?")
+    return f"--- crash {stamp} pid={os.getpid()} cmd={cmd} ---"
+
+
 def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     """Uncaught-crash header (#92): serialize-crash.log is the detached
     child's RAW stderr fd — no logger sits in the write path, so the only
@@ -590,10 +599,7 @@ def _crash_stamp_excepthook(exc_type, exc, tb) -> None:
     Fail-open, redact.py's own posture: anything that goes wrong formatting
     or redacting falls back to the stock hook, because a swallowed traceback
     is a crash nobody can diagnose."""
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cmd = next((a for a in sys.argv[1:] if not a.startswith("-")), "?")
-    print(f"--- crash {stamp} pid={os.getpid()} cmd={cmd} ---",
-          file=sys.stderr, flush=True)
+    print(_crash_header(), file=sys.stderr, flush=True)
     try:
         formatted = "".join(traceback.format_exception(exc_type, exc, tb))
         redacted, _ = redact.redact_text(formatted)

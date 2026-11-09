@@ -154,12 +154,15 @@ daimon configure detect/repair the LLM backend Docs: https://daily-nerd.github.i
 https://github.com/Daily-Nerd/daimon/issues
 
 === serialize ===
-usage: daimon serialize [-h] [--project PROJECT] [--session SESSION] transcript positional
-arguments: transcript path to a text/markdown transcript options: -h, --help show this help message
-and exit --project PROJECT project directory to route the checkpoint to (default:
+usage: daimon serialize [-h] [--project PROJECT] [--session SESSION] [--host HOST] transcript
+positional arguments: transcript path to a text/markdown transcript options: -h, --help show this
+help message and exit --project PROJECT project directory to route the checkpoint to (default:
 DAIMON_PROJECT_DIR, then cwd) --session SESSION session id for this transcript, overriding the
 filename (#988: a host whose transcript is not named for its session, such as Kimi Code, where every
-file is `wire.jsonl`)
+file is `wire.jsonl`) --host HOST the name this host gives itself (#1314), for a host that runs
+serialize itself because no hook can: announces the run in serialize.log with its project, refuses
+(exit 75) while a live serialize for the session exists, records a crash in serialize-crash.log, and
+stamps DAIMON_CAPTURE_HOST unless set
 
 === write-checkpoint ===
 usage: daimon write-checkpoint [-h] [--project PROJECT] [--source SOURCE] [--session SESSION]

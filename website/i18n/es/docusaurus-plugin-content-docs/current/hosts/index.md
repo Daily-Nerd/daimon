@@ -48,4 +48,5 @@ independiente:
   vez (`uv tool install 'daimon-briefing[pretty]'`) y los hooks de todos los
   hosts comparten el mismo almacén de checkpoints.
 
-Elige tu host arriba para la guía completa.
+Elige tu host arriba para la guía completa. Un runtime que no figura igual puede
+alimentar a daimon: mira [Cualquier otro runtime](./any-runtime.md).
