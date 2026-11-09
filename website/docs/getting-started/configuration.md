@@ -199,7 +199,7 @@ For a host that runs one daimon home with one project directory per person. A si
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_TENANT_SCOPED` | off | When truthy, a caller may not choose a scope. `--slug` and `--all-projects` on `recall`, `brief`, `why` and `decide`, `--all` on `audit privacy`, `--global-fallback` on `brief`, and a `--project` that names another bucket on any verb are refused with a plain error, and `DAIMON_BRIEF_GLOBAL_FALLBACK` is ignored. `daimon decide` shows no counts of other projects, `daimon status` shows no global pointer, and a read never falls back to another project's checkpoint. The MCP tools refuse any `slug`, `all_projects` or `project` path outside the caller's own bucket the same way (`DAIMON_MODEL_CROSS_PROJECT` cannot lift it), and `daimon projects` lists only the caller's own bucket. Refused, never silently narrowed: a caller who asked for a scope and got their own instead would read the answer as complete. |
-| `DAIMON_GIT_POSTURE` | `ambient` | How daimon asks git about a project directory. `ambient` lets git answer as it always has. `sealed` is for hosts whose project directories are written by a less trusted party: daimon finds the checkout itself below a ceiling (home by default), pins the git directory, reads only the checkout's own config file with includes off, takes the branch from `HEAD`, never asks git for `user.name`, and refuses a `.git` that is a file, a symlink or a pointer to another directory. A checkout whose config holds anything outside a short allowlist of keys (no `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` and the like), or that has a `config.worktree` or an `objects/info/alternates` file, is refused before git runs on it. A refused project is listed by `daimon status`, and writes to it are rejected. |
+| `DAIMON_GIT_POSTURE` | `ambient` | How daimon asks git about a project directory. `ambient` lets git answer as it always has. `sealed` is for hosts whose project directories are written by a less trusted party: daimon finds the checkout itself below a ceiling (home by default), pins the git directory, reads only the checkout's own config file with includes off, takes the branch from `HEAD`, never asks git for `user.name`, and refuses a `.git` that is a file, a symlink or a pointer to another directory. A checkout whose config holds anything outside a short allowlist of keys (no `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` and the like), or that has a `config.worktree` or an `objects/info/alternates` file, is refused before git runs on it. A host can state a project's slug and origin URL itself with `declare` instead of letting daimon derive them; the declared root still passes the checks above. A refused project is listed by `daimon status`, and writes to it are rejected. |
 | `DAIMON_EXTRA_READ_SLUGS` | unset | Comma-separated slugs this session may read beside its own, ambiently, with no caller argument involved. Reaches `recall`, `why` and the proactive suggestion path alike. Read only: no write path takes a slug and a session never writes to a listed scope. A hit from a listed scope names its origin project. Meant for a shared scope whose contents were already visible to everyone in it; set it only where one session is one person. |
 
 `DAIMON_MODEL_CROSS_PROJECT`, the MCP-side counterpart, is listed in the Core table above.
@@ -259,6 +259,38 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
 | `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them — change it in one place only, or the writer and the deleter stop agreeing. |
 | `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1 — unlike the other Windsurf knobs, `0` does not disable it. |
+
+## Embedding hosts: the sealed git surface
+
+A program that embeds daimon and works in directories written by a less trusted
+party selects the sealed posture (`DAIMON_GIT_POSTURE=sealed`, or
+`hostgit.configure(posture="sealed", ceiling=...)` before the first project
+read) and then does all of its git through `daimon_briefing.hostgit`. These
+calls exist only under that posture, except `project`, which answers in both.
+
+| Call | What it does |
+|---|---|
+| `project(path)` | The checkout `path` belongs to, or a refusal code. Runs the shape check and the config allowlist gate before it returns a checkout. |
+| `run(checkout, *args)` | One git call on a checkout `project` returned, from a fixed table of subcommands (`diff`, `show`, `log`, `diff-tree`, `diff-index`, `diff-files`, `status`, `init`, `rev-parse`, `ls-files`, `ls-tree`, `cat-file`, `symbolic-ref`, `for-each-ref`, `rev-list`, `add`). The gate runs again on every call. A refused checkout answers with exit code 125, a hang with 124. |
+| `init(path)` | Creates a repository with an empty template directory and returns `project(path)`. |
+| `fetch_local(lead, member, branch, member_name)` | Fetches the member clone's branch into the lead as `refs/members/<member_name>/<branch>`, local transport only, no tags, no submodules. Both repositories pass the gate. |
+| `declare(root, slug=..., origin_url=...)` | States a project's identity once per process. Also exposed as `api.declare_project`. It is data: the root still passes the gate. |
+
+Refusal codes: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
+`gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
+`worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (a
+config key outside the allowlist), `checkout-changed`, `init-failed`.
+
+To keep git calls in one place, call the census over your own tree from a test:
+
+```python
+from daimon_briefing import testing
+
+testing.assert_single_git_owner(host_module_paths, allowlist)
+```
+
+`testing.git_spawn_sites(paths)` returns the sites it found, as
+`{(module, function, primitive): line numbers}`.
 
 ## Scar harvest
 

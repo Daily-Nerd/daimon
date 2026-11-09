@@ -16,6 +16,9 @@ Public surface (kept tiny on purpose; other packages are meant to import it):
     origin_url(path)         -> str | None
     branch(path)             -> str | None
     sidecar(path, *args)     -> CompletedProcess   (daimon-owned team clones)
+    declare(root, slug=, origin_url=) -> Declaration  (SEALED only: the host
+                             states a project's identity; never bypasses the
+                             gate); declared(root), declared_slug(path)
     run(checkout, *args)     -> CompletedProcess   (SEALED only: a sealed
                              Checkout, re-gated, subcommand from RUN_FAMILIES)
     fetch_local(lead, member, branch, member_name)
@@ -173,6 +176,18 @@ class Refused:
     reason: str
 
 
+@dataclass(frozen=True)
+class Declaration:
+    """A project's identity as its host stated it: the real path of `root`, the
+    bucket `slug` its data lives under, and optionally its `origin_url`."""
+
+    root: str
+    slug: str
+    origin_url: str | None = None
+
+
+_declared: dict[str, Declaration] = {}
+
 _configured: Posture | None = None
 _ceiling: str | None = None
 _refusal_log: dict[tuple[str, str], None] = {}
@@ -227,6 +242,7 @@ def _reset() -> None:
     _warned.clear()
     _refusal_log.clear()
     _gate_memo.clear()
+    _declared.clear()
 
 
 # ---- the spawn seam -------------------------------------------------------
@@ -407,6 +423,13 @@ def _seal(path) -> Checkout | Refused:
     top = ceiling()
     if not _below(real, top):
         return _refuse(raw, "outside-ceiling")
+    dec = _declaration_covering(real)
+    if dec is not None:
+        # The host named the root: no walking up, nothing nearer is adopted.
+        got = _inspect(dec.root)
+        if isinstance(got, Checkout):
+            return got
+        return _refuse(raw, got or "no-git-below-ceiling")
     current = real
     while current != top:
         got = _inspect(current)
@@ -594,6 +617,9 @@ def origin_url(path, timeout: float = ORIGIN_TIMEOUT) -> str | None:
         co = project(path)
         if isinstance(co, Refused):
             return None
+        stated = _declared.get(co.root)
+        if stated is not None and stated.origin_url is not None:
+            return stated.origin_url
         done = _sealed_config(co, "--get", "remote.origin.url")
         if done is None or done.returncode != 0:
             return None
@@ -689,7 +715,65 @@ def refs_dir(path) -> Path | None:
     return dot if (dot / "refs" / "heads").is_dir() else None
 
 
-# ---- SEALED: run and init -----------------------------------------------------
+# ---- SEALED: declared identity --------------------------------------------------
+
+_SLUG = re.compile(r"[\w-]+")
+
+
+def declare(root, *, slug: str, origin_url: str | None = None) -> Declaration:
+    """State a project's identity once per process (SEALED only).
+
+    `slug` names the bucket daimon uses for `root` (word characters and '-',
+    so `store.project_slug` leaves it alone), `origin_url` is what
+    `origin_url()` answers without asking git. A declaration is DATA: the root
+    still passes the shape check and the config gate, a path under it resolves
+    to it (nothing nearer is adopted), and a declared root that is refused is
+    refused for writes like any other. Declaring a root again with the same
+    values changes nothing; with different values it raises ValueError, because
+    identity does not flip mid-process. Raises RuntimeError outside SEALED."""
+    if not _sealed():
+        raise RuntimeError("declare() needs SEALED posture: ambient git "
+                           "derives identity from the checkout itself")
+    if not isinstance(slug, str) or not _SLUG.fullmatch(slug):
+        raise ValueError(f"slug {slug!r} must be word characters and '-' only")
+    if origin_url is not None and not isinstance(origin_url, str):
+        raise ValueError("origin_url must be a string or None")
+    new = Declaration(os.path.realpath(root), slug, origin_url)
+    old = _declared.setdefault(new.root, new)
+    if old != new:
+        raise ValueError(f"{new.root} is already declared as {old}, "
+                         f"cannot redeclare it as {new}")
+    return old
+
+
+def declared(root) -> Declaration | None:
+    """The declaration for exactly this root (symlinks resolved), or None."""
+    return _declared.get(os.path.realpath(root))
+
+
+def declared_slug(path) -> str | None:
+    """The declared bucket slug when SEALED and `path` is a declared root (an
+    absolute path; a bare slug never matches), else None. The one place
+    `store.project_slug` asks."""
+    if not _declared:
+        return None
+    text = os.fspath(path) if not isinstance(path, str) else path
+    if not os.path.isabs(text) or not _sealed():
+        return None
+    found = _declared.get(os.path.realpath(text))
+    return None if found is None else found.slug
+
+
+def _declaration_covering(real: str) -> Declaration | None:
+    """The deepest declared root that `real` is, or is below."""
+    best = None
+    for root, dec in _declared.items():
+        if _below(real, root) and (best is None or len(root) > len(best.root)):
+            best = dec
+    return best
+
+
+# ---- SEALED: run and init ---------------------------------------------------
 
 
 class RunFamily(NamedTuple):
