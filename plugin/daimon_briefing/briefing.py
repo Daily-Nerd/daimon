@@ -1115,7 +1115,7 @@ def rulings_read(project_dir=None, *, read=None) -> RulingsRead:
         records = refutations.fold(got.rows)
         rows = [r for r in records.values()
                 if r.get("state") == "active" and r.get("polarity") == "ruling"]
-        rows.sort(key=lambda r: (str(r.get("activated_at") or ""),
+        rows.sort(key=lambda r: (int(r.get("activated_order") or 0),
                                  str(r.get("refutation_id") or "")),
                   reverse=True)
     except Exception:

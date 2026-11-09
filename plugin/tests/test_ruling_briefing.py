@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from daimon_briefing import briefing, config, refutations, store
+from daimon_briefing import briefing, clock, config, refutations, store
 from daimon_briefing.surfaces import Writer
 
 
@@ -551,14 +551,28 @@ def test_no_legend_when_no_policy_ruling_is_present(tmp_checkpoint_dir):
 
 
 def test_no_legend_when_the_only_policy_is_over_cap(tmp_checkpoint_dir,
-                                                     monkeypatch):
+                                                     monkeypatch, use_clock):
     # The legend describes a policy line the reader can actually see; a
     # policy ruling pushed past the cap note must not still claim one.
-    _rule("prose ruling that fills the cap")
+    # Newest first: the policy is activated FIRST, so the later prose
+    # ruling fills the cap and the policy is the one over it (#1319).
+    use_clock(clock.StepClock(1_700_000_000 * 10 ** 9))
     _open_policy()
+    _rule("prose ruling that fills the cap")
     monkeypatch.setattr(config, "ruling_cap", lambda: 1)
     lines = briefing.ruling_lines(PROJECT)
     assert not any("answerable from existing artifacts" in ln for ln in lines)
+    assert any("over cap" in ln for ln in lines)
+
+
+def test_legend_stays_when_the_only_policy_is_the_newest_ruling(
+        tmp_checkpoint_dir, monkeypatch, use_clock):
+    use_clock(clock.StepClock(1_700_000_000 * 10 ** 9))
+    _rule("older prose ruling past the cap")
+    _open_policy()
+    monkeypatch.setattr(config, "ruling_cap", lambda: 1)
+    lines = briefing.ruling_lines(PROJECT)
+    assert any("answerable from existing artifacts" in ln for ln in lines)
     assert any("over cap" in ln for ln in lines)
 
 

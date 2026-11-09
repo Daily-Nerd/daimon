@@ -88,7 +88,7 @@ def search(query: str, *, project_dir=None, states=None) -> list[dict]:
         if not (anchor_hit or phrase_hit or overlap):
             continue
         scored.append((anchor_hit, phrase_hit, overlap,
-                       judged.row.get("updated_at") or "", judged.row))
+                       judged.row.get("updated_order") or 0, judged.row))
     scored.sort(key=lambda row: (row[0], row[1], row[2], row[3]),
                 reverse=True)
     return [row[-1] for row in scored]
