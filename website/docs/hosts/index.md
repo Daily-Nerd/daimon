@@ -45,4 +45,5 @@ Every host setup combines up to three pieces, installed independently:
   (`uv tool install 'daimon-briefing[pretty]'`) and every host's hooks share
   the same checkpoint store.
 
-Pick your host above for the full setup walkthrough.
+Pick your host above for the full setup walkthrough. A runtime that is not
+listed can still feed daimon: see [Any other runtime](./any-runtime.md).
