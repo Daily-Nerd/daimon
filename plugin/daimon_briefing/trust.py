@@ -282,6 +282,20 @@ def _integer(row, key, default=0):
         return default
 
 
+def _row_order(row: dict) -> int:
+    """The row's nanosecond `order`; a row written before the stamp existed
+    (or with an unreadable one) counts as 0. `ts` is this value rendered at
+    second resolution, so recency is compared on this, never on `ts`."""
+    return _integer(row, "order")
+
+
+def recency(record: dict) -> tuple[int, str]:
+    """The sort key for readers that order folded quarantines by when they
+    last changed: the nanosecond stamp of the last row folded in, the id only
+    to break an exact tie. `updated_at` is the same moment cut to seconds."""
+    return (int(record.get("updated_order") or 0), record["quarantine_id"])
+
+
 def _fold_key(row: dict) -> tuple:
     """The order the fold applies rows in: ledger order, then event rank,
     then event id, then line."""
@@ -344,6 +358,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
                 "created_at": (current["created_at"] if current is not None
                                else row.get("ts")),
                 "updated_at": row.get("ts"),
+                "updated_order": _row_order(row),
                 "history_count": (current["history_count"] + 1
                                   if current is not None else 1),
             }
@@ -352,6 +367,7 @@ def fold(rows: list[dict]) -> dict[str, dict]:
             continue  # orphan lifecycle event: visible in raw audit, inert
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
+        current["updated_order"] = _row_order(row)
         authority = of_row("trust", row)
         if authority != "human":
             continue  # no agent channel moves state, whatever the event says

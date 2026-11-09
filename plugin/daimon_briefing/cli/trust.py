@@ -202,8 +202,7 @@ def _cmd_trust_list(args) -> int:
     project = _resolve_project(args.project)
     records = sorted(
         trust.records(project_dir=project).values(),
-        key=lambda r: (r["state"] != "candidate",
-                       r.get("updated_at") or "", r["quarantine_id"]))
+        key=lambda r: (r["state"] != "candidate", *trust.recency(r)))
     rows = _masked_records(project, records, snap=view.judge(_slug_of(project)).snap,
                   human=_human_channel())
     if args.json:

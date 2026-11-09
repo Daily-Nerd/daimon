@@ -318,6 +318,24 @@ def _ts(order: int) -> str:
         "%Y-%m-%dT%H:%M:%SZ")
 
 
+def _row_order(row: dict) -> int:
+    """The row's nanosecond `order`; a row written before the stamp existed
+    (or with an unreadable one) counts as 0. `ts` is this value rendered at
+    second resolution, so recency is compared on this, never on `ts`."""
+    try:
+        return int(row.get("order") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _recency(record: dict) -> tuple[int, str]:
+    """The sort key for every reader that orders folded requests by recency:
+    the nanosecond stamp of the last row folded in, the id only to break an
+    exact tie. One key, so no panel can fall back to the
+    second-resolution `updated_at` on its own."""
+    return (int(record.get("updated_order") or 0), record["request_id"])
+
+
 def _act_author(channel: str, author) -> str:
     """#1026: the scrubbed per-act author, or "" when nobody was named.
 
@@ -789,7 +807,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             return default
 
     ordered = sorted(rows, key=lambda row: (
-        _integer(row, "order"),
+        _row_order(row),
         _EVENT_RANK.get(str(row.get("event") or ""), 99),
         str(row.get("event_id") or ""),
         _integer(row, "_line"),
@@ -944,6 +962,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
+                "updated_order": _row_order(row),
                 "history_count": 1,
             }
             # #1131: present only when the sender set one, so a request
@@ -1091,6 +1110,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             current["replies"].append(entry)
             current["history_count"] += 1
             current["updated_at"] = row.get("ts") or current["updated_at"]
+            current["updated_order"] = _row_order(row)
             continue
         if event == "surfaced":
             # Attention rows never move the record's rendered age: a brief
@@ -1176,6 +1196,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             current["state"] = "open"
             current["history_count"] += 1
             current["updated_at"] = row.get("ts") or current["updated_at"]
+            current["updated_order"] = _row_order(row)
             if current["done_pending"]:
                 # #978 review round 1 (F1), gated per review round 2 (B1): a
                 # `revised` row on a record with a PENDING AGENT claim clears
@@ -1246,6 +1267,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # generic `done` landing already gives `done_evidence`.
             current["history_count"] += 1
             current["updated_at"] = row.get("ts") or current["updated_at"]
+            current["updated_order"] = _row_order(row)
             current["done_by"] = authority
             current["done_claimed"] = True
             current["done_evidence"] = str(row.get("evidence") or "")
@@ -1274,6 +1296,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             continue
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
+        current["updated_order"] = _row_order(row)
         if event == "accepted" and current["done_pending"]:
             # #978: an accept landing on a completion claim ratifies the
             # claim itself, not a to-do still to be started — the record
@@ -1471,7 +1494,7 @@ def listed(project_dir=None) -> "Inbox":
     return Inbox(sorted(
         folded.values(),
         key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       r.get("updated_at") or "", r["request_id"])),
+                       *_recency(r))),
         notes)
 
 
@@ -1507,7 +1530,7 @@ def renderable(project_dir=None) -> dict:
     """
     rows = [r for r in records(project_dir=project_dir).values()
             if r["state"] in _SENDER_MOVABLE and not r["suppressed"]]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
@@ -2464,7 +2487,7 @@ def inbox(project_dir=None) -> Inbox:
     return Inbox(sorted(
         got.by_id.values(),
         key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       r.get("updated_at") or "", r["request_id"])),
+                       *_recency(r))),
         got.notes)
 
 
@@ -2515,7 +2538,7 @@ def owed_renderable(project_dir=None) -> dict:
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
             if _is_owed(r, project_dir=project_dir)]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
@@ -2569,7 +2592,7 @@ def owed_deliverable(session: str, project_dir=None) -> dict:
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _is_owed(r, project_dir=project_dir)
             and needs_owed_delivered_stamp(r, session)]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
@@ -2591,7 +2614,7 @@ def inbox_renderable(project_dir=None) -> dict:
     shape, and several tests exercise it directly."""
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
@@ -2612,7 +2635,7 @@ def decision_renderable(project_dir=None) -> dict:
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
             if _deserves_attention(r, project_dir=project_dir)]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
@@ -2643,7 +2666,7 @@ def deliverable(session: str, project_dir=None) -> dict:
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)
             and needs_delivered_stamp(r, session)]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
@@ -2899,7 +2922,7 @@ def verdict_deliverable(session: str, project_dir=None) -> dict:
             and ((not verdict_panel_expired(r, project_dir=project_dir)
                   and needs_verdict_delivered_stamp(r, session))
                  or unseen_reply_id(r, session))]  # #1117
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
@@ -2916,7 +2939,7 @@ def verdict_renderable(project_dir=None) -> dict:
             if r["state"] in _VERDICT_STATES
             and (not verdict_panel_expired(r, project_dir=project_dir)
                  or unseen_reply_id(r))]  # #1117: expiry measures the decision
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]),
+    rows.sort(key=_recency,
               reverse=True)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
@@ -2938,7 +2961,7 @@ def overdue_renderable(project_dir=None, shown_ids=frozenset()) -> dict:
     now = clock.now_ns()
     rows = [r for r in got.by_id.values()
             if r["request_id"] not in shown_ids and is_overdue(r, now)]
-    rows.sort(key=lambda r: (r.get("updated_at") or "", r["request_id"]))
+    rows.sort(key=_recency)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
                        got.notes)
