@@ -301,3 +301,18 @@ def test_init_creates_a_gated_repo_with_no_template_hooks(tmp_path, home,
     assert not hooks.exists() or list(hooks.iterdir()) == []
     assert hostgit.project(target) == got
     assert hostgit.run(got, "status", "--porcelain", timeout=30).returncode == 0
+
+
+@pytest.mark.parametrize("how", ["rc", "oserror", "timeout"])
+def test_init_that_fails_is_refused_as_init_failed(home, rec, how):
+    target = home / "new"
+    target.mkdir()
+    if how == "rc":
+        rec.answer("", rc=128, stderr="fatal: cannot init")
+    elif how == "oserror":
+        rec.raises = FileNotFoundError("git")
+    else:
+        rec.raises = subprocess.TimeoutExpired("git", 15)
+    assert hostgit.init(target) == hostgit.Refused("init-failed")
+    assert len(rec.calls) == 1 and rec.listings == []
+    assert (str(target), "init-failed") in hostgit.refusals()
