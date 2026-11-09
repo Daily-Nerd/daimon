@@ -39,8 +39,7 @@ def _hook_lib(path):
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
-    monkeypatch.setenv("DAIMON_CAPTURE_HOST", "x")
-    monkeypatch.delenv("DAIMON_CAPTURE_HOST")
+    monkeypatch.delenv("DAIMON_CAPTURE_HOST", raising=False)
 
 
 @pytest.fixture
@@ -220,3 +219,46 @@ def test_heal_plans_the_real_session_with_its_project_on_the_first_pass(
     assert [t.session_id for t in plan.targets] == [SID]
     assert plan.targets[0].project == PROJECT
     assert all(s.reason != "project-unknown" for s in plan.skipped)
+
+
+# ---- 7: a transcript that is gone -------------------------------------------
+
+def _outstanding(log_dir):
+    entries = ledger._session_ledger(_text(log_dir), now=time.time())
+    out = ledger._outstanding_failures(
+        entries, time.time(), lambda sid: False, 1800,
+        lambda p: Path(p).exists())
+    return entries, {o["sid"]: o for o in out}
+
+
+def test_a_missing_transcript_names_the_session_and_settles_it(
+        wire, project, log_dir, capsys):
+    _seed_spawn(log_dir, wire)
+    wire.unlink()
+    assert cli._run_serialize(wire, project, session=SID) == 2
+    assert _last(log_dir) == (
+        f"error: transcript not found: {wire} (session: s1) "
+        f"(transcript: {wire})")
+    entries, out = _outstanding(log_dir)
+    assert set(entries) == {SID}
+    assert entries[SID]["result_kind"] == "error"
+    assert entries[SID]["transcript"] == str(wire)
+    assert entries[SID]["project"] == PROJECT
+    assert out[SID]["class"] == "unrecoverable"
+    assert out[SID]["kind"] == "error"
+
+
+def test_an_unnamed_missing_transcript_settles_under_its_stem(
+        wire, project, log_dir, capsys):
+    stem = wire.stem
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_dir / "serialize.log", "a", encoding="utf-8") as f:
+        f.write(f"{STAMP} session-end: spawned serialize for {stem} "
+                f"(reason: x, project: {PROJECT}) (transcript: {wire})\n")
+    wire.unlink()
+    assert cli._run_serialize(wire, project) == 2
+    assert _last(log_dir) == (
+        f"error: transcript not found: {wire} (transcript: {wire})")
+    entries, out = _outstanding(log_dir)
+    assert entries[stem]["result_kind"] == "error"
+    assert out[stem]["class"] == "unrecoverable"

@@ -49,7 +49,11 @@ def _error_line(text: str, path: Path, session: str | None = None,
     it) must say so on EVERY failure, or the failure lands on the stem (`wire`
     for every Kimi session). The group sits before the transcript group (the
     transcript regex swallows what follows the path). A run that was never told
-    its session prints no group and keeps the stem as its key."""
+    its session prints no group and keeps the stem as its key. Every failure
+    kind goes through here (a serialize error, a refused admission, both
+    pre-flight errors, a transcript that is gone) and every line carries the
+    transcript group, which is what lets the ledger attribute it (#49): a
+    line without one is dropped and its spawn reads as running until hung."""
     named = (session or "").strip()
     group = f" (session: {named})" if named else ""
     tail = f" after {elapsed}s" if elapsed is not None else ""
@@ -215,7 +219,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
         account = detailed["account"]
         _append_transcript_notes(session_id, detailed["notes"])
     except FileNotFoundError:
-        msg = f"error: transcript not found: {path}"
+        msg = _error_line(f"transcript not found: {path}", path, session)
         _print_error(msg)
         _append_serialize_log(msg)
         return 2
