@@ -13,10 +13,11 @@ anchors:
   - pattern: "fallback = latest is not None"
 evidence:
   - note: #1132 PR 7a census: hook/daimon-session-brief.py:55-66 slugs the payload cwd, tests <slug>/latest.json, else falls back to the global latest.json and prints a 'global fallback' label; daimon brief decides the same thing through store.read_latest_result (fell_back) and briefing.prepare.
+  - note: archived 2026-11-10: The session-start hooks now consume the CLI briefing label. Superseded by candidate session-start-hooks-print-the-label-the-cli-gives.
 expires:
   condition: "the hook script stops testing pointer files and reads the route fact from `daimon brief` output or a `daimon` verb"
   review_after: 2027-04-07
-status: active
+status: archived
 ---
 
 `hook/daimon-session-brief.py` (and its `_hooks/` mirror) decides "is this a

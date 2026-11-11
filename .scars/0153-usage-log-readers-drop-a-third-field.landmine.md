@@ -14,6 +14,7 @@ anchors:
   - pattern: "worldcheck:[^\"' ]*skipped-"
 evidence:
   - commit: 0128f8a
+  - commit: 9d203e7
 expires:
   condition: "the usage.log readers parse more than two whitespace fields"
   review_after: 2027-04-12
@@ -30,6 +31,10 @@ worldcheck claim therefore rides inside the command token,
 
 Counting follows from that. An unanchored match on
 `worldcheck:pr-state:skipped` also hits every tagged line and reads double.
-Anchor on the whole token, for example the line ending in
-` worldcheck:pr-state:skipped`. Do not replace the untagged line: it is a
+Parse the command token with `worldcheck.parse_usage_token(command)` and
+compare the returned `.key` to `worldcheck:pr-state:skipped`. Per-class tokens can carry
+`:<slug>`, so a line-ending comparison misses scoped entries. The parser
+accepts both historical unscoped tokens and current scoped tokens. For a
+project-specific count, compare `.slug` explicitly; `None` is unscoped.
+Keep the untagged outcome line alongside its reason-tagged line: it is a
 documented-by-use `daimon stats` key.

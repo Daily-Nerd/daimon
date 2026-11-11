@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 161
 type: landmine
 title: heal.plan_all keeps the three-argument ledger._compute_outstanding call and routes presumed_dead through _scan_outstanding
 severity: medium
 confidence: 0.8
 created: 2026-10-15
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/heal.py
   - pattern: "_compute_outstanding\(text, now"
 evidence:
-  - note: "tests/test_cli.py test_heal_plan_* replace ledger._compute_outstanding with fakes of the exact signature (text, now, force=False); #1179 PR 3 (feat/heal-all)"
+  - note: tests/test_cli.py test_heal_plan_* replace ledger._compute_outstanding with fakes of the exact signature (text, now, force=False); #1179 PR 3 (feat/heal-all)
 expires:
   condition: "the test_heal_plan_* fakes accept **kwargs or are rewritten over heal.plan_all"
   review_after: 2027-04-15
-status: candidate
+status: active
 ---
 
 `ledger._heal_plan` is now written over `heal.plan_all`. The old

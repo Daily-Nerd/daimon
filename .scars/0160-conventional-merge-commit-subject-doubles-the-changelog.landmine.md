@@ -1,21 +1,25 @@
 ---
-id: 0
+id: 160
 type: landmine
 title: A merge commit whose subject is the PR title makes release-please list every change twice
 severity: medium
 confidence: 0.95
 created: 2026-10-23
 authors: ["Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: .github/workflows/pr-validation.yml
   - path: release-please-config.json
 evidence:
-  - note: "v0.59.2 CHANGELOG lists `fix(scope): one owner decides every read scope` twice, as branch commit 6a14b12 and again as merge commit c601e16 (PR #1224), and `fix(mcp): the host grants cross-project reads` twice, as ece15a4 and d7b4b57 (PR #1226). Repo settings at the time: merge_commit_title=PR_TITLE, merge_commit_message=PR_BODY, squash and rebase disabled."
+  - note: Archived with user authorization on 2026-11-10. Superseded by pr-title-must-not-parse-as-a-conventional-commit: a conventional PR title can also duplicate changelog entries through the merge commit body.
+  - note: v0.59.2 CHANGELOG lists `fix(scope): one owner decides every read scope` twice, as branch commit 6a14b12 and again as merge commit c601e16 (PR
   - pr: 1176
+  - note: archived 2026-11-10: Obsolete advice was previously archived by the owner decision. Bulk promotion reactivated it. Superseded by scar 168, which covers conventional PR titles in merge commit bodies.
 expires:
   condition: "release-please skips merge commits, or the repo stops merging with a merge commit"
   review_after: 2027-04-23
-status: candidate
+status: archived
 ---
 
 PRs here merge with a merge commit, so every branch commit reaches main as

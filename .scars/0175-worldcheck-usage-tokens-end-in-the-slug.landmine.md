@@ -1,21 +1,24 @@
 ---
-id: 0
+id: 175
 type: landmine
 title: worldcheck class usage tokens end in the project slug, so count them through parse_usage_token, never by line ending
 severity: medium
 confidence: 0.85
 created: 2026-10-17
 authors: ["Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/worldcheck.py
   - path: plugin/daimon_briefing/cli/stats.py
-  - pattern: "endswith\(. worldcheck:"
+  - path: research/experiments/worldcheck-per-note-1183/measure.py
 evidence:
+  - note: Active scar 153 still recommends a line-ending example without the slug. Revise that example to use parse_usage_token before promoting this complementary scar.
   - commit: 9d203e7
 expires:
   condition: "usage.log lines carry the project in a field of their own"
   review_after: 2027-04-17
-status: candidate
+status: active
 ---
 
 Since #1184 the per-class counters in usage.log are

@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 173
 type: fence
 title: A tilde in a checked path argument is reported as shell-expansion, never resolved with expanduser
 severity: low
 confidence: 0.8
 created: 2026-11-06
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/checks_runtime.py
 evidence:
@@ -13,7 +15,7 @@ evidence:
 expires:
   condition: "the tokenizer keeps quote information per token"
   review_after: 2027-05-06
-status: candidate
+status: active
 ---
 
 `_needs_shell_expansion` flags a leading `~` (and `$`, backtick, `*`, `?`, `[`)

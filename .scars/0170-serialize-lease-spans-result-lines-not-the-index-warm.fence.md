@@ -1,21 +1,23 @@
 ---
-id: 0
+id: 170
 type: fence
 title: The serialize heartbeat lease must cover every result line and end before recall.warm()
 severity: medium
 confidence: 0.8
 created: 2026-10-15
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/serialize.py
   - path: plugin/daimon_briefing/hooks.py
 evidence:
-  - commit: 7e6785e
-  - commit: 56c9c4f
+  - commit: 70eedbd
+  - commit: 1f06bad
 expires:
   condition: "a single completion record replaces the stamp-plus-log-line pair as the liveness source"
   review_after: 2027-04-15
-status: candidate
+status: active
 ---
 
 The heartbeat stamp is deleted when a serialize ends, and a host reads "finished"
