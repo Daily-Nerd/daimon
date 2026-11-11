@@ -383,16 +383,11 @@ def test_a_hook_report_that_raises_leaves_every_channel_unset(tmp_path, monkeypa
     assert found["kimi"].channel == "none"
 
 
-def test_a_host_with_no_scope_never_claims_a_channel(tmp_path, monkeypatch):
-    """If a host table ever has a scope with no row (here forced by removing
-    cursor's global one) and something marks it wirable, the channel lookup
-    must still answer "no", not index a row that is not there."""
-    from daimon_briefing import skill_install
-
-    monkeypatch.setitem(skill_install.HOSTS["cursor"], "global", None)
+def test_a_host_with_no_scope_never_claims_a_channel(tmp_path):
+    """A host the skill table does not know (hermes has hooks, no skill) must
+    answer "no" at the channel lookup, not index a row that is not there."""
     home = _home(tmp_path)
-    (home / ".cursor").mkdir()
-    forced = [host_detect.Host(name="cursor", present=True, signal="x",
+    forced = [host_detect.Host(name="hermes", present=True, signal="x",
                                wirable=True)]
     resolved = host_detect.resolve_channels(forced, home=home, kind="skill",
                                             cwd=tmp_path)
