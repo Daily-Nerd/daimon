@@ -24,9 +24,7 @@ def _cmd_skill_list(args) -> int:
     from .. import skill_install
     rows = []
     for host in sorted(skill_install.HOSTS):
-        scopes = [s for s in ("global", "project")
-                  if skill_install.HOSTS[host].get(s) is not None]
-        rows.append((host, scopes))
+        rows.append((host, list(skill_install.HOSTS[host])))
     render.render_skill_list(rows)
     return 0
 

@@ -86,9 +86,6 @@ def _wirable(name: str, kind: str, project: bool) -> tuple[bool, str | None]:
         scope = "project" if project else "global"
         if skill_install.HOSTS.get(name, {}).get(scope) is not None:
             return True, None
-        if skill_install.HOSTS.get(name, {}).get("project") is not None:
-            return False, (f"{name} has no global install; use --project "
-                           f"inside a repo")
         return False, f"daimon ships no skill for {name}"
     hosts = _hook_hosts()
     spec = hosts.get(name)

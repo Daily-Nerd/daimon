@@ -66,9 +66,10 @@ _BY_DESCRIPTION = ("Gemini activates it by its description, there is no "
 
 # host -> scope -> HostSpec. "owned" writes a daimon-owned file; "block" edits
 # a marker region inside a shared file. Paths are relative to home (global) or
-# cwd (project); None = unsupported scope (see UNSUPPORTED_SKILLS).
+# cwd (project). Every host has both scopes; a scope that cannot take the
+# bundled skills is named in UNSUPPORTED_SKILLS.
 # ONE value shape per entry (#842): read caps live in CHAR_CAPS, keyed by host.
-HOSTS: dict[str, dict[str, HostSpec | None]] = {
+HOSTS: dict[str, dict[str, HostSpec]] = {
     "claude": {
         "global": HostSpec(".claude/skills/daimon/SKILL.md", "owned", "full",
                            ".claude/skills", _SLASH),
@@ -232,12 +233,7 @@ def _spec(host: str, project: bool) -> HostSpec:
     if spec is None:
         known = ", ".join(sorted(HOSTS))
         raise SkillInstallError(f"unknown host '{host}' (known: {known})")
-    entry = spec["project"] if project else spec["global"]
-    if entry is None:
-        raise SkillInstallError(
-            f"{host} has no {'project' if project else 'global'} install — "
-            f"use the other scope instead")
-    return entry
+    return spec["project"] if project else spec["global"]
 
 
 def _replace_block(text: str, block: str) -> str:
@@ -524,9 +520,7 @@ def audit(*, home: Path, cwd: Path) -> list[dict]:
     plugin_hosts = _plugin_hosts(home)
     for host in sorted(HOSTS):
         for scope in ("global", "project"):
-            entry = HOSTS[host].get(scope)
-            if entry is None:
-                continue
+            entry = HOSTS[host][scope]
             base = cwd if scope == "project" else home
             if entry.rel is None:
                 # Skills-only row: the skill is the ONLY artifact, so there is

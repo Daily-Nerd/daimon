@@ -44,6 +44,13 @@ def test_skill_list_names_hosts(capsys):
         assert host in out
 
 
+def test_skill_list_shows_both_scopes_for_cursor(capsys):
+    """Cursor global is a skills-only row, so it is listed like any other."""
+    assert cli.main(["skill", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "cursor  (global, project)" in out
+
+
 def test_skill_install_project_writes_relative_to_cwd(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
