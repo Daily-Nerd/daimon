@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 157
 type: landmine
 title: carry_forward and the pointer guard must read the same ordering rule, or an older capture carries the future
 severity: high
 confidence: 0.9
 created: 2026-10-26
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/capture.py
@@ -14,11 +16,11 @@ anchors:
   - pattern: "_stamp_first_seen\b"
 evidence:
   - commit: aabb447
-  - note: "#1236 design, section 6 'Older than the live latest': carry_forward folded the newer latest into an older import and could emit corroborations from it"
+  - note: #1236 design, section 6 'Older than the live latest': carry_forward folded the newer latest into an older import and could emit corroborations from it
 expires:
   condition: "carry reads its prev from the write's own rotation step so there is one read and one comparison"
   review_after: 2027-04-26
-status: candidate
+status: active
 ---
 
 `store.write_checkpoint` guards each `latest` pointer with `_pointer_regresses`

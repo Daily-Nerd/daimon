@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 162
 type: landmine
 title: Host hook output limits are external and change silently; the brief byte default must come from a measurement, not one spill message
 severity: high
 confidence: 0.8
 created: 2026-10-30
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/config.py
   - pattern: "DAIMON_BRIEF_MAX_BYTES"
 evidence:
-  - note: "2026-10-30, #1269: Claude Code 2.1.314 trims hook stdout and spills it when its length passes 10000 UTF-16 units, replacing it with a 2 KB preview (largest unspilled briefing 8,920 chars, smallest spilled 10,508). Codex 0.157.0 delivers about 10,000 chars with a truncation banner. Kimi Code 0.43.1 showed no cut up to 25,728 chars. The old default 11264 came from one spill message that read 12.8KB and sat above both limits."
+  - note: 2026-10-30, #1269: Claude Code 2.1.314 trims hook stdout and spills it when its length passes 10000 UTF-16 units, replacing it with a 2 KB preview (largest unspilled briefing 8,920 chars, smallest spilled 10,508). Codex 0.157.0 delivers about 10,000 chars with a truncation banner. Kimi Code 0.43.1 showed no cut up to 25,728 chars. The old default 11264 came from one spill message that read 12.8KB and sat above both limits.
 expires:
-  condition: "the per-host limits in docs/configuration.md are re-measured against current host versions and the default still sits under the tightest of them, or hosts stop capturing hook stdout"
+  condition: "hosts stop capturing hook stdout, or host adapters enforce declared output limits automatically"
   review_after: 2027-04-30
-status: candidate
+status: active
 ---
 
 The byte budget for `daimon brief` exists because a host hook captures the
@@ -34,5 +36,6 @@ through that budget reopens the gap. Second, the unit differs by host
 of them, which is why the budget is in bytes.
 
 Before changing the default, re-measure each host and update the table in
-`docs/configuration.md` (and its Spanish mirror). Keep the default under the
+`website/docs/getting-started/configuration.md` and
+`website/i18n/es/docusaurus-plugin-content-docs/current/getting-started/configuration.md`. Keep the default under the
 tightest measured limit with margin.

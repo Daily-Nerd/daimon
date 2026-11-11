@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 172
 type: fence
 title: team sync commits .gitattributes on purpose; it is the one non-author path daimon writes to the shared branch, and an untracked copy is the trap
 severity: medium
 confidence: 0.8
 created: 2026-10-23
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/teamsync.py
   - pattern: "_commit_union_rules"
@@ -18,7 +20,7 @@ evidence:
 expires:
   condition: "the merge=union rule moves to .git/info/attributes (per clone, never committed) or git merges append-only ledgers by union without a rule"
   review_after: 2027-04-23
-status: candidate
+status: active
 ---
 
 The module docstring says only immutable per-author files are synced and

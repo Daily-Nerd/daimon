@@ -1,23 +1,25 @@
 ---
-id: 0
+id: 159
 type: fence
 title: The Codex transcript lister matches any .jsonl under sessions, never only rollout-*, because the receipt index reads the same list
 severity: medium
 confidence: 0.85
 created: 2026-10-27
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/provenance.py
   - path: plugin/daimon_briefing/importer.py
+  - path: plugin/tests/test_provenance.py
   - pattern: "def transcripts\b"
-  - pattern: "\*\*/\*\.jsonl"
 evidence:
   - commit: 3e68cbf
-  - note: "#1236 design section 7 names the Codex root as sessions/**/rollout-*.jsonl; tests/test_provenance.py::test_resolver_supports_codex_recursive_sessions resolves a receipt to sessions/2026/08/S-codex.jsonl, a stem with no rollout prefix"
+  - note: #1236 design section 7 names the Codex root as sessions/**/rollout-*.jsonl; tests/test_provenance.py::test_resolver_supports_codex_recursive_sessions resolves a receipt to sessions/2026/08/S-codex.jsonl, a stem with no rollout prefix
 expires:
   condition: "SourceResolver._candidates stops building its Codex index from SourceResolver.transcripts, or the receipt resolver gains its own Codex pattern"
   review_after: 2027-04-27
-status: candidate
+status: active
 ---
 
 `SourceResolver.transcripts("codex")` globs `*.jsonl` below `sessions` and

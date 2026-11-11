@@ -1,20 +1,23 @@
 ---
-id: 0
+id: 155
 type: landmine
 title: A request kind that skips the receiver's coverage predicate leaves its ruling inert and its agent unchecked; keep one kind-agnostic predicate for the write boundary and the fold
 severity: high
 confidence: 0.85
 created: 2026-11-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/requests.py
-  - pattern: "kind == \"work\" and verb == \"accept\""
+  - path: plugin/tests/test_request_receiver_consent.py
 evidence:
-  - note: "Receiver consent for info asks. The accept write boundary and the fold each carried an unconditional info branch, and both coverage predicates compared the ruling kind to the literal work, so a verb=accept kind=info ruling validated, was ratified, and changed nothing. An agent's done on an info ask also skipped the accept entirely because the fold held back only work."
+  - note: plugin/tests/test_request_receiver_consent.py::test_an_agent_accepted_row_older_than_the_rule_keeps_landing protects historical pre-anchor agent accepts.
+  - note: Receiver consent for info asks. The accept write boundary and the fold each carried an unconditional info branch, and both coverage predicates compared the ruling kind to the literal work, so a verb=accept kind=info ruling validated, was ratified, and changed nothing. An agent's done on an info ask also skipped the accept entirely because the fold held back only work.
 expires:
   condition: "request kinds stop being a closed pair, or coverage moves behind a single resolver both boundaries call"
   review_after: 2027-05-01
-status: candidate
+status: active
 ---
 
 Answering an ask exposes what the receiving project knows, so every agent verb that

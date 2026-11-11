@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 156
 type: landmine
 title: the bench checkpoint cache keys on transcript content, so identical fixture sessions across questions are cache hits, not serialize attempts
 severity: low
 confidence: 0.9
 created: 2026-10-23
 authors: ["Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/tests/test_bench_abort.py
   - path: plugin/tests/test_bench_model_pin.py
@@ -15,7 +17,7 @@ evidence:
 expires:
   condition: "cache_mod.cache_key stops hashing the message content, or run-level tests stop sharing one CheckpointCache across questions"
   review_after: 2027-04-23
-status: candidate
+status: active
 ---
 
 `cache_mod.cache_key` hashes the session's messages (plus backend, model,

@@ -1,20 +1,22 @@
 ---
-id: 0
+id: 154
 type: landmine
 title: A new host bookkeeping row type is dropped, so a file of only those rows fails as unreadable-transcript
 severity: medium
 confidence: 0.7
 created: 2026-11-07
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/transcript.py
   - pattern: "_BOOKKEEPING_ROWS"
 evidence:
-  - note: "issue 1292. Read-only census of 951 Claude Code transcripts on one machine: 6 held no user or assistant row; 5 of them only session-owner rows, 1 only rows with no type at all. Naming the bookkeeping types as excluded codes turns the five into a no-conversation skip; the sixth (unknown shape) stays a failure by design."
+  - note: issue 1292. Read-only census of 951 Claude Code transcripts on one machine: 6 held no user or assistant row; 5 of them only session-owner rows, 1 only rows with no type at all. Naming the bookkeeping types as excluded codes turns the five into a no-conversation skip; the sixth (unknown shape) stays a failure by design.
 expires:
   condition: "the host's bookkeeping row types are read from a declared host schema instead of a list in transcript.py"
   review_after: 2027-05-07
-status: candidate
+status: active
 ---
 
 `serializer.require_readable` fails a transcript that has rows and no admitted

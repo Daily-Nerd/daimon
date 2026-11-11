@@ -1,11 +1,13 @@
 ---
-id: 0
+id: 165
 type: fence
 title: The noted suffix is charged to the one byte allocator, so making it cheaper means re-measuring displacement, not adding a second budget
 severity: medium
 confidence: 0.8
 created: 2026-10-16
 authors: ["Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/briefing.py
 evidence:
@@ -13,7 +15,7 @@ evidence:
 expires:
   condition: "select stops charging each candidate its rendered line, or the noted line moves out of the item line"
   review_after: 2027-04-16
-status: candidate
+status: active
 ---
 
 Every carried item that names a PR, branch, file or dependency ends with

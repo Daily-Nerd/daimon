@@ -1,22 +1,24 @@
 ---
-id: 0
+id: 166
 type: fence
 title: An overturned record without a reason reads "overturned" as a refutation and "retired" as a ruling; the two defaults differ on purpose and are never backfilled
 severity: medium
 confidence: 0.85
 created: 2026-10-26
 authors: ["Kibukx"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/cli/_ledger.py
   - path: plugin/daimon_ui/static/render.js
   - path: plugin/daimon_briefing/refutations.py
   - pattern: "overturn_reason"
 evidence:
-  - note: "issue #1238; plugin/tests/test_refutations.py::test_an_overturned_row_without_a_reason_folds_to_none_and_reads_as_before and plugin/tests/test_rulings.py::test_a_retired_row_without_a_reason_still_reads_retired pin both fallbacks"
+  - note: issue #1238; plugin/tests/test_refutations.py::test_an_overturned_row_without_a_reason_folds_to_none_and_reads_as_before and plugin/tests/test_rulings.py::test_a_retired_row_without_a_reason_still_reads_retired pin both fallbacks
 expires:
   condition: "every overturned row in every ledger carries a reason, or the fold stops distinguishing rows that predate the field"
   review_after: 2027-04-26
-status: candidate
+status: active
 ---
 
 Since #1238 the `overturned` and `overturn-proposed` rows carry `reason`,

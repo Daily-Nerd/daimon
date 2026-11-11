@@ -1,19 +1,23 @@
 ---
-id: 0
+id: 169
 type: fence
 title: The sandbox marker sits in the checkpoint dir on purpose, and the seeders compare it against the dir config resolves NOW
 severity: medium
 confidence: 0.8
 created: 2026-10-16
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/testing.py
+  - path: plugin/daimon_briefing/config.py
+  - path: plugin/daimon_briefing/heal.py
 evidence:
-  - note: "#1179 PR 5, design D21 (marker under the current checkpoint dir)"
+  - note: #1179 PR 5, design D21 (marker under the current checkpoint dir)
 expires:
   condition: "seed_checkpoint and seed_ruling stop writing a ratified ruling, or the sandbox gains a second guard"
   review_after: 2027-04-16
-status: candidate
+status: active
 ---
 
 `testing.sandbox` writes a random token to `<checkpoints>/.sandbox`, and
