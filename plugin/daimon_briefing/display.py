@@ -295,6 +295,15 @@ def elsewhere_degraded_note(count: int, scoped: bool) -> str:
                          "lines; their counts may be incomplete")
 
 
+def pending_serialize_note() -> str:
+    """#1328: a serialize of this project is live right now, so a fresher
+    checkpoint is being written and the briefing may be one session behind.
+    The one wording every briefing surface carries."""
+    return marks.warning(
+        "a serialize is in flight — this briefing may be one session "
+        "behind; re-run `daimon brief` in a few minutes for the fresh one.")
+
+
 def admission_refused_note(count: int, state: str, hint: str) -> str:
     """`admission-refused`: sessions of THIS project that were not serialized
     because its events ledger is not proven. The caller's own project, so the

@@ -318,7 +318,7 @@ def _in_flight_stems() -> set:
     A STALE stamp is deliberately not in-flight — that is a crashed serialize
     and heal's territory, and treating it as live would make the transcript
     permanently unsweepable, strictly worse than the double-spawn this
-    prevents. Same liveness bar as ledger.serialize_in_flight, but keyed
+    prevents. Same liveness bar as briefing.pending_serialize_note, but keyed
     per-session (the stamp's filename) rather than per-project (its content),
     so a live serialize for one session never starves an orphaned sibling.
 

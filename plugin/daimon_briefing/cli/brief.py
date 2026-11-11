@@ -20,7 +20,6 @@ from .. import (
     config,
     display,
     effects_commit,
-    ledger,
     recall,
     render,
     store,
@@ -407,16 +406,8 @@ def _cmd_brief(args, fx) -> int:
         lead += render.brief_note_lines(
             ["no checkpoint for this project — showing the global "
              "checkpoint (fallback), possibly another project's."])
-    # #534: a LIVE serialize for this project means a fresher checkpoint is
-    # being written right now — say so instead of silently briefing one
-    # session behind (measured at 10% of runs on one field machine). Keyed on
-    # the ledger's liveness bar, never heartbeat existence: a stuck or
-    # crashed serialize is heal's case, and a permanent false staleness line
-    # would be worse than the silence this fixes.
-    if ledger.serialize_in_flight(store.project_slug(project) or ""):
-        lead += render.brief_note_lines([
-            "a serialize is in flight — this briefing may be one session "
-            "behind; re-run `daimon brief` in a few minutes for the fresh one."])
+    # #534, #1328: a live serialize of this project says so through the
+    # notes `briefing.prepare` returns, on every route and every host.
     # --team (#111): fan in teammates for THIS project. Empty team → None → the
     # renderer emits no Teammates section, byte-identical to a non-team briefing.
     team_counts = _TeamCounts()

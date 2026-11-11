@@ -72,9 +72,6 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/ledger.py", "heartbeat_age", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp",
-    ("daimon_briefing/ledger.py", "serialize_in_flight", "time.time"):
-        "real-machine age or mtime arithmetic (cooldown, reap, retention, "
-        "heartbeat), not a row stamp",
     ("daimon_briefing/ledger.py", "touch_heartbeat", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp",
