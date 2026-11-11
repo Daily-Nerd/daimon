@@ -256,7 +256,7 @@ def test_the_allowlist_table_is_printed_whole():
     for pattern in hostgit.CONFIG_ALLOWLIST_PATTERNS:
         print(f"  {pattern}")
     assert len(hostgit.CONFIG_ALLOWLIST_EXACT) == 11
-    assert len(hostgit.CONFIG_ALLOWLIST_PATTERNS) == 6
+    assert len(hostgit.CONFIG_ALLOWLIST_PATTERNS) == 7
 
 
 @needs_git

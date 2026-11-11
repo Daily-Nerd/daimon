@@ -26,7 +26,7 @@ from typing import Any, NamedTuple
 # don't apply here). checks_runtime is the #943 stdlib-only runtime module —
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
-from . import (capture, checks_host, checks_runtime, clock, config, display,
+from . import (capture, checks_host, checks_runtime, clock, config, display, hostgit,
                ledger,
                llm, marks, pending, receipts, refutations, requests, schema,
                scoring, store)
@@ -877,8 +877,9 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
 
     No try blocks: a ledger that cannot be read is a health value in the
     snapshot (an unreadable trust ledger CLOSES the view), and a raise from
-    `view` is a bug the host reports. Worldcheck is the one annotator doing
-    I/O, runs only when `worldcheck_project` is set and the flag is on, never
+    `view` is a bug the host reports. Sealed checkout admission is queried
+    for this project's diagnostic even without a checkpoint. Worldcheck
+    runs only when `worldcheck_project` is set and the flag is on, never
     on a global-fallback body (its `gh` probes would answer for the wrong
     repo), only RETURNS its stats and ledger rows, and stays fail-open."""
     from . import view
@@ -954,6 +955,24 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
                         *requests.sent(worldcheck_project).notes))
         except Exception:  # noqa: BLE001
             pass
+    # Query this response's checkout, never the process-wide refusal history.
+    # The requested project owns this diagnostic even when its memory body
+    # falls back to another project. Named buckets have no checkout to query.
+    if hostgit.posture() is hostgit.Posture.SEALED:
+        project_dir = config.resolve_project_dir(project)
+        if project_dir and os.path.isabs(project_dir):
+            checkout = hostgit.project(project_dir)
+            if isinstance(checkout, hostgit.Refused):
+                # repr escapes controls in config subsections and paths.
+                # Bound foreign fields before charging this protected note
+                # to the shared allocator. Put it before the note cap so a
+                # busy ledger cannot hide unavailable Git evidence.
+                room = display.shorten(repr(project_dir), 120)
+                reason = display.shorten(repr(checkout.reason), 200)
+                warning = marks.warning(
+                    f"Git-backed reads unavailable for {room}: "
+                    f"checkout refused ({reason}).")
+                notes = display.merge_notes((warning,), display.all_notes(notes))
     return Annotated(
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,

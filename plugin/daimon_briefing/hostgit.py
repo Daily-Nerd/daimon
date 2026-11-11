@@ -137,6 +137,7 @@ CONFIG_ALLOWLIST: tuple[str, ...] = (
     "init.defaultbranch",
     "remote.<name>.url", "remote.<name>.fetch", "remote.<name>.pushurl",
     "branch.<name>.remote", "branch.<name>.merge", "branch.<name>.rebase",
+    "branch.<name>.vscode-merge-base",
 )
 CONFIG_ALLOWLIST_EXACT: frozenset[str] = frozenset(
     k for k in CONFIG_ALLOWLIST if "<name>" not in k)
