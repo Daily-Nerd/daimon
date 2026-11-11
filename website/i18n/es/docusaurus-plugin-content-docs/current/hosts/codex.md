@@ -148,8 +148,18 @@ registro en `hooks.json`. Una vez que la tabla existe, el puntero de recall
 daimon skill install codex       # bloque gestionado en ~/.codex/AGENTS.md
 ```
 
+Install entrega dos cosas. El protocolo compacto va en un bloque gestionado
+de `AGENTS.md` (el archivo que Codex lee en cada prompt, con un tope de
+bytes). El flujo de checkpoint en sesión, `daimon-end`, se escribe como skill
+en `~/.agents/skills/daimon-end/SKILL.md` (`<repo>/.agents/skills/daimon-end/SKILL.md`
+con `--project`), los directorios donde Codex busca skills.
+
+Codex no usa `/daimon-end`. Escribe `$daimon-end`, o elígela en el selector
+`/skills`.
+
 En el archivo compartido `AGENTS.md`, daimon solo toca su propio bloque
-marcado — `daimon skill uninstall codex` elimina exactamente ese bloque.
+marcado. `daimon skill uninstall codex` elimina exactamente ese bloque y la
+carpeta `daimon-end/` que escribió, y nada más del directorio de skills.
 Re-ejecuta install después de actualizar `daimon` para refrescar el
 contenido.
 

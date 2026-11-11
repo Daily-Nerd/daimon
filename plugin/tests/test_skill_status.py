@@ -136,13 +136,50 @@ def test_a_bundled_skill_deleted_by_hand_is_missing_not_absent(tmp_path):
     assert row["drift"] is True
 
 
-def test_compact_hosts_are_audited_without_their_bundled_row(tmp_path):
+def test_a_host_with_no_skills_root_is_audited_without_a_bundled_row(tmp_path):
+    """Only the explicit unsupported row (windsurf project) has no bundled
+    skill to audit; density no longer decides that (#1327)."""
     home = _home(tmp_path)
-    skill_install.install("cursor", project=True, home=home, cwd=tmp_path)
+    skill_install.install("windsurf", project=True, home=home, cwd=tmp_path)
     report = skill_install.audit(home=home, cwd=tmp_path)
-    assert _rows(report, "cursor", scope="project")["state"] == "CURRENT"
+    assert _rows(report, "windsurf", scope="project")["state"] == "CURRENT"
     assert not [r for r in report
-                if r["host"] == "cursor" and r["skill"] == "daimon-end"]
+                if r["host"] == "windsurf" and r["scope"] == "project"
+                and r["skill"] == "daimon-end"]
+
+
+@pytest.mark.parametrize("host,scope", [("codex", "global"), ("codex", "project"),
+                                        ("gemini", "global"), ("gemini", "project"),
+                                        ("cursor", "project")])
+def test_new_skill_hosts_report_missing_stale_and_current(tmp_path, host, scope):
+    home = _home(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    project = scope == "project"
+    skill_install.install(host, project=project, home=home, cwd=repo)
+    spec = skill_install.HOSTS[host][scope]
+    dest = (repo if project else home) / spec.skills_root / "daimon-end" / "SKILL.md"
+
+    def state():
+        report = skill_install.audit(home=home, cwd=repo)
+        return _rows(report, host, skill="daimon-end", scope=scope)
+
+    assert state()["state"] == "CURRENT"
+    dest.write_text("stale\n", encoding="utf-8")
+    assert state()["state"] == "STALE" and state()["drift"] is True
+    dest.unlink()
+    assert state()["state"] == "MISSING" and state()["drift"] is True
+
+
+def test_the_block_without_the_skill_is_drift_not_health(tmp_path):
+    """The class that hid #1327: AGENTS.md carried daimon's block, no skill
+    existed anywhere, and the audit had no row to fail on."""
+    home = _home(tmp_path)
+    skill_install.install("codex", project=False, home=home, cwd=tmp_path)
+    (home / ".agents" / "skills" / "daimon-end" / "SKILL.md").unlink()
+    report = skill_install.audit(home=home, cwd=tmp_path)
+    assert _rows(report, "codex")["state"] == "CURRENT"
+    assert _rows(report, "codex", skill="daimon-end")["state"] == "MISSING"
 
 
 # ---- marker-block hosts ----
@@ -247,6 +284,17 @@ def test_skill_status_exits_zero_when_nothing_drifted(cli_home, capsys):
     capsys.readouterr()
     assert cli.main(["skill", "status"]) == 0
     assert "kimi" in capsys.readouterr().out
+
+
+def test_skill_status_fails_when_the_codex_block_exists_but_the_skill_does_not(
+        cli_home, capsys):
+    import daimon_briefing.cli as cli
+
+    assert cli.main(["skill", "install", "codex"]) == 0
+    (cli_home / ".agents" / "skills" / "daimon-end" / "SKILL.md").unlink()
+    capsys.readouterr()
+    assert cli.main(["skill", "status"]) == 1
+    assert "MISSING" in capsys.readouterr().out
 
 
 def test_skill_status_exits_non_zero_on_drift(cli_home, capsys):

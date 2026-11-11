@@ -157,7 +157,7 @@ def _skill_installed(name: str, *, home: Path, cwd: Path, project: bool) -> bool
     if entry is None:
         return False
     try:
-        return ((cwd if project else home) / entry[0]).exists()
+        return ((cwd if project else home) / entry.rel).exists()
     except OSError:
         return False
 

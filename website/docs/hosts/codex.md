@@ -137,9 +137,19 @@ pointer, emitted by `daimon-codex-user-prompt-submit.py` above) names the
 daimon skill install codex       # managed block in ~/.codex/AGENTS.md
 ```
 
+Install delivers two things. The compact protocol goes in a managed block in
+`AGENTS.md` (the file Codex reads into every prompt, under a byte cap). The
+in-session checkpoint flow, `daimon-end`, is written as a skill to
+`~/.agents/skills/daimon-end/SKILL.md` (`<repo>/.agents/skills/daimon-end/SKILL.md`
+with `--project`), the directories Codex scans for skills.
+
+Codex does not use `/daimon-end`. Type `$daimon-end`, or pick it from the
+`/skills` selector.
+
 On the shared `AGENTS.md` file, daimon only ever touches its own marker
-block — `daimon skill uninstall codex` removes exactly that block. Re-run
-install after upgrading `daimon` to refresh the content.
+block. `daimon skill uninstall codex` removes exactly that block and the
+`daimon-end/` folder it wrote, and nothing else in the skills directory.
+Re-run install after upgrading `daimon` to refresh the content.
 
 ## Verify
 

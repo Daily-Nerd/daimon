@@ -16,6 +16,7 @@ project-only host here.
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 from . import __version__, skill_content
 
@@ -27,22 +28,56 @@ _BLOCK_RE = re.compile(
     r"<!-- daimon:skill v\S+ start -->.*?<!-- daimon:skill v\S+ end -->",
     re.DOTALL)
 
-# host -> writer spec. "owned" writes a daimon-owned file; "block" edits a
-# marker region inside a shared file. Paths are relative to home (global)
-# or cwd (project); None = unsupported scope.
-# Per-host install scopes. ONE value shape per entry (#842): a read cap used
-# to live in here beside the scopes, which made the mapping's value type a
-# union of "a scope" and "a number", and `spec["project"]` therefore something
-# no caller could index without first ruling out the cap. Caps live in
-# CHAR_CAPS below, keyed by host, so this table answers exactly one question.
-HOSTS: dict[str, dict[str, tuple[str, str, str] | None]] = {
+class HostSpec(NamedTuple):
+    """ONE host scope's delivery, one owner for install, uninstall and audit.
+
+    Two facts that used to share one string (#1327) are separate fields:
+
+    - `density` ("compact" | "full") decides ONLY how verbose the always-loaded
+      protocol text is. It never decides which skills exist.
+    - `skills_root` is the host's native skills directory (relative to home
+      for global, to the repo for project) that daimon may write the bundled
+      skills into, or None when the host cannot take them. Skill folder is the
+      unit of ownership: daimon writes and removes `<skills_root>/<name>/`
+      only, never the shared root.
+
+    `invoke` is how a person actually triggers a bundled skill on this host,
+    because the hosts differ and a promise of `/daimon-end` on Codex or Gemini
+    is false.
+    """
+
+    rel: str
+    kind: str  # "owned" (daimon's own file) | "block" (marker region in a user file)
+    density: str
+    skills_root: str | None
+    invoke: str
+
+
+_SLASH = "invoke it with /daimon-end"
+_DOLLAR = "invoke it with $daimon-end or pick it in /skills"
+_BY_DESCRIPTION = ("Gemini activates it by its description, there is no "
+                   "by-name command")
+
+# host -> scope -> HostSpec. "owned" writes a daimon-owned file; "block" edits
+# a marker region inside a shared file. Paths are relative to home (global) or
+# cwd (project); None = unsupported scope (see UNSUPPORTED_SKILLS).
+# ONE value shape per entry (#842): read caps live in CHAR_CAPS, keyed by host.
+HOSTS: dict[str, dict[str, HostSpec | None]] = {
     "claude": {
-        "global": (".claude/skills/daimon/SKILL.md", "owned", "full"),
-        "project": (".claude/skills/daimon/SKILL.md", "owned", "full"),
+        "global": HostSpec(".claude/skills/daimon/SKILL.md", "owned", "full",
+                           ".claude/skills", _SLASH),
+        "project": HostSpec(".claude/skills/daimon/SKILL.md", "owned", "full",
+                            ".claude/skills", _SLASH),
     },
+    # Codex scans `$HOME/.agents/skills` (user) and `<repo>/.agents/skills`
+    # (repo) per its skills documentation, and invokes by `$name` or the
+    # `/skills` selector. The AGENTS.md block stays compact: it is read into
+    # every prompt under a byte cap.
     "codex": {
-        "global": (".codex/AGENTS.md", "block", "compact"),
-        "project": ("AGENTS.md", "block", "compact"),
+        "global": HostSpec(".codex/AGENTS.md", "block", "compact",
+                           ".agents/skills", _DOLLAR),
+        "project": HostSpec("AGENTS.md", "block", "compact", ".agents/skills",
+                            _DOLLAR),
     },
     "windsurf": {
         # Global skills live at ~/.codeium/windsurf/skills/<name>/SKILL.md
@@ -50,17 +85,24 @@ HOSTS: dict[str, dict[str, tuple[str, str, str] | None]] = {
         # store, which pre-#88 versions polluted with a compact block; install
         # and uninstall both clean that legacy block (see _WINDSURF_LEGACY).
         # Project scope stays a rules file: the project-level skills path is
-        # unverified on a live machine.
-        "global": (".codeium/windsurf/skills/daimon/SKILL.md", "owned", "full"),
-        "project": (".windsurf/rules/daimon.md", "owned", "compact"),
+        # unverified on a live machine (see UNSUPPORTED_SKILLS).
+        "global": HostSpec(".codeium/windsurf/skills/daimon/SKILL.md", "owned",
+                           "full", ".codeium/windsurf/skills", _SLASH),
+        "project": HostSpec(".windsurf/rules/daimon.md", "owned", "compact",
+                            None, _SLASH),
     },
     "cursor": {
         "global": None,
-        "project": (".cursor/rules/daimon.mdc", "owned", "compact"),
+        "project": HostSpec(".cursor/rules/daimon.mdc", "owned", "compact",
+                            ".cursor/skills", _SLASH),
     },
+    # Gemini activates a skill by matching its description, not by name: there
+    # is no command to type, `/skills` only manages them.
     "gemini": {
-        "global": (".gemini/GEMINI.md", "block", "compact"),
-        "project": ("GEMINI.md", "block", "compact"),
+        "global": HostSpec(".gemini/GEMINI.md", "block", "compact",
+                           ".gemini/skills", _BY_DESCRIPTION),
+        "project": HostSpec("GEMINI.md", "block", "compact", ".gemini/skills",
+                            _BY_DESCRIPTION),
     },
     # #988. Kimi Code's skill contract is Claude's, not the rules-file shape:
     # a directory-form `<scope>/skills/<name>/SKILL.md` whose frontmatter
@@ -68,13 +110,25 @@ HOSTS: dict[str, dict[str, tuple[str, str, str] | None]] = {
     # (user) and `<repo>/.kimi-code/skills/` (project). At session start the
     # host injects only the LISTING (name plus description) and loads the body
     # when the skill is invoked, so this is description-gated like Claude and
-    # takes `full` rather than the always-injected compact block. Project scope
-    # is the same relative path under the repo root, which is why both rows
-    # read the same and only the base directory differs.
+    # takes `full` rather than the always-injected compact block.
     "kimi": {
-        "global": (".kimi-code/skills/daimon/SKILL.md", "owned", "full"),
-        "project": (".kimi-code/skills/daimon/SKILL.md", "owned", "full"),
+        "global": HostSpec(".kimi-code/skills/daimon/SKILL.md", "owned", "full",
+                           ".kimi-code/skills", _SLASH),
+        "project": HostSpec(".kimi-code/skills/daimon/SKILL.md", "owned",
+                            "full", ".kimi-code/skills", _SLASH),
     },
+}
+
+# #1327. A scope that cannot take the bundled skills says so, with the reason.
+# Every row of HOSTS has a `skills_root` or an entry here: silence is how
+# Codex, Gemini and Cursor went without `daimon-end`. Tests pin the census.
+UNSUPPORTED_SKILLS: dict[tuple[str, str], str] = {
+    ("windsurf", "project"): (
+        "the project-level skills path is unverified on a live machine; "
+        "install the global scope instead"),
+    ("cursor", "global"): (
+        "Cursor global rules live in IDE settings and daimon writes no "
+        "global Cursor file; use --project inside a repo"),
 }
 
 # #1000. Skills daimon ships WHOLE, as their own directory, alongside the
@@ -170,7 +224,7 @@ def _block(variant: str) -> str:
     return f"{start}\n{_render(variant)}\n{end}"
 
 
-def _spec(host: str, project: bool):
+def _spec(host: str, project: bool) -> HostSpec:
     spec = HOSTS.get(host)
     if spec is None:
         known = ", ".join(sorted(HOSTS))
@@ -180,7 +234,7 @@ def _spec(host: str, project: bool):
         raise SkillInstallError(
             f"{host} has no global rules file (rules live in IDE settings) — "
             f"use --project inside a repo instead")
-    return spec, entry
+    return entry
 
 
 def _replace_block(text: str, block: str) -> str:
@@ -208,22 +262,7 @@ def _replace_block(text: str, block: str) -> str:
         "manually, daimon will not guess at the boundary")
 
 
-def _bundled_root(rel: str, variant: str) -> Path | None:
-    """The host's skills directory for a directory-form row, or None.
-
-    `full` is the DIRECTORY-FORM contract, not a density: the host scans
-    `<root>/skills/<name>/SKILL.md` and loads a body only when the skill is
-    invoked. `compact` rows are single rules files concatenated into every
-    prompt — they have no directory to scan, so a second skill there is
-    content no host would ever load. test_skill_install.py pins the shape
-    these two lines derive the root from.
-    """
-    if variant != "full":
-        return None
-    return Path(rel).parent.parent
-
-
-def _install_bundled(root: Path) -> list[str]:
+def _install_bundled(root: Path, invoke: str) -> list[str]:
     lines = []
     for name in BUNDLED_SKILLS:
         src = _BUNDLED_DIR / name / "SKILL.md"
@@ -236,7 +275,7 @@ def _install_bundled(root: Path) -> list[str]:
         dest = root / name / "SKILL.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(body, encoding="utf-8")
-        lines.append(f"installed daimon skill ({name}) -> {dest}")
+        lines.append(f"installed daimon skill ({name}) -> {dest} ({invoke})")
     return lines
 
 
@@ -259,8 +298,10 @@ def _uninstall_bundled(root: Path) -> list[str]:
 
 
 def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
-    spec, (rel, kind, variant) = _spec(host, project)
-    dest = (cwd if project else home) / rel
+    spec = _spec(host, project)
+    rel, kind, variant = spec.rel, spec.kind, spec.density
+    base = cwd if project else home
+    dest = base / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     if kind == "owned":
@@ -285,25 +326,24 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
         cleaned = _clean_windsurf_legacy(home)
         if cleaned:
             lines.append(cleaned)
-    bundled_root = _bundled_root(rel, variant)
-    if bundled_root is not None:
-        lines.extend(_install_bundled((cwd if project else home) / bundled_root))
+    if spec.skills_root is not None:
+        lines.extend(_install_bundled(base / spec.skills_root, spec.invoke))
     lines.insert(0, f"installed daimon skill ({variant}) -> {dest}")
     return lines
 
 
 def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
-    _spec_dict, (rel, kind, variant) = _spec(host, project)
+    spec = _spec(host, project)
     base = cwd if project else home
-    dest = base / rel
+    dest = base / spec.rel
+    kind = spec.kind
     extra_lines = []
     if host == "windsurf" and not project:
         cleaned = _clean_windsurf_legacy(home)
         if cleaned:
             extra_lines.append(cleaned)
-    bundled_root = _bundled_root(rel, variant)
-    if bundled_root is not None:
-        extra_lines.extend(_uninstall_bundled(base / bundled_root))
+    if spec.skills_root is not None:
+        extra_lines.extend(_uninstall_bundled(base / spec.skills_root))
     if not dest.exists():
         return extra_lines + [f"nothing installed at {dest}"]
     if kind == "owned":
@@ -311,14 +351,14 @@ def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
         return extra_lines + [f"removed {dest}"]
     text = dest.read_text(encoding="utf-8")
     if not _BLOCK_RE.search(text):
-        return [f"no daimon:skill block in {dest} — left untouched"]
+        return extra_lines + [f"no daimon:skill block in {dest} — left untouched"]
     new = _BLOCK_RE.sub("", text, count=1)
     # Undo the "\n\n<block>\n" boundary _replace_block appended: strip the
     # trailing newline(s) left after removing the block, then restore a
     # single trailing newline if any content remains.
     new = new.rstrip("\n")
     dest.write_text((new + "\n") if new else "", encoding="utf-8")
-    return [f"removed daimon:skill block from {dest}"]
+    return extra_lines + [f"removed daimon:skill block from {dest}"]
 
 
 # ---- drift audit (#1006) ----------------------------------------------------
@@ -365,8 +405,9 @@ def _row(host, scope, skill, path, state, version=None,
             "drift": state in _STATE_DRIFTED}
 
 
-def _audit_owned(host, scope, rel, variant, base) -> dict:
-    dest = base / rel
+def _audit_owned(host, scope, spec, base) -> dict:
+    variant = spec.density
+    dest = base / spec.rel
     expected = _OWNED_WRAPPERS.get(
         (host, variant), _stamp_full if variant == "full" else (lambda b: b)
     )(_render(variant))
@@ -381,11 +422,12 @@ def _audit_owned(host, scope, rel, variant, base) -> dict:
     return _row(host, scope, "daimon", dest, state, _installed_version(actual))
 
 
-def _audit_block(host, scope, rel, variant, base) -> dict:
+def _audit_block(host, scope, spec, base) -> dict:
     """A marker-block host writes into a file the USER owns. Only the region
     between daimon's markers is audited: their own rules changing is not
     daimon drift, and reporting it as such trains the reader to ignore this."""
-    dest = base / rel
+    variant = spec.density
+    dest = base / spec.rel
     if not dest.exists():
         return _row(host, scope, "daimon", dest, "NOT INSTALLED")
     try:
@@ -406,8 +448,9 @@ def _audit_block(host, scope, rel, variant, base) -> dict:
     return _row(host, scope, "daimon", dest, state, _installed_version(text))
 
 
-def _audit_bundled(host, scope, rel, base) -> list[dict]:
-    root = base / Path(rel).parent.parent
+def _audit_bundled(host, scope, spec, base) -> list[dict]:
+    assert spec.skills_root is not None
+    root = base / spec.skills_root
     rows = []
     for name in BUNDLED_SKILLS:
         dest = root / name / "SKILL.md"
@@ -456,10 +499,9 @@ def audit(*, home: Path, cwd: Path) -> list[dict]:
             entry = HOSTS[host].get(scope)
             if entry is None:
                 continue
-            rel, kind, variant = entry
             base = cwd if scope == "project" else home
-            audit_one = _audit_owned if kind == "owned" else _audit_block
-            main = audit_one(host, scope, rel, variant, base)
+            audit_one = _audit_owned if entry.kind == "owned" else _audit_block
+            main = audit_one(host, scope, entry, base)
             if host in plugin_hosts and scope == "global":
                 # Not a content verdict: the file's freshness is not the
                 # question when another channel owns the skill. Either the
@@ -470,7 +512,7 @@ def audit(*, home: Path, cwd: Path) -> list[dict]:
                                  else "LEFTOVER")
                 main["drift"] = main["state"] in _STATE_DRIFTED
             report.append(main)
-            if _bundled_root(rel, variant) is None:
+            if entry.skills_root is None:
                 continue
             if main["state"] in ("NOT INSTALLED", "PLUGIN", "LEFTOVER"):
                 # Nothing daimon should be maintaining here, so the bundled
@@ -478,5 +520,5 @@ def audit(*, home: Path, cwd: Path) -> list[dict]:
                 # under a leftover sent the reader to create a SECOND copy
                 # beside whatever the plugin ships.
                 continue
-            report.extend(_audit_bundled(host, scope, rel, base))
+            report.extend(_audit_bundled(host, scope, entry, base))
     return report

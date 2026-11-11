@@ -70,8 +70,19 @@ recall no tiene dónde renderizar todavía aquí.
 daimon skill install gemini      # bloque gestionado en ~/.gemini/GEMINI.md
 ```
 
+Install entrega dos cosas. El protocolo compacto va en un bloque gestionado
+de `GEMINI.md`. El flujo de checkpoint en sesión, `daimon-end`, se escribe
+como skill en `~/.gemini/skills/daimon-end/SKILL.md` (`<repo>/.gemini/skills/daimon-end/SKILL.md`
+con `--project`).
+
+Gemini activa las skills por coincidencia con su descripción, así que no hay
+comando `/daimon-end` ni un nombre que escribir. Pídele al agente que escriba
+el checkpoint de fin de sesión y tomará la skill. `/skills` solo administra
+las skills instaladas.
+
 En el archivo compartido `GEMINI.md`, daimon solo toca su propio bloque
-marcado — `daimon skill uninstall gemini` elimina exactamente ese bloque.
+marcado. `daimon skill uninstall gemini` elimina exactamente ese bloque y la
+carpeta `daimon-end/` que escribió, y nada más del directorio de skills.
 Re-ejecuta install después de actualizar `daimon` para refrescar el
 contenido.
 
