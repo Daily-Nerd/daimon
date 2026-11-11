@@ -71,10 +71,9 @@ def test_the_table_is_printed_before_anything_is_written(home, capsys):
     cli.main(["skill", "install", "--all"])
     out = capsys.readouterr().out
     assert "kimi" in out and "present" in out
-    # cursor is detected and has no global skill scope: it must appear in the
-    # table saying why, not silently vanish from the report.
+    # cursor is detected and now installs its skills-only global scope.
     assert "cursor" in out
-    assert "--project" in out
+    assert (home / ".cursor" / "skills" / "daimon-end" / "SKILL.md").exists()
 
 
 def test_project_scope_is_honored_by_the_detected_path(home, tmp_path,

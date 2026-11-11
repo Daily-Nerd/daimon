@@ -171,6 +171,26 @@ def test_new_skill_hosts_report_missing_stale_and_current(tmp_path, host, scope)
     assert state()["state"] == "MISSING" and state()["drift"] is True
 
 
+def test_cursor_global_skills_only_row_is_audited(tmp_path):
+    """No rules file, so there is no `daimon` row: the skill is the only
+    artifact. Absent = NOT INSTALLED (nothing to maintain), then CURRENT/STALE."""
+    home = _home(tmp_path)
+
+    def row():
+        return _rows(skill_install.audit(home=home, cwd=tmp_path), "cursor",
+                     skill="daimon-end")
+
+    assert row()["state"] == "NOT INSTALLED" and row()["drift"] is False
+    skill_install.install("cursor", project=False, home=home, cwd=tmp_path)
+    assert row()["state"] == "CURRENT"
+    dest = home / ".cursor" / "skills" / "daimon-end" / "SKILL.md"
+    dest.write_text("stale\n", encoding="utf-8")
+    assert row()["state"] == "STALE" and row()["drift"] is True
+    report = skill_install.audit(home=home, cwd=tmp_path)
+    assert not [r for r in report if r["host"] == "cursor"
+                and r["scope"] == "global" and r["skill"] == "daimon"]
+
+
 def test_the_block_without_the_skill_is_drift_not_health(tmp_path):
     """The class that hid #1327: AGENTS.md carried daimon's block, no skill
     existed anywhere, and the audit had no row to fail on."""

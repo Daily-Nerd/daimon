@@ -10,8 +10,8 @@ refuses on half-broken marker state rather than guess.
 
 Host paths verified against live docs 2026-07-03; they drift — re-verify on
 failure reports, the Windsurf adapter arc caught the docs lying repeatedly.
-Cursor global rules live in IDE settings, not a file: cursor is a
-project-only host here.
+Cursor global rules live in IDE settings, not a file: its global scope is a
+skills-only row (no rules file, just the bundled skills).
 """
 
 import re
@@ -46,9 +46,15 @@ class HostSpec(NamedTuple):
     is false.
     """
 
-    rel: str
-    kind: str  # "owned" (daimon's own file) | "block" (marker region in a user file)
-    density: str
+    # `rel` is the always-loaded rules artifact, or None when the host has no
+    # file for it at this scope (Cursor global: rules live in IDE settings).
+    # None is a "skills" row: only the bundled skills are delivered, and
+    # install, uninstall and audit all skip the rules artifact together.
+    rel: str | None
+    # "owned" (daimon's own file) | "block" (marker region in a user file)
+    # | "skills" (no rules file, `rel` is None)
+    kind: str
+    density: str  # "compact" | "full" | "none" (a skills-only row has no text)
     skills_root: str | None
     invoke: str
 
@@ -92,7 +98,7 @@ HOSTS: dict[str, dict[str, HostSpec | None]] = {
                             None, _SLASH),
     },
     "cursor": {
-        "global": None,
+        "global": HostSpec(None, "skills", "none", ".cursor/skills", _SLASH),
         "project": HostSpec(".cursor/rules/daimon.mdc", "owned", "compact",
                             ".cursor/skills", _SLASH),
     },
@@ -126,9 +132,6 @@ UNSUPPORTED_SKILLS: dict[tuple[str, str], str] = {
     ("windsurf", "project"): (
         "the project-level skills path is unverified on a live machine; "
         "install the global scope instead"),
-    ("cursor", "global"): (
-        "Cursor global rules live in IDE settings and daimon writes no "
-        "global Cursor file; use --project inside a repo"),
 }
 
 # #1000. Skills daimon ships WHOLE, as their own directory, alongside the
@@ -232,8 +235,8 @@ def _spec(host: str, project: bool) -> HostSpec:
     entry = spec["project"] if project else spec["global"]
     if entry is None:
         raise SkillInstallError(
-            f"{host} has no global rules file (rules live in IDE settings) — "
-            f"use --project inside a repo instead")
+            f"{host} has no {'project' if project else 'global'} install — "
+            f"use the other scope instead")
     return entry
 
 
@@ -260,6 +263,16 @@ def _replace_block(text: str, block: str) -> str:
     raise SkillInstallError(
         "broken daimon:skill markers in target file — fix or remove them "
         "manually, daimon will not guess at the boundary")
+
+
+def installed_marker(spec: HostSpec, base: Path) -> Path:
+    """The path whose existence means "daimon installed this scope": the rules
+    artifact when the row has one, else the first bundled skill. One answer
+    for every caller that asks, so none of them indexes `spec.rel` blindly."""
+    if spec.rel is not None:
+        return base / spec.rel
+    assert spec.skills_root is not None
+    return base / spec.skills_root / BUNDLED_SKILLS[0] / "SKILL.md"
 
 
 def _install_bundled(root: Path, invoke: str) -> list[str]:
@@ -301,14 +314,17 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
     spec = _spec(host, project)
     rel, kind, variant = spec.rel, spec.kind, spec.density
     base = cwd if project else home
-    dest = base / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
     lines = []
-    if kind == "owned":
+    dest = base / rel if rel is not None else None
+    if dest is None:
+        pass
+    elif kind == "owned":
+        dest.parent.mkdir(parents=True, exist_ok=True)
         default = _stamp_full if variant == "full" else (lambda b: b)
         wrapper = _OWNED_WRAPPERS.get((host, variant), default)
         dest.write_text(wrapper(_render(variant)), encoding="utf-8")
     else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
         old = dest.read_text(encoding="utf-8") if dest.exists() else ""
         new = _replace_block(old, _block(variant))
         dest.write_text(new, encoding="utf-8")
@@ -328,14 +344,18 @@ def install(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
             lines.append(cleaned)
     if spec.skills_root is not None:
         lines.extend(_install_bundled(base / spec.skills_root, spec.invoke))
-    lines.insert(0, f"installed daimon skill ({variant}) -> {dest}")
+    if dest is None:
+        lines.insert(0, f"{host}: skills only, no rules file at this scope "
+                        f"(its rules live in IDE settings)")
+    else:
+        lines.insert(0, f"installed daimon skill ({variant}) -> {dest}")
     return lines
 
 
 def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
     spec = _spec(host, project)
     base = cwd if project else home
-    dest = base / spec.rel
+    dest = base / spec.rel if spec.rel is not None else None
     kind = spec.kind
     extra_lines = []
     if host == "windsurf" and not project:
@@ -344,6 +364,11 @@ def uninstall(host: str, *, project: bool, home: Path, cwd: Path) -> list[str]:
             extra_lines.append(cleaned)
     if spec.skills_root is not None:
         extra_lines.extend(_uninstall_bundled(base / spec.skills_root))
+    if dest is None:
+        if extra_lines:
+            return extra_lines
+        assert spec.skills_root is not None
+        return [f"nothing installed at {base / spec.skills_root}"]
     if not dest.exists():
         return extra_lines + [f"nothing installed at {dest}"]
     if kind == "owned":
@@ -407,6 +432,7 @@ def _row(host, scope, skill, path, state, version=None,
 
 def _audit_owned(host, scope, spec, base) -> dict:
     variant = spec.density
+    assert spec.rel is not None
     dest = base / spec.rel
     expected = _OWNED_WRAPPERS.get(
         (host, variant), _stamp_full if variant == "full" else (lambda b: b)
@@ -427,6 +453,7 @@ def _audit_block(host, scope, spec, base) -> dict:
     between daimon's markers is audited: their own rules changing is not
     daimon drift, and reporting it as such trains the reader to ignore this."""
     variant = spec.density
+    assert spec.rel is not None
     dest = base / spec.rel
     if not dest.exists():
         return _row(host, scope, "daimon", dest, "NOT INSTALLED")
@@ -448,7 +475,8 @@ def _audit_block(host, scope, spec, base) -> dict:
     return _row(host, scope, "daimon", dest, state, _installed_version(text))
 
 
-def _audit_bundled(host, scope, spec, base) -> list[dict]:
+def _audit_bundled(host, scope, spec, base,
+                   absent: str = "MISSING") -> list[dict]:
     assert spec.skills_root is not None
     root = base / spec.skills_root
     rows = []
@@ -458,7 +486,7 @@ def _audit_bundled(host, scope, spec, base) -> list[dict]:
             # The host is installed and one of its skills is gone: a different
             # repair from "never installed here", so a different word. The
             # caller decides which applies by looking at the `daimon` row.
-            rows.append(_row(host, scope, name, dest, "MISSING"))
+            rows.append(_row(host, scope, name, dest, absent))
             continue
         try:
             actual = dest.read_text(encoding="utf-8")
@@ -500,6 +528,13 @@ def audit(*, home: Path, cwd: Path) -> list[dict]:
             if entry is None:
                 continue
             base = cwd if scope == "project" else home
+            if entry.rel is None:
+                # Skills-only row: the skill is the ONLY artifact, so there is
+                # no `daimon` row to be missing a sibling of. Absent means
+                # never installed here, which is not drift.
+                report.extend(_audit_bundled(host, scope, entry, base,
+                                             absent="NOT INSTALLED"))
+                continue
             audit_one = _audit_owned if entry.kind == "owned" else _audit_block
             main = audit_one(host, scope, entry, base)
             if host in plugin_hosts and scope == "global":

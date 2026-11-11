@@ -29,9 +29,40 @@ def test_claude_global_writes_full_skill(tmp_path):
     assert "daimon brief" in text
 
 
-def test_cursor_is_project_only(tmp_path):
-    with pytest.raises(SkillInstallError, match="project"):
-        _run("cursor", tmp_path)
+def test_cursor_global_is_skills_only_and_says_so(tmp_path):
+    """Cursor global rules live in IDE settings, so there is no file to write.
+    The row is a skills-only record, not a missing one (#1327)."""
+    lines, home, _ = _run("cursor", tmp_path)
+    skill = home / ".cursor" / "skills" / "daimon-end" / "SKILL.md"
+    assert skill.exists()
+    assert not (home / ".cursor" / "rules").exists()
+    assert sorted(p.relative_to(home).as_posix()
+                  for p in home.rglob("*") if p.is_file()) == [
+        ".cursor/skills/daimon-end/SKILL.md"]
+    out = "\n".join(lines)
+    assert "skills only" in out and "IDE settings" in out
+    assert str(skill) in out
+
+
+def test_cursor_global_uninstall_removes_only_the_skill_folder(tmp_path):
+    _, home, cwd = _run("cursor", tmp_path)
+    skills = home / ".cursor" / "skills"
+    (skills / "other").mkdir()
+    (skills / "other" / "SKILL.md").write_text("theirs\n", encoding="utf-8")
+    stray = skills / "daimon-end" / "notes.md"
+    stray.write_text("mine\n", encoding="utf-8")
+    uninstall("cursor", project=False, home=home, cwd=cwd)
+    assert stray.read_text(encoding="utf-8") == "mine\n"
+    assert not (skills / "daimon-end" / "SKILL.md").exists()
+    assert (skills / "other" / "SKILL.md").read_text(encoding="utf-8") == "theirs\n"
+
+
+def test_cursor_global_uninstall_without_install_is_quiet(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    lines = uninstall("cursor", project=False, home=home, cwd=home)
+    assert any("nothing installed" in ln for ln in lines)
+    assert not (home / ".cursor").exists()
 
 
 def test_cursor_project_writes_mdc(tmp_path):
@@ -226,6 +257,7 @@ def test_every_row_has_a_skills_root_or_an_explicit_unsupported_reason():
                 continue
             assert UNSUPPORTED_SKILLS.get((host, scope)), f"{host}/{scope}"
     assert UNSUPPORTED_SKILLS[("windsurf", "project")]
+    assert ("cursor", "global") not in UNSUPPORTED_SKILLS
 
 
 def test_unsupported_rows_name_only_real_rows():
