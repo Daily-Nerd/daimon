@@ -67,9 +67,20 @@ above), so the recall hint has nowhere to render here yet.
 daimon skill install gemini      # managed block in ~/.gemini/GEMINI.md
 ```
 
+Install delivers two things. The compact protocol goes in a managed block in
+`GEMINI.md`. The in-session checkpoint flow, `daimon-end`, is written as a
+skill to `~/.gemini/skills/daimon-end/SKILL.md` (`<repo>/.gemini/skills/daimon-end/SKILL.md`
+with `--project`).
+
+Gemini activates skills by matching their description, so there is no
+`/daimon-end` command and no name to type. Ask the agent to write the
+end-of-session checkpoint and it will pick the skill up. `/skills` only
+manages installed skills.
+
 On the shared `GEMINI.md` file, daimon only ever touches its own marker
-block — `daimon skill uninstall gemini` removes exactly that block. Re-run
-install after upgrading `daimon` to refresh the content.
+block. `daimon skill uninstall gemini` removes exactly that block and the
+`daimon-end/` folder it wrote, and nothing else in the skills directory.
+Re-run install after upgrading `daimon` to refresh the content.
 
 ## Verify
 

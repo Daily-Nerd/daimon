@@ -87,14 +87,24 @@ def test_hook_wirability_matches_the_hook_host_table():
         assert host.wirable == (name in _cli._HOOK_HOSTS), name
 
 
-def test_cursor_has_no_global_skill_scope_but_does_have_a_project_one(tmp_path):
+def test_cursor_is_wirable_at_both_scopes(tmp_path):
+    """Global is skills-only (#1327), project also carries the rules file."""
     home = _home(tmp_path)
     glob = _by_name(host_detect.detect(home, kind="skill", path_env=""))["cursor"]
     proj = _by_name(host_detect.detect(home, kind="skill", project=True,
                                        path_env=""))["cursor"]
-    assert not glob.wirable
-    assert glob.hint and "--project" in glob.hint
-    assert proj.wirable
+    assert glob.wirable and proj.wirable
+
+
+def test_a_skills_only_install_is_seen_as_installed(tmp_path):
+    from daimon_briefing import skill_install
+
+    home = _home(tmp_path)
+    assert not host_detect._skill_installed("cursor", home=home, cwd=tmp_path,
+                                            project=False)
+    skill_install.install("cursor", project=False, home=home, cwd=tmp_path)
+    assert host_detect._skill_installed("cursor", home=home, cwd=tmp_path,
+                                        project=False)
 
 
 def test_only_a_host_daimon_registered_is_removable(tmp_path):
@@ -373,10 +383,13 @@ def test_a_hook_report_that_raises_leaves_every_channel_unset(tmp_path, monkeypa
     assert found["kimi"].channel == "none"
 
 
-def test_a_host_with_no_scope_never_claims_a_channel(tmp_path):
-    """cursor has no global skill destination. If something ever marks it
-    wirable at that scope, the channel lookup must still answer "no", not
-    index a row that is not there."""
+def test_a_host_with_no_scope_never_claims_a_channel(tmp_path, monkeypatch):
+    """If a host table ever has a scope with no row (here forced by removing
+    cursor's global one) and something marks it wirable, the channel lookup
+    must still answer "no", not index a row that is not there."""
+    from daimon_briefing import skill_install
+
+    monkeypatch.setitem(skill_install.HOSTS["cursor"], "global", None)
     home = _home(tmp_path)
     (home / ".cursor").mkdir()
     forced = [host_detect.Host(name="cursor", present=True, signal="x",

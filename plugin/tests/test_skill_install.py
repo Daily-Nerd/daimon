@@ -14,8 +14,8 @@ from daimon_briefing.skill_install import SkillInstallError, install, uninstall
 def _run(host, tmp_path, project=False):
     home = tmp_path / "home"
     cwd = tmp_path / "repo"
-    home.mkdir(exist_ok=True)
-    cwd.mkdir(exist_ok=True)
+    home.mkdir(parents=True, exist_ok=True)
+    cwd.mkdir(parents=True, exist_ok=True)
     return install(host, project=project, home=home, cwd=cwd), home, cwd
 
 
@@ -29,9 +29,40 @@ def test_claude_global_writes_full_skill(tmp_path):
     assert "daimon brief" in text
 
 
-def test_cursor_is_project_only(tmp_path):
-    with pytest.raises(SkillInstallError, match="project"):
-        _run("cursor", tmp_path)
+def test_cursor_global_is_skills_only_and_says_so(tmp_path):
+    """Cursor global rules live in IDE settings, so there is no file to write.
+    The row is a skills-only record, not a missing one (#1327)."""
+    lines, home, _ = _run("cursor", tmp_path)
+    skill = home / ".cursor" / "skills" / "daimon-end" / "SKILL.md"
+    assert skill.exists()
+    assert not (home / ".cursor" / "rules").exists()
+    assert sorted(p.relative_to(home).as_posix()
+                  for p in home.rglob("*") if p.is_file()) == [
+        ".cursor/skills/daimon-end/SKILL.md"]
+    out = "\n".join(lines)
+    assert "skills only" in out and "IDE settings" in out
+    assert str(skill) in out
+
+
+def test_cursor_global_uninstall_removes_only_the_skill_folder(tmp_path):
+    _, home, cwd = _run("cursor", tmp_path)
+    skills = home / ".cursor" / "skills"
+    (skills / "other").mkdir()
+    (skills / "other" / "SKILL.md").write_text("theirs\n", encoding="utf-8")
+    stray = skills / "daimon-end" / "notes.md"
+    stray.write_text("mine\n", encoding="utf-8")
+    uninstall("cursor", project=False, home=home, cwd=cwd)
+    assert stray.read_text(encoding="utf-8") == "mine\n"
+    assert not (skills / "daimon-end" / "SKILL.md").exists()
+    assert (skills / "other" / "SKILL.md").read_text(encoding="utf-8") == "theirs\n"
+
+
+def test_cursor_global_uninstall_without_install_is_quiet(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    lines = uninstall("cursor", project=False, home=home, cwd=home)
+    assert any("nothing installed" in ln for ln in lines)
+    assert not (home / ".cursor").exists()
 
 
 def test_cursor_project_writes_mdc(tmp_path):
@@ -200,49 +231,161 @@ def test_unknown_host_refuses(tmp_path):
 
 # ---- bundled directory-form skills (#1000) ----
 
-def _full_rows():
+def _rows():
+    """Every (host, scope, spec) with a delivery row."""
     from daimon_briefing.skill_install import HOSTS
 
     for host, scopes in sorted(HOSTS.items()):
-        for scope, entry in sorted(scopes.items()):
-            if entry is not None and entry[2] == "full":
-                yield host, scope, entry[0]
+        for scope, spec in sorted(scopes.items()):
+            if spec is not None:
+                yield host, scope, spec
 
 
-def test_every_full_row_is_directory_form():
-    """`full` is not a density label, it is the DIRECTORY-FORM contract:
-    a lazily-loaded `<root>/skills/<name>/SKILL.md` the host scans by
-    directory. The bundled-skill writer derives its destination root from
-    that shape, so a `full` row that stops ending in `skills/daimon/SKILL.md`
-    would silently send `daimon-end` somewhere no host reads."""
-    rows = list(_full_rows())
-    assert rows
-    for host, scope, rel in rows:
-        assert rel.endswith("skills/daimon/SKILL.md"), f"{host}/{scope}: {rel}"
+def _skill_rows():
+    return [(h, s, spec) for h, s, spec in _rows() if spec.skills_root]
 
 
-def test_full_hosts_receive_the_bundled_end_skill(tmp_path):
-    """#1000: `daimon-end` was packaged but never installed outside the Claude
-    plugin layout, so a kimi (or plain-CLI claude, or windsurf global) user had
-    no `/daimon-end` and no way to learn it exists."""
+def test_every_row_has_a_skills_root_or_an_explicit_unsupported_reason():
+    """#1327: a host that cannot take the bundled skills says so, with a
+    reason. Silence is how Codex, Gemini and Cursor went without one."""
+    from daimon_briefing.skill_install import HOSTS, UNSUPPORTED_SKILLS
+
+    for host, scopes in sorted(HOSTS.items()):
+        for scope, spec in sorted(scopes.items()):
+            if spec is not None and spec.skills_root:
+                assert (host, scope) not in UNSUPPORTED_SKILLS
+                continue
+            assert UNSUPPORTED_SKILLS.get((host, scope)), f"{host}/{scope}"
+    assert UNSUPPORTED_SKILLS[("windsurf", "project")]
+    assert ("cursor", "global") not in UNSUPPORTED_SKILLS
+
+
+def test_unsupported_rows_name_only_real_rows():
+    from daimon_briefing.skill_install import HOSTS, UNSUPPORTED_SKILLS
+
+    for host, scope in UNSUPPORTED_SKILLS:
+        assert scope in HOSTS[host], f"{host}/{scope}"
+
+
+def test_every_skills_root_is_a_relative_path_without_traversal():
+    for host, scope, spec in _skill_rows():
+        assert not spec.skills_root.startswith("/"), f"{host}/{scope}"
+        assert ".." not in spec.skills_root.split("/"), f"{host}/{scope}"
+
+
+def test_no_two_hosts_share_a_skills_folder():
+    """Skill folder is the unit of ownership. Two hosts resolving to one
+    folder would let one host's uninstall delete the other's skill, so the
+    shared case needs an explicit user count before it is allowed."""
+    seen: dict[tuple[str, str], str] = {}
+    for host, scope, spec in _skill_rows():
+        key = (scope, spec.skills_root)
+        assert key not in seen, f"{host}/{scope} shares {key} with {seen[key]}"
+        seen[key] = host
+
+
+def test_every_directory_form_row_still_ends_in_its_skills_root():
+    """The `daimon` skill of a directory-form host lives inside the root the
+    bundled skills use, so the two can never diverge."""
+    for host, scope, spec in _skill_rows():
+        if spec.density == "full":
+            assert spec.rel == f"{spec.skills_root}/daimon/SKILL.md", f"{host}/{scope}"
+
+
+def test_every_host_with_a_skills_root_receives_every_bundled_skill(tmp_path):
+    """#1327 (and #1000): table-driven over every row that has a skills_root,
+    whatever its density."""
     from daimon_briefing.skill_install import BUNDLED_SKILLS
 
-    for host, scope, rel in _full_rows():
+    rows = _skill_rows()
+    assert {h for h, _, _ in rows} >= {"claude", "codex", "cursor", "gemini",
+                                       "kimi", "windsurf"}
+    for host, scope, spec in rows:
         home = tmp_path / f"{host}-{scope}-home"
         cwd = tmp_path / f"{host}-{scope}-repo"
         home.mkdir()
         cwd.mkdir()
         project = scope == "project"
         install(host, project=project, home=home, cwd=cwd)
-        root = (cwd if project else home) / rel
+        base = cwd if project else home
         for name in BUNDLED_SKILLS:
-            dest = root.parent.parent / name / "SKILL.md"
-            text = dest.read_text(encoding="utf-8")
+            text = (base / spec.skills_root / name / "SKILL.md").read_text(
+                encoding="utf-8")
             # Directory form: the host skips a skill whose frontmatter `name`
             # does not equal its directory name.
             assert text.startswith("---\n"), f"{host}/{scope}/{name}"
             assert f"\nname: {name}\n" in text, f"{host}/{scope}/{name}"
             assert "description:" in text
+
+
+def test_density_never_decides_which_skills_exist(tmp_path, monkeypatch):
+    """The root cause of #1327, pinned directly: the same host with compact
+    and with full density writes identical bundled output."""
+    import dataclasses
+
+    from daimon_briefing import skill_install
+
+    out = {}
+    for density in ("compact", "full"):
+        spec = skill_install.HOSTS["codex"]["global"]
+        row = spec._replace(density=density) if hasattr(spec, "_replace") \
+            else dataclasses.replace(spec, density=density)
+        monkeypatch.setitem(skill_install.HOSTS["codex"], "global", row)
+        home = tmp_path / density
+        home.mkdir()
+        install("codex", project=False, home=home, cwd=home)
+        out[density] = (home / spec.skills_root / "daimon-end" / "SKILL.md"
+                        ).read_text(encoding="utf-8")
+    assert out["compact"] == out["full"]
+
+
+def test_codex_skills_land_in_the_documented_agents_directory(tmp_path):
+    _, home, _ = _run("codex", tmp_path)
+    assert (home / ".agents" / "skills" / "daimon-end" / "SKILL.md").exists()
+    _, home2, cwd2 = _run("codex", tmp_path / "p", project=True)
+    assert (cwd2 / ".agents" / "skills" / "daimon-end" / "SKILL.md").exists()
+
+
+def test_codex_block_stays_compact_with_a_realistic_agents_md(tmp_path):
+    from daimon_briefing.skill_install import CHAR_CAPS
+
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    user = "# My rules\n" + "- keep functions small\n" * 400
+    (home / ".codex" / "AGENTS.md").write_text(user, encoding="utf-8")
+    lines = install("codex", project=False, home=home, cwd=tmp_path)
+    text = (home / ".codex" / "AGENTS.md").read_text(encoding="utf-8")
+    assert len(text.encode("utf-8")) <= CHAR_CAPS["codex"]
+    assert not any(ln.startswith("warning") for ln in lines)
+    # The block carries the protocol only, never the daimon-end body.
+    assert "In-session self-serialization" not in text
+
+
+def test_install_names_the_invocation_each_host_actually_has(tmp_path):
+    """Codex invokes by `$name` or `/skills`; Gemini activates by description
+    and has no by-name invocation. Promising `/daimon-end` there is false."""
+    def joined(host):
+        lines, _h, _c = _run(host, tmp_path / host)
+        # Only the wording after the written path: the path itself contains
+        # the directory name `daimon-end`.
+        return "\n".join(ln.split("SKILL.md", 1)[1] for ln in lines
+                         if "skill (daimon-end)" in ln)
+
+    codex = joined("codex")
+    assert "$daimon-end" in codex and "/daimon-end" not in codex
+    gemini = joined("gemini")
+    assert "/daimon-end" not in gemini and "$daimon-end" not in gemini
+    assert "description" in gemini
+    assert "/daimon-end" in joined("kimi")
+
+
+def test_gemini_and_cursor_are_wired_both_scopes_they_support(tmp_path):
+    _, _, cwd = _run("cursor", tmp_path / "c", project=True)
+    assert (cwd / ".cursor" / "skills" / "daimon-end" / "SKILL.md").exists()
+    _, home, _ = _run("gemini", tmp_path / "g")
+    assert (home / ".gemini" / "skills" / "daimon-end" / "SKILL.md").exists()
+    _, _, cwd2 = _run("gemini", tmp_path / "g2", project=True)
+    assert (cwd2 / ".gemini" / "skills" / "daimon-end" / "SKILL.md").exists()
 
 
 def test_install_reports_every_file_it_wrote(tmp_path):
@@ -252,11 +395,46 @@ def test_install_reports_every_file_it_wrote(tmp_path):
     assert str(home / ".kimi-code" / "skills" / "daimon-end" / "SKILL.md") in joined
 
 
-def test_compact_hosts_get_no_bundled_skill(tmp_path):
-    """The rules-file hosts concatenate one file into every prompt; they have
-    no directory to scan, so a second skill there is content nobody loads."""
-    _, _home, cwd = _run("cursor", tmp_path, project=True)
-    assert not list(cwd.rglob("daimon-end"))
+def test_only_the_explicit_unsupported_rows_get_no_bundled_skill(tmp_path):
+    """Rewritten from the pin that froze #1327 as intended behavior: the one
+    install path that still writes no `daimon-end` is a row the table names
+    as unsupported, with its reason."""
+    from daimon_briefing.skill_install import BUNDLED_SKILLS, UNSUPPORTED_SKILLS
+
+    assert ("windsurf", "project") in UNSUPPORTED_SKILLS
+    _, _home, cwd = _run("windsurf", tmp_path, project=True)
+    for name in BUNDLED_SKILLS:
+        assert not list(cwd.rglob(name))
+
+
+def test_uninstall_codex_removes_the_skill_and_only_the_skill(tmp_path):
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    user = "# Mine\n"
+    (home / ".codex" / "AGENTS.md").write_bytes(user.encode())
+    install("codex", project=False, home=home, cwd=tmp_path)
+    shared = home / ".agents" / "skills"
+    (shared / "other-skill").mkdir()
+    (shared / "other-skill" / "SKILL.md").write_text("theirs\n", encoding="utf-8")
+    stray = shared / "notes.md"
+    stray.write_text("mine\n", encoding="utf-8")
+    lines = uninstall("codex", project=False, home=home, cwd=tmp_path)
+    assert not (shared / "daimon-end").exists()
+    assert (shared / "other-skill" / "SKILL.md").read_text(encoding="utf-8") == "theirs\n"
+    assert stray.read_text(encoding="utf-8") == "mine\n"
+    assert (home / ".codex" / "AGENTS.md").read_bytes() == user.encode()
+    assert any("daimon-end" in ln for ln in lines)
+
+
+def test_uninstall_still_removes_the_skill_when_the_block_is_already_gone(tmp_path):
+    """The skill and the block are separate artifacts: a user who deleted the
+    block by hand must still be able to take the skill back, and be told."""
+    home = tmp_path / "home"
+    install("codex", project=False, home=home, cwd=tmp_path)
+    (home / ".codex" / "AGENTS.md").write_text("# Mine\n", encoding="utf-8")
+    lines = uninstall("codex", project=False, home=home, cwd=tmp_path)
+    assert not (home / ".agents" / "skills" / "daimon-end").exists()
+    assert any("daimon-end" in ln for ln in lines)
 
 
 def test_uninstall_removes_the_bundled_skill(tmp_path):

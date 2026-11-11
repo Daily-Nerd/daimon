@@ -112,7 +112,7 @@ daimon skill install windsurf --project   # .windsurf/rules/daimon.md
 ```
 
 Install delivers two skills: `daimon` (the protocol) and `daimon-end`, the in-session `/daimon-end` checkpoint flow, written next to it as `~/.codeium/windsurf/skills/daimon-end/SKILL.md`.
-The project scope is a single rules file, so it carries the protocol alone.
+The project scope is a single rules file, so it carries the protocol alone. This is an explicit unsupported row, not an oversight: the project-level skills path has not been verified on a live machine, so `daimon-end` is not installed there.
 
 On Windsurf the skill is not just protocol etiquette — it is the briefing
 delivery path. Because Cascade has no session-start event to inject into,

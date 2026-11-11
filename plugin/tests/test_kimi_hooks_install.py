@@ -604,8 +604,12 @@ def test_kimi_is_a_known_skill_host(tmp_path):
 
     spec = skill_install.HOSTS.get("kimi")
     assert spec is not None
-    assert spec["global"] == (".kimi-code/skills/daimon/SKILL.md", "owned", "full")
-    assert spec["project"] == (".kimi-code/skills/daimon/SKILL.md", "owned", "full")
+    for scope in ("global", "project"):
+        row = spec[scope]
+        assert row is not None
+        assert tuple(row[:3]) == (".kimi-code/skills/daimon/SKILL.md", "owned",
+                                  "full")
+        assert row.skills_root == ".kimi-code/skills"
 
 
 def test_installing_the_skill_for_kimi_writes_a_usable_skill_file(tmp_path):
