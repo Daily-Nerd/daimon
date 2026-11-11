@@ -215,7 +215,7 @@ Para un host que corre un solo home de daimon con un directorio de proyecto por 
 | Variable | Default | Qué hace |
 |---|---|---|
 | `DAIMON_TENANT_SCOPED` | off | Cuando es verdadero, quien llama no puede elegir un alcance. `--slug` y `--all-projects` en `recall`, `brief`, `why` y `decide`, `--all` en `audit privacy`, `--global-fallback` en `brief`, y un `--project` que nombre otro bucket en cualquier verbo se rechazan con un error claro, y `DAIMON_BRIEF_GLOBAL_FALLBACK` se ignora. `daimon decide` no muestra conteos de otros proyectos, `daimon status` no muestra puntero global, y una lectura nunca cae al checkpoint de otro proyecto. Las herramientas MCP rechazan de la misma forma cualquier `slug`, `all_projects` o ruta `project` fuera del bucket propio de quien llama (`DAIMON_MODEL_CROSS_PROJECT` no puede levantarlo), y `daimon projects` lista solo el bucket propio de quien llama. Se rechaza, nunca se reduce en silencio: quien pidió un alcance y recibió el suyo en su lugar leería la respuesta como completa. |
-| `DAIMON_GIT_POSTURE` | `ambient` | Cómo consulta daimon a git sobre el directorio de un proyecto. `ambient` deja que git responda como siempre. `sealed` es para hosts cuyos directorios de proyecto son escritos por alguien de menor confianza: daimon encuentra el checkout por su cuenta bajo un techo (el home por defecto), fija el directorio git, lee solo el archivo de config propio del checkout con los includes apagados, toma la rama de `HEAD`, nunca le pregunta a git por `user.name`, y rechaza un `.git` que sea un archivo, un symlink o un puntero a otro directorio. Un checkout cuya config tenga algo fuera de una lista corta de claves permitidas (nada de `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` y similares), o que tenga un archivo `config.worktree` o `objects/info/alternates`, se rechaza antes de que git corra sobre él. Un host puede declarar por su cuenta el slug y la URL de origen de un proyecto con `declare` en vez de dejar que daimon los derive; la raíz declarada igual pasa las verificaciones de arriba. `daimon status` lista un proyecto rechazado y las escrituras hacia él se rechazan. |
+| `DAIMON_GIT_POSTURE` | `ambient` | Cómo consulta daimon a git sobre el directorio de un proyecto. `ambient` deja que git responda como siempre. `sealed` es para hosts cuyos directorios de proyecto son escritos por alguien de menor confianza: daimon encuentra el checkout por su cuenta bajo un techo (el home por defecto), fija el directorio git, lee solo el archivo de config propio del checkout con los includes apagados, toma la rama de `HEAD`, nunca le pregunta a git por `user.name`, y rechaza un `.git` que sea un archivo, un symlink o un puntero a otro directorio. Un checkout cuya config tenga algo fuera de una lista corta de claves permitidas (nada de `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` y similares), o que tenga un archivo `config.worktree` o `objects/info/alternates`, se rechaza antes de que git corra sobre él. Un host puede declarar por su cuenta el slug y la URL de origen de un proyecto con `declare` en vez de dejar que daimon los derive; la raíz declarada igual pasa las verificaciones de arriba. `daimon status` y el briefing consultado por ruta muestran un proyecto rechazado, y las escrituras hacia él se rechazan. |
 | `DAIMON_EXTRA_READ_SLUGS` | sin definir | Slugs separados por comas que esta sesión puede leer junto al suyo, de forma ambiental, sin que intervenga ningún argumento de quien llama. Alcanza por igual a `recall`, `why` y a la ruta de sugerencias proactivas. Solo lectura: ninguna ruta de escritura acepta un slug y una sesión nunca escribe en un alcance listado. Un acierto de un alcance listado nombra su proyecto de origen. Pensada para un alcance compartido cuyo contenido ya era visible para todos en él; defínela solo donde una sesión sea una persona. |
 
 `DAIMON_MODEL_CROSS_PROJECT`, la contraparte del lado MCP, está en la tabla de Núcleo de arriba.
@@ -301,6 +301,24 @@ Códigos de rechazo: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
 `gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
 `worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (una
 clave de config fuera de la lista permitida), `checkout-changed`, `init-failed`.
+
+La lista permite `branch.<name>.vscode-merge-base`, que VS Code usa como
+metadato para seleccionar una rama. Otras claves del editor requieren su propia
+revisión.
+
+El briefing del proyecto muestra el motivo de un rechazo de checkout sellado,
+incluso cuando todavía no tiene checkpoint. El diagnóstico corresponde al
+proyecto y a la respuesta actuales. También aparece en `daimon status`. Las
+verificaciones de estado que necesitan Git conservan el motivo de omisión
+`git-refused` cuando se rechaza el checkout.
+
+| Host o superficie | Entrega del diagnóstico de rechazo |
+|---|---|
+| Claude Code, Codex, Gemini CLI | Briefing al iniciar sesión mediante la CLI compartida. |
+| Kimi Code | Briefing del primer prompt mediante la CLI compartida. |
+| Hermes | Preparación y renderizado compartidos en proceso. |
+| API de Python, MCP | Briefing compartido para consumidores automáticos. |
+| Windsurf | Briefing por CLI o MCP. La inyección automática del briefing por el hook de captura no está soportada. |
 
 Para mantener las llamadas a git en un solo lugar, el censo se corre sobre el
 propio árbol del host desde un test:

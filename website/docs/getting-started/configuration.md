@@ -199,7 +199,7 @@ For a host that runs one daimon home with one project directory per person. A si
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_TENANT_SCOPED` | off | When truthy, a caller may not choose a scope. `--slug` and `--all-projects` on `recall`, `brief`, `why` and `decide`, `--all` on `audit privacy`, `--global-fallback` on `brief`, and a `--project` that names another bucket on any verb are refused with a plain error, and `DAIMON_BRIEF_GLOBAL_FALLBACK` is ignored. `daimon decide` shows no counts of other projects, `daimon status` shows no global pointer, and a read never falls back to another project's checkpoint. The MCP tools refuse any `slug`, `all_projects` or `project` path outside the caller's own bucket the same way (`DAIMON_MODEL_CROSS_PROJECT` cannot lift it), and `daimon projects` lists only the caller's own bucket. Refused, never silently narrowed: a caller who asked for a scope and got their own instead would read the answer as complete. |
-| `DAIMON_GIT_POSTURE` | `ambient` | How daimon asks git about a project directory. `ambient` lets git answer as it always has. `sealed` is for hosts whose project directories are written by a less trusted party: daimon finds the checkout itself below a ceiling (home by default), pins the git directory, reads only the checkout's own config file with includes off, takes the branch from `HEAD`, never asks git for `user.name`, and refuses a `.git` that is a file, a symlink or a pointer to another directory. A checkout whose config holds anything outside a short allowlist of keys (no `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` and the like), or that has a `config.worktree` or an `objects/info/alternates` file, is refused before git runs on it. A host can state a project's slug and origin URL itself with `declare` instead of letting daimon derive them; the declared root still passes the checks above. A refused project is listed by `daimon status`, and writes to it are rejected. |
+| `DAIMON_GIT_POSTURE` | `ambient` | How daimon asks git about a project directory. `ambient` lets git answer as it always has. `sealed` is for hosts whose project directories are written by a less trusted party: daimon finds the checkout itself below a ceiling (home by default), pins the git directory, reads only the checkout's own config file with includes off, takes the branch from `HEAD`, never asks git for `user.name`, and refuses a `.git` that is a file, a symlink or a pointer to another directory. A checkout whose config holds anything outside a short allowlist of keys (no `include`, `filter`, `diff`, `merge`, `alias`, `core.sshCommand` and the like), or that has a `config.worktree` or an `objects/info/alternates` file, is refused before git runs on it. A host can state a project's slug and origin URL itself with `declare` instead of letting daimon derive them; the declared root still passes the checks above. A refused project is listed by `daimon status` and its path-based briefing, and writes to it are rejected. |
 | `DAIMON_EXTRA_READ_SLUGS` | unset | Comma-separated slugs this session may read beside its own, ambiently, with no caller argument involved. Reaches `recall`, `why` and the proactive suggestion path alike. Read only: no write path takes a slug and a session never writes to a listed scope. A hit from a listed scope names its origin project. Meant for a shared scope whose contents were already visible to everyone in it; set it only where one session is one person. |
 
 `DAIMON_MODEL_CROSS_PROJECT`, the MCP-side counterpart, is listed in the Core table above.
@@ -280,6 +280,22 @@ Refusal codes: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
 `gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
 `worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (a
 config key outside the allowlist), `checkout-changed`, `init-failed`.
+
+The allowlist includes `branch.<name>.vscode-merge-base`, which VS Code uses
+as branch-selection metadata. Other editor keys require their own review.
+
+A sealed checkout refusal appears in the project's briefing with its reason,
+including when the project has no checkpoint. The diagnostic belongs to the
+current project and response. It also appears in `daimon status`. Git-backed
+world checks keep the `git-refused` skip reason when the checkout is refused.
+
+| Host or surface | Refusal diagnostic delivery |
+|---|---|
+| Claude Code, Codex, Gemini CLI | Session-start briefing through the shared CLI. |
+| Kimi Code | First-prompt briefing through the shared CLI. |
+| Hermes | Shared in-process briefing preparation and rendering. |
+| Python API, MCP | Shared machine briefing. |
+| Windsurf | CLI or MCP briefing. Automatic briefing injection by the capture hook is unsupported. |
 
 To keep git calls in one place, call the census over your own tree from a test:
 
