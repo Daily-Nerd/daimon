@@ -718,7 +718,7 @@ def _slug_of(project) -> str:
 def admission_notes(slug: str, *, text: str | None = None,
                     now: float | None = None) -> tuple[str, ...]:
     """The `admission-refused` note for `slug`, or `()` (D10.4). Pure over the
-    same scan `status` and `heal` use, in the shape of `serialize_in_flight`:
+    same scan `status` and `heal` use, in the shape of `briefing.pending_serialize_note`:
     own bucket only, and silent unless a session of THIS project is held back
     right now, that is a refusal whose ledger is still unproven. Once the
     ledger reads again the sessions are ordinary healable failures and the
@@ -1037,7 +1037,7 @@ def heartbeat_index(now: float | None = None) -> dict[str, Heartbeat]:
     `_session_key` is what lets one lookup answer for both. When two files
     share a key the freshest wins. A missing dir is no activity (empty); any
     other failure to list it raises OSError, for the caller to report. A
-    single unreadable entry is skipped, as `serialize_in_flight` does."""
+    single unreadable entry is skipped, as every liveness scan does."""
     t = now if now is not None else time.time()
     try:
         entries = list(_heartbeat_dir().iterdir())
@@ -1075,37 +1075,6 @@ def _canonical_heartbeat_age(now: float):
         ages = [a for a in (direct, hit.age if hit else None) if a is not None]
         return min(ages) if ages else None
     return age_of
-
-
-def serialize_in_flight(project_slug: str, now: float | None = None) -> bool:
-    """#534: is a serialize LIVE for this project right now? True only for a
-    heartbeat whose content matches `project_slug` and whose age is inside
-    the hung ceiling — the same liveness bar heal uses, so brief and heal
-    never disagree about what "alive" means.
-
-    Every other shape answers False on purpose: a stale stamp is a stuck or
-    crashed serialize (heal's case, and a permanent false "one session
-    behind" line would be worse than the silence this exists to fix), an
-    empty stamp is a pre-#534 trail nothing can attribute, and a missing
-    dir is simply no activity."""
-    slug = str(project_slug or "").strip()
-    if not slug:
-        return False
-    ceiling = config.hung_after_seconds()
-    t = now if now is not None else time.time()
-    try:
-        entries = list(_heartbeat_dir().iterdir())
-    except OSError:
-        return False
-    for p in entries:
-        try:
-            if t - p.stat().st_mtime > ceiling:
-                continue
-            if p.read_text(encoding="utf-8").strip() == slug:
-                return True
-        except OSError:
-            continue
-    return False
 
 
 # Host prefix on a spawn line, for per-host capture counts. Deliberately the

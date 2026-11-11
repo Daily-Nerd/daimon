@@ -138,7 +138,7 @@ def test_a_cross_project_brief_keeps_the_greeting_as_header(
 def test_a_serialize_in_flight_note_is_a_warning(
         box, monkeypatch, capsys):
     _seed(box)
-    monkeypatch.setattr(ledger, "serialize_in_flight", lambda slug: True)
+    ledger.touch_heartbeat("S-run", project_slug=store.project_slug(box.project))
     rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)

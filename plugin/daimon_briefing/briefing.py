@@ -862,6 +862,28 @@ def topic_qualifier(days: float | None, *, imported: bool) -> str:
     return f" (imported, {_import_age_label(days)})" if imported else ""
 
 
+def pending_serialize_note(project, now=None) -> str | None:
+    """#1328: the note a briefing carries while a serialize of its own project
+    is live, or None. ONE liveness source: `serialize_liveness.serializes`
+    rows in `LIVE_STATES` (a stamped run, a repair, or a spawn whose child
+    has not stamped yet), the same fold `api.serializes` and heal read. A run
+    past the hung ceiling is not live (heal's case), and another project's
+    run never counts. Reads only: no stamp, no flag, no reap.
+
+    `project` is whatever the briefing was prepared for (a path or a bucket
+    slug), and the note is about THAT bucket: the serialize that would write
+    the checkpoint the reader is looking at. Who may read a named bucket is
+    decided before the briefing is built (the MCP read scope, the CLI's
+    explicit `--slug`), so the liveness read adds no scope of its own and
+    never resolves the process's working directory (a sealed host's checkout
+    diagnostic stays unqueried on a named-bucket read)."""
+    from . import serialize_liveness
+    rows = serialize_liveness.serializes(project, now=now).rows
+    if any(r.state in serialize_liveness.LIVE_STATES for r in rows):
+        return display.pending_serialize_note()
+    return None
+
+
 def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             route=None, stamps: bool = True, opened=None) -> Annotated:
     """#1132 PR 7a: the one preparation every briefing host shares (the CLI
@@ -945,6 +967,18 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         admission = ()
     if admission:
         notes = display.merge_notes(notes, admission)
+    # #1328: a serialize of this project is live, so a fresher checkpoint is
+    # being written. It is a fact about the project's store, not about one
+    # route, so it rides the preparation every entrance shares. The teammate
+    # blocks (`stamps=False`) print no notes of their own. Fail-open like the
+    # admission note: an advisory line never costs the briefing.
+    if stamps:
+        try:
+            pending = pending_serialize_note(project, now)
+        except Exception:  # noqa: BLE001 - a liveness read it cannot make is no note
+            pending = None
+        if pending:
+            notes = display.merge_notes(notes, (pending,))
     if worldcheck_project and not opened.fell_back:
         # The request panels of this brief read the same joins; their notes
         # (a sender left out, or read around) join the snapshot's here, so
