@@ -5,6 +5,16 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.1](https://github.com/Daily-Nerd/daimon/compare/v0.67.0...v0.67.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **brief:** every briefing entrance says a fresher checkpoint is being written ([cce332c](https://github.com/Daily-Nerd/daimon/commit/cce332ce19c11b9c2e0800ef32c68ae64110cf6e)), closes [#1328](https://github.com/Daily-Nerd/daimon/issues/1328)
+* **hostgit:** admit editor metadata and brief refusals ([0f8a5e8](https://github.com/Daily-Nerd/daimon/commit/0f8a5e8b6e01a1165492eaa4f60b5658d0656839)), closes [#1324](https://github.com/Daily-Nerd/daimon/issues/1324)
+* **skill:** install daimon-end on every host with a skills directory ([2e0737d](https://github.com/Daily-Nerd/daimon/commit/2e0737d43c890d14d6be4f002cb325bec3d3f49f)), closes [#1327](https://github.com/Daily-Nerd/daimon/issues/1327)
+* **skill:** let HostSpec express a skills-only scope for Cursor global ([f956c4f](https://github.com/Daily-Nerd/daimon/commit/f956c4fb6d1b5a7ddf491b1c240b0976d464cd42)), closes [#1327](https://github.com/Daily-Nerd/daimon/issues/1327)
+
 ## [0.67.0](https://github.com/Daily-Nerd/daimon/compare/v0.66.0...v0.67.0) (2026-11-09)
 
 
