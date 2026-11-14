@@ -58,6 +58,16 @@ El servidor hereda la disciplina entre proyectos de daimon:
   ofrecen los argumentos. Bajo `DAIMON_TENANT_SCOPED` la variable no tiene
   efecto. Esto vale para las herramientas MCP; un agente con shell puede
   igual correr la CLI desde otro directorio.
+- **Bloquear nombres de herramientas no es el límite.** Un host puede ver el
+  mismo servidor con más de un prefijo: `mcp__daimon__*` cuando está
+  registrado en la configuración MCP del host, y `mcp__plugin_daimon_daimon__*`
+  cuando llega por el plugin de Claude Code. Una lista de bloqueo por nombre
+  deja pasar todo prefijo que no nombra, así que es incompleta por
+  construcción. El límite de los datos es `DAIMON_MODEL_CROSS_PROJECT`, y vale
+  bajo cualquier nombre con el que responda el servidor. Para quedarte en un
+  solo proyecto, déjala sin definir (o con cualquier valor que no sea `1`,
+  `true`, `yes` u `on`) en el entorno del proceso del servidor y en el
+  archivo env de daimon.
 - **Sin fallback implícito.** Un proyecto sin checkpoint recibe
   `no checkpoint for this project`, nunca el contenido de otro proyecto. Con
   la variable activa, el mensaje además apunta a `daimon_projects`, y cruzar
