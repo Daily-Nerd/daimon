@@ -55,6 +55,15 @@ The server inherits daimon's cross-project discipline:
   descriptions then offer the arguments. Under `DAIMON_TENANT_SCOPED` the
   setting has no effect. This holds for the MCP tools; an agent with a shell
   can still run the CLI from another directory.
+- **Blocking tool names is not the boundary.** A host can see the same
+  server under more than one prefix: `mcp__daimon__*` when it is registered
+  in the host's MCP config, and `mcp__plugin_daimon_daimon__*` when it arrives
+  through the Claude Code plugin. A block list of tool names misses every
+  prefix it does not name, so it is incomplete by construction. The data
+  boundary is `DAIMON_MODEL_CROSS_PROJECT`, and it holds under every name the
+  server answers to. To stay single-project, keep it unset (or set to
+  anything other than `1`, `true`, `yes` or `on`) in the server's process env
+  and in daimon's env file.
 - **No implicit fallback.** A project with no checkpoint gets
   `no checkpoint for this project`, never another project's content. With
   the setting on, the message also points to `daimon_projects`, and crossing
