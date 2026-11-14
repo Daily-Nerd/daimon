@@ -440,6 +440,15 @@ def _write_folded_prose(world: World, project: str) -> None:
     requests.reply(rid, t, q, channel="ui", author=c, project_dir=project)
     requests.done(rid, channel="ui", evidence=c, author=t,
                   project_dir=project)
+    # #1333: a completion claim an agent made and the sender's revision then
+    # cleared, kept on the record as a superseded claim
+    claimed = requests.open_request(
+        to=slug, ask="a third census ask", why="because",
+        channel="cli-agent", project_dir=project)
+    requests.done(claimed, channel="cli-agent", evidence=q,
+                  project_dir=project)
+    requests.revise(claimed, channel="cli-agent", ask="a revised census ask",
+                    project_dir=project)
 
 
 def _write_forgotten_prose(world: World, project: str) -> None:

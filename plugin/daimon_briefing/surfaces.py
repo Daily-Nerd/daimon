@@ -408,7 +408,11 @@ SURFACES: tuple[Surface, ...] = (
                 FieldPath(("replies[]", "act_author")),
                 FieldPath(("opened_act_author",)),
                 FieldPath(("verdict_act_author",)),
-                FieldPath(("done_act_author",))),
+                FieldPath(("done_act_author",)),
+                # #1333: a completion claim a revision cleared, kept on the
+                # record. The same quote `done_evidence` carried, so it is
+                # judged the same way.
+                FieldPath(("superseded_claims[]", "evidence"))),
             mergeable=True, read=_READ_NOTED,
             foreign_read=_READ_FOREIGN, write=_W_HUMAN_EMITTER,
             steps=(Step("requests.forget_content_key", "value", "requests.jsonl"),)),

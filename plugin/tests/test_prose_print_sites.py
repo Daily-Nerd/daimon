@@ -44,9 +44,6 @@ ALLOWED_NON_PRINTING = {
         "counts buckets over the cap; prints slugs and numbers",
     ("cli/ruling.py", "_checks_payload"):
         "ids, lifecycle words, hosts and counts of the armed checks",
-    ("cli/request.py", "_cmd_request_done"):
-        "its record is printed by _report; this reads done_pending for one "
-        "fixed sentence",
     ("cli/trust.py", "_cmd_trust_verdict"):
         "prints the quarantine id and its state word",
     ("cli/amend.py", "_cmd_amend_verdict"):

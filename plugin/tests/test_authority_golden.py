@@ -110,6 +110,20 @@ _ACCEPT_POLICY = ("p-sender", "", "work", "accept", "agent",
 _OPEN_POLICY = ("", "p-recipient", "info", "open", "agent",
                 "r-0000000000aa", "s" * 64, 0, None)
 
+# #1333: keys the request fold ADDED to the record to say what each row did
+# and to keep a discarded claim. They describe the fold's decisions, they are
+# not decisions, so the golden (the pre-seam RULE's outcome on every channel
+# pair) is compared without them. Every other key, state and verdict field
+# included, is still hashed exactly as before.
+_OBSERVED_KEYS = ("row_effects", "superseded_claims")
+
+
+def _without_observed(records):
+    return {q_id: {k: v for k, v in record.items()
+                   if k not in _OBSERVED_KEYS}
+            for q_id, record in records.items()}
+
+
 SPECS = {
     "refutations": dict(
         module=refutations, prefix="r-", id_key="refutation_id",
@@ -128,9 +142,9 @@ SPECS = {
             "accepted", "rejected", "needs_info", "done", "replied",
             "revised", "suppressed", "done_verified", "surfaced",
             "verdict_surfaced", "delivered")],
-        fold=lambda rows: requests.fold(
+        fold=lambda rows: _without_observed(requests.fold(
             rows, policies=frozenset({_ACCEPT_POLICY}), own_slug="p-recipient",
-            open_policies={"p-sender": frozenset({_OPEN_POLICY})})),
+            open_policies={"p-sender": frozenset({_OPEN_POLICY})}))),
     "amendments": dict(
         module=amendments, prefix="a-", id_key="amendment_id",
         founders=[("proposed", {"change": "progressed", "item_id": "o-1",
