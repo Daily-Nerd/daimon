@@ -5,6 +5,18 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.2](https://github.com/Daily-Nerd/daimon/compare/v0.67.1...v0.67.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **request:** name the effect of every row a request verb writes ([299220e](https://github.com/Daily-Nerd/daimon/commit/299220ec0e3b4a5108f98233b254316f108aacd0)), closes [#1333](https://github.com/Daily-Nerd/daimon/issues/1333)
+
+
+### Documentation
+
+* **mcp:** say tool-name blocking is not the cross-project boundary ([a8e7e06](https://github.com/Daily-Nerd/daimon/commit/a8e7e0664586989557bf6c27134579777bd1ef01))
+
 ## [0.67.1](https://github.com/Daily-Nerd/daimon/compare/v0.67.0...v0.67.1) (2026-11-11)
 
 
