@@ -2091,6 +2091,7 @@ MASK_POLICY: dict[tuple[str, str], bool] = {
     ("requests.jsonl", "opened_act_author"): False,
     ("requests.jsonl", "verdict_act_author"): False,
     ("requests.jsonl", "done_act_author"): False,
+    ("requests.jsonl", "superseded_claims[].evidence"): False,
     ("trust.jsonl", "reason"): True,
     ("trust.jsonl", "evidence[]"): True,
 }

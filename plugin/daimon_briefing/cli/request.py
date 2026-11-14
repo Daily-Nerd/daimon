@@ -116,6 +116,26 @@ def _state_label(record: dict, project_dir=None) -> str:
     return requests.render_state(record, project_dir=project_dir)
 
 
+def _claim_lines(record: dict) -> list[str]:
+    """The completion-claim lines of a record card, shared by `list` and
+    `inbox` so the two cannot drift (#1333): the pending claim, or the
+    landed completion, then every claim a revision discarded."""
+    lines = []
+    if record.get("done_pending"):
+        # #978: the state glyph above stays the open one — a claim is not a
+        # verdict — so this line is the only place the claim itself shows.
+        lines.append("  Done (claimed, awaiting a human accept): "
+                     f"{record.get('done_evidence', '')}")
+    elif record.get("done_evidence"):
+        lines.append(f"  Done: {record['done_evidence']}")
+    for claim in record.get("superseded_claims") or []:
+        lines.append(
+            "  Superseded claim (answered revision "
+            f"{claim.get('revision', 0)}, discarded by a later revision): "
+            f"{claim.get('evidence', '')}")
+    return lines
+
+
 def _request_lines(record: dict, project_dir=None) -> list:
     """One request as a record card. The header follows the #711 three-span
     shape (state bracket, id, prose); the body carries the two-party facts a
@@ -178,13 +198,7 @@ def _request_lines(record: dict, project_dir=None) -> list:
                      "here, and any verdict reverses it")
     if record.get("note"):
         lines.append(f"  Note: {record['note']}")
-    if record.get("done_pending"):
-        # #978: the state glyph above stays the open one — a claim is not a
-        # verdict — so this line is the only place the claim itself shows.
-        lines.append("  Done (claimed, awaiting a human accept): "
-                     f"{record.get('done_evidence', '')}")
-    elif record.get("done_evidence"):
-        lines.append(f"  Done: {record['done_evidence']}")
+    lines.extend(_claim_lines(record))
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
                      f"{requests.MAX_REVISIONS}")
@@ -231,13 +245,7 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
                      "here, and any verdict reverses it")
     if record.get("note"):
         lines.append(f"  Note: {record['note']}")
-    if record.get("done_pending"):
-        # #978: the state glyph above stays the open one — a claim is not a
-        # verdict — so this line is the only place the claim itself shows.
-        lines.append("  Done (claimed, awaiting a human accept): "
-                     f"{record.get('done_evidence', '')}")
-    elif record.get("done_evidence"):
-        lines.append(f"  Done: {record['done_evidence']}")
+    lines.extend(_claim_lines(record))
     replies = record.get("replies") or []
     if replies:
         # #1117: count plus the latest in full (the author's own text).
@@ -587,9 +595,10 @@ def _cmd_request_revise(args) -> int:
     _cli.require_ledger(project, "requests.jsonl")
     snap = _snap(project)
     try:
-        requests.revise(args.request_id, channel=_request_channel(args),
-                        ask=args.ask, why=args.why, evidence=args.evidence,
-                        title=args.title, project_dir=project)
+        event_id = requests.revise(
+            args.request_id, channel=_request_channel(args),
+            ask=args.ask, why=args.why, evidence=args.evidence,
+            title=args.title, project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:revise:refused")
         print(_refusal_message("request not revised", exc))
@@ -612,6 +621,7 @@ def _cmd_request_revise(args) -> int:
         return 0
     render.render_ledger_lines(_request_lines(
         _masked(project, [record], snap=snap)[0], project_dir=project))
+    _say_effect(args.request_id, event_id, project, record)
     return 0
 
 
@@ -625,7 +635,7 @@ def _cmd_request_verdict(args) -> int:
     verb = args.request_cmd
     try:
         channel = _request_channel(args, human_only=True)
-        getattr(requests, _VERDICT_CALLS[verb])(
+        event_id = getattr(requests, _VERDICT_CALLS[verb])(
             args.request_id, channel=channel, note=args.note or "",
             project_dir=project)
     except requests.RequestError as exc:
@@ -633,11 +643,21 @@ def _cmd_request_verdict(args) -> int:
         print(_refusal_message(f"request {verb} refused", exc))
         return 1
     _cli._note_usage(f"request:{verb}")
-    _report(args.request_id, project, verb, snap)
+    _report(args.request_id, project, verb, snap, event_id)
     return 0
 
 
-def _report(request_id: str, project, verb: str, snap) -> None:
+def _say_effect(request_id: str, event_id: str, project, record=None) -> None:
+    """Print the one line naming what the row just written did (#1333). The
+    words come from the fold's effect for that row (`requests.effect_line`);
+    nothing here compares states or looks at a verb name."""
+    line = requests.written_effect_line(request_id, event_id,
+                                        project_dir=project, record=record)
+    if line:
+        render.render_ledger_lines([line])
+
+
+def _report(request_id: str, project, verb: str, snap, event_id: str) -> None:
     """Print the answered record, or say plainly that this bucket cannot see
     it. A recipient's answer to a foreign ask is written here and pairs with
     its origin only at the read-time join (PR 2).
@@ -657,11 +677,13 @@ def _report(request_id: str, project, verb: str, snap) -> None:
     if record is not None:
         render.render_ledger_lines(_request_lines(
             _masked(project, [record], snap=snap)[0], project_dir=project))
+        _say_effect(request_id, event_id, project, record)
         return
     record = requests.recipient_join(project_dir=project).get(request_id)
     if record is not None:
         render.render_ledger_lines(_inbox_lines(
             _masked(project, [record], snap=snap)[0], project_dir=project))
+        _say_effect(request_id, event_id, project, record)
         return
     render.render_ledger_lines(
         [f"{request_id}: {verb} recorded in this project's ledger",
@@ -676,35 +698,19 @@ def _cmd_request_done(args) -> int:
     _cli.require_ledger(project, "requests.jsonl")
     snap = _snap(project)
     try:
-        requests.done(args.request_id, channel=_request_channel(args),
-                      evidence=args.evidence, project_dir=project)
+        event_id = requests.done(
+            args.request_id, channel=_request_channel(args),
+            evidence=args.evidence, project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:done:refused")
         print(_refusal_message("request done refused", exc))
         return 1
     _cli._note_usage("request:done")
-    _report(args.request_id, project, "done", snap)
-    # #978 review round 1 (F2): `requests.get()` is the bucket-LOCAL fold —
-    # on the ordinary cross-bucket path (this project answering a FOREIGN
-    # ask), the `opened` row lives in the sender's bucket and this project's
-    # own `done` row is an orphan in its own per-bucket fold, so `get()`
-    # returns None here and this guidance never printed. `recipient_join` is
-    # the same composer `daimon request inbox` reads through, and finds the
-    # record regardless of which bucket founded it.
-    record = requests.recipient_join(project_dir=project).get(args.request_id)
-    if record is not None and record.get("done_pending"):
-        # #978: the record card `_report` just printed already renders the
-        # claim (on the cross-bucket path too, since review round 2's B2
-        # fix gave `_report` its own `recipient_join` fallback) — this line
-        # is the plain-language answer to the question an agent just asked
-        # by running `done` at all — did that close it? — named in the
-        # voice a script reads rather than left to infer from the state
-        # glyph staying `open`.
-        render.render_ledger_lines(
-            [f"{args.request_id}: completion claimed, and still waits on a "
-             f"person — `daimon request accept {args.request_id}` lands it "
-             "as done, `daimon request reject "
-             f"{args.request_id} --note \"<why>\"` sends it back"])
+    # #1333: the line that says whether this closed it (a held claim still
+    # waits on a person, #978) is the fold's word for the row just written,
+    # printed by `_report` on the local AND the cross-bucket path alike. It
+    # used to be a second, hand-built read of `done_pending` here.
+    _report(args.request_id, project, "done", snap, event_id)
     return 0
 
 
@@ -716,14 +722,15 @@ def _cmd_request_reply(args) -> int:
     _cli.require_ledger(project, "requests.jsonl")
     snap = _snap(project)
     try:
-        requests.reply(args.request_id, args.note, args.evidence,
-                       channel=_request_channel(args), project_dir=project)
+        event_id = requests.reply(
+            args.request_id, args.note, args.evidence,
+            channel=_request_channel(args), project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:reply:refused")
         print(_refusal_message("request reply refused", exc))
         return 1
     _cli._note_usage("request:reply")
-    _report(args.request_id, project, "reply", snap)
+    _report(args.request_id, project, "reply", snap, event_id)
     return 0
 
 

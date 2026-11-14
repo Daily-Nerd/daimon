@@ -478,7 +478,8 @@ def test_the_folded_prose_declarations_are_pinned():
         fp(("replies[]", "act_author")),
         fp(("opened_act_author",)),
         fp(("verdict_act_author",)),
-        fp(("done_act_author",)))
+        fp(("done_act_author",)),
+        fp(("superseded_claims[]", "evidence")))
     for name in ("events.jsonl", "amendments.jsonl", "trust.jsonl",
                  "relations.jsonl", "verification.jsonl"):
         assert surfaces.bucket_ledger(name).folded_prose == (), name

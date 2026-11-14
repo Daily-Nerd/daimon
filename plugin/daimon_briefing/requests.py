@@ -113,6 +113,127 @@ _STATE_BY_EVENT = {
 }
 # Verdicts and suppression: the human-only half of the verb table (D8).
 _HUMAN_ONLY = frozenset({"needs_info", "accepted", "rejected", "suppressed"})
+
+# #1333: what a row did, as the fold decided it. ONE closed set of effects, and
+# every reason belongs to exactly one effect, so a branch of the fold picks the
+# reason and the effect follows from the table: nothing downstream can name a
+# fifth outcome, and no printer works one out from a state diff or a verb name.
+#   landed         the row moved the record (or recorded a fact on it)
+#   held_as_claim  an agent's completion, held until a person decides
+#   ignored        a no-op: the row is real but changed nothing, and says why
+#   discarded_claim  a `revised` row cleared a pending claim (kept, superseded)
+EFFECT_LANDED = "landed"
+EFFECT_HELD = "held_as_claim"
+EFFECT_IGNORED = "ignored"
+EFFECT_DISCARDED = "discarded_claim"
+EFFECTS = frozenset({EFFECT_LANDED, EFFECT_HELD, EFFECT_IGNORED,
+                     EFFECT_DISCARDED})
+# reason -> (effect, the one line a verb prints). `{id}` and `{revision}` are
+# the only holes; `effect_line` fills them from the record, never from state.
+_EFFECT_REASONS: dict[str, tuple[str, str]] = {
+    "opened": (EFFECT_LANDED, "{id}: request recorded"),
+    "duplicate_open": (
+        EFFECT_IGNORED, "{id}: no-op, a request with this id was already "
+        "opened and the first one stands"),
+    "revised": (EFFECT_LANDED, "{id}: revision recorded"),
+    "claim_discarded": (
+        EFFECT_DISCARDED,
+        "{id}: revision recorded, and the completion claim that answered "
+        "revision {revision} was discarded; it stays on the record as a "
+        "superseded claim"),
+    "not_revisable": (
+        EFFECT_IGNORED, "{id}: no-op, a settled request is not revised"),
+    "revision_cap": (
+        EFFECT_IGNORED, "{id}: no-op, every revision is already used"),
+    "needs_human_channel": (
+        EFFECT_IGNORED, "{id}: no-op, this verdict needs a human channel "
+        "and the row changed nothing"),
+    "record_rejected": (
+        EFFECT_IGNORED, "{id}: no-op, the request was rejected and a "
+        "rejection is final; the sender can open a new one with "
+        "--supersedes"),
+    "already_done": (
+        EFFECT_IGNORED, "{id}: no-op, the request is already done and a "
+        "verdict does not reopen it"),
+    "already_done_unverified": (
+        EFFECT_IGNORED, "{id}: no-op, the request is already done and its "
+        "completion is claimed, unverified; only the session-end byte-check "
+        "clears that, a verdict does not"),
+    "suppressed": (
+        EFFECT_LANDED, "{id}: suppressed from the briefing panel; it stays "
+        "listed, and any verdict reverses it"),
+    "already_suppressed": (
+        EFFECT_IGNORED, "{id}: no-op, it was already suppressed from the "
+        "briefing panel"),
+    "accepted": (EFFECT_LANDED, "{id}: accepted"),
+    "claim_ratified": (
+        EFFECT_LANDED, "{id}: accepted, which ratified the completion claim "
+        "already on file; the request is done"),
+    "rejected": (
+        EFFECT_LANDED, "{id}: rejected; final for this request, and the "
+        "sender can open a new one with --supersedes"),
+    "needs_info": (
+        EFFECT_LANDED, "{id}: needs-info recorded; the sender is asked for "
+        "more"),
+    "needs_info_again": (
+        EFFECT_LANDED, "{id}: needs-info recorded again; the request was "
+        "already waiting on the sender"),
+    "done_needs_evidence": (
+        EFFECT_IGNORED, "{id}: no-op, a completion without evidence never "
+        "lands"),
+    "awaits_person": (
+        EFFECT_HELD, "{id}: completion claimed, and still waits on a person "
+        "— `daimon request accept {id}` lands it as done, `daimon "
+        "request reject {id} --note \"<why>\"` sends it back"),
+    "done": (EFFECT_LANDED, "{id}: done"),
+    "done_claimed": (
+        EFFECT_LANDED, "{id}: done, claimed and unverified until the "
+        "session-end byte-check confirms the evidence quote"),
+    "claim_verified": (
+        EFFECT_LANDED, "{id}: the session-end byte-check confirmed the "
+        "completion quote"),
+    "no_claim_to_verify": (
+        EFFECT_IGNORED, "{id}: no-op, there is no completion claim for the "
+        "byte-check to confirm"),
+    "reply_recorded": (
+        EFFECT_LANDED, "{id}: reply recorded; the request stays accepted "
+        "and owed until `done`"),
+    "reply_empty": (EFFECT_IGNORED, "{id}: no-op, a reply needs a note"),
+    "reply_not_permitted": (
+        EFFECT_IGNORED, "{id}: no-op, this channel cannot reply"),
+    "reply_needs_accept": (
+        EFFECT_IGNORED, "{id}: no-op, a reply only attaches to an accepted "
+        "request"),
+    "reply_from_sender": (
+        EFFECT_IGNORED, "{id}: no-op, the sender cannot reply to its own "
+        "ask; `daimon request revise` adds to it"),
+}
+
+
+def _note_effect(current: dict, row: dict, reason: str, **detail) -> None:
+    """Record, on the record, what THIS row did (#1333). Called once per
+    consumed row at the branch that decides its fate. `reason` names the
+    branch; the effect is looked up, never passed, so a branch cannot claim
+    an effect its reason does not belong to. A row without an `event_id` (a
+    hand-edited one) has nothing to key by and is not recorded."""
+    event_id = str(row.get("event_id") or "")
+    if event_id:
+        current["row_effects"][event_id] = {
+            "effect": _EFFECT_REASONS[reason][0], "reason": reason, **detail}
+
+
+def effect_line(request_id: str, effect: dict | None) -> str:
+    """The one line a write verb prints for the row it wrote, from the effect
+    the fold recorded for it (#1333). Empty when the fold recorded none (the
+    row is an orphan in the fold that was asked). The words live HERE, beside
+    the vocabulary, so no CLI branch can say something the fold did not."""
+    if not effect:
+        return ""
+    template = _EFFECT_REASONS.get(str(effect.get("reason") or ""))
+    if template is None:
+        return ""
+    return template[1].format(id=request_id,
+                              revision=effect.get("revision", 0))
 # #1026. Channels whose author is DERIVED from the environment this process
 # runs in (`config.author()`: DAIMON_AUTHOR, then git user.name, then the OS
 # user), so naming a different person per act is meaningless there — one
@@ -821,6 +942,10 @@ def fold(rows: list[dict], policies=frozenset(), *,
     # rather than two independent passes that could disagree.
     founders = _founder_by_id(ordered, open_policies)
     out: dict[str, dict] = {}
+    # #1333: who made the pending claim and when, per request, so a `revised`
+    # row that clears it can keep it. Local to the pass: it is only ever read
+    # by the one branch that discards, never rendered or returned.
+    claim_meta: dict[str, dict] = {}
     for row in ordered:
         q_id = row["request_id"]
         event = row["event"]
@@ -828,6 +953,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
         current = out.get(q_id)
         if event == "opened":
             if current is not None:
+                _note_effect(current, row, "duplicate_open")
                 continue  # duplicate logical open, first writer wins
                 # otherwise; `kind`/`from_slug` are already resolved for
                 # every id by `founders` above, so there is nothing left
@@ -915,6 +1041,16 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # event branch below for the write side and `is_stale` for
                 # why a pending claim never decays.
                 "done_pending": False,
+                # #1333: completion claims a `revised` row cleared, oldest
+                # first. A claim never leaves a record without a trace: the
+                # sender's revise happens in the sender's session, and the
+                # person who accepts later has no other way to see that a
+                # claim existed and answered an older ask.
+                "superseded_claims": [],
+                # #1333: {event_id: {"effect", "reason", ...}}, one entry per
+                # lifecycle row this fold consumed, written by `_note_effect`
+                # at the branch that decided the row's fate.
+                "row_effects": {},
                 # #694 PR 3 (D8): set only by a `done_verified` row landing
                 # on a currently-claimed completion — never on disk, the
                 # session-end byte-check's own timestamp.
@@ -970,6 +1106,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             title = str(row.get("title") or "")
             if title:
                 out[q_id]["title"] = title
+            _note_effect(out[q_id], row, "opened")
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
@@ -1056,11 +1193,13 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 covered = _covered_by_policy(
                     row, origin_slugs, row_policies, kind=current["kind"])
             if not (covered or covered_before_rule):
+                _note_effect(current, row, "needs_human_channel")
                 continue
         if event in _STATE_BY_EVENT and current["state"] == "rejected":
             # D6: rejection is terminal for this id. Re-proposal is a NEW
             # record citing `supersedes`, so the rejected verdict stays on
             # the record instead of being overwritten by the next ask.
+            _note_effect(current, row, "record_rejected")
             continue
         if event in ("accepted", "rejected") and current["state"] == "done":
             # #1021: `done` is terminal for a VERDICT row, the same shape the
@@ -1083,6 +1222,10 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # the same reason `surfaced` leaves it alone: a duplicate must
             # not make a settled record sort as freshly updated.
             current["history_count"] += 1
+            # #1333: the byte-check is named only while there is something
+            # for it to clear. A human `done` was never claimed.
+            _note_effect(current, row, "already_done_unverified"
+                         if current["done_claimed"] else "already_done")
             continue
         if event == "replied":
             # #1117: no state moves, so `continue` BEFORE the generic
@@ -1090,9 +1233,16 @@ def fold(rows: list[dict], policies=frozenset(), *,
             # `append` is public: the reader decides. A dropped row bumps
             # neither `updated_at` (drives every sort) nor `history_count`.
             note = str(row.get("note") or "").strip()
-            if (not note or authority not in ("human", "agent")
-                    or current["state"] != "accepted"
-                    or _reply_from_sender(current, row, own_slug)):
+            refusal = ("reply_empty" if not note
+                       else "reply_not_permitted"
+                       if authority not in ("human", "agent")
+                       else "reply_needs_accept"
+                       if current["state"] != "accepted"
+                       else "reply_from_sender"
+                       if _reply_from_sender(current, row, own_slug)
+                       else "")
+            if refusal:
+                _note_effect(current, row, refusal)
                 continue
             entry = {
                 "ts": row.get("ts"),
@@ -1108,6 +1258,7 @@ def fold(rows: list[dict], policies=frozenset(), *,
             if evidence:  # scar 0042: the ABSENCE of a key is data
                 entry["evidence"] = evidence
             current["replies"].append(entry)
+            _note_effect(current, row, "reply_recorded")
             current["history_count"] += 1
             current["updated_at"] = row.get("ts") or current["updated_at"]
             current["updated_order"] = _row_order(row)
@@ -1171,13 +1322,22 @@ def fold(rows: list[dict], policies=frozenset(), *,
             continue
         if event == "suppressed":
             current["history_count"] += 1
+            # #1333: a second `suppress` finds the record already muted. It
+            # still counts in history (the row is real), but it is a no-op
+            # and says so rather than reading as a second suppression.
+            _note_effect(current, row, "already_suppressed"
+                         if current["suppressed"] else "suppressed")
             current["suppressed"] = True
             continue
         if event == "revised":
             if current["state"] not in _SENDER_MOVABLE:
+                _note_effect(current, row, "not_revisable")
                 continue
             if current["revision"] >= MAX_REVISIONS:
-                continue  # D7: revision 4+ is inert, not a silent success
+                # D7: revision 4+ is inert, not a silent success
+                _note_effect(current, row, "revision_cap")
+                continue
+            answered_revision = current["revision"]
             # Scar 0042: replace only the keys the caller actually set. In an
             # append-only stream the ABSENCE of a key is data, so a revise
             # that names only `why` must not clear the ask.
@@ -1225,15 +1385,36 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 # revise that followed. `done_verified_at` resets alongside
                 # the claim it verified (N1): left standing, it would assert
                 # "byte-checked" over evidence that no longer exists.
+                #
+                # #1333: cleared, but never silently. The claim moves to
+                # `superseded_claims` with the revision it answered, so the
+                # person who decides later can see it existed. Gated on the
+                # same `done_pending` as the clear above, for the same
+                # reason: a human `done` is not a claim and is not moved.
+                meta = claim_meta.pop(q_id, {})
+                current["superseded_claims"].append({
+                    "evidence": current["done_evidence"],
+                    "by": current["done_by"],
+                    "author": meta.get("author"),
+                    "claimed_at": meta.get("ts"),
+                    "verified_at": current["done_verified_at"],
+                    "revision": answered_revision,
+                    "superseded_at": row.get("ts"),
+                })
                 current["done_pending"] = False
                 current["done_claimed"] = False
                 current["done_evidence"] = ""
                 current["done_by"] = None
                 current["done_verified_at"] = None
+                _note_effect(current, row, "claim_discarded",
+                             revision=answered_revision)
+            else:
+                _note_effect(current, row, "revised")
             continue
         if event == "done" and not str(row.get("evidence") or "").strip():
             # D8: `done` is the one either-channel state move, and its price
             # is evidence. A row without it never lands.
+            _note_effect(current, row, "done_needs_evidence")
             continue
         if (event == "done" and authority != "human"
                 and current["state"] in _SENDER_MOVABLE
@@ -1272,6 +1453,9 @@ def fold(rows: list[dict], policies=frozenset(), *,
             current["done_claimed"] = True
             current["done_evidence"] = str(row.get("evidence") or "")
             current["done_pending"] = True
+            claim_meta[q_id] = {"author": row.get("author"),
+                                "ts": row.get("ts")}
+            _note_effect(current, row, "awaits_person")
             continue
         if event == "done_verified":
             # #694 PR 3 (D8): the session-end byte-check confirmed the
@@ -1293,10 +1477,26 @@ def fold(rows: list[dict], policies=frozenset(), *,
                 current["history_count"] += 1
                 current["done_claimed"] = False
                 current["done_verified_at"] = row.get("ts")
+                _note_effect(current, row, "claim_verified")
+            else:
+                _note_effect(current, row, "no_claim_to_verify")
             continue
         current["history_count"] += 1
         current["updated_at"] = row.get("ts") or current["updated_at"]
         current["updated_order"] = _row_order(row)
+        # #1333: decided here, from the state BEFORE the move, because the
+        # move below is what erases the difference between an accept and an
+        # accept that ratified a claim, and a first needs-info from a repeat.
+        if event == "accepted":
+            landed = "claim_ratified" if current["done_pending"] else "accepted"
+        elif event == "needs_info":
+            landed = ("needs_info_again" if current["state"] == "needs-info"
+                      else "needs_info")
+        elif event == "done":
+            landed = "done" if authority == "human" else "done_claimed"
+        else:
+            landed = "rejected"
+        _note_effect(current, row, landed)
         if event == "accepted" and current["done_pending"]:
             # #978: an accept landing on a completion claim ratifies the
             # claim itself, not a to-do still to be started — the record
@@ -1512,6 +1712,27 @@ def _sent_fold(project_dir) -> tuple[dict[str, dict], tuple]:
             grouped.notes)
 
 
+def written_effect_line(request_id: str, event_id: str, project_dir=None,
+                        record: dict | None = None) -> str:
+    """The line a write verb prints for the row it just wrote (#1333): the
+    fold's own word for that row's effect, or "" when no fold this project can
+    read holds the row. `record` is the one the verb already rendered; when it
+    cannot see the row (the bucket-local fold misses a verdict that lives in
+    another bucket, the sender join misses an answer this project wrote to a
+    foreign ask) the other two composers are asked in turn, so the cross-bucket
+    path gets the same line as the local one."""
+    for found in (record,
+                  lambda: get(request_id, project_dir=project_dir),
+                  lambda: recipient_join(project_dir=project_dir).get(
+                      request_id),
+                  lambda: sent_record(request_id, project_dir=project_dir)):
+        candidate = found() if callable(found) else found
+        effect = ((candidate or {}).get("row_effects") or {}).get(event_id)
+        if effect:
+            return effect_line(request_id, effect)
+    return ""
+
+
 def sent_record(request_id: str, project_dir=None) -> dict | None:
     """One request this project sent, as `request list` renders it: through
     the sender join, so the recipient's verdict is in it. `get` is the
@@ -1706,8 +1927,12 @@ def _resolve_covering_open_policy(to: str, project_dir):
 def revise(request_id: str, *, channel: str, ask: str | None = None,
            why: str | None = None, evidence: str | None = None,
            author: str | None = None, title: str | None = None,
-           project_dir=None) -> None:
+           project_dir=None) -> str:
     """Answer a needs-info, or sharpen an open ask. Capped at MAX_REVISIONS.
+
+    Returns the `event_id` of the row written (#1333), the key the fold's
+    `row_effects` names that row's effect under. Every write verb below does
+    the same.
 
     #1131: `title=None` keeps the title (a revise that sharpens the ask does
     not touch the headline); a value replaces it; `""` clears it. Same
@@ -1742,6 +1967,7 @@ def revise(request_id: str, *, channel: str, ask: str | None = None,
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise RequestError("revision not written")
+    return row["event_id"]
 
 
 def _answering(request_id: str, project_dir) -> dict | None:
@@ -1773,7 +1999,7 @@ def _require(request_id: str, project_dir) -> dict:
 
 def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
                        project_dir, row: dict | None = None,
-                       author: str | None = None, **stamp) -> None:
+                       author: str | None = None, **stamp) -> str:
     """`stamp` (#961 slice 4) carries `under_ruling`/`policy_sha256` for a
     ruling-covered agent accept — a truthy extra becomes a row field, an
     absent or falsy one is never written at all, the same "only what the
@@ -1803,10 +2029,11 @@ def _write_verdict_row(event: str, request_id: str, channel: str, note: str,
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise RequestError("verdict not written")
+    return row["event_id"]
 
 
 def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
-             author: str | None = None, project_dir=None) -> None:
+             author: str | None = None, project_dir=None) -> str:
     if of_channel("requests", channel) != "human":
         state = _STATE_BY_EVENT.get(event, event)
         article = "an" if state[:1] in "aeiou" else "a"
@@ -1819,8 +2046,8 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
             f"{request_id} was rejected, and a rejection is final for that "
             "record; the sender can open a new request with "
             f"`--supersedes {request_id}`")
-    _write_verdict_row(event, request_id, channel, note, project_dir,
-                       author=author)
+    return _write_verdict_row(event, request_id, channel, note, project_dir,
+                              author=author)
 
 
 def _resolve_covering_ruling(sender: str, kind: str, project_dir):
@@ -1845,7 +2072,7 @@ def _resolve_covering_ruling(sender: str, kind: str, project_dir):
 
 
 def accept(request_id: str, *, channel: str, note: str = "",
-           author: str | None = None, project_dir=None) -> None:
+           author: str | None = None, project_dir=None) -> str:
     """Land the addressed request as accepted.
 
     Human-only for an ask nothing covers, as every verdict verb has always
@@ -1994,27 +2221,26 @@ def accept(request_id: str, *, channel: str, note: str = "",
                 f"arrived through {channel!r}{detail} this ask needs "
                 f"`daimon request accept {request_id}` from a human "
                 "channel")
-        _write_verdict_row("accepted", request_id, channel, note,
-                           project_dir, row=synthetic, **stamp)
-        return
-    _verdict("accepted", request_id, channel=channel, note=note,
-             author=author, project_dir=project_dir)
+        return _write_verdict_row("accepted", request_id, channel, note,
+                                  project_dir, row=synthetic, **stamp)
+    return _verdict("accepted", request_id, channel=channel, note=note,
+                    author=author, project_dir=project_dir)
 
 
 def reject(request_id: str, *, channel: str, note: str = "",
-           author: str | None = None, project_dir=None) -> None:
-    _verdict("rejected", request_id, channel=channel, note=note,
-             author=author, project_dir=project_dir)
+           author: str | None = None, project_dir=None) -> str:
+    return _verdict("rejected", request_id, channel=channel, note=note,
+                    author=author, project_dir=project_dir)
 
 
 def needs_info(request_id: str, *, channel: str, note: str = "",
-               author: str | None = None, project_dir=None) -> None:
-    _verdict("needs_info", request_id, channel=channel, note=note,
-             author=author, project_dir=project_dir)
+               author: str | None = None, project_dir=None) -> str:
+    return _verdict("needs_info", request_id, channel=channel, note=note,
+                    author=author, project_dir=project_dir)
 
 
 def suppress(request_id: str, *, channel: str, note: str = "",
-             author: str | None = None, project_dir=None) -> None:
+             author: str | None = None, project_dir=None) -> str:
     """Drop a record out of the briefing panel — human-only, panel-only.
 
     Not a verdict and not a state: the record stays in `request list`, and
@@ -2034,10 +2260,11 @@ def suppress(request_id: str, *, channel: str, note: str = "",
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise RequestError("suppression not written")
+    return row["event_id"]
 
 
 def done(request_id: str, *, channel: str, evidence: str,
-         author: str | None = None, project_dir=None) -> None:
+         author: str | None = None, project_dir=None) -> str:
     """Report the ask as satisfied. Either channel, evidence required — an
     agent's claim renders as claimed-and-unverified until the session-end
     byte-check confirms the quote (PR 3).
@@ -2056,6 +2283,7 @@ def done(request_id: str, *, channel: str, evidence: str,
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise RequestError("completion not written")
+    return row["event_id"]
 
 
 def _reply_refusal(request_id: str, state: str) -> str:
@@ -2076,7 +2304,7 @@ def _reply_refusal(request_id: str, state: str) -> str:
 
 
 def reply(request_id: str, note: str, evidence: str | None = None, *,
-          channel: str, author: str | None = None, project_dir=None) -> None:
+          channel: str, author: str | None = None, project_dir=None) -> str:
     """#1117: send the sender a progress note on a request this project has
     ACCEPTED, without moving its state. Either channel. The state check goes
     through `recipient_join`, never `_answering` (bucket-local, scar 0056);
@@ -2105,6 +2333,7 @@ def reply(request_id: str, note: str, evidence: str | None = None, *,
     if not append(row, project_dir=project_dir,
                   writer=Writer.HUMAN):
         raise RequestError("reply not written")
+    return row["event_id"]
 
 
 def verify_done(request_id: str, *, role: str, project_dir=None) -> bool:
