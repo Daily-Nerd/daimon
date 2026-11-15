@@ -1,9 +1,11 @@
 """Generate the reference pages that the code owns.
 
 `reference/cli/<group>.md` is written from the argparse parsers, through the
-same walker the CLI help golden test uses (`cli/_surface.py`). It is
-deterministic: it reads structured parser data, never formatted help text, so
-the output is the same on every Python version and in every environment. `tests/test_docs_generated.py` fails when a committed page
+same walker the CLI help golden test uses (`cli/_surface.py`), and the tool
+table in `reference/mcp.md` from the MCP server's tool schemas. Both are
+deterministic: they read structured parser and schema data, never formatted
+help text, so the output is the same on every Python version and in every
+environment. `tests/test_docs_generated.py` fails when a committed page
 differs from what this module writes.
 
     uv run python -m daimon_briefing._docgen        # rewrite the pages
@@ -14,8 +16,9 @@ that text is what the CLI prints.
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
-from . import cli
+from . import cli, config
 from .cli._surface import arguments, children, walk
 
 REPO = Path(__file__).resolve().parents[2]
@@ -269,8 +272,76 @@ def render_cli() -> dict[str, str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# MCP tool table
+
+MCP_BEGIN = "{/* generated:mcp-tools (daimon_briefing._docgen) */}"
+MCP_END = "{/* end generated:mcp-tools */}"
+
+_MCP_UI = {
+    "en": ("Tool", "What it does", "Arguments", "required", "default",
+           "only with `DAIMON_MODEL_CROSS_PROJECT`"),
+    "es": ("Herramienta", "Qué hace", "Argumentos", "obligatorio",
+           "por defecto", "solo con `DAIMON_MODEL_CROSS_PROJECT`"),
+}
+
+
+def _descriptors(cross: bool):
+    from . import mcp_server
+    with mock.patch.object(config, "model_cross_project",
+                           lambda: cross):
+        return {t["name"]: t for t in mcp_server._tool_descriptors()}
+
+
+def mcp_table(lang: str) -> str:
+    """The tool table, from the schemas the server sends to a client. A tool's
+    description and arguments are those of a host that granted no
+    cross-project read; arguments only a grant offers are marked."""
+    tool_h, what_h, args_h, req_t, def_t, grant_t = _MCP_UI[lang]
+    plain, granted = _descriptors(False), _descriptors(True)
+    lines = [f"| {tool_h} | {what_h} | {args_h} |", "| --- | --- | --- |"]
+    for name, tool in plain.items():
+        props = dict(tool["inputSchema"].get("properties", {}))
+        both = granted[name]["inputSchema"].get("properties", {})
+        required = set(tool["inputSchema"].get("required", []))
+        pieces = []
+        for arg, spec in {**props, **{k: v for k, v in both.items()
+                                      if k not in props}}.items():
+            kind = spec.get("type", "")
+            if "enum" in spec:
+                kind = "|".join(spec["enum"])
+            bits = [f"`{arg}`", f"`{cell(kind)}`" if kind else ""]
+            if arg in required:
+                bits.append(req_t)
+            if "default" in spec:
+                bits.append(f"{def_t} `{spec['default']}`")
+            if arg not in props:
+                bits.append(grant_t)
+            text = " ".join(b for b in bits if b)
+            if spec.get("description"):
+                text += f": {cell(spec['description'])}"
+            pieces.append(text)
+        lines.append(f"| `{name}` | {cell(tool['description'])} | "
+                     f"{'<br />'.join(pieces) or '-'} |")
+    return "\n".join(lines)
+
+
+def _with_mcp_table(lang: str, rel: str) -> str:
+    text = (REPO / rel).read_text(encoding="utf-8")
+    pattern = re.compile(re.escape(MCP_BEGIN) + r".*?" + re.escape(MCP_END),
+                         re.S)
+    block = f"{MCP_BEGIN}\n\n{mcp_table(lang)}\n\n{MCP_END}"
+    if not pattern.search(text):
+        raise SystemExit(f"{rel}: generated mcp-tools markers are missing")
+    return pattern.sub(lambda _m: block, text)
+
+
 def generated_files() -> dict[str, str]:
-    return render_cli()
+    files = render_cli()
+    for lang, base in LANGS:
+        rel = f"{base}/reference/mcp.md"
+        files[rel] = _with_mcp_table(lang, rel)
+    return files
 
 
 def write(files: dict[str, str]) -> None:

@@ -1,15 +1,17 @@
 """The generated reference pages match the code that owns them.
 
-`reference/cli/<group>.md` is written from the argparse parsers by
-`daimon_briefing._docgen`. A flag changed without regenerating the pages
-fails here, which is what makes the code the one
+`reference/cli/<group>.md` is written from the argparse parsers and the tool
+table in `reference/mcp.md` from the MCP server's tool schemas, both by
+`daimon_briefing._docgen`. A flag or a tool argument changed without
+regenerating the pages fails here, which is what makes the code the one
 owner of those facts: a hand-written copy can go stale unseen, a generated
 one cannot.
 
-Regenerate after a real CLI change:
+Regenerate after a real CLI or MCP change:
     UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py
 """
 import os
+import sys
 
 import pytest
 
@@ -77,3 +79,10 @@ def test_spanish_pages_keep_the_english_flag_text_under_a_spanish_header():
 ])
 def test_table_cells_are_safe_for_markdown_and_mdx(raw, cell):
     assert _docgen.cell(raw) == cell
+
+
+def test_the_mcp_table_marks_arguments_only_a_cross_project_grant_offers():
+    table = _docgen.mcp_table("en")
+    assert "`daimon_recall`" in table and "`requests_inbox`" in table
+    assert "all_projects" in table and "DAIMON_MODEL_CROSS_PROJECT" in table
+    assert sys.modules["daimon_briefing.mcp_server"]

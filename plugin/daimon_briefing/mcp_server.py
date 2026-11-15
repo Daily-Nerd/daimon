@@ -66,7 +66,7 @@ def _tool_descriptors():
                 "conclusion), author, origin project slug, and a `status` "
                 "field in plain words when a row is resolved, superseded or "
                 "contradicted (null for a live row). "
-                + ("Cross-project search only via all_projects/slug — never "
+                + ("Cross-project search only via all_projects/slug, never "
                    "implicit." if cross else
                    "Searches this project only.")),
             "inputSchema": {
@@ -80,7 +80,7 @@ def _tool_descriptors():
             "name": "daimon_brief",
             "description": (
                 "The latest briefing for this project: what the last session "
-                "was doing, decisions, open loops — trust-tagged. Strictly "
+                "was doing, decisions, open loops, trust-tagged. Strictly "
                 "project-scoped: no checkpoint here answers 'none', never "
                 "another project's content"
                 + (" (pass slug to read one explicitly)." if cross else ".")),
@@ -113,7 +113,7 @@ def _tool_descriptors():
             "description": (
                 "Requests other daimon projects have addressed to this one "
                 "(the cross-project ask ledger, #694). Deliberate pull, "
-                "never ambient — daimon_brief does not carry this content. "
+                "never ambient: daimon_brief does not carry this content. "
                 "Read-only: opening, answering, or deciding a request is "
                 "CLI-only (`daimon request ...`)."),
             "inputSchema": {
