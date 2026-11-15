@@ -1,0 +1,447 @@
+{
+ "admission_epoch": "peer-admission-1",
+ "vectors": [
+  {
+   "name": "request opened, clean",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "request opened with title, severity, reason and supersedes",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"high\",\"severity_reason\":\"the release is blocked\",\"supersedes\":\"q-ba9876543210\",\"title\":\"retrieval bar\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "request revised carries the full request, not only the changed keys",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal and the budget\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":2,\"severity\":\"normal\",\"type\":\"revised\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "request withdrawn with a note",
+   "content_type": "daimon.request/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"note\":\"no longer needed\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"withdrawn\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "request withdrawn without a note",
+   "content_type": "daimon.request/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"withdrawn\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "request severity_set",
+   "content_type": "daimon.request/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"critical\",\"severity_reason\":\"customer is waiting\",\"type\":\"severity_set\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "answer accepted",
+   "content_type": "daimon.answer/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"note\":\"will do this week\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"accepted\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "answer rejected",
+   "content_type": "daimon.answer/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"note\":\"out of scope\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"rejected\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "answer needs_info",
+   "content_type": "daimon.answer/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"note\":\"which proposal?\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"needs_info\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "reply replied",
+   "content_type": "daimon.reply/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"evidence\":\"thread link\",\"note\":\"the proposal is the one in the thread\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"replied\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "done with evidence",
+   "content_type": "daimon.done/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"evidence\":\"merged in the release branch\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"done\",\"v\":1}",
+   "expect": {
+    "decision": "custody",
+    "outcome": "bytes"
+   }
+  },
+  {
+   "name": "prose the local person forgot becomes forgotten custody and keeps the addressee",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"the forgotten ask text\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "forgotten": [
+    "the forgotten ask text"
+   ],
+   "expect": {
+    "decision": "custody",
+    "outcome": "forgotten",
+    "closed": {
+     "v": 1,
+     "org": "org-acme",
+     "requester": "member-ana",
+     "request_id": "q-0123456789ab",
+     "revision": 1,
+     "event_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+     "type": "opened",
+     "addressee": "member-luis",
+     "kind_requested": "work",
+     "blocking": false,
+     "severity": "normal"
+    }
+   }
+  },
+  {
+   "name": "a forgotten value in another field also forgets the record",
+   "content_type": "daimon.answer/1",
+   "body": "{\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"note\":\"api_key=FAKEFAKEFAKE0000\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"type\":\"accepted\",\"v\":1}",
+   "forgotten": [
+    "api_key=FAKEFAKEFAKE0000"
+   ],
+   "expect": {
+    "decision": "custody",
+    "outcome": "forgotten",
+    "closed": {
+     "v": 1,
+     "org": "org-acme",
+     "requester": "member-ana",
+     "request_id": "q-0123456789ab",
+     "revision": 1,
+     "event_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+     "type": "accepted"
+    }
+   }
+  },
+  {
+   "name": "ask matching a redaction rule is held with the field name and no text",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"deploy with api_key=FAKEFAKEFAKE0000 today\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "secret_pattern",
+    "fields": [
+     "ask"
+    ],
+    "closed_fields": {
+     "v": 1,
+     "org": "org-acme",
+     "requester": "member-ana",
+     "request_id": "q-0123456789ab",
+     "revision": 1,
+     "event_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+     "type": "opened",
+     "addressee": "member-luis",
+     "kind_requested": "work",
+     "blocking": false,
+     "severity": "normal"
+    }
+   }
+  },
+  {
+   "name": "two prose fields matching are both named, in field order",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"token=FAKEFAKEFAKE0000\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"password: FAKEFAKEFAKE1111\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "secret_pattern",
+    "fields": [
+     "ask",
+     "why"
+    ],
+    "closed_fields": {
+     "v": 1,
+     "org": "org-acme",
+     "requester": "member-ana",
+     "request_id": "q-0123456789ab",
+     "revision": 1,
+     "event_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+     "type": "opened",
+     "addressee": "member-luis",
+     "kind_requested": "work",
+     "blocking": false,
+     "severity": "normal"
+    }
+   }
+  },
+  {
+   "name": "extra field",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"surprise\":\"x\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "unknown version",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":2,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "missing required prose field",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "malformed request id",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-NOTHEX\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "severity outside the table",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"urgent\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "type of another content type",
+   "content_type": "daimon.answer/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "prose over the limit",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "non-canonical: key order",
+   "content_type": "daimon.request/1",
+   "body": "{\"why\":\"it blocks the release note\",\"v\":1,\"type\":\"opened\",\"severity\":\"normal\",\"revision\":1,\"requester\":\"member-ana\",\"request_id\":\"q-0123456789ab\",\"org\":\"org-acme\",\"kind_requested\":\"work\",\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"blocking\":false,\"ask\":\"review the retrieval bar proposal\",\"addressee\":\"member-luis\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "non-canonical: whitespace",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\": \"member-luis\", \"ask\": \"review the retrieval bar proposal\", \"blocking\": false, \"event_id\": \"a1b2c3d4e5f60718293a4b5c6d7e8f90\", \"kind_requested\": \"work\", \"org\": \"org-acme\", \"request_id\": \"q-0123456789ab\", \"requester\": \"member-ana\", \"revision\": 1, \"severity\": \"normal\", \"type\": \"opened\", \"v\": 1, \"why\": \"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "non-canonical: escaped character",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"caf\\u00e9\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "non-canonical: escaped slash",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"a\\/b\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "non-canonical: duplicate key",
+   "content_type": "daimon.request/1",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\",\"v\":1}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "not an object",
+   "content_type": "daimon.request/1",
+   "body": "[]",
+   "expect": {
+    "decision": "hold",
+    "reason": "unsupported_body"
+   }
+  },
+  {
+   "name": "unknown content type",
+   "content_type": "daimon.request/2",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unknown_content_type"
+   }
+  },
+  {
+   "name": "unknown content type, other family",
+   "content_type": "other.thing",
+   "body": "{\"addressee\":\"member-luis\",\"ask\":\"review the retrieval bar proposal\",\"blocking\":false,\"event_id\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"kind_requested\":\"work\",\"org\":\"org-acme\",\"request_id\":\"q-0123456789ab\",\"requester\":\"member-ana\",\"revision\":1,\"severity\":\"normal\",\"type\":\"opened\",\"v\":1,\"why\":\"it blocks the release note\"}",
+   "expect": {
+    "decision": "hold",
+    "reason": "unknown_content_type"
+   }
+  },
+  {
+   "name": "signed act, a real compact JWS, awaits verification with key id only",
+   "content_type": "signed.act",
+   "body": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRldi03ZjNhOTEiLCJ0eXAiOiJKV1QifQ.eyJhY3QiOiJkZWNpc2lvbiIsImlhdCI6MTc2MzIwMDAwMCwic3ViamVjdCI6InItZXhhbXBsZSJ9.6s6lMz8CcIQGLedpjsFtgpQa7EzunE9DNRuvGosk20xIW7HJ_lyrPN7hQzvzf3UzNLntP4JAQ4Cnb94P7AKYmA",
+   "expect": {
+    "decision": "hold",
+    "reason": "awaits_verification",
+    "closed_fields": {
+     "kid": "dev-7f3a91"
+    }
+   }
+  },
+  {
+   "name": "signed act without a signature segment",
+   "content_type": "signed.act",
+   "body": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRldi03ZjNhOTEiLCJ0eXAiOiJKV1QifQ.eyJhY3QiOiJkZWNpc2lvbiIsImlhdCI6MTc2MzIwMDAwMCwic3ViamVjdCI6InItZXhhbXBsZSJ9",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_act"
+   }
+  },
+  {
+   "name": "signed act with a padded segment",
+   "content_type": "signed.act",
+   "body": "eyJhbGciOiJFZERTQSIsImtpZCI6ImRldi03ZjNhOTEiLCJ0eXAiOiJKV1QifQ=.eyJhY3QiOiJkZWNpc2lvbiIsImlhdCI6MTc2MzIwMDAwMCwic3ViamVjdCI6InItZXhhbXBsZSJ9.6s6lMz8CcIQGLedpjsFtgpQa7EzunE9DNRuvGosk20xIW7HJ_lyrPN7hQzvzf3UzNLntP4JAQ4Cnb94P7AKYmA",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_act"
+   }
+  },
+  {
+   "name": "signed act whose header is not JSON",
+   "content_type": "signed.act",
+   "body": "e30x.eyJhY3QiOiJkZWNpc2lvbiIsImlhdCI6MTc2MzIwMDAwMCwic3ViamVjdCI6InItZXhhbXBsZSJ9.6s6lMz8CcIQGLedpjsFtgpQa7EzunE9DNRuvGosk20xIW7HJ_lyrPN7hQzvzf3UzNLntP4JAQ4Cnb94P7AKYmA",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_act"
+   }
+  },
+  {
+   "name": "signed act that is not ASCII",
+   "content_type": "signed.act",
+   "body_hex": "65794a68624763694f694a465a45525451534973496d74705a434936496d526c646930335a6a4e684f5445694c434a30655841694f694a4b5631516966512e65794a68593351694f694a6b5a574e7063326c7662694973496d6c68644349364d5463324d7a49774d4441774d43776963335669616d566a64434936496e49745a586868625842735a534a392e3673366c4d7a3843634951474c6564706a7346746770516137457a756e4539444e527576476f736b323078495737484a5f6c7972504e3768517a767a6633557a4e4c6e7450344a415134436e6239345037414b596d41c3a9",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_act"
+   }
+  },
+  {
+   "name": "body that is not JSON",
+   "content_type": "daimon.request/1",
+   "body": "not json",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_body"
+   }
+  },
+  {
+   "name": "empty body",
+   "content_type": "daimon.request/1",
+   "body": "",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_body"
+   }
+  },
+  {
+   "name": "body that is not UTF-8",
+   "content_type": "daimon.request/1",
+   "body_hex": "fffe7b7d",
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_body"
+   }
+  },
+  {
+   "name": "body of exactly 16384 bytes is not oversize",
+   "content_type": "daimon.request/1",
+   "body_repeat": {
+    "char": "a",
+    "count": 16384
+   },
+   "expect": {
+    "decision": "reject",
+    "reason": "malformed_body"
+   }
+  },
+  {
+   "name": "body over 16384 bytes",
+   "content_type": "daimon.request/1",
+   "body_repeat": {
+    "char": "a",
+    "count": 16385
+   },
+   "expect": {
+    "decision": "reject",
+    "reason": "oversize"
+   }
+  },
+  {
+   "name": "act over 16384 bytes",
+   "content_type": "signed.act",
+   "body_repeat": {
+    "char": "a",
+    "count": 16385
+   },
+   "expect": {
+    "decision": "reject",
+    "reason": "oversize"
+   }
+  }
+ ]
+}
