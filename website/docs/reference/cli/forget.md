@@ -29,7 +29,7 @@ daimon forget [[target]] [--reason REASON] [--project PROJECT] [--dry-run] [--re
 | `--dry-run` |  |  | show what would be forgotten without writing: look before a destructive op |
 | `--resume` |  |  | finish every phase for every forget already recorded: the cure for a surface that could not be reached; a person at a terminal, takes no target |
 | `--only` | `publish\|value\|id\|wholesale\|derived` |  | with --resume, run only this phase |
-| `--republish` |  |  | publish every local forget the team sidecar is missing (the cure for a publish that failed); takes no target; the same as --resume --only publish, and it goes in the next release |
+| `--republish` |  |  | publish every local forget the team sidecar is missing (the cure for a publish that failed); takes no target; the same as --resume --only publish |
 
 **Examples**
 

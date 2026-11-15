@@ -593,9 +593,9 @@ def test_reply_is_taught_in_the_skill_and_documented_in_both_languages():
     es = "website/i18n/es/docusaurus-plugin-content-docs/current/"
     for rel in ("skills/daimon-briefing/SKILL.md", "skills/daimon-end/SKILL.md",
                 "website/docs/reference/cli/coordinate.md",
-                "website/docs/concepts/requests-and-decisions.md",
+                "website/docs/guides/ask-another-project.md",
                 es + "reference/cli/coordinate.md",
-                es + "concepts/requests-and-decisions.md"):
+                es + "guides/ask-another-project.md"):
         text = (repo / rel).read_text(encoding="utf-8")
         assert "request reply" in text or "**`reply`**" in text, rel
 
@@ -657,3 +657,38 @@ def test_a_refusal_is_taught_as_final():
     full = skill_content.render_full()
     assert "Never work around" in full
     assert "do not retry another way" in full
+
+
+def _skill_surfaces():
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[2]
+    return {
+        "skill_content.render_full": skill_content.render_full(),
+        "skills/daimon-briefing": (
+            repo / "skills/daimon-briefing/SKILL.md").read_text(encoding="utf-8"),
+        "skills/daimon-end": (
+            repo / "skills/daimon-end/SKILL.md").read_text(encoding="utf-8"),
+        "_skills/daimon-end": (
+            repo / "plugin/daimon_briefing/_skills/daimon-end/SKILL.md"
+        ).read_text(encoding="utf-8"),
+    }
+
+
+def test_no_skill_tells_an_agent_to_run_reverify():
+    # `reverify` has no agent channel: it needs a person at an interactive
+    # terminal, so a skill that tells an agent to run it sends the agent into
+    # a refusal. What an agent can do with a carried item it re-checked is say
+    # so for a person to run.
+    for name, text in _skill_surfaces().items():
+        flat = " ".join(text.split())
+        assert 'daimon reverify <id> --evidence "<what you checked>"' \
+            not in flat, name
+
+
+def test_no_skill_says_an_agent_can_reject():
+    # Only `accept` has a ruling-covered agent path. `reject` is a person's
+    # decision on every channel.
+    for name, text in _skill_surfaces().items():
+        flat = " ".join(text.split())
+        assert ("Accept and reject stay the human's decisions (or an agent's "
+                "under a covering ruling)") not in flat, name

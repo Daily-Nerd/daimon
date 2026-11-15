@@ -31,14 +31,16 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    daimon request done <id> --evidence "<quote>" --by agent
    # an accepted inbound request still in progress: tell the sender, without closing it
    daimon request reply <id> --note "<what moved>" --by agent
-   # a carried item this session re-checked against the world and found still true
-   daimon reverify <id> --evidence "<what you checked>"
    ```
+
+   A carried item this session re-checked against the world and found still
+   true is a person's `daimon reverify`, which needs an interactive terminal.
+   An agent cannot run it: say what you checked in your closing message.
 
    Closing an accepted request needs no human: run `daimon request done <id>
    --evidence ...` the moment evidence exists, in the same turn, not at session
-   end. Accept and reject stay the human's decisions (or an agent's under a
-   covering ruling). On an ask nobody accepted, an agent `done` is only a
+   end. Only `accept` has an agent path, under a covering ruling; reject and
+   needs-info are a person's. On an ask nobody accepted, an agent `done` is only a
    pending claim that lands when a person accepts.
    This step is the sweep for anything missed, not the first chance to close.
 

@@ -1521,8 +1521,7 @@ def register(sub, fmt) -> None:
         "--republish", action="store_true",
         help="publish every local forget the team sidecar is missing "
              "(the cure for a publish that failed); takes no target; the "
-             "same as --resume --only publish, and it goes in the next "
-             "release")
+             "same as --resume --only publish")
     p_forget.set_defaults(func=_cli._cmd_forget)
 
     p_unforget = sub.add_parser(

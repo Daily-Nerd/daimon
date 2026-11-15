@@ -19,12 +19,14 @@ def _flat(text: str) -> str:
 
 
 def test_the_rule_text_is_the_approved_wording():
+    # #1352 corrected the middle sentence: `reject` has no ruling-covered
+    # agent path, only `accept` does (`request reject --by agent` refuses).
     assert requests.CLOSE_RULE == (
         "Closing an accepted request needs no human: run `daimon request "
         "done <id> --evidence ...` the moment evidence exists, in the same "
-        "turn, not at session end. Accept and reject stay the human's "
-        "decisions (or an agent's under a covering ruling). On an ask "
-        "nobody accepted, an agent `done` is only a pending claim that "
+        "turn, not at session end. Only `accept` has an agent path, under "
+        "a covering ruling; reject and needs-info are a person's. On an "
+        "ask nobody accepted, an agent `done` is only a pending claim that "
         "lands when a person accepts.")
     assert requests.CLOSE_RULE_SHORT == (
         "Accepted and owed. Close one now, no human needed: "

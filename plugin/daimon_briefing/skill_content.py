@@ -247,9 +247,9 @@ span — the same QUOTE DISCIPLINE rule 17 holds a verbatim capture item to.
 It is byte-checked against the transcript at session end: found confirms
 and credits the resolution to you; not found leaves the loop open, nothing
 withheld early. Never use this for a loop you merely SUSPECT is stale —
-that is world-check territory, not a resolve claim: run
-`daimon reverify <id> --evidence "<what you checked>"` to assert a carried
-item is still true and reset its staleness clock. `forget` stays human-only.
+that is world-check territory, not a resolve claim: say what you
+checked and leave `daimon reverify <id>` to the person (it needs a terminal).
+`forget` stays human-only.
 
 Work also moves stores `resolve` cannot close, and an unclosed store rides
 into the next briefing as work. An item that advanced but did not close
@@ -259,8 +259,8 @@ sent, satisfied here, takes `daimon request done <id> --evidence "<quote>"
 
 Closing an accepted request needs no human: run `daimon request done <id>
 --evidence ...` the moment evidence exists, in the same turn, not at session
-end. Accept and reject stay the human's decisions (or an agent's under a
-covering ruling). On an ask nobody accepted, an agent `done` is only a
+end. Only `accept` has an agent path, under a covering ruling; reject and
+needs-info are a person's. On an ask nobody accepted, an agent `done` is only a
 pending claim that lands when a person accepts.
 
 ## Amending loops

@@ -86,3 +86,45 @@ def test_the_mcp_table_marks_arguments_only_a_cross_project_grant_offers():
     assert "`daimon_recall`" in table and "`requests_inbox`" in table
     assert "all_projects" in table and "DAIMON_MODEL_CROSS_PROJECT" in table
     assert sys.modules["daimon_briefing.mcp_server"]
+
+
+def test_no_command_help_promises_a_future_release():
+    # Help text is the one owner of a flag's description, and the generated
+    # reference publishes it as is. "It goes in the next release" is true on
+    # the day it is written and false from the release on, with nothing to
+    # notice.
+    promises = []
+    for path, parser in walk(cli.build_parser()):
+        for action in parser._actions:
+            text = " ".join((action.help or "").split()).lower()
+            if "next release" in text or "future release" in text:
+                promises.append(" ".join(path) + " " + "/".join(action.option_strings))
+    assert not promises, promises
+
+
+def test_the_surface_reads_every_kind_of_argument():
+    import argparse
+
+    from daimon_briefing.cli._surface import arguments
+    p = argparse.ArgumentParser(prog="x")
+    p.add_argument("--on", action="store_true", default=True, help="a\n  flag")
+    p.add_argument("--many", nargs="*", help="several")
+    p.add_argument("--hidden", help=argparse.SUPPRESS)
+    p.add_argument("--version", action="version", version="1")
+    p.add_argument("target", nargs="?", help="one")
+    got = {a.flags or (a.value,): a for a in arguments(p)}
+    assert list(got)[0] == ("[target]",)          # positionals first
+    assert got[("--on",)].default == "true" and got[("--on",)].help == "a flag"
+    assert got[("--many",)].value == "[MANY]"
+    assert ("--hidden",) not in got and ("--version",) not in got
+
+
+def test_write_creates_the_pages_and_a_page_without_markers_is_an_error(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(_docgen, "REPO", tmp_path)
+    _docgen.write({"website/docs/reference/cli/x.md": "text\n"})
+    assert (tmp_path / "website/docs/reference/cli/x.md").read_text() == "text\n"
+    bare = tmp_path / "website/docs/reference/mcp.md"
+    bare.write_text("no markers here\n")
+    with pytest.raises(SystemExit):
+        _docgen._with_mcp_table("en", "website/docs/reference/mcp.md")
