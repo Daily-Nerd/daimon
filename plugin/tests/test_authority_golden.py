@@ -107,6 +107,13 @@ _RULING_BODY = {"subject": "s", "verdict": "v", "scope": "tests",
 _REQ_BODY = {"to": "p-recipient", "ask": "do it", "why": "because",
              "_origin_slug": "p-sender", "under_ruling": "r-0000000000aa",
              "policy_sha256": "s" * 64, "note": "n", "evidence": "quote"}
+# #1346: a recipient's act is applied only from the recipient's bucket, so the
+# rows the matrix writes for those events sit in `p-recipient`. The founder
+# and the sender's own acts keep `p-sender`, and a covered accept still reads
+# the SENDER off the founder row, so every outcome is the one it always was.
+_REQ_RECIPIENT = dict(_REQ_BODY, _origin_slug="p-recipient")
+_RECIPIENT_EVENTS = {"accepted", "rejected", "needs_info", "done",
+                     "suppressed"}
 _ACCEPT_POLICY = ("p-sender", "", "work", "accept", "agent",
                   "r-0000000000aa", "s" * 64, 0, None)
 _OPEN_POLICY = ("", "p-recipient", "info", "open", "agent",
@@ -117,7 +124,10 @@ _OPEN_POLICY = ("", "p-recipient", "info", "open", "agent",
 # not decisions, so the golden (the pre-seam RULE's outcome on every channel
 # pair) is compared without them. Every other key, state and verdict field
 # included, is still hashed exactly as before.
-_OBSERVED_KEYS = ("row_effects", "superseded_claims")
+# #1346: the withdrawal fields join them: they are what a `withdrawn` row adds
+# to the record, and no event this matrix replayed before can set them.
+_OBSERVED_KEYS = ("row_effects", "superseded_claims", "withdrawn_by",
+                  "withdrawn_at", "withdrawn_from", "withdrawn_delivered")
 
 
 def _without_observed(records):
@@ -139,11 +149,12 @@ SPECS = {
         module=requests, prefix="q-", id_key="request_id",
         founders=[("opened", dict(_REQ_BODY, kind="work")),
                   ("opened", dict(_REQ_BODY, kind="info"))],
-        middle=("accepted", dict(_REQ_BODY)),
-        followups=[(e, dict(_REQ_BODY)) for e in (
+        middle=("accepted", dict(_REQ_RECIPIENT)),
+        followups=[(e, dict(_REQ_RECIPIENT if e in _RECIPIENT_EVENTS
+                            else _REQ_BODY)) for e in (
             "accepted", "rejected", "needs_info", "done", "replied",
             "revised", "suppressed", "done_verified", "surfaced",
-            "verdict_surfaced", "delivered")],
+            "verdict_surfaced", "delivered", "withdrawn")],
         fold=lambda rows: _without_observed(fold_rows(
             rows, policies=frozenset({_ACCEPT_POLICY}), own_slug="p-recipient",
             open_policies={"p-sender": frozenset({_OPEN_POLICY})}))),

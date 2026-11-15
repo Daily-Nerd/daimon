@@ -31,7 +31,7 @@ _VERDICT_CALLS = {
     "suppress": "suppress",
 }
 _MARKS = {"open": "→", "needs-info": "?", "accepted": "✓",
-          "rejected": "×", "done": "✔", "stale": "⏳"}
+          "rejected": "×", "done": "✔", "stale": "⏳", "withdrawn": "↩"}
 # Near-match budget for an unknown `--to`: enough to catch a typo, few
 # enough that the refusal stays a refusal rather than a project directory.
 _SUGGESTIONS = 3
@@ -114,6 +114,18 @@ def _state_label(record: dict, project_dir=None) -> str:
     if record.get("state") == "done" and record.get("done_claimed"):
         return "done (claimed, unverified)"
     return requests.render_state(record, project_dir=project_dir)
+
+
+def _note_lines(record: dict) -> list[str]:
+    """The note line of a record card. On a withdrawn request the note is the
+    sender's reason (#1346), so it is named as that and not as a verdict
+    comment; the header's bracket says `withdrawn` without a verdict label."""
+    note = record.get("note")
+    if not note:
+        return []
+    if record.get("state") == "withdrawn":
+        return [f"  Withdrawn by the sender: {note}"]
+    return [f"  Note: {note}"]
 
 
 def _claim_lines(record: dict) -> list[str]:
@@ -202,8 +214,7 @@ def _request_lines(record: dict, project_dir=None) -> list:
         # that proves it — the record is right here.
         lines.append("  Suppressed from the briefing panel; still listed "
                      "here, and any verdict reverses it")
-    if record.get("note"):
-        lines.append(f"  Note: {record['note']}")
+    lines.extend(_note_lines(record))
     lines.extend(_claim_lines(record))
     if record.get("revision"):
         lines.append(f"  Revisions: {record['revision']} of "
@@ -249,8 +260,7 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
     if record.get("suppressed"):
         lines.append("  Suppressed from the briefing panel; still listed "
                      "here, and any verdict reverses it")
-    if record.get("note"):
-        lines.append(f"  Note: {record['note']}")
+    lines.extend(_note_lines(record))
     lines.extend(_claim_lines(record))
     replies = record.get("replies") or []
     if replies:
@@ -405,6 +415,17 @@ def _verdict_inject_lines(record: dict) -> list[str]:
     return lines
 
 
+def _withdrawn_inject_lines(record: dict) -> list[str]:
+    """#1346: one delivered withdrawal of an ask this project had accepted.
+    The sender's reason is its own text, so it passes the same masking as every
+    other lane (`_masked`) before it reaches here."""
+    lines = [f"daimon withdrawn: {record['request_id']} from "
+             f"{record.get('from_label') or '?'}"]
+    lines.extend(_ask_lines(record))
+    lines.append(f"  withdrawn by the sender: {record.get('note', '')}")
+    return lines
+
+
 def _owed_inject_lines(record: dict) -> list[str]:
     """#885: one delivered OWED ask — work this project accepted and has not
     closed. Same thinness as `_inject_lines`, different verb: the undecided
@@ -446,16 +467,22 @@ def _cmd_request_inject(args) -> int:
         entry = requests.deliverable(session, project_dir=project)
         verdicts = requests.verdict_deliverable(session, project_dir=project)
         owed = requests.owed_deliverable(session, project_dir=project)
+        withdrawn = requests.withdrawn_deliverable(session, project_dir=project)
         rows = entry["rows"]
-        if not rows and not verdicts["rows"] and not owed["rows"]:
+        if (not rows and not verdicts["rows"] and not owed["rows"]
+                and not withdrawn["rows"]):
             return 0
         # Judged before anything is rendered, so a judge that fails prints
         # nothing and stamps nothing. One call for the three lanes, over the
         # light snapshot of the bucket (never a full fold on this path).
-        every = _masked(project, [*verdicts["rows"], *rows, *owed["rows"]])
+        every = _masked(project, [*verdicts["rows"], *rows, *owed["rows"],
+                                  *withdrawn["rows"]])
         shown_verdicts = every[:len(verdicts["rows"])]
         shown_rows = every[len(verdicts["rows"]):len(verdicts["rows"]) + len(rows)]
-        shown_owed = every[len(verdicts["rows"]) + len(rows):]
+        shown_owed = every[len(verdicts["rows"]) + len(rows):
+                           len(verdicts["rows"]) + len(rows)
+                           + len(owed["rows"])]
+        shown_withdrawn = every[len(every) - len(withdrawn["rows"]):]
         out = []
         for record in shown_verdicts:
             out.extend(_verdict_inject_lines(record))
@@ -486,6 +513,11 @@ def _cmd_request_inject(args) -> int:
         # undecided lane above this names a verb the agent can actually run.
         if owed["rows"]:
             out.append(requests.CLOSE_RULE_SHORT)
+        for record in shown_withdrawn:
+            out.extend(_withdrawn_inject_lines(record))
+        if withdrawn["overflow"]:
+            out.append(f"(+{withdrawn['overflow']} more withdrawn, not shown "
+                       "here)")
         print("\n".join(out))
         for record in verdicts["rows"]:
             requests.stamp_verdict_delivered(
@@ -497,6 +529,9 @@ def _cmd_request_inject(args) -> int:
         for record in owed["rows"]:
             requests.stamp_owed_delivered(record["request_id"], session,
                                           project_dir=project)
+        for record in withdrawn["rows"]:
+            requests.stamp_withdrawn_delivered(record["request_id"], session,
+                                               project_dir=project)
     except Exception:  # noqa: BLE001 — per-prompt path: never block a prompt
         return 0
     return 0
@@ -625,6 +660,32 @@ def _cmd_request_revise(args) -> int:
             [f"{args.request_id}: revision recorded in this project's ledger",
              "  the record is not readable from this bucket right now — the "
              "revision is on the ledger and renders with the request"])
+        return 0
+    render.render_ledger_lines(_request_lines(
+        _masked(project, [record], snap=snap)[0], project_dir=project))
+    _say_effect(args.request_id, event_id, project, record)
+    return 0
+
+
+@_cli.guarded(writes=True)
+def _cmd_request_withdraw(args) -> int:
+    project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
+    try:
+        event_id = requests.withdraw(
+            args.request_id, reason=args.reason,
+            channel=_request_channel(args), project_dir=project)
+    except requests.RequestError as exc:
+        _cli._note_usage("request:withdraw:refused")
+        print(_refusal_message("request not withdrawn", exc))
+        return 1
+    _cli._note_usage("request:withdraw")
+    record = requests.sent_record(args.request_id, project_dir=project)
+    if record is None:
+        render.render_ledger_lines(
+            [f"{args.request_id}: withdrawal recorded in this project's "
+             "ledger"])
         return 0
     render.render_ledger_lines(_request_lines(
         _masked(project, [record], snap=snap)[0], project_dir=project))
@@ -838,6 +899,22 @@ def register(sub, fmt) -> None:
                                 "an interactive terminal")
     _common(rq_revise)
     rq_revise.set_defaults(func=_cli._cmd_request_revise)
+
+    rq_withdraw = request_sub.add_parser(
+        "withdraw", help="take back a request this project sent; an agent "
+                         "may, because it is the sender's own ask and not a "
+                         "verdict. Final for that record: open a new one "
+                         "with --supersedes")
+    rq_withdraw.add_argument("request_id", help="exact q-… id")
+    rq_withdraw.add_argument(
+        "--reason", required=True,
+        help="why the ask no longer stands; the recipient reads it")
+    rq_withdraw.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; omit it only from an interactive "
+             "terminal")
+    _common(rq_withdraw)
+    rq_withdraw.set_defaults(func=_cli._cmd_request_withdraw)
 
     # #961 slice 3: `accept` is the one verdict verb with a non-categorical
     # `--by agent` story — permitted for an addressed `info` ask still open

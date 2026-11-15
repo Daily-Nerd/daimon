@@ -47,10 +47,23 @@ ASK = "review the retrieval bar proposal before Friday"
 WHY = "it blocks the release note we owe the team"
 
 
-def _open(project, *, channel="cli-agent", to=RECIPIENT, ask=ASK, why=WHY,
+def _open(project, *, channel="cli-agent", to=None, ask=ASK, why=WHY,
           **kwargs):
+    # #1346: a request is decided by its recipient, so a test that opens an
+    # ask and decides it from the same project models a SELF-addressed one
+    # (one project holding both roles). A test about the two sides passes the
+    # recipient's slug.
+    to = store.project_slug(project) if to is None else to
     return requests.open_request(to=to, ask=ask, why=why, channel=channel,
                                  project_dir=project, **kwargs)
+
+
+def _self_ask(project):
+    """A SELF-addressed ask: one project holding both roles (#1346), the shape
+    a test needs to open an ask and decide it from the same directory."""
+    return requests.open_request(
+        to=store.project_slug(project), ask=ASK, why=WHY,
+        channel="cli-agent", project_dir=project)
 
 
 def _rows(project):
@@ -64,7 +77,7 @@ def _rows(project):
 
 
 def test_open_lands_as_open_with_its_fields(project):
-    q_id = _open(project, blocking=True, to_human=True,
+    q_id = _open(project, to=RECIPIENT, blocking=True, to_human=True,
                  evidence="issue:694")
     record = requests.get(q_id, project_dir=project)
     assert record["state"] == "open"
@@ -2677,8 +2690,9 @@ def test_fold_is_deterministic_under_reorder(project):
                     project_dir=project)
     requests.accept(q_id, channel="cli-tty", project_dir=project)
     rows = requests.events(project_dir=project)
-    forward = fold_rows(rows)[q_id]
-    backward = fold_rows(list(reversed(rows)))[q_id]
+    home = frozenset({store.project_slug(project)})  # self-addressed
+    forward = fold_rows(rows, home_slugs=home)[q_id]
+    backward = fold_rows(list(reversed(rows)), home_slugs=home)[q_id]
     assert forward == backward
     assert forward["state"] == "accepted"
 
@@ -2691,7 +2705,8 @@ def test_same_instant_rejection_beats_an_acceptance(project):
     instant = rows[0]["order"] + 10 ** 9
     for event in ("accepted", "rejected"):
         rows.append(requests._stamp(event, q_id, "cli-tty", now_ns=instant))
-    assert fold_rows(rows)[q_id]["state"] == "rejected"
+    home = frozenset({store.project_slug(project)})  # self-addressed
+    assert fold_rows(rows, home_slugs=home)[q_id]["state"] == "rejected"
 
 
 def test_orphan_lifecycle_rows_are_inert_but_kept(project):
@@ -3210,8 +3225,7 @@ def test_cli_request_list_detail_card_shows_accepted_by_human(
         project, recipient, monkeypatch, capsys):
     from daimon_briefing import cli
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    assert _cli_open(project, recipient) == 0
-    q_id = next(iter(requests.records(project_dir=project)))
+    q_id = _self_ask(project)
     capsys.readouterr()
     assert cli.main(["request", "accept", q_id, "--project", project]) == 0
     capsys.readouterr()
@@ -3436,8 +3450,7 @@ def test_cli_verdict_verbs_refuse_the_agent_channel(project, recipient, verb,
 def test_cli_human_verdicts_and_done(project, recipient, monkeypatch, capsys):
     from daimon_briefing import cli
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    assert _cli_open(project, recipient) == 0
-    q_id = next(iter(requests.records(project_dir=project)))
+    q_id = _self_ask(project)
     assert cli.main(["request", "needs-info", q_id, "--note", "which release?",
                      "--project", project]) == 0
     assert requests.get(q_id, project_dir=project)["state"] == "needs-info"
@@ -3604,8 +3617,7 @@ def test_cli_done_refusal_over_cap_names_the_proof_destination(project,
                                                                 recipient,
                                                                 capsys):
     from daimon_briefing import cli
-    assert _cli_open(project, recipient) == 0
-    q_id = next(iter(requests.records(project_dir=project)))
+    q_id = _self_ask(project)
     long_evidence = "x" * (requests._MAX_TEXT + 1)
     rc = cli.main(["request", "done", q_id, "--evidence", long_evidence,
                    "--by", "agent", "--project", project])
@@ -3636,8 +3648,7 @@ def test_cli_verdict_over_cap_note_names_no_destination(project, recipient,
     so its over-cap refusal stays exactly its old plain message."""
     from daimon_briefing import cli
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    assert _cli_open(project, recipient) == 0
-    q_id = next(iter(requests.records(project_dir=project)))
+    q_id = _self_ask(project)
     long_note = "x" * (requests._MAX_TEXT + 1)
     rc = cli.main(["request", "needs-info", q_id, "--note", long_note,
                    "--project", project])
@@ -3702,8 +3713,7 @@ def test_cli_list_keeps_suppressed_records_visible(project, recipient,
                                                    monkeypatch, capsys):
     from daimon_briefing import cli
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    assert _cli_open(project, recipient) == 0
-    q_id = next(iter(requests.records(project_dir=project)))
+    q_id = _self_ask(project)
     assert cli.main(["request", "suppress", q_id, "--project", project]) == 0
     capsys.readouterr()
     assert cli.main(["request", "list", "--project", project]) == 0
@@ -3800,9 +3810,9 @@ def test_the_event_vocabulary_is_frozen():
     drops the row and the sender sees no reply."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
-        "verdict_delivered", "owed_delivered",
+        "verdict_delivered", "owed_delivered", "withdrawn_delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
-        "done_verified", "replied"}
+        "done_verified", "replied", "withdrawn"}
 
 
 def test_the_fold_reaches_every_render_state_but_never_stale(project):
@@ -3821,6 +3831,9 @@ def test_the_fold_reaches_every_render_state_but_never_stale(project):
     finished = _open(project, ask="the fifth ask, handled")
     requests.done(finished, channel="cli-tty", evidence="shipped on Tuesday",
                   project_dir=project)
+    taken_back = _open(project, ask="the sixth ask, taken back")
+    requests.withdraw(taken_back, reason="no longer needed",
+                      channel="cli-agent", project_dir=project)
     seen |= {r["state"] for r in requests.records(project_dir=project).values()}
     assert seen == set(requests.RENDER_STATES) - {"stale"}
 
@@ -5030,7 +5043,7 @@ def test_deliverable_caps_at_the_render_budget(project):
 
 
 def test_deliverable_never_offers_this_projects_own_outgoing_ask(project):
-    _open(project)
+    _open(project, to=RECIPIENT)
     assert requests.deliverable("S-alpha", project_dir=project)["rows"] == []
 
 
@@ -6393,6 +6406,7 @@ def test_replied_ranks_above_accepted_and_folds_after_a_same_order_accept():
     opened.update(to=RECIPIENT, ask=ASK, why=WHY)
     accepted = requests._stamp("accepted", q_id, "cli-tty", now_ns=base + 1,
                                event_id="f" * 32)
+    accepted["_origin_slug"] = RECIPIENT  # #1346: the recipient's own bucket
     replied = _reply_row(q_id, now_ns=base + 1, event_id="0" * 32)
     # Scar 0064: reply listed and id-sorted first; also passes unranked (99),
     # so the pin above holds the contract.

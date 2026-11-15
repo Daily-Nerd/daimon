@@ -392,6 +392,12 @@ DESTS = {
         "by": ("INE", "X-HUMAN"),
         "project": ("OUT", "R1"),
     },
+    "request withdraw": {
+        "request_id": ("OUT", "R2"),
+        "reason": ("INE", "R6"),
+        "by": ("INE", "X-HUMAN"),
+        "project": ("OUT", "R1"),
+    },
     "request reply": {
         "request_id": ("OUT", "R2"),
         "note": ("INE", "R6"),

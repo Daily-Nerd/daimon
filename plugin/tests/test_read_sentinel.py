@@ -389,6 +389,9 @@ case("cli:request done", "id", A("request", "done", lambda w: w.request_id,
 case("cli:request reply", "id", A("request", "reply",
      lambda w: w.request_id, "--note", "progress"), tty=True, rc=(0, 1, 2),
      dests=("request_id",))
+case("cli:request withdraw", "id", A("request", "withdraw",
+     lambda w: w.request_id, "--reason", "no longer needed"), tty=True,
+     rc=(0, 1, 2), dests=("request_id",))
 case("cli:request revise", "id", A("request", "revise",
      lambda w: w.request_id, "--ask", "revised"), tty=True, rc=(0, 1, 2),
      dests=("request_id",))
@@ -1113,7 +1116,8 @@ CONVERTED = {
     "cli:trust propose": ("cli/trust.py", frozenset({"masked"})),
     **{f"cli:request {verb}": ("cli/request.py", frozenset({"masked"}))
        for verb in ("list", "inbox", "accept", "reject", "needs-info",
-                    "suppress", "done", "reply", "revise", "open")},
+                    "suppress", "done", "reply", "revise", "open",
+                    "withdraw")},
 }
 
 # A per-prompt hook is rc 0 and silent on every failure by design, so it cannot
