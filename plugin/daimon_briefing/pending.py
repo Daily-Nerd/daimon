@@ -598,6 +598,8 @@ class _Tally:
     def __init__(self) -> None:
         self.skipped: set[str] = set()
         self.degraded: set[str] = set()
+        # origin bucket -> error class of a fold that raised (#1338)
+        self.fold_failed: dict[str, str] = {}
 
     def notes(self) -> tuple:
         scoped = config.tenant_scoped()
@@ -608,6 +610,9 @@ class _Tally:
         torn = self.degraded - self.skipped
         if torn:
             out.append(display.elsewhere_degraded_note(len(torn), scoped))
+        if self.fold_failed:
+            out.append(display.elsewhere_fold_failed_note(
+                sorted(self.fold_failed.items()), scoped))
         return tuple(out)
 
 
@@ -682,44 +687,22 @@ def _foreign_request_counts(slug: str | None,
             stripped["_origin_slug"] = bucket
             by_id.setdefault(rid, []).append(stripped)
     counts: dict[str, int] = {}
-    policies_by_recipient: dict[str, frozenset] = {}
-    # #961 slice 5: a SECOND cache, keyed on the founder's own ORIGIN bucket
-    # (`row["_origin_slug"]`, already stamped above) rather than the
-    # recipient `to` — `verb=open` authority is sender-side, the opposite
-    # direction from the `verb=accept` cache just above, so mixing the two
-    # into one map would let a recipient's own ruling cover an open it never
-    # ratified. One read per distinct origin, the same discipline the
-    # `to`-keyed cache already holds.
-    open_policies_by_origin: dict[str, frozenset] = {}
+    # One shared read per ruling ledger across the whole fleet pass: many asks
+    # to the same project must not re-read its ledger once per ask.
+    reads = requests.PolicyReads()
     for rows in by_id.values():
-        to = ""
-        origin = ""
-        for row in rows:
-            if row.get("event") == "opened":
-                to = str(row.get("to") or "")
-                origin = str(row.get("_origin_slug") or "")
-                break
-        policies = policies_by_recipient.get(to)
-        if policies is None:
-            try:
-                policies = (refutations.request_policy_history(project_dir=to)
-                           if to else frozenset())
-            except Exception:
-                policies = frozenset()
-            policies_by_recipient[to] = policies
-        open_policies = open_policies_by_origin.get(origin)
-        if open_policies is None:
-            try:
-                open_policies = (
-                    refutations.request_policy_history(project_dir=origin)
-                    if origin else frozenset())
-            except Exception:
-                open_policies = frozenset()
-            open_policies_by_origin[origin] = open_policies
+        origin = next((str(r.get("_origin_slug") or "") for r in rows
+                       if r.get("event") == "opened"), "")
         try:
-            folded = requests.fold(rows, policies=policies,
-                                   open_policies={origin: open_policies})
-        except Exception:
+            folded = requests.fold(rows, requests.fold_inputs(
+                rows, perspective=requests.Perspective.FLEET, reads=reads))
+        except Exception as exc:
+            # #1338: a group that cannot be folded is NAMED, never dropped
+            # silently from the count. Its origin and the error class reach
+            # the decide footer through the tally's notes.
+            if tally is None:
+                raise
+            tally.fold_failed.setdefault(origin, type(exc).__name__)
             continue
         for record in folded.values():
             to = str(record.get("to") or "")

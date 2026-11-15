@@ -20,6 +20,7 @@ import pytest
 from daimon_briefing import amendments, requests, store, trust
 from daimon_briefing import pending
 from tests import _masking as m
+from tests._fold import fold_rows
 
 SENDER = "/p/order-1321-sender"
 RECIPIENT = "/p/order-1321-recipient"
@@ -203,7 +204,7 @@ def test_request_rows_without_an_order_fold_as_zero(tmp_checkpoint_dir,
         del row["order"]
         rows.append(row)
 
-    record = requests.fold(rows)[rid]
+    record = fold_rows(rows)[rid]
 
     assert record["updated_order"] == 0
 

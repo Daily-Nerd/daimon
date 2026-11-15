@@ -1408,9 +1408,15 @@ def _cmd_decide(args) -> int:
     for note in lane_notes:
         print(note)
     # With the text itself on screen the counts footer is redundant.
-    foreign = {} if everywhere else pending.foreign_counts(project_dir=project)
+    # #1338: the counts come with their notes, so another project whose
+    # requests could not be folded is named here, never dropped silently. A
+    # tenant-scoped home reads nothing abroad (#1223), as `foreign_counts`.
+    foreign: dict = {}
     abroad_notes: tuple = ()
     abroad: list = []
+    if not everywhere and not config.tenant_scoped():
+        counted = pending.foreign_counts_typed(project_dir=project)
+        foreign, abroad_notes = counted.counts, counted.notes
     if everywhere:
         typed = pending.foreign_queues_typed(project_dir=project)
         abroad, abroad_notes = typed.queues, typed.notes

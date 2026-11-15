@@ -295,6 +295,20 @@ def elsewhere_degraded_note(count: int, scoped: bool) -> str:
                          "lines; their counts may be incomplete")
 
 
+def elsewhere_fold_failed_note(failures: list, scoped: bool) -> str:
+    """`elsewhere-fold-failed` (#1338): requests from other projects whose
+    fold raised and were left out of the count. Names each origin bucket and
+    the error class, unless the home is tenant scoped (then only the count)."""
+    if scoped:
+        return marks.warning(
+            f"{len(failures)} other project(s) have requests that could not "
+            "be folded; their counts may be incomplete")
+    named = ", ".join(f"{slug or '(local)'} ({err})" for slug, err in failures)
+    return marks.warning(
+        f"requests from {named} could not be folded and were skipped; "
+        "their counts may be incomplete")
+
+
 def pending_serialize_note() -> str:
     """#1328: a serialize of this project is live right now, so a fresher
     checkpoint is being written and the briefing may be one session behind.
