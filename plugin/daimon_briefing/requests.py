@@ -41,8 +41,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import NamedTuple
+from enum import Enum
+from types import MappingProxyType
+from typing import Mapping, NamedTuple
 
 from . import (buckets, clock, config, display, jsonl, normalize, policy,
                redact, refutations, scope, store, surfaces)
@@ -609,7 +612,8 @@ def _covered_by_open_policy(row: dict, policies) -> bool:
     return False
 
 
-def _kind_of(row: dict, open_policies: dict[str, frozenset] | None = None) -> str:
+def _kind_of(row: dict,
+             open_policies: Mapping[str, frozenset] | None = None) -> str:
     """The approval-requirement kind an `opened` row carries (#961).
 
     Read from a row in exactly one place, this branch of `fold` — no other
@@ -687,7 +691,7 @@ def _stamped(rows: list[dict], origin_slug: str) -> list[dict]:
 
 
 def _founder_by_id(ordered: list[dict],
-                   open_policies: dict[str, frozenset] | None = None,
+                   open_policies: Mapping[str, frozenset] | None = None,
                    ) -> dict[str, tuple[str, str, str]]:
     """#961 slice 4 review round 2 (C1): the ONE founder resolution for
     every request id, resolved in a PRE-PASS over every `opened` row before
@@ -876,10 +880,114 @@ def _reply_from_sender(current: dict, row: dict, own_slug: str) -> bool:
     return bool(own_slug) and current["to"] != own_slug and origin == ""
 
 
-def fold(rows: list[dict], policies=frozenset(), *,
-         policies_by_to: dict[str, frozenset] | None = None,
-         own_slug: str = "",
-         open_policies: dict[str, frozenset] | None = None) -> dict[str, dict]:
+@dataclass(frozen=True)
+class FoldInputs:
+    """#1338: everything `fold` consults besides the rows, in ONE immutable
+    bundle that only `fold_inputs` constructs. `fold` takes it with no
+    default, so a composer cannot leave a piece out or build it slightly
+    differently from the others. See `fold`'s docstring for what each field
+    means: `policies` (flat accept history), `policies_by_to` (per-recipient
+    accept history, `None` = use the flat set), `own_slug`, `open_policies`
+    (per-origin `verb=open` history)."""
+    policies: frozenset
+    policies_by_to: Mapping[str, frozenset] | None
+    own_slug: str
+    open_policies: Mapping[str, frozenset]
+
+
+class Perspective(Enum):
+    """Whose rows a composer folds, which decides where the rulings that
+    cover them live. Named, never implied: two composers that need
+    different inputs say so here instead of differing silently.
+
+    LOCAL: this bucket's own rows (`records`), every founder local.
+    SENDER: rows of asks this project SENT (`sent`, `listing`); the covering
+        accept ruling lives in each RECIPIENT's ledger, resolved per `to`.
+    RECIPIENT: rows of asks sent TO this project (`recipient_join`); accept
+        rulings are this project's own, open rulings are each origin's.
+    FLEET: one request group from the fleet-wide decide tally
+        (`pending._foreign_request_counts`), read for its founder's `to` and
+        origin."""
+    LOCAL = "local"
+    SENDER = "sender"
+    RECIPIENT = "recipient"
+    FLEET = "fleet"
+
+
+class PolicyReads:
+    """One memoized `request_policy_history` read per bucket for the life of
+    a composer call (or, for the fleet tally, the whole fleet pass), so many
+    asks to the same project never re-read its ruling ledger.
+
+    A read that raises reads as `frozenset()`: no grant, so every agent
+    verdict on that bucket falls back to needing a human channel. That is
+    the deliberate direction already documented on `_policies_by_to` (fail
+    toward MORE scrutiny, never less)."""
+
+    def __init__(self) -> None:
+        self._cache: dict = {}
+
+    def of(self, project_dir) -> frozenset:
+        if project_dir not in self._cache:
+            try:
+                self._cache[project_dir] = (
+                    refutations.request_policy_history(
+                        project_dir=project_dir))
+            except Exception:
+                self._cache[project_dir] = frozenset()
+        return self._cache[project_dir]
+
+
+def fold_inputs(rows: list[dict], *, perspective: Perspective,
+                project_dir=None, policy: frozenset | None = None,
+                reads: PolicyReads | None = None) -> FoldInputs:
+    """#1338: the ONE place that decides what `fold` is told about rulings.
+
+    `rows` are the rows about to be folded (already `_stamped`); the builder
+    reads the ruling ledgers they need. `project_dir` is the composer's own
+    project. `policy` lets `records` hand in the ruling history its view
+    already read. `reads` shares ledger reads across calls (the fleet tally).
+
+    The per-perspective semantics are exactly what each composer built by
+    hand before this existed; the module-level comments on `fold` and on the
+    composers explain why each direction differs."""
+    reads = reads if reads is not None else PolicyReads()
+    if perspective is Perspective.LOCAL:
+        return FoldInputs(
+            policies=frozenset(),
+            policies_by_to=MappingProxyType(_policies_by_to(rows, reads)),
+            own_slug="",
+            open_policies=MappingProxyType(
+                {"": policy if policy is not None else reads.of(project_dir)}))
+    if perspective is Perspective.SENDER:
+        return FoldInputs(
+            policies=frozenset(),
+            policies_by_to=MappingProxyType(_policies_by_to(rows, reads)),
+            own_slug=store.project_slug(
+                config.resolve_project_dir(project_dir)) or "",
+            open_policies=MappingProxyType({"": reads.of(project_dir)}))
+    if perspective is Perspective.RECIPIENT:
+        my_slug = store.project_slug(config.resolve_project_dir(project_dir))
+        open_policies = {"": reads.of(my_slug)}
+        for row in rows:
+            if row.get("event") == "opened":
+                origin = str(row.get("_origin_slug") or "")
+                if origin and origin not in open_policies:
+                    open_policies[origin] = reads.of(origin)
+        return FoldInputs(
+            policies=reads.of(project_dir), policies_by_to=None, own_slug="",
+            open_policies=MappingProxyType(open_policies))
+    founder = next((r for r in rows if r.get("event") == "opened"), {})
+    to = str(founder.get("to") or "")
+    origin = str(founder.get("_origin_slug") or "")
+    return FoldInputs(
+        policies=reads.of(to) if to else frozenset(), policies_by_to=None,
+        own_slug="",
+        open_policies=MappingProxyType(
+            {origin: reads.of(origin) if origin else frozenset()}))
+
+
+def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
     """Fold this bucket's rows into current records, deterministic under
     reorder.
 
@@ -920,7 +1028,14 @@ def fold(rows: list[dict], policies=frozenset(), *,
     ever resolved) — never consulted a second time inside this function.
     `None`/`{}` (every caller before this slice) leaves every agent-opened
     `kind="info"` row reading as `work`, the negative control this
-    parameter's own default preserves by construction."""
+    parameter's own default preserves by construction.
+
+    #1338: those four inputs arrive as ONE `FoldInputs`, built only by
+    `fold_inputs`; there is no way to call `fold` without all of them."""
+    policies = inputs.policies
+    policies_by_to = inputs.policies_by_to
+    own_slug = inputs.own_slug
+    open_policies = inputs.open_policies
     def _integer(row, key, default=0):
         try:
             return int(row.get(key) or default)
@@ -1555,27 +1670,8 @@ def fold(rows: list[dict], policies=frozenset(), *,
     return out
 
 
-def _request_policy_history(project_dir):
-    """#961 slice 4: resolved ONCE per composer call, from THIS project's
-    OWN ruling ledger — the fold itself never reads a ruling ledger
-    (design's own words: injected, never read from inside the fold), so
-    every one of the three composers below calls this exactly once, right
-    before it calls `fold`.
-
-    `refutations.request_policy_history`, NOT `active_request_policies` —
-    the fold's own re-check of an ALREADY-LANDED `accepted` row asks "was
-    this granted AT THE ROW'S OWN ORDER", not "is it granted right now":
-    binding answer 3 (a past accept survives an overturn) means a re-fold
-    must not make a landed decision depend on the ruling's CURRENT state,
-    while a row forged AFTER the fact must still be checked against the
-    window that was actually open when it claims to have landed.
-    `requests.accept()`'s write boundary asks the current-state question
-    instead (`_resolve_covering_ruling`, via `active_request_policies`) so
-    overturn still refuses every NEW accept regardless."""
-    return refutations.request_policy_history(project_dir=project_dir)
-
-
-def _policies_by_to(rows: list[dict]) -> dict[str, frozenset]:
+def _policies_by_to(rows: list[dict],
+                    reads: PolicyReads) -> dict[str, frozenset]:
     """#1083: `request_policy_history` resolved PER RECIPIENT — keyed by the
     literal `to` a founder `opened` row in `rows` carries — never a single
     project-wide read injected as one flat set across a whole batch of
@@ -1588,7 +1684,7 @@ def _policies_by_to(rows: list[dict]) -> dict[str, frozenset]:
     leak, not a cosmetic gap. `records()`, `listing()`, and `sender_join()`
     are the callers: `recipient_join` and `pending` fold rows already
     addressed to exactly one recipient (themselves), so a single flat
-    `_request_policy_history(project_dir)` already answers the per-record
+    `FoldInputs.policies` already answers the per-record
     question for them and this map is not needed there.
 
     A `to` that is itself a pre-migration alias of the bucket the ruling was
@@ -1607,24 +1703,8 @@ def _policies_by_to(rows: list[dict]) -> dict[str, frozenset]:
         to = str(row.get("to") or "")
         if not to or to in cache:
             continue
-        try:
-            cache[to] = refutations.request_policy_history(
-                project_dir=canonical_of.get(to, to))
-        except Exception:
-            cache[to] = frozenset()
+        cache[to] = reads.of(canonical_of.get(to, to))
     return cache
-
-
-def _open_policies_local(project_dir) -> dict[str, frozenset]:
-    """#961 slice 5: the `open_policies` map for a composer whose OWN
-    `opened` rows are always local — `records()`, `listing()`,
-    `sender_join()`. The ask this project sends is always founded in this
-    project's own bucket (`_stamped` gives every row here `""`), so there is
-    exactly one entry to resolve: this project's own ruling ledger, keyed
-    `""`, the SAME convention `_founder_by_id` already reads a local
-    founder's `_origin_slug` as. `request_policy_history` already fails
-    open to `frozenset()` on any read error."""
-    return {"": refutations.request_policy_history(project_dir=project_dir)}
 
 
 def records(project_dir=None, *, rows=None, policy=None) -> dict[str, dict]:
@@ -1648,10 +1728,9 @@ def records(project_dir=None, *, rows=None, policy=None) -> dict[str, dict]:
     # lands in this project's own file at all), so there is no legitimate
     # use for the fallback here at all.
     stamped = _stamped(events(project_dir=project_dir, rows=rows), "")
-    open_policies = ({"": policy} if policy is not None
-                     else _open_policies_local(project_dir))
-    return fold(stamped, policies_by_to=_policies_by_to(stamped),
-               open_policies=open_policies)
+    return fold(stamped, fold_inputs(
+        stamped, perspective=Perspective.LOCAL, project_dir=project_dir,
+        policy=policy))
 
 
 def get(request_id: str, project_dir=None) -> dict | None:
@@ -1705,10 +1784,8 @@ def _sent_fold(project_dir) -> tuple[dict[str, dict], tuple]:
     verb checks and what `request list` shows cannot disagree."""
     grouped = _sender_group(project_dir)
     rows = [row for group in grouped.by_id.values() for row in group]
-    own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return (fold(rows, policies_by_to=_policies_by_to(rows),
-                 own_slug=own_slug,
-                 open_policies=_open_policies_local(project_dir)),
+    return (fold(rows, fold_inputs(rows, perspective=Perspective.SENDER,
+                                   project_dir=project_dir)),
             grouped.notes)
 
 
@@ -2517,10 +2594,8 @@ def sent(project_dir=None) -> Join:
     grouped = _sender_group(project_dir)
     rows = _without_suppression(
         [row for group in grouped.by_id.values() for row in group])
-    own_slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
-    return Join(fold(rows, policies_by_to=_policies_by_to(rows),
-                     own_slug=own_slug,
-                     open_policies=_open_policies_local(project_dir)),
+    return Join(fold(rows, fold_inputs(rows, perspective=Perspective.SENDER,
+                                       project_dir=project_dir)),
                 grouped.notes)
 
 
@@ -2698,13 +2773,9 @@ def join(project_dir=None) -> Join:
     # after the H3 fix), plus `""` for the rare self-addressed case (this
     # project's own agent opening an `info` ask to itself), pointed at this
     # project's own ledger the same way `_open_policies_local` reads it.
-    open_policies: dict[str, frozenset] = {
-        "": refutations.request_policy_history(project_dir=my_slug)}
-    for origin_slug in set(origin_of.values()):
-        open_policies[origin_slug] = refutations.request_policy_history(
-            project_dir=origin_slug)
-    return Join(fold(all_rows, policies=_request_policy_history(project_dir),
-                     open_policies=open_policies), _skipped_notes(skipped, degraded))
+    return Join(fold(all_rows, fold_inputs(
+        all_rows, perspective=Perspective.RECIPIENT, project_dir=project_dir)),
+        _skipped_notes(skipped, degraded))
 
 
 def inbox(project_dir=None) -> Inbox:

@@ -548,3 +548,32 @@ def test_all_projects_counts_a_foreign_suppression_never_lists_it(
     assert f"waiting on you in {b}" in out
     assert "1 suppressed there" in out
     assert "UNIQUE-SUPPRESSED-ASK-7731" not in out
+
+
+def test_decide_names_an_origin_whose_requests_could_not_be_folded(
+        project, capsys, monkeypatch):
+    """#1338: a fold that raises is said on the footer, with the origin
+    bucket and the error class, never silently dropped from the count."""
+    sender = "/p/B"
+    store.write_checkpoint("S-b", {
+        "session_id": "S-b", "created": "2026-08-16T00:00:00Z",
+        "working_context": {"recent_decisions": [
+            {"text": "something happened here", "trust": "inferred"}]},
+    }, project_dir=sender, writer=Writer.HUMAN)
+    requests.open_request(
+        to="-p-elsewhere", ask="review the retrieval bar proposal soon",
+        why="it blocks the release note we owe", channel="cli-tty",
+        project_dir=sender)
+
+    real_fold = requests.fold
+
+    def _boom(rows, inputs):
+        if any(r.get("to") == "-p-elsewhere" for r in rows):
+            raise ValueError("boom")
+        return real_fold(rows, inputs)
+
+    monkeypatch.setattr(requests, "fold", _boom)
+    assert cli.main(["decide"]) == 0
+    out = capsys.readouterr().out
+    assert store.project_slug(sender) in out
+    assert "ValueError" in out

@@ -18,6 +18,7 @@ import pytest
 from daimon_briefing import (authority, clock, config, normalize, pending, redact,
                              refutations, requests, store)
 
+from ._fold import fold_rows
 from ._prepared import FrozenClock
 from daimon_briefing.surfaces import Writer
 
@@ -1206,7 +1207,7 @@ def test_forged_agent_accepted_row_on_a_covered_work_ask_lands_in_the_fold(
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)["q-0123456789ab"]
+    record = fold_rows([opened, accepted], policies=policies)["q-0123456789ab"]
     assert record["state"] == "accepted"
     assert record["accepted_by"] == "agent"
     assert record["accepted_under"] == ruling_id
@@ -1229,7 +1230,7 @@ def test_forged_accepted_row_with_the_right_ruling_id_but_a_wrong_sha_is_inert(
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = "f" * 64  # well-formed, but not the real hash
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)[
+    record = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -1247,7 +1248,7 @@ def test_forged_accepted_row_naming_a_ruling_the_policy_set_does_not_grant_is_in
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = "r-000000000000"
     accepted["policy_sha256"] = "0" * 64
-    record = requests.fold([opened, accepted], policies=frozenset())[
+    record = fold_rows([opened, accepted], policies=frozenset())[
         "q-0123456789ab"]
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -1272,7 +1273,7 @@ def test_forged_accepted_row_on_a_covered_to_human_ask_is_inert_in_the_fold(
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)[
+    record = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -1300,7 +1301,7 @@ def test_forged_accepted_row_citing_a_candidate_rulings_hash_is_inert_in_the_fol
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)[
+    record = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "open"
 
@@ -1326,7 +1327,7 @@ def test_a_forged_row_with_a_current_order_citing_an_overturned_hash_is_inert(
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha  # order: stamped NOW, after the retire
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)[
+    record = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "open"
     assert record["accepted_by"] is None
@@ -1365,7 +1366,7 @@ def test_disclosed_gap_a_backdated_forged_row_inside_an_old_window_still_lands(
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)[
+    record = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "accepted"  # the disclosed residual, pinned
 
@@ -1386,7 +1387,7 @@ def test_fold_with_no_policies_argument_leaves_every_covered_accept_inert(
     accepted = requests._stamp("accepted", "q-0123456789ab", "cli-agent")
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
-    record = requests.fold([opened, accepted])["q-0123456789ab"]  # no policies
+    record = fold_rows([opened, accepted])["q-0123456789ab"]  # no policies
     assert record["state"] == "open"
     assert record["accepted_by"] is None
 
@@ -1410,7 +1411,7 @@ def test_an_empty_origin_slug_matches_no_policy(project):
     accepted["under_ruling"] = other_ruling_id
     accepted["policy_sha256"] = other_sha
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([opened, accepted], policies=policies)[
+    record = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
     assert record["state"] == "open"
 
@@ -1425,9 +1426,9 @@ def test_fold_is_deterministic_under_reorder_for_a_covered_work_accept(
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
-    forward = requests.fold([opened, accepted], policies=policies)[
+    forward = fold_rows([opened, accepted], policies=policies)[
         "q-0123456789ab"]
-    backward = requests.fold([accepted, opened], policies=policies)[
+    backward = fold_rows([accepted, opened], policies=policies)[
         "q-0123456789ab"]
     assert forward == backward
     assert forward["state"] == "accepted"
@@ -1465,7 +1466,7 @@ def test_a_shape_invalid_duplicate_opened_in_an_earlier_order_bucket_cannot_stea
     accepted["under_ruling"] = ruling_id
     accepted["policy_sha256"] = sha
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([planted, genuine, accepted],
+    record = fold_rows([planted, genuine, accepted],
                            policies=policies)["q-0123456789ab"]
     assert record["from_slug"] == "p-stranger"
     assert record["state"] == "open"
@@ -1494,7 +1495,7 @@ def test_a_valid_duplicate_opened_in_a_third_bucket_at_an_earlier_order_does_not
     later_duplicate.update({"to": store.project_slug(project), "ask": ASK,
                             "why": WHY})
     later_duplicate["_origin_slug"] = "p-second-writer"
-    record = requests.fold([earlier_valid, later_duplicate],
+    record = fold_rows([earlier_valid, later_duplicate],
                            policies=frozenset())["q-0123456789ab"]
     assert record["from_slug"] == "p-first-writer"
     assert record["kind"] == "work"
@@ -1757,9 +1758,9 @@ def test_every_fold_call_site_receives_policies_and_stamped_rows(
     real_fold = requests.fold
     calls = []
 
-    def _tracking(rows, **kwargs):
-        calls.append((list(rows), kwargs))
-        return real_fold(rows, **kwargs)
+    def _tracking(rows, inputs):
+        calls.append((list(rows), inputs))
+        return real_fold(rows, inputs)
 
     monkeypatch.setattr(requests, "fold", _tracking)
 
@@ -1770,9 +1771,9 @@ def test_every_fold_call_site_receives_policies_and_stamped_rows(
     pending.foreign_counts(project_dir=donor)
 
     assert len(calls) >= 5
-    for rows, kwargs in calls:
-        assert "policies" in kwargs or "policies_by_to" in kwargs, (
-            "a fold call site injected no policies at all")
+    for rows, inputs in calls:
+        assert isinstance(inputs, requests.FoldInputs), (
+            "a fold call site built no FoldInputs")
         for row in rows:
             assert "_origin_slug" in row, f"unstamped row reached fold: {row}"
 
@@ -2112,8 +2113,8 @@ def test_done_verified_is_deterministic_under_reorder(project):
                  project_dir=project)
     requests.verify_done(q_id, role="assistant", project_dir=project)
     rows = requests.events(project_dir=project)
-    forward = requests.fold(rows)[q_id]
-    backward = requests.fold(list(reversed(rows)))[q_id]
+    forward = fold_rows(rows)[q_id]
+    backward = fold_rows(list(reversed(rows)))[q_id]
     assert forward == backward
     assert forward["done_claimed"] is False
 
@@ -2676,8 +2677,8 @@ def test_fold_is_deterministic_under_reorder(project):
                     project_dir=project)
     requests.accept(q_id, channel="cli-tty", project_dir=project)
     rows = requests.events(project_dir=project)
-    forward = requests.fold(rows)[q_id]
-    backward = requests.fold(list(reversed(rows)))[q_id]
+    forward = fold_rows(rows)[q_id]
+    backward = fold_rows(list(reversed(rows)))[q_id]
     assert forward == backward
     assert forward["state"] == "accepted"
 
@@ -2690,7 +2691,7 @@ def test_same_instant_rejection_beats_an_acceptance(project):
     instant = rows[0]["order"] + 10 ** 9
     for event in ("accepted", "rejected"):
         rows.append(requests._stamp(event, q_id, "cli-tty", now_ns=instant))
-    assert requests.fold(rows)[q_id]["state"] == "rejected"
+    assert fold_rows(rows)[q_id]["state"] == "rejected"
 
 
 def test_orphan_lifecycle_rows_are_inert_but_kept(project):
@@ -2718,13 +2719,13 @@ def test_surfaced_rows_fold_per_revision_epoch(project):
 
     rows.append(at("surfaced", 10))
     rows.append(at("surfaced", 20))
-    assert set(requests.fold(rows)[q_id]["surfaced"]) == {0}
+    assert set(fold_rows(rows)[q_id]["surfaced"]) == {0}
     revised = requests._stamp("revised", q_id, "cli-agent",
                               now_ns=base + 30 * 10 ** 9)
     revised["ask"] = "second ask"
     rows.append(revised)
     rows.append(at("surfaced", 40))
-    record = requests.fold(rows)[q_id]
+    record = fold_rows(rows)[q_id]
     assert set(record["surfaced"]) == {0, 1}
     # Earliest row of the epoch wins: the 20s stamp never overwrote the 10s.
     assert record["surfaced"][0] == requests._ts(base + 10 * 10 ** 9)
@@ -4000,7 +4001,7 @@ def test_fold_tolerates_garbage_ordering_values(project):
     rows = requests.events(project_dir=project)
     rows[0]["order"] = "not-a-number"
     rows[0]["_line"] = [1]
-    assert requests.fold(rows)[q_id]["state"] == "open"
+    assert fold_rows(rows)[q_id]["state"] == "open"
 
 
 def test_a_second_opened_row_never_rewrites_the_first(project):
@@ -4878,7 +4879,7 @@ def test_delivered_rows_fold_per_session_within_a_revision_epoch(project):
     rows.append(at(10, "S-alpha"))
     rows.append(at(20, "S-alpha"))
     rows.append(at(30, "S-beta"))
-    record = requests.fold(rows)[q_id]
+    record = fold_rows(rows)[q_id]
     assert set(record["delivered"]) == {0}
     assert set(record["delivered"][0]) == {"S-alpha", "S-beta"}
     # Earliest row for a session wins: the 20s stamp never overwrote the 10s.
@@ -4905,7 +4906,7 @@ def test_a_revise_reopens_delivery_for_every_session(project):
     revised["ask"] = "the sharpened ask, after a revise"
     rows.append(revised)
     rows.append(at(30, "S-alpha"))
-    record = requests.fold(rows)[q_id]
+    record = fold_rows(rows)[q_id]
     assert set(record["delivered"]) == {0, 1}
     assert record["delivered"][1]["S-alpha"] == requests._ts(base + 30 * 10 ** 9)
 
@@ -4917,7 +4918,7 @@ def test_a_delivered_row_without_a_session_is_inert(project):
     q_id = _open(project)
     rows = requests.events(project_dir=project)
     rows.append(requests._stamp("delivered", q_id, "mechanical"))
-    assert requests.fold(rows)[q_id]["delivered"] == {}
+    assert fold_rows(rows)[q_id]["delivered"] == {}
 
 
 def test_delivered_never_moves_the_records_age(project):
@@ -6066,7 +6067,7 @@ def test_fold_with_no_open_policies_leaves_an_agent_opened_info_row_as_work():
     row = _forged_open_info_row(
         "q-0000000000f1", "p-x", "r-fakefakefake", "f" * 64,
         origin_slug="p-x")
-    record = requests.fold([row])["q-0000000000f1"]
+    record = fold_rows([row])["q-0000000000f1"]
     assert record["kind"] == "work"
     assert record["opened_under_ruling"] == ""
 
@@ -6100,7 +6101,7 @@ def test_a_forged_row_with_the_right_ruling_id_but_a_wrong_sha_is_inert_for_open
         "q-0000000000f3", to_slug, ruling_id, "f" * 64, origin_slug=(
             store.project_slug(project)))
     policies = refutations.request_policy_history(project_dir=project)
-    record = requests.fold([row], open_policies={
+    record = fold_rows([row], open_policies={
         store.project_slug(project): policies})["q-0000000000f3"]
     assert record["kind"] == "work"
 
@@ -6177,7 +6178,7 @@ def test_a_past_info_open_survives_an_overturn_of_its_authorizing_ruling(
         "q-0000000000f4", to_slug, ruling_id, sha,
         origin_slug=store.project_slug(project))
     policies = refutations.request_policy_history(project_dir=project)
-    forged_record = requests.fold(
+    forged_record = fold_rows(
         [forged], open_policies={store.project_slug(project): policies})
     assert forged_record["q-0000000000f4"]["kind"] == "work"
 
@@ -6392,7 +6393,7 @@ def test_replied_ranks_above_accepted_and_folds_after_a_same_order_accept():
     replied = _reply_row(q_id, now_ns=base + 1, event_id="0" * 32)
     # Scar 0064: reply listed and id-sorted first; also passes unranked (99),
     # so the pin above holds the contract.
-    record = requests.fold([opened, replied, accepted])[q_id]
+    record = fold_rows([opened, replied, accepted])[q_id]
     assert record["state"] == "accepted" and len(record["replies"]) == 1
 
 

@@ -30,6 +30,8 @@ from daimon_briefing import (amendments, capture, config, refutations, relations
 from daimon_briefing.cli import stats
 from daimon_briefing.surfaces import Writer
 
+from ._fold import fold_rows
+
 GOLDEN = Path(__file__).parent / "golden" / "authority_folds.json"
 
 # What each channel carried when this matrix was written. Literal on purpose:
@@ -142,7 +144,7 @@ SPECS = {
             "accepted", "rejected", "needs_info", "done", "replied",
             "revised", "suppressed", "done_verified", "surfaced",
             "verdict_surfaced", "delivered")],
-        fold=lambda rows: _without_observed(requests.fold(
+        fold=lambda rows: _without_observed(fold_rows(
             rows, policies=frozenset({_ACCEPT_POLICY}), own_slug="p-recipient",
             open_policies={"p-sender": frozenset({_OPEN_POLICY})}))),
     "amendments": dict(
