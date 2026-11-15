@@ -254,7 +254,7 @@ def test_every_prose_limit_is_the_constant_requests_owns():
     assert limits["title"] == requests.TITLE_CHARS
     assert limits["severity_reason"] == requests.SEVERITY_REASON_CHARS
     for name in ("ask", "why", "evidence", "note"):
-        assert limits[name] == requests._MAX_TEXT
+        assert limits[name] == requests.MAX_TEXT_CHARS
 
 
 def test_prose_at_its_limit_is_admitted_and_one_over_is_held():
@@ -371,3 +371,14 @@ def test_a_jws_without_a_usable_key_id_is_still_held_with_no_closed_fields():
     got = peer_messages.admit("signed.act", act.encode(), frozenset())
     assert isinstance(got, Hold) and got.reason == "awaits_verification"
     assert not got.closed_fields
+
+
+def test_the_request_id_pattern_has_one_reader_and_one_spelling():
+    root = Path(requests.__file__).parent
+    readers, spellings = [], []
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        readers += [path.name for _ in range(text.count("_REQUEST_ID_RE.")) ]
+        spellings += [path.name for _ in range(text.count("q-[0-9a-f]"))]
+    assert readers == ["requests.py"]      # only is_request_id reads the pattern
+    assert spellings == ["requests.py"]    # and nobody spells it again

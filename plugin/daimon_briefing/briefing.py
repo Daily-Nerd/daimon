@@ -1707,7 +1707,7 @@ def decision_count_line(project_dir=None) -> str | None:
 # overflow — never a section budget pressure is allowed to quietly thin out.
 _REQUEST_PANEL_HEADER = "Requests waiting on you (from other projects):"
 
-# An `ask` can be up to `requests._MAX_TEXT` (2000 chars); the panel line is
+# An `ask` can be up to `requests.MAX_TEXT_CHARS` (2000 chars); the panel line is
 # meant to be skimmable, not the full record — `daimon request inbox` has the
 # rest. Same display-cap idiom as `_truncate_agent_claim` above, and the
 # reason the worst-case-cap test can bound the section's cost at all.

@@ -261,7 +261,7 @@ def test_full_cap_worst_case_stays_within_budget_share(tmp_checkpoint_dir):
     # still cost only a small, bounded share of the default budget.
     sender = _seed_sender()
     for n in range(requests.RENDER_CAP):
-        _ask(sender, ask=f"n{n} " + "x" * (requests._MAX_TEXT - 4))
+        _ask(sender, ask=f"n{n} " + "x" * (requests.MAX_TEXT_CHARS - 4))
     lines = briefing.request_panel_lines(RECIPIENT)
     section = "\n".join(lines)
     assert briefing.estimate_tokens(section) <= 300  # 10% of the 3000 default

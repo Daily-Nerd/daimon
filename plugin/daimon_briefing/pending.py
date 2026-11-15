@@ -687,7 +687,7 @@ def _foreign_request_counts(slug: str | None,
         except Exception:
             continue
         for row in rows:
-            # `events` already filtered every row through `_REQUEST_ID_RE`
+            # `events` already filtered every row through `requests.is_request_id`
             # (requests.py:285-288), so the id is present and well-formed
             # here — no second guard, which would be unreachable.
             rid = str(row.get("request_id") or "")

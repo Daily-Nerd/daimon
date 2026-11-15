@@ -458,10 +458,7 @@ def is_request_id(value) -> bool:
 # the CLI's check (it can offer near-matches and an --anyway override; this
 # module must stay writable for a project not yet initialized).
 _SPACE_RE = re.compile(r"\s+")
-_MAX_TEXT = 2000
-# The public name of the prose bound, for a module that must hold another
-# person's text to the same limit this one holds its own to.
-MAX_TEXT_CHARS = _MAX_TEXT
+MAX_TEXT_CHARS = 2000
 # #1127: the display bound for an ask shown as a title or a skimmable line.
 # One limit for every surface (decide headline, briefing panels, hook inject).
 ASK_CHARS = 160
@@ -488,7 +485,7 @@ _ROLE_MAX = 64
 
 def short_ask(text) -> str:
     """#1127: bound an ask to `ASK_CHARS` for a title or skimmable line. An
-    ask is up to `_MAX_TEXT` chars on one line, so a raw print is a wall.
+    ask is up to `MAX_TEXT_CHARS` chars on one line, so a raw print is a wall.
     Whitespace collapses; a short text is returned whole; else the first
     sentence if it fits (and is not a stub); else a cut at the last word
     boundary (when one sits in the back half) with an ellipsis. Never longer
@@ -663,7 +660,7 @@ def _path(project_dir=None):
 
 
 def _text(name: str, value, *, required: bool = True,
-          limit: int = _MAX_TEXT) -> str:
+          limit: int = MAX_TEXT_CHARS) -> str:
     out = _SPACE_RE.sub(" ", str(value or "")).strip()
     if required and not out:
         raise RequestError(f"{name} is required")
@@ -675,7 +672,7 @@ def _text(name: str, value, *, required: bool = True,
 
 
 def _scrub(name: str, value, *, required: bool = True,
-           limit: int = _MAX_TEXT) -> str:
+           limit: int = MAX_TEXT_CHARS) -> str:
     """Cap, redact, then cap AGAIN — placeholder expansion can grow the
     persisted bytes past what the raw text passed, and the bytes that
     persist are the ones the cap exists to bound."""
@@ -771,7 +768,7 @@ def _stamp(event: str, request_id: str, channel: str,
            author: str | None = None) -> dict:
     if event not in EVENTS:
         raise RequestError(f"unknown request event: {event}")
-    if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
+    if not is_request_id(request_id):
         raise RequestError(f"invalid request id: {request_id!r}")
     if channel not in known_channels("requests"):
         raise RequestError(
@@ -835,7 +832,7 @@ def events(project_dir=None, *, rows=None) -> list[dict]:
     for index, row in enumerate(rows):
         if (not isinstance(row, dict)
                 or row.get("event") not in EVENTS
-                or not _REQUEST_ID_RE.fullmatch(str(row.get("request_id") or ""))):
+                or not is_request_id(row.get("request_id"))):
             continue
         copy = dict(row)
         # `_line` is the row's index among the rows `jsonl.read` returned
@@ -2336,7 +2333,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     if scope.parse_bucket(str(to or "")) is None:
         raise RequestError(f"invalid recipient slug: {to!r}")
     supersedes = str(supersedes or "").strip()
-    if supersedes and not _REQUEST_ID_RE.fullmatch(supersedes):
+    if supersedes and not is_request_id(supersedes):
         raise RequestError(f"invalid superseded request id: {supersedes!r}")
     # #961 review finding 5: an unknown channel is a channel-shaped problem,
     # not a kind-shaped one. `_stamp` re-checks this too (the row is not
@@ -2533,7 +2530,7 @@ def _sent_or_refuse(request_id: str, act: str, project_dir) -> dict:
     knows."""
     record = sent_record(request_id, project_dir=project_dir)
     if record is None:
-        if (_REQUEST_ID_RE.fullmatch(str(request_id or ""))
+        if (is_request_id(request_id)
                 and recipient_join(project_dir=project_dir).get(request_id)):
             raise RequestError(
                 f"{request_id} was sent to this project, and only its sender "
@@ -2585,7 +2582,7 @@ def _answering(request_id: str, project_dir, event: str) -> dict | None:
     (PR 2) pairs it with its origin. Refusing what cannot be resolved would
     make the recipient side unimplementable.
     """
-    if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
+    if not is_request_id(request_id):
         raise RequestError(f"invalid request id: {request_id!r}")
     current = get(request_id, project_dir=project_dir)
     # #1346: a record found in THIS bucket was sent by this project. The role
@@ -2938,7 +2935,7 @@ def reply(request_id: str, note: str, evidence: str | None = None, *,
     is the refusal a caller sees."""
     text = _scrub("note", note)
     proof = _scrub("evidence", evidence, required=False)
-    if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
+    if not is_request_id(request_id):
         raise RequestError(f"invalid request id: {request_id!r}")
     record = recipient_join(project_dir=project_dir).get(request_id)
     if record is None:
