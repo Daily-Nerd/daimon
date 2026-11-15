@@ -50,7 +50,7 @@ auto-created on first mint under `~/.daimon/keys` (mode 0600).
 
 Receipts are **off by default** (each mint spawns a subprocess); the full knob
 list — `DAIMON_RECEIPTS`, `DAIMON_VITNI_CLI`, `DAIMON_KEYS_DIR` — is in the
-[configuration reference](../getting-started/configuration.md#receipts).
+[configuration reference](../reference/configuration.md#receipts).
 
 ## Receipts and deletion
 

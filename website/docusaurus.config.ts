@@ -40,6 +40,23 @@ const config: Config = {
     locales: ['en', 'es'],
   },
 
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        // A page that moved keeps answering at its old address. The plugin
+        // writes one static page per locale, so each entry covers /docs/...
+        // and /es/docs/... alike.
+        redirects: [
+          {
+            from: '/docs/getting-started/configuration',
+            to: '/docs/reference/configuration',
+          },
+        ],
+      },
+    ],
+  ],
+
   presets: [
     [
       'classic',

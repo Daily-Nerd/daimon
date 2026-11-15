@@ -387,7 +387,7 @@ lo enrute o no el proyecto ahora.
 | `DAIMON_TEAM_PROJECT` | sin definir | Ruta lógica de proyecto explícita (p. ej. `core/api-gateway`) para las sesiones de esta máquina. Le gana al mapeo de `daimon-team.toml` y al fallback derivado del origin. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Ventana de edad al leer los checkpoints de compañeros; `0` = conservar todos. |
 
-Mira la [referencia de configuración](../getting-started/configuration.md)
+Mira la [referencia de configuración](../reference/configuration.md)
 para el entorno completo.
 
 ## Cuando algo sale mal

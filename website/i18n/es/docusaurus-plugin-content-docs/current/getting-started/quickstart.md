@@ -44,7 +44,7 @@ daimon configure --test
 
 Esto envía un prompt mínimo por el backend resuelto y reporta si pasó o
 falló. La configuración se escribe en `~/.daimon/env` — mira
-[Configuración](./configuration) para todas las variables, y la
+[Configuración](../reference/configuration.md) para todas las variables, y la
 [matriz de backends](../reference/backends-tested) para combinaciones de
 modelos medidas en uso real.
 
@@ -289,7 +289,7 @@ después. Historia completa en [el ciclo de vida](../concepts/lifecycle.md).
 ## Adónde seguir
 
 - [Referencia CLI](../reference/cli.md) — todos los verbos, una página.
-- [Configuración](./configuration) — todas las variables de entorno,
+- [Configuración](../reference/configuration.md) — todas las variables de entorno,
   incluido el interruptor de apagado `DAIMON_DISABLE`.
 - [Hosts](../hosts/) — detalle de configuración por host y
   limitaciones conocidas.

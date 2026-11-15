@@ -39,7 +39,7 @@ nunca una clase de confianza superior. Ver
 Con `DAIMON_WORLDCHECK` activo, `daimon_brief` también ejecuta evidencia del
 mundo sobre las afirmaciones arrastradas del proyecto actual y registra el
 resultado, igual que `daimon brief`. Una lectura por `slug` nunca lo hace. Ver
-[Worldcheck](../getting-started/configuration.md#worldcheck) para el costo.
+[Worldcheck](../reference/configuration.md#worldcheck) para el costo.
 
 ## Reglas de alcance
 

@@ -37,7 +37,7 @@ witnessed the claim, on its own axis and never a higher trust class. See
 With `DAIMON_WORLDCHECK` on, `daimon_brief` also runs world evidence on the
 current project's carried claims and records the result, as `daimon brief`
 does. A read by `slug` never does. See
-[Worldcheck](../getting-started/configuration.md#worldcheck) for the cost.
+[Worldcheck](../reference/configuration.md#worldcheck) for the cost.
 
 ## Scoping rules
 

@@ -68,7 +68,7 @@ uv tool install 'daimon-briefing[pretty]'   # pipx works identically
 ```
 
 > [!TIP]
-> If the `claude` CLI is on your PATH you are **zero-config**: `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works. See [configuration](https://daily-nerd.github.io/daimon/docs/getting-started/configuration/).
+> If the `claude` CLI is on your PATH you are **zero-config**: `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works. See [configuration](https://daily-nerd.github.io/daimon/docs/reference/configuration/).
 
 **Claude Code (plugin, recommended):**
 

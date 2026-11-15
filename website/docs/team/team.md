@@ -350,7 +350,7 @@ now.
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path (e.g. `core/api-gateway`) for this machine's sessions. Beats the `daimon-team.toml` mapping and the origin-derived fallback. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window for teammates' checkpoints; `0` = keep all. |
 
-See [docs/configuration.md](../getting-started/configuration.md) for the full environment
+See [docs/configuration.md](../reference/configuration.md) for the full environment
 reference.
 
 ## When things go wrong

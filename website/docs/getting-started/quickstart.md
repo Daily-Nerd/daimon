@@ -43,7 +43,7 @@ daimon configure --test
 
 This sends one tiny prompt through the resolved backend and reports pass or
 fail. Config is written to `~/.daimon/env` — see
-[Configuration](./configuration.md) for every variable, and the
+[Configuration](../reference/configuration.md) for every variable, and the
 [backends matrix](../reference/backends-tested.md) for field-measured model
 combinations.
 
@@ -276,7 +276,7 @@ next. Full story in [the item lifecycle](../concepts/lifecycle.md).
 ## Where to next
 
 - [CLI reference](../reference/cli.md) — every verb, one page.
-- [Configuration](./configuration.md) — every environment variable, including
+- [Configuration](../reference/configuration.md) — every environment variable, including
   the `DAIMON_DISABLE` kill switch.
 - [Hosts](../hosts/index.md) — per-host setup detail and known limitations.
 - [Team memory](../team/team.md) — share checkpoints with teammates through a

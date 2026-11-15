@@ -52,7 +52,7 @@ minteo bajo `~/.daimon/keys` (modo 0600).
 Los receipts están **apagados por defecto** (cada minteo lanza un
 subproceso); la lista completa de perillas — `DAIMON_RECEIPTS`,
 `DAIMON_VITNI_CLI`, `DAIMON_KEYS_DIR` — está en la
-[referencia de configuración](../getting-started/configuration#receipts).
+[referencia de configuración](../reference/configuration.md#receipts).
 
 ## Receipts y borrado
 

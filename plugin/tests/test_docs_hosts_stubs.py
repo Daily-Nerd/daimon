@@ -74,9 +74,9 @@ TOP_PAGES = {
         re.compile(_SITE + r"es/docs/reference/backends-tested/"),
     ),
     "configuration.md": (
-        "getting-started/configuration.md",
-        re.compile(_SITE + r"docs/getting-started/configuration/"),
-        re.compile(_SITE + r"es/docs/getting-started/configuration/"),
+        "reference/configuration.md",
+        re.compile(_SITE + r"docs/reference/configuration/"),
+        re.compile(_SITE + r"es/docs/reference/configuration/"),
     ),
     "team.md": (
         "team/team.md",

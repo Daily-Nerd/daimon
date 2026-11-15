@@ -70,7 +70,7 @@ Los ítems sin cerrar no se acumulan para siempre:
   es la vía prevista de salida; el decaimiento es la red de seguridad.
 
 Todas las perillas están en la
-[referencia de configuración](../getting-started/configuration), incluido
+[referencia de configuración](../reference/configuration.md), incluido
 `DAIMON_CARRY` (interruptor maestro, encendido por defecto).
 
 ## Qué significa salir del arrastre
