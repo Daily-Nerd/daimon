@@ -5168,7 +5168,9 @@ def test_listing_reports_the_recipients_human_done_verdict(project):
 def test_listing_reports_the_recipients_pending_claim_not_done(project):
     """#978: an agent's completion claim on a work ask must reach `request
     list` too — joined across buckets exactly like a genuine verdict — but
-    it renders as still open, with the claim visible on the record."""
+    it renders as still open, with the claim marked pending on the record.
+    #1339: the sender's record carries no claim text until the recipient's
+    person accepts it."""
     recipient_slug = _seed_bucket("/p/req-list-claim")
     q_id = _open(project, to=recipient_slug)
     requests.done(q_id, channel="cli-agent", evidence="shipped in abc1234",
@@ -5176,7 +5178,8 @@ def test_listing_reports_the_recipients_pending_claim_not_done(project):
     record = _listed(project, q_id)
     assert record["state"] == "open"
     assert record["done_pending"] is True
-    assert record["done_evidence"] == "shipped in abc1234"
+    assert record["done_evidence"] == ""
+    assert record["done_evidence_withheld"] is True
 
 
 def test_listing_reports_a_rejection_too(project):
