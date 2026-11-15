@@ -43,7 +43,7 @@ under `SessionStart` / `SessionEnd` / `PreToolUse` in
 `~/.claude/settings.json` (idempotent;
 settings backed up before every mutation). Proactive recall (the
 `UserPromptSubmit` hook below) ships with the plugin only; the manual install
-registers just these three events. Requires the `daimon` CLI on PATH —
+registers just these three events. Requires the `daimon` CLI on PATH:
 `uv tool install 'daimon-briefing[pretty]'`, see the
 [quickstart](../getting-started/quickstart) — and the hooks also accept the
 deprecated `daimon-briefing` alias as a fallback. After upgrading the CLI,
