@@ -1792,9 +1792,43 @@ def _sent_fold(project_dir) -> tuple[dict[str, dict], tuple]:
     verb checks and what `request list` shows cannot disagree."""
     grouped = _sender_group(project_dir)
     rows = [row for group in grouped.by_id.values() for row in group]
-    return (fold(rows, fold_inputs(rows, perspective=Perspective.SENDER,
-                                   project_dir=project_dir)),
+    inputs = fold_inputs(rows, perspective=Perspective.SENDER,
+                         project_dir=project_dir)
+    return (_sender_perspective(fold(rows, inputs), inputs.own_slug),
             grouped.notes)
+
+
+# The one line a sender-side surface prints for a claim whose text is withheld.
+WITHHELD_CLAIM_LINE = ("Done: a completion is pending the recipient's accept "
+                       "(the answer shows once they accept)")
+
+
+def _sender_perspective(folded: dict[str, dict], own_slug: str) -> dict:
+    """The sender's view of a fold (#1339): a completion claim the recipient's
+    person has not accepted yet is not the sender's to read.
+
+    For an `info` ask the accept IS the recipient's consent to share what that
+    project knows, so the claim's text stays out of every record a sender-side
+    composer (`listed`, `sent`, `sent_record`) hands to a surface. The ONE place
+    this is decided: the renderers, the JSON listing and the panels all read
+    these records and none of them needs its own `if sender`. The record keeps
+    `done_pending` and gains `done_evidence_withheld`, so a surface says "a
+    completion is pending" instead of guessing from an empty string. A claim a
+    revision discarded was never accepted either, so it is withheld the same
+    way. Once a person accepts, `done_pending` clears and the text shows
+    unchanged. A SELF-addressed ask has no other party: the sender is the
+    recipient and keeps the text (the `to == own_slug` test the fold uses for
+    the same question)."""
+    for record in folded.values():
+        if record["to"] == own_slug:
+            continue
+        if record["done_pending"]:
+            record["done_evidence"] = ""
+            record["done_evidence_withheld"] = True
+        for claim in record["superseded_claims"]:
+            claim["evidence"] = ""
+            claim["withheld"] = True
+    return folded
 
 
 def written_effect_line(request_id: str, event_id: str, project_dir=None,
@@ -2602,8 +2636,9 @@ def sent(project_dir=None) -> Join:
     grouped = _sender_group(project_dir)
     rows = _without_suppression(
         [row for group in grouped.by_id.values() for row in group])
-    return Join(fold(rows, fold_inputs(rows, perspective=Perspective.SENDER,
-                                       project_dir=project_dir)),
+    inputs = fold_inputs(rows, perspective=Perspective.SENDER,
+                         project_dir=project_dir)
+    return Join(_sender_perspective(fold(rows, inputs), inputs.own_slug),
                 grouped.notes)
 
 

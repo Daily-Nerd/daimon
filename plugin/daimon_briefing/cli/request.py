@@ -121,7 +121,11 @@ def _claim_lines(record: dict) -> list[str]:
     `inbox` so the two cannot drift (#1333): the pending claim, or the
     landed completion, then every claim a revision discarded."""
     lines = []
-    if record.get("done_pending"):
+    if record.get("done_evidence_withheld"):
+        # #1339: the sender's view of an unaccepted claim. The fold withheld
+        # the text; this surface only says that a completion is pending.
+        lines.append(f"  {requests.WITHHELD_CLAIM_LINE}")
+    elif record.get("done_pending"):
         # #978: the state glyph above stays the open one — a claim is not a
         # verdict — so this line is the only place the claim itself shows.
         lines.append("  Done (claimed, awaiting a human accept): "
@@ -129,10 +133,12 @@ def _claim_lines(record: dict) -> list[str]:
     elif record.get("done_evidence"):
         lines.append(f"  Done: {record['done_evidence']}")
     for claim in record.get("superseded_claims") or []:
+        quote = ("(withheld, the recipient never accepted it)"
+                 if claim.get("withheld") else claim.get("evidence", ""))
         lines.append(
             "  Superseded claim (answered revision "
             f"{claim.get('revision', 0)}, discarded by a later revision): "
-            f"{claim.get('evidence', '')}")
+            f"{quote}")
     return lines
 
 
@@ -389,7 +395,9 @@ def _verdict_inject_lines(record: dict) -> list[str]:
     if note:
         lines.append(f"  Note: {note}")
     evidence = str(record.get("done_evidence") or "").strip()
-    if evidence:
+    if record.get("done_evidence_withheld"):
+        lines.append(f"  {requests.WITHHELD_CLAIM_LINE}")
+    elif evidence:
         lines.append(f"  Done: {evidence}")
     reply_line = requests.latest_reply_line(record)
     if reply_line:

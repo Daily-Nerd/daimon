@@ -1923,7 +1923,9 @@ def verdict_panel(project_dir=None, *, snap=None):
         if note:
             lines.append(f"  Note: {_truncate_request_ask(note)}")
         done_evidence = str(row.get("done_evidence") or "").strip()
-        if done_evidence:
+        if row.get("done_evidence_withheld"):
+            lines.append(f"  {requests.WITHHELD_CLAIM_LINE}")
+        elif done_evidence:
             lines.append(
                 f"  Done: {_truncate_request_ask(done_evidence)}")
         # #1117: ONE capped line (skeleton the trimmer keeps).
