@@ -561,6 +561,23 @@ def _attention_sorted(rows: list[dict]) -> list[dict]:
     return rows
 
 
+def _listing_order(rows, min_severity=None) -> list[dict]:
+    """#1348: the ONE order and filter of the two listing verbs (`request
+    list`, `request inbox`): undecided first, as before, then most severe,
+    then today's recency order. `min_severity` keeps that level and anything
+    more severe; an unknown level is refused here, once, for the CLI, MCP and
+    the host API, which all reach this through the same keyword."""
+    if min_severity is not None and min_severity not in _SEVERITY_RANK:
+        raise RequestError(
+            f"min severity must be one of: {', '.join(SEVERITIES)}")
+    floor = None if min_severity is None else severity_rank(min_severity)
+    kept = [r for r in rows
+            if floor is None or severity_rank(r["severity"]) <= floor]
+    return sorted(kept, key=lambda r: (r["state"] not in _SENDER_MOVABLE,
+                                       severity_rank(r["severity"]),
+                                       *_recency(r)))
+
+
 def _validated_severity(level, reason) -> tuple[str, str]:
     """#1348: the write boundary of a severity, once, for `open_request` and
     `set_severity`. Returns `(level, reason)` ready for a row: a level outside
@@ -2114,13 +2131,13 @@ def get(request_id: str, project_dir=None) -> dict | None:
     return records(project_dir=project_dir).get(request_id)
 
 
-def listing(project_dir=None) -> list[dict]:
+def listing(project_dir=None, *, min_severity=None) -> list[dict]:
     """`listed(project_dir).rows`: the listing for the callers that have no
     use for the notes. See `listed`."""
-    return listed(project_dir).rows
+    return listed(project_dir, min_severity=min_severity).rows
 
 
-def listed(project_dir=None) -> "Inbox":
+def listed(project_dir=None, *, min_severity=None) -> "Inbox":
     """Every record in this bucket, undecided first — the `request list`
     order, and the notes of the cross-bucket read behind it. Suppressed records are HERE by construction (D5): suppression
     takes away panel placement, never visibility.
@@ -2147,11 +2164,7 @@ def listed(project_dir=None) -> "Inbox":
     which `fold`'s own gate excludes regardless: that must stay human-only,
     the same rule `accept()`'s write boundary already holds for it."""
     folded, notes = _sent_fold(project_dir)
-    return Inbox(sorted(
-        folded.values(),
-        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       *_recency(r))),
-        notes)
+    return Inbox(_listing_order(folded.values(), min_severity), notes)
 
 
 def _sent_fold(project_dir) -> tuple[dict[str, dict], tuple]:
@@ -3302,23 +3315,21 @@ def join(project_dir=None) -> Join:
         _skipped_notes(skipped, degraded))
 
 
-def inbox(project_dir=None) -> Inbox:
+def inbox(project_dir=None, *, min_severity=None) -> Inbox:
     """Every request addressed to this project, undecided first — the
     `request inbox` order, and the notes of the join that produced it.
     Suppressed records are HERE by construction (D3/D5): suppression takes
-    away panel placement, never visibility."""
+    away panel placement, never visibility. #1348: severity sorts between
+    undecided-first and recency, and `min_severity` keeps that level and
+    anything more severe."""
     got = join(project_dir)
-    return Inbox(sorted(
-        got.by_id.values(),
-        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       *_recency(r))),
-        got.notes)
+    return Inbox(_listing_order(got.by_id.values(), min_severity), got.notes)
 
 
-def inbox_listing(project_dir=None) -> list[dict]:
+def inbox_listing(project_dir=None, *, min_severity=None) -> list[dict]:
     """`inbox(project_dir).rows`: the listing for the callers that have no use
     for the notes (anamnesis iterates it in-process)."""
-    return inbox(project_dir).rows
+    return inbox(project_dir, min_severity=min_severity).rows
 
 
 def _deserves_attention(record: dict, project_dir=None) -> bool:
@@ -3362,8 +3373,7 @@ def owed_renderable(project_dir=None) -> dict:
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
             if _is_owed(r, project_dir=project_dir)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
                        got.notes)
@@ -3462,8 +3472,7 @@ def owed_deliverable(session: str, project_dir=None) -> dict:
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _is_owed(r, project_dir=project_dir)
             and needs_owed_delivered_stamp(r, session)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
@@ -3484,8 +3493,7 @@ def inbox_renderable(project_dir=None) -> dict:
     shape, and several tests exercise it directly."""
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
@@ -3505,8 +3513,7 @@ def decision_renderable(project_dir=None) -> dict:
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
             if _deserves_attention(r, project_dir=project_dir)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
                        got.notes)
@@ -3536,8 +3543,7 @@ def deliverable(session: str, project_dir=None) -> dict:
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)
             and needs_delivered_stamp(r, session)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
