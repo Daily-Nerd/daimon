@@ -174,11 +174,6 @@ def test_all_surfaces_agree_an_uncovered_agent_accept_stays_open(project):
     assert pending._foreign_request_counts(None).get(recipient, 0) == 1
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "#1338 finding: the FLEET perspective reads the ruling ledger by the raw "
-    "`to`, with no alias forwarding, so it disagrees with sender-side "
-    "surfaces for an ask addressed to a pre-migration alias. Preserved as "
-    "found; fixing it changes the decide footer count, owner to decide."))
 def test_fleet_tally_resolves_an_aliased_recipient_like_the_other_surfaces(
         project, monkeypatch):
     """An ask addressed to a pre-migration alias of the recipient bucket: the
@@ -201,7 +196,26 @@ def test_fleet_tally_resolves_an_aliased_recipient_like_the_other_surfaces(
     sender_state = requests.sender_join(project_dir=project)[q_id]["state"]
     counts = pending._foreign_request_counts(None)
     waiting = counts.get(old, 0) + counts.get(recipient, 0)
-    assert (sender_state == "accepted") == (waiting == 0)
+    assert sender_state == "accepted"
+    assert waiting == 0
+
+
+def test_an_uncovered_accept_to_an_aliased_recipient_stays_waiting_everywhere(
+        project, monkeypatch):
+    """Control: alias forwarding must not widen authority. No covering ruling
+    in the canonical ledger, so sender and fleet both keep the ask open."""
+    recipient = _seed_bucket("/p/fold-inputs-recipient-e", "S-recipient")
+    _seed_bucket(project, "S-sender")
+    old = "-p-fold-inputs-old-alias-e"
+    monkeypatch.setattr(requests.buckets, "alias_map",
+                        lambda: {old: recipient})
+    q_id = requests.open_request(
+        to=old, ask=ASK, why=WHY, channel="cli-tty", project_dir=project)
+    forged = requests._stamp("accepted", q_id, "cli-agent")
+    assert requests.append(forged, project_dir=recipient, writer=Writer.HUMAN)
+    assert requests.sender_join(project_dir=project)[q_id]["state"] == "open"
+    counts = pending._foreign_request_counts(None)
+    assert counts.get(old, 0) + counts.get(recipient, 0) == 1
 
 
 # ---- a fold failure on decide is visible --------------------------------

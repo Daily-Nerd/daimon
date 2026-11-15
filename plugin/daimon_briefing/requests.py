@@ -922,17 +922,27 @@ class PolicyReads:
     A read that raises reads as `frozenset()`: no grant, so every agent
     verdict on that bucket falls back to needing a human channel. That is
     the deliberate direction already documented on `_policies_by_to` (fail
-    toward MORE scrutiny, never less)."""
+    toward MORE scrutiny, never less).
+
+    #1338: also the ONE owner of recipient identity. A bucket named by a
+    pre-migration alias is resolved FORWARD through `buckets.alias_map()`
+    before its ledger is read, so every perspective (sender, recipient,
+    fleet) answers the same for an ask addressed to an alias. The cache is
+    keyed by the name as given."""
 
     def __init__(self) -> None:
         self._cache: dict = {}
+        self._canonical_of: dict[str, str] | None = None
 
     def of(self, project_dir) -> frozenset:
         if project_dir not in self._cache:
+            if self._canonical_of is None:
+                self._canonical_of = buckets.alias_map()
+            target = (self._canonical_of.get(project_dir, project_dir)
+                      if isinstance(project_dir, str) else project_dir)
             try:
                 self._cache[project_dir] = (
-                    refutations.request_policy_history(
-                        project_dir=project_dir))
+                    refutations.request_policy_history(project_dir=target))
             except Exception:
                 self._cache[project_dir] = frozenset()
         return self._cache[project_dir]
@@ -1687,23 +1697,21 @@ def _policies_by_to(rows: list[dict],
     `FoldInputs.policies` already answers the per-record
     question for them and this map is not needed there.
 
-    A `to` that is itself a pre-migration alias of the bucket the ruling was
-    actually ratified in is resolved FORWARD through `buckets.alias_map()`
-    before the read (the cache is still keyed by the raw `to`, matching
-    what the fold gate looks up with `current["to"]` — the SAME string this
-    function read it from). Any read error or missing ledger reads as
+    A `to` that is itself a pre-migration alias is resolved forward by
+    `PolicyReads.of`, the one owner of that resolution (the cache here is
+    still keyed by the raw `to`, matching what the fold gate looks up with
+    `current["to"]`). Any read error or missing ledger reads as
     `frozenset()` for that recipient — fail toward more scrutiny, never
     less, the posture `_foreign_request_counts` and `request_policy_
     history` itself already hold."""
     cache: dict[str, frozenset] = {}
-    canonical_of = buckets.alias_map()
     for row in rows:
         if row.get("event") != "opened":
             continue
         to = str(row.get("to") or "")
         if not to or to in cache:
             continue
-        cache[to] = reads.of(canonical_of.get(to, to))
+        cache[to] = reads.of(to)
     return cache
 
 
