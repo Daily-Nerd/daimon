@@ -16,7 +16,7 @@ semantic rule — this module owns serialization to MCP shapes, nothing else).
 import json
 import logging
 
-from . import config
+from . import config, requests
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +118,15 @@ def _tool_descriptors():
                 "CLI-only (`daimon request ...`)."),
             "inputSchema": {
                 "type": "object",
-                "properties": {"project": project_path} if cross else {},
+                "properties": {
+                    **({"project": project_path} if cross else {}),
+                    "min_severity": {
+                        "type": "string",
+                        "enum": list(requests.SEVERITIES),
+                        "description": (
+                            "only requests at this severity or a more "
+                            "severe one")},
+                },
             },
             "annotations": {"readOnlyHint": True},
         },

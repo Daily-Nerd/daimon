@@ -188,7 +188,14 @@ def _requests_inbox(arguments: dict, fx) -> ToolResult:
     Every write verb (open/revise/withdraw/accept/reject/needs-info/suppress/
     reply/done) stays CLI-only — no tool here mutates the ledger."""
     project = _read(arguments).project
-    got = requests.inbox(project)
+    # #1348: the filter is the requests function's own keyword, the one the
+    # CLI and the host API pass too; a level outside its table is refused
+    # there, and the model reads the refusal.
+    try:
+        got = requests.inbox(
+            project, min_severity=arguments.get("min_severity") or None)
+    except requests.RequestError as refused:
+        raise ToolError(str(refused)) from None
     # Every prose column is judged over the bucket's light snapshot (and the
     # snapshot of each bucket a row names) before it leaves this tool; the
     # fold stays raw. There is no id parameter here, by design.
