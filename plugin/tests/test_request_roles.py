@@ -82,7 +82,8 @@ def test_the_role_table_is_the_approved_split():
     by_role = {}
     for event, role in requests.EVENT_ROLE.items():
         by_role.setdefault(role, set()).add(event)
-    assert by_role[requests.ROLE_SENDER] == {"opened", "revised", "withdrawn"}
+    assert by_role[requests.ROLE_SENDER] == {
+        "opened", "revised", "withdrawn", "severity_set"}
     assert by_role[requests.ROLE_RECIPIENT] == {
         "accepted", "rejected", "needs_info", "done", "suppressed"}
     assert "replied" in by_role[requests.ROLE_EITHER]

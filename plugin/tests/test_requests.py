@@ -3807,12 +3807,14 @@ def test_the_event_vocabulary_is_frozen():
     owed ask as undelivered, and at worst repeats a nudge. Every widening so
     far fails the same safe way, which is the property this test exists to
     keep true. #1117 widens it a fifth time with `replied`; an older reader
-    drops the row and the sender sees no reply."""
+    drops the row and the sender sees no reply. #1348 widens it an eighth
+    time with `severity_set`; an older reader drops the row and the request
+    keeps the severity it had."""
     assert set(requests.EVENTS) == {
         "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
         "verdict_delivered", "owed_delivered", "withdrawn_delivered",
         "needs_info", "accepted", "rejected", "done", "suppressed",
-        "done_verified", "replied", "withdrawn"}
+        "done_verified", "replied", "withdrawn", "severity_set"}
 
 
 def test_the_fold_reaches_every_render_state_but_never_stale(project):
