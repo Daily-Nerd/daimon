@@ -131,7 +131,7 @@ def test_text_cap_is_rechecked_after_redaction(project):
     """Placeholder expansion can grow the persisted bytes past what the raw
     text passed: `token=abcdefgh` (14 chars) persists as 24."""
     raw = " ".join(["token=abcdefgh"] * 120)
-    assert len(raw) <= requests._MAX_TEXT
+    assert len(raw) <= requests.MAX_TEXT_CHARS
     with pytest.raises(requests.RequestError):
         _open(project, ask=raw)
 
@@ -142,7 +142,7 @@ def test_ask_and_why_are_required_and_capped(project):
     with pytest.raises(requests.RequestError):
         _open(project, why="")
     with pytest.raises(requests.RequestError):
-        _open(project, ask="x" * (requests._MAX_TEXT + 1))
+        _open(project, ask="x" * (requests.MAX_TEXT_CHARS + 1))
 
 
 def test_over_cap_raises_the_subclass_with_field_and_limit(project):
@@ -150,9 +150,9 @@ def test_over_cap_raises_the_subclass_with_field_and_limit(project):
     the cap, so the exception must carry that field rather than the caller
     re-parsing the message string."""
     with pytest.raises(requests.RequestTooLong) as exc_info:
-        _open(project, ask="x" * (requests._MAX_TEXT + 1))
+        _open(project, ask="x" * (requests.MAX_TEXT_CHARS + 1))
     assert exc_info.value.field == "ask"
-    assert exc_info.value.limit == requests._MAX_TEXT
+    assert exc_info.value.limit == requests.MAX_TEXT_CHARS
 
 
 def test_non_length_failures_still_raise_plain_request_error(project):
@@ -3568,7 +3568,7 @@ def test_cli_open_refusal_over_cap_names_the_ask_destination(project,
     and the checkpoint, mirroring the #902 handoff refusal — but never
     `daimon log` (nothing reads a ref-less note back)."""
     from daimon_briefing import cli
-    long_ask = "x" * (requests._MAX_TEXT + 1)
+    long_ask = "x" * (requests.MAX_TEXT_CHARS + 1)
     rc = cli.main(["request", "open", "--to", OTHER, "--ask", long_ask,
                    "--why", WHY, "--by", "agent", "--project", project])
     assert rc == 1
@@ -3584,7 +3584,7 @@ def test_cli_open_refusal_over_cap_names_the_ask_destination(project,
 def test_cli_open_refusal_over_cap_evidence_names_the_proof_destination(
         project, recipient, capsys):
     from daimon_briefing import cli
-    long_evidence = "x" * (requests._MAX_TEXT + 1)
+    long_evidence = "x" * (requests.MAX_TEXT_CHARS + 1)
     rc = cli.main(["request", "open", "--to", OTHER, "--ask", ASK,
                    "--why", WHY, "--evidence", long_evidence, "--by", "agent",
                    "--project", project])
@@ -3602,7 +3602,7 @@ def test_cli_revise_refusal_over_cap_names_the_why_destination(project,
     from daimon_briefing import cli
     assert _cli_open(project, recipient) == 0
     q_id = next(iter(requests.records(project_dir=project)))
-    long_why = "x" * (requests._MAX_TEXT + 1)
+    long_why = "x" * (requests.MAX_TEXT_CHARS + 1)
     rc = cli.main(["request", "revise", q_id, "--why", long_why, "--by",
                    "agent", "--project", project])
     assert rc == 1
@@ -3618,7 +3618,7 @@ def test_cli_done_refusal_over_cap_names_the_proof_destination(project,
                                                                 capsys):
     from daimon_briefing import cli
     q_id = _self_ask(project)
-    long_evidence = "x" * (requests._MAX_TEXT + 1)
+    long_evidence = "x" * (requests.MAX_TEXT_CHARS + 1)
     rc = cli.main(["request", "done", q_id, "--evidence", long_evidence,
                    "--by", "agent", "--project", project])
     assert rc == 1
@@ -3649,7 +3649,7 @@ def test_cli_verdict_over_cap_note_names_no_destination(project, recipient,
     from daimon_briefing import cli
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
     q_id = _self_ask(project)
-    long_note = "x" * (requests._MAX_TEXT + 1)
+    long_note = "x" * (requests.MAX_TEXT_CHARS + 1)
     rc = cli.main(["request", "needs-info", q_id, "--note", long_note,
                    "--project", project])
     assert rc == 1
@@ -6504,7 +6504,7 @@ def test_reply_refusals_write_nothing(project, monkeypatch):
     _seed_bucket(other)
     bad = [
         (q_id, "   ", rdir, requests.RequestError, "note is required"),
-        (q_id, "x" * (requests._MAX_TEXT + 1), rdir,
+        (q_id, "x" * (requests.MAX_TEXT_CHARS + 1), rdir,
          requests.RequestTooLong, "too long"),
         ("q-0123456789ab", "ok", rdir, requests.RequestError, "unknown request"),
         ("nonsense", "ok", rdir, requests.RequestError, "invalid request id"),

@@ -161,7 +161,7 @@ def test_render_with_no_checkpoint_still_shows_the_panel(tmp_checkpoint_dir):
 
 def test_full_cap_worst_case_stays_within_budget_share(tmp_checkpoint_dir):
     for n in range(requests.RENDER_CAP):
-        q_id = _ask(ask=f"n{n} " + "x" * (requests._MAX_TEXT - 4))
+        q_id = _ask(ask=f"n{n} " + "x" * (requests.MAX_TEXT_CHARS - 4))
         requests.accept(q_id, channel="cli-tty", project_dir=RECIPIENT)
     lines = briefing.verdict_panel_lines(SENDER)
     section = "\n".join(lines)

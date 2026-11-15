@@ -37,7 +37,7 @@ def _ends_cleanly(short, full):
 
 
 def test_fixture_is_realistic():
-    assert 900 <= len(REALISTIC_ASK) <= requests._MAX_TEXT
+    assert 900 <= len(REALISTIC_ASK) <= requests.MAX_TEXT_CHARS
     assert "\n" not in REALISTIC_ASK
     assert len(REALISTIC_ASK.split(". ")[0]) > LIMIT
 
