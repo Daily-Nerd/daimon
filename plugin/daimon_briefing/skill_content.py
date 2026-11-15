@@ -257,6 +257,12 @@ takes `daimon amend` (next section); an accepted request another project
 sent, satisfied here, takes `daimon request done <id> --evidence "<quote>"
 --by agent`, and `daimon request inbox` lists the ones still owed.
 
+Closing an accepted request needs no human: run `daimon request done <id>
+--evidence ...` the moment evidence exists, in the same turn, not at session
+end. Accept and reject stay the human's decisions (or an agent's under a
+covering ruling). On an ask nobody accepted, an agent `done` is only a
+pending claim that lands when a person accepts.
+
 ## Amending loops
 
 Advanced-but-open loops take `daimon amend`:
@@ -328,8 +334,7 @@ covers for that sender (`verb=accept`, the ask's kind, `by=agent`), and the
 record says so. Otherwise it needs `accept` from a human channel like the
 rest: an `info` ask exposes this project's knowledge to the sender, so a
 person consents first. Until then the ask waits in `daimon decide`, and the
-refusal names the ruling to ratify. `done --evidence` on an ask nobody
-accepted is only a pending claim.
+refusal names the ruling to ratify.
 `daimon decide` lists every human-only command still waiting on a person,
 across this project's ledgers, so say it lands there and stop repeating
 the ask.

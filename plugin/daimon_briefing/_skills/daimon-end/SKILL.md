@@ -35,6 +35,13 @@ a `prev` pointer. So it does not need to be perfect to be useful.
    daimon reverify <id> --evidence "<what you checked>"
    ```
 
+   Closing an accepted request needs no human: run `daimon request done <id>
+   --evidence ...` the moment evidence exists, in the same turn, not at session
+   end. Accept and reject stay the human's decisions (or an agent's under a
+   covering ruling). On an ask nobody accepted, an agent `done` is only a
+   pending claim that lands when a person accepts.
+   This step is the sweep for anything missed, not the first chance to close.
+
    (See the daimon-briefing skill's "Closing loops" section for the full
    quote-discipline rule.) The CLI answers `claim recorded ... pending
    verification at session end` — that is the expected output, not a failure:

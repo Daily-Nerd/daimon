@@ -267,6 +267,23 @@ RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
 # indistinguishable from `suppress` from the recipient's side while meaning
 # the opposite thing.
 _RECIPIENT_OWED = frozenset({"accepted"})
+
+# #1344: who may close an accepted request, said once. Every text an agent
+# reads before deciding whether to close derives from these three strings: the
+# live-delivery hook line, the owed panel and `request done --help` import them,
+# and the two skills (markdown cannot import) carry CLOSE_RULE verbatim, which
+# tests/test_close_rule.py pins. Only accept and reject need a person; the
+# last sentence is the exception a plain "done needs no human" would hide.
+CLOSE_RULE = (
+    "Closing an accepted request needs no human: run `daimon request done "
+    "<id> --evidence ...` the moment evidence exists, in the same turn, not "
+    "at session end. Accept and reject stay the human's decisions (or an "
+    "agent's under a covering ruling). On an ask nobody accepted, an agent "
+    "`done` is only a pending claim that lands when a person accepts.")
+CLOSE_RULE_SHORT = ("Accepted and owed. Close one now, no human needed: "
+                    "`daimon request done <id> --evidence …`")
+CLOSE_RULE_HELP = ("An agent may run this on an accepted ask without asking "
+                   "the human.")
 # Per-brief render budget (D2). Over-cap renders a loud "+N more waiting"
 # line in PR 2; silent truncation of addressed asks is the one forbidden
 # failure, so the cap lives beside the overflow count it produces.

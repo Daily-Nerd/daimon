@@ -70,6 +70,13 @@ An accepted request another project sent, satisfied by this session's work
 (a shipped fix, a merged PR), takes `daimon request done <id> --evidence
 "<quote>" --by agent`; `daimon request inbox` lists every one still owed.
 Same quote discipline, same byte-check at session end.
+
+Closing an accepted request needs no human: run `daimon request done <id>
+--evidence ...` the moment evidence exists, in the same turn, not at session
+end. Accept and reject stay the human's decisions (or an agent's under a
+covering ruling). On an ask nobody accepted, an agent `done` is only a
+pending claim that lands when a person accepts.
+
 An accepted request still in progress takes `daimon request reply <id> --note
 "<what moved>" --by agent`. It moves no state, so the request stays owed until
 `request done`. The sender sees it labeled as an unverified agent claim.
