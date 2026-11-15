@@ -70,6 +70,7 @@ REQUIRED = (
     "_cmd_request_open",
     "_cmd_request_reply",
     "_cmd_request_revise",
+    "_cmd_request_severity",
     "_cmd_request_verdict",
     "_cmd_request_withdraw",
     "_cmd_resolve",

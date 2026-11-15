@@ -377,8 +377,12 @@ case("cli:ledger repair", "dry", A("ledger", "repair", "trust", "--dry-run"),
      dests=("name", "dry_run"))
 case("cli:request list", "default", A("request", "list"),
      dests=("project", "json"), axes=("DAIMON_PLAIN",))
+case("cli:request list", "min_severity", A("request", "list",
+     "--min-severity", "low"), dests=("min_severity",))
 case("cli:request inbox", "default", A("request", "inbox"),
      dests=("project", "json"), axes=("DAIMON_LIVE_DELIVERY",))
+case("cli:request inbox", "min_severity", A("request", "inbox",
+     "--min-severity", "low"), dests=("min_severity",))
 for verb in ("accept", "reject", "needs-info", "suppress"):
     case(f"cli:request {verb}", "id", A("request", verb,
          lambda w: w.request_id), tty=True, rc=(0, 1, 2),
@@ -391,6 +395,9 @@ case("cli:request reply", "id", A("request", "reply",
      dests=("request_id",))
 case("cli:request withdraw", "id", A("request", "withdraw",
      lambda w: w.request_id, "--reason", "no longer needed"), tty=True,
+     rc=(0, 1, 2), dests=("request_id",))
+case("cli:request severity", "id", A("request", "severity",
+     lambda w: w.request_id, "high", "--reason", "it matters"), tty=True,
      rc=(0, 1, 2), dests=("request_id",))
 case("cli:request revise", "id", A("request", "revise",
      lambda w: w.request_id, "--ask", "revised"), tty=True, rc=(0, 1, 2),
@@ -1117,7 +1124,7 @@ CONVERTED = {
     **{f"cli:request {verb}": ("cli/request.py", frozenset({"masked"}))
        for verb in ("list", "inbox", "accept", "reject", "needs-info",
                     "suppress", "done", "reply", "revise", "open",
-                    "withdraw")},
+                    "withdraw", "severity")},
 }
 
 # A per-prompt hook is rc 0 and silent on every failure by design, so it cannot

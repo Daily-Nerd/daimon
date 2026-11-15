@@ -154,6 +154,13 @@ def _claim_lines(record: dict) -> list[str]:
     return lines
 
 
+def _severity_lines(record: dict) -> list[str]:
+    """#1348: the severity line of a card or inject block, from the one
+    renderer, as a list so a normal request adds nothing."""
+    line = requests.severity_line(record)
+    return [line] if line else []
+
+
 def _request_lines(record: dict, project_dir=None) -> list:
     """One request as a record card. The header follows the #711 three-span
     shape (state bracket, id, prose); the body carries the two-party facts a
@@ -203,6 +210,7 @@ def _request_lines(record: dict, project_dir=None) -> list:
     if record.get("from_label"):
         lines.append(f"  From: {record['from_label']}")
     lines.append(f"  Why: {record.get('why', '')}")
+    lines.extend(_severity_lines(record))
     if record.get("evidence"):
         lines.append(f"  Evidence: {record['evidence']}")
     if record.get("supersedes"):
@@ -251,6 +259,7 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
             f"  Accepted by: {record.get('accepted_by') or 'human'}"
             + (f" under {under}" if under else ""))
     lines.append(f"  Why: {record.get('why', '')}")
+    lines.extend(_severity_lines(record))
     if record.get("evidence"):
         lines.append(f"  Evidence: {record['evidence']}")
     if record.get("supersedes"):
@@ -279,7 +288,11 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
 @_cli.guarded
 def _cmd_request_inbox(args) -> int:
     project = _cli._resolve_project(args.project)
-    got = requests.inbox(project)
+    try:
+        got = requests.inbox(project, min_severity=args.min_severity)
+    except requests.RequestError as exc:
+        print(_refusal_message("request inbox refused", exc))
+        return 1
     rows = _masked(project, got.rows)
     _cli._note_usage("request:inbox")
     return _print_listing(args, rows, got.notes,
@@ -368,6 +381,7 @@ def _inject_lines(record: dict) -> list[str]:
              # above, read from the folded record only.
              + (" [done claimed]" if record.get("done_pending") else "")]
     lines.extend(_ask_lines(record))
+    lines.extend(_severity_lines(record))
     if record.get("why"):
         lines.append(f"  Why: {record['why']}")
     return lines
@@ -439,6 +453,7 @@ def _owed_inject_lines(record: dict) -> list[str]:
              + (" [blocking: the sender is waiting]"
                 if record.get("blocking") else "")]
     lines.extend(_ask_lines(record))
+    lines.extend(_severity_lines(record))
     note = str(record.get("note") or "").strip()
     if note:
         lines.append(f"  Accepted with: {note}")
@@ -610,7 +625,9 @@ def _cmd_request_open(args) -> int:
             to=to, ask=args.ask, why=args.why, channel=_request_channel(args),
             blocking=bool(args.blocking), to_human=bool(args.to_human),
             evidence=args.evidence or "", supersedes=args.supersedes or "",
-            kind=args.kind, title=args.title or "", project_dir=project)
+            kind=args.kind, title=args.title or "",
+            severity=args.severity, severity_reason=args.severity_reason or "",
+            project_dir=project)
     except requests.RequestError as exc:
         _cli._note_usage("request:open:refused")
         print(_refusal_message("request not recorded", exc))
@@ -685,6 +702,32 @@ def _cmd_request_withdraw(args) -> int:
     if record is None:
         render.render_ledger_lines(
             [f"{args.request_id}: withdrawal recorded in this project's "
+             "ledger"])
+        return 0
+    render.render_ledger_lines(_request_lines(
+        _masked(project, [record], snap=snap)[0], project_dir=project))
+    _say_effect(args.request_id, event_id, project, record)
+    return 0
+
+
+@_cli.guarded(writes=True)
+def _cmd_request_severity(args) -> int:
+    project = _cli._resolve_project(args.project)
+    _cli.require_ledger(project, "requests.jsonl")
+    snap = _snap(project)
+    try:
+        event_id = requests.set_severity(
+            args.request_id, args.level, reason=args.reason or "",
+            channel=_request_channel(args), project_dir=project)
+    except requests.RequestError as exc:
+        _cli._note_usage("request:severity:refused")
+        print(_refusal_message("request severity refused", exc))
+        return 1
+    _cli._note_usage("request:severity")
+    record = requests.sent_record(args.request_id, project_dir=project)
+    if record is None:
+        render.render_ledger_lines(
+            [f"{args.request_id}: severity recorded in this project's "
              "ledger"])
         return 0
     render.render_ledger_lines(_request_lines(
@@ -805,7 +848,7 @@ def _cmd_request_reply(args) -> int:
 @_cli.guarded
 def _cmd_request_list(args) -> int:
     project = _cli._resolve_project(args.project)
-    got = requests.listed(project)
+    got = requests.listed(project, min_severity=args.min_severity)
     _cli._note_usage("request:list")
     # #1281: liveness is derived here, on read, from one clock reading shared
     # by every row, so the rows of a listing agree on what "now" is. The three
@@ -869,6 +912,17 @@ def register(sub, fmt) -> None:
         help="mark the sender as blocked on it; a flag on the record, never "
              "a claim on the recipient's time")
     rq_open.add_argument(
+        "--severity", choices=requests.SEVERITIES,
+        default=requests.DEFAULT_SEVERITY,
+        help="how much the outcome matters to you, which is not --blocking "
+             "(whether you are stalled): the recipient's lists sort by it. "
+             "Any level but the default needs --severity-reason")
+    rq_open.add_argument(
+        "--severity-reason", metavar="REASON",
+        help=f"one line, {requests.SEVERITY_REASON_CHARS} characters at "
+             "most (refused past that, never cut), shown with the level; "
+             "required with every level but the default")
+    rq_open.add_argument(
         "--evidence",
         help="optional source backing the ask; recorded, never resolved")
     rq_open.add_argument(
@@ -915,6 +969,27 @@ def register(sub, fmt) -> None:
              "terminal")
     _common(rq_withdraw)
     rq_withdraw.set_defaults(func=_cli._cmd_request_withdraw)
+
+    rq_severity = request_sub.add_parser(
+        "severity", help="change how much a request you sent matters to you; "
+                         "an agent may. It moves no state and re-sends "
+                         "nothing: the new level shows on the recipient's "
+                         "next brief, inbox and decide. It is not --blocking")
+    rq_severity.add_argument("request_id", help="exact q-… id")
+    rq_severity.add_argument(
+        "level", choices=requests.SEVERITIES,
+        help="the new level; the default level clears a raised one")
+    rq_severity.add_argument(
+        "--reason", metavar="REASON",
+        help=f"one line, {requests.SEVERITY_REASON_CHARS} characters at "
+             "most, shown with the level; required with every level but the "
+             "default")
+    rq_severity.add_argument(
+        "--by", choices=["agent"], default=None,
+        help="declare yourself an agent; omit it only from an interactive "
+             "terminal")
+    _common(rq_severity)
+    rq_severity.set_defaults(func=_cli._cmd_request_severity)
 
     # #961 slice 3: `accept` is the one verdict verb with a non-categorical
     # `--by agent` story — permitted for an addressed `info` ask still open
@@ -983,6 +1058,9 @@ def register(sub, fmt) -> None:
         "list", help="list this project's requests, undecided first")
     rq_list.add_argument("--json", action="store_true",
                          help="machine-readable output")
+    rq_list.add_argument(
+        "--min-severity", choices=requests.SEVERITIES, default=None,
+        help="only requests at this severity or a more severe one")
     _common(rq_list)
     rq_list.set_defaults(func=_cli._cmd_request_list)
 
@@ -991,5 +1069,8 @@ def register(sub, fmt) -> None:
                       "sender, undecided first")
     rq_inbox.add_argument("--json", action="store_true",
                           help="machine-readable output")
+    rq_inbox.add_argument(
+        "--min-severity", choices=requests.SEVERITIES, default=None,
+        help="only requests at this severity or a more severe one")
     _common(rq_inbox)
     rq_inbox.set_defaults(func=_cli._cmd_request_inbox)
