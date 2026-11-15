@@ -334,6 +334,16 @@ _SENDER_MOVABLE = frozenset({"open", "needs-info"})
 # under a `verb=accept` ruling of the receiving project, and an agent's `done`
 # on an ask nobody has accepted stays a pending claim.
 RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
+# #1346: the role rule (`EVENT_ROLE`) starts at this `order` (ns since the
+# epoch, 2026-11-15T20:17:11Z, later than every row in any ledger written
+# before the rule and earlier than any row a build with it can write). A row
+# ordered BEFORE it keeps the meaning it had when written: some ledgers hold
+# a human `accepted` or an agent `done` in the sender's own bucket, which
+# the old fold applied, and refolding them under the rule would reopen
+# requests that were closed. Append-only history is not reinterpreted. From
+# this order on a wrong-role row is inert. Same shape as
+# `RECEIVER_CONSENT_FROM_NS`, same `_written_before` helper.
+ROLE_RULE_FROM_NS = 1_794_770_231_000_000_000
 # #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
 # `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
 # reopen an accepted record, which is exactly the assertion the wedge
@@ -949,15 +959,19 @@ def _covered_by_policy(row: dict, origin_slugs, policies, *,
     return False
 
 
-def _before_receiver_consent(row: dict) -> bool:
-    """Whether `row` was written before receiver consent for `info` asks
-    began (`RECEIVER_CONSENT_FROM_NS`). A row with no readable positive
-    `order` is NOT before it: an unreadable order never buys the old rule."""
+def _written_before(row: dict, effective_from_ns: int) -> bool:
+    """Whether `row` was written before a rule that took effect at
+    `effective_from_ns` (`RECEIVER_CONSENT_FROM_NS`, `ROLE_RULE_FROM_NS`).
+    A row with no readable positive `order` is NOT before it: an unreadable
+    order never buys the old rule, and a bool read off disk is not one."""
+    raw = row.get("order")
+    if isinstance(raw, bool):
+        return False
     try:
-        order = int(row.get("order") or 0)
+        order = int(raw or 0)
     except (TypeError, ValueError):
         return False
-    return 0 < order < RECEIVER_CONSENT_FROM_NS
+    return 0 < order < effective_from_ns
 
 
 def _epoch_of(row: dict, fallback: int) -> int:
@@ -1390,10 +1404,11 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
         # and a row can be hand-edited or written by an older build, so the
         # reader decides again, from the one table both read.
         role = EVENT_ROLE.get(event, ROLE_EITHER)
-        if not row_holds_role(
-                role, origin=str(row.get("_origin_slug") or ""),
-                from_slug=current["from_slug"], to=current["to"],
-                home_slugs=inputs.home_slugs):
+        if not (_written_before(row, ROLE_RULE_FROM_NS)
+                or row_holds_role(
+                    role, origin=str(row.get("_origin_slug") or ""),
+                    from_slug=current["from_slug"], to=current["to"],
+                    home_slugs=inputs.home_slugs)):
             _note_effect(current, row, "not_from_sender"
                          if role == ROLE_SENDER else "not_from_recipient")
             continue
@@ -1430,7 +1445,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 event == "accepted" and authority == "agent"
                 and current["kind"] == "info"
                 and current["state"] in _SENDER_MOVABLE
-                and _before_receiver_consent(row))
+                and _written_before(row, RECEIVER_CONSENT_FROM_NS))
             if (event == "accepted" and authority == "agent"
                     and not current["to_human"]
                     and current["state"] in _SENDER_MOVABLE):
@@ -1735,7 +1750,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
         if (event == "done" and authority != "human"
                 and current["state"] in _SENDER_MOVABLE
                 and (current["kind"] == "work"
-                     or not _before_receiver_consent(row))):
+                     or not _written_before(row, RECEIVER_CONSENT_FROM_NS))):
             # #978: the #961 amendment's own sentence — an agent answering an
             # ask stays owed until a person accepts, rejects, or ratifies a
             # reclassification — was never wired into this fold. Without this
@@ -1857,7 +1872,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                     str(row.get("under_ruling") or "") or None
                     if authority == "agent" and (
                         current["kind"] == "work"
-                        or not _before_receiver_consent(row))
+                        or not _written_before(row, RECEIVER_CONSENT_FROM_NS))
                     else None)
             if "note" in row:
                 current["note"] = str(row.get("note") or "")

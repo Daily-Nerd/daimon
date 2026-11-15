@@ -54,10 +54,12 @@ def _sent(project, rdir="/p/role-recipient", **kwargs):
     return _open(project, to=slug, **kwargs), rdir
 
 
-def _forge(event, q_id, project_dir, *, channel="cli-tty", **extra):
+def _forge(event, q_id, project_dir, *, channel="cli-tty", now_ns=None,
+           **extra):
     """A raw row appended off the write path (the verbs refuse it): what a
     hand-edit, an old build or a hostile writer leaves in a bucket."""
-    row = requests._stamp(event, q_id, channel, now_ns=time.time_ns())
+    row = requests._stamp(event, q_id, channel,
+                          now_ns=now_ns or time.time_ns())
     row.update(extra)
     assert requests.append(row, project_dir=project_dir, writer=Writer.HUMAN)
     return row["event_id"]
@@ -84,6 +86,67 @@ def test_the_role_table_is_the_approved_split():
     assert by_role[requests.ROLE_RECIPIENT] == {
         "accepted", "rejected", "needs_info", "done", "suppressed"}
     assert "replied" in by_role[requests.ROLE_EITHER]
+
+
+# ---- rows written before the rule existed keep their meaning ----------------
+
+HOUR_NS = 3_600 * 1_000_000_000
+
+
+def _rule_begins_in_an_hour(monkeypatch):
+    """Move the cutoff past the ask this test just opened (a row ordered
+    before its own founder is an orphan, inert for another reason) and
+    return it."""
+    cutoff = time.time_ns() + HOUR_NS
+    monkeypatch.setattr(requests, "ROLE_RULE_FROM_NS", cutoff)
+    return cutoff
+
+
+def test_the_role_rule_starts_after_every_row_of_the_receiver_consent_era():
+    assert requests.ROLE_RULE_FROM_NS > requests.RECEIVER_CONSENT_FROM_NS
+
+
+@pytest.mark.parametrize("event,state,extra", [
+    ("done", "done", {"evidence": "shipped"}),
+    ("accepted", "accepted", {}),
+])
+def test_a_sender_bucket_verdict_written_before_the_rule_still_lands(
+        project, monkeypatch, event, state, extra):
+    q_id, _ = _sent(project)
+    cutoff = _rule_begins_in_an_hour(monkeypatch)
+    _forge(event, q_id, project, now_ns=cutoff - 1, **extra)
+    assert requests.get(q_id, project_dir=project)["state"] == state
+
+
+def test_the_same_row_at_the_rule_order_is_inert(project, monkeypatch):
+    q_id, _ = _sent(project)
+    cutoff = _rule_begins_in_an_hour(monkeypatch)
+    event_id = _forge("done", q_id, project, evidence="shipped", now_ns=cutoff)
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert _effect(record, event_id) == "not_from_recipient"
+
+
+@pytest.mark.parametrize("order", [None, 0, "soon", True])
+def test_a_row_with_no_readable_order_gets_no_old_rule(project, order):
+    """A ledger older than the `order` stamp: the founder has none either, so
+    the row is consumed and its role is judged by the rule, not exempted."""
+    q_id, _ = _sent(project)
+    path = (config.checkpoint_dir() / store.project_slug(project)
+            / "requests.jsonl")
+    rows = _rows(project)
+    for row in rows:
+        row.pop("order", None)
+    done = requests._stamp("done", q_id, "cli-tty", now_ns=time.time_ns())
+    done.update(evidence="shipped", order=order)
+    if order is None:
+        del done["order"]
+    rows.append(done)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows),
+                    encoding="utf-8")
+    record = requests.get(q_id, project_dir=project)
+    assert record["state"] == "open"
+    assert _effect(record, done["event_id"]) == "not_from_recipient"
 
 
 # ---- the fold: a wrong-role row is inert, and says why ----------------------
