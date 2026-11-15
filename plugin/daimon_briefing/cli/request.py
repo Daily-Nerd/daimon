@@ -288,11 +288,7 @@ def _inbox_lines(record: dict, project_dir=None) -> list:
 @_cli.guarded
 def _cmd_request_inbox(args) -> int:
     project = _cli._resolve_project(args.project)
-    try:
-        got = requests.inbox(project, min_severity=args.min_severity)
-    except requests.RequestError as exc:
-        print(_refusal_message("request inbox refused", exc))
-        return 1
+    got = requests.inbox(project, min_severity=args.min_severity)
     rows = _masked(project, got.rows)
     _cli._note_usage("request:inbox")
     return _print_listing(args, rows, got.notes,

@@ -475,3 +475,10 @@ def test_a_foreign_read_keeps_only_the_presence_of_a_reason():
     # and the fold still reads that stripped row as a high severity
     q_id, _, opened = _hand_rows(**out)
     assert fold_rows([opened])[q_id]["severity"] == "high"
+
+
+def test_a_severity_that_cannot_be_appended_is_an_error(project, monkeypatch):
+    q_id, _ = _sent(project)
+    monkeypatch.setattr(requests, "append", lambda *a, **k: False)
+    with pytest.raises(requests.RequestError, match="not written"):
+        _set(project, q_id, "high", REASON)

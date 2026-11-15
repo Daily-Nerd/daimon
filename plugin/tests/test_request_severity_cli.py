@@ -215,3 +215,21 @@ def test_the_verdict_inject_lines_do_not_show_it(project):
               "severity_reason": REASON}
     assert not any("High" in line
                    for line in cli_request._verdict_inject_lines(record))
+
+
+def test_the_verb_still_reports_when_the_record_cannot_be_reread(
+        project, capsys, monkeypatch):
+    q_id = _open(project)
+    real = requests.sent_record
+    calls = []
+
+    def once(request_id, project_dir=None):
+        calls.append(request_id)
+        return real(request_id, project_dir=project_dir) if len(calls) == 1 \
+            else None
+
+    monkeypatch.setattr(requests, "sent_record", once)
+    rc, out = _run(["request", "severity", q_id, "high", "--reason", REASON,
+                    "--by", "agent", "--project", project], capsys)
+    assert rc == 0
+    assert f"{q_id}: severity recorded in this project's ledger" in out
