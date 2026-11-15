@@ -726,11 +726,12 @@ DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by i
 --slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === request done ===
-usage: daimon request done [-h] --evidence EVIDENCE [--by {agent}] [--project PROJECT] request_id
-positional arguments: request_id exact q-… id options: -h, --help show this help message and exit
---evidence EVIDENCE what settles it; a verbatim quote from an agent is byte-checked at session end
---by {agent} declare yourself an agent; omit it only from an interactive terminal --project PROJECT
-project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request done [-h] --evidence EVIDENCE [--by {agent}] [--project PROJECT] request_id An
+agent may run this on an accepted ask without asking the human. positional arguments: request_id
+exact q-… id options: -h, --help show this help message and exit --evidence EVIDENCE what settles
+it; a verbatim quote from an agent is byte-checked at session end --by {agent} declare yourself an
+agent; omit it only from an interactive terminal --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === request reply ===
 usage: daimon request reply [-h] --note NOTE [--evidence EVIDENCE] [--by {agent}] [--project

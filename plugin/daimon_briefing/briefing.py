@@ -1849,7 +1849,7 @@ def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
     if overflow:
         lines.append(f"  (+{overflow} more owed — "
                      "daimon request inbox)")
-    lines.append("  Close one with: daimon request done <id> --evidence …")
+    lines.append(f"  {requests.CLOSE_RULE_SHORT}")
     lines.extend(notes)
     return lines
 

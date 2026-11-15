@@ -485,8 +485,7 @@ def _cmd_request_inject(args) -> int:
         # `done` is the one either-channel state move (D8), so unlike the
         # undecided lane above this names a verb the agent can actually run.
         if owed["rows"]:
-            out.append("Accepted and owed. Close one with: "
-                       "`daimon request done <id> --evidence …`")
+            out.append(requests.CLOSE_RULE_SHORT)
         print("\n".join(out))
         for record in verdicts["rows"]:
             requests.stamp_verdict_delivered(
@@ -875,7 +874,8 @@ def register(sub, fmt) -> None:
 
     rq_done = request_sub.add_parser(
         "done", help="report the ask as satisfied; an agent claim renders as "
-                     "claimed-and-unverified until the byte-check")
+                     "claimed-and-unverified until the byte-check",
+        description=requests.CLOSE_RULE_HELP)
     rq_done.add_argument("request_id", help="exact q-… id")
     rq_done.add_argument("--evidence", required=True,
                          help="what settles it; a verbatim quote from an "

@@ -138,8 +138,14 @@ def test_full_fits_size_budget():
     # draft was 204 chars (14,391), and the left-off rule moved to the plugin
     # SKILL.md. 14,900 is the new size plus about 4% slack. Nothing was added
     # to the compact body.
+    #
+    # RAISED 14,900 -> 15,300 on 2026-11-15 (#1344). The skill content is the
+    # subject: agents stopped to ask a human before closing an accepted
+    # request because no text said it needs none. The addition is the one
+    # shared rule paragraph (`requests.CLOSE_RULE`, pinned verbatim by
+    # test_close_rule.py), net of the sentence it replaces, new size ~15,180.
     full = skill_content.render_full()
-    assert len(full) <= 14900, f"full body is {len(full)} chars (cap 14900)"
+    assert len(full) <= 15300, f"full body is {len(full)} chars (cap 15300)"
 
 
 def test_full_has_trigger_only_frontmatter():
