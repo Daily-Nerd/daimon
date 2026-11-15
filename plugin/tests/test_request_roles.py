@@ -149,6 +149,29 @@ def test_a_row_with_no_readable_order_gets_no_old_rule(project, order):
     assert _effect(record, done["event_id"]) == "not_from_recipient"
 
 
+def test_a_backdated_withdrawn_row_in_the_recipients_bucket_is_inert(
+        project, monkeypatch):
+    """The pre-rule exemption is for events that existed when the rule began.
+    `withdrawn` is newer, so a row dated before the cutoff has no old ledger
+    to protect and must not slip past the role check."""
+    q_id, rdir = _sent(project)
+    cutoff = _rule_begins_in_an_hour(monkeypatch)
+    event_id = _forge("withdrawn", q_id, rdir, now_ns=cutoff - 1,
+                      note=REASON)
+    for record in (requests.sent_record(q_id, project_dir=project),
+                   requests.recipient_join(project_dir=rdir)[q_id]):
+        assert record["state"] == "open"
+        assert _effect(record, event_id) == "not_from_sender"
+
+
+def test_the_pre_rule_events_are_only_those_that_existed_at_the_cutoff():
+    assert requests._PRE_ROLE_RULE_EVENTS <= requests.EVENTS
+    for newer in ("withdrawn", "withdrawn_delivered"):
+        assert newer not in requests._PRE_ROLE_RULE_EVENTS
+    for older in ("opened", "revised", "accepted", "done", "replied"):
+        assert older in requests._PRE_ROLE_RULE_EVENTS
+
+
 # ---- the fold: a wrong-role row is inert, and says why ----------------------
 
 

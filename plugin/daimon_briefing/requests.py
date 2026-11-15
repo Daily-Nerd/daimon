@@ -344,6 +344,16 @@ RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
 # this order on a wrong-role row is inert. Same shape as
 # `RECEIVER_CONSENT_FROM_NS`, same `_written_before` helper.
 ROLE_RULE_FROM_NS = 1_794_770_231_000_000_000
+# The events that existed when the rule began, FROZEN: only they can have old
+# ledger rows the exemption protects. An event added later (`withdrawn`,
+# `withdrawn_delivered` came with the rule itself) has no history before the
+# cutoff, so a row of it dated earlier is forged or hand-edited and gets no
+# old rule. Never add to this set.
+_PRE_ROLE_RULE_EVENTS = frozenset({
+    "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
+    "verdict_delivered", "owed_delivered", "needs_info", "accepted",
+    "rejected", "done", "suppressed", "done_verified", "replied",
+})
 # #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
 # `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
 # reopen an accepted record, which is exactly the assertion the wedge
@@ -1404,7 +1414,8 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
         # and a row can be hand-edited or written by an older build, so the
         # reader decides again, from the one table both read.
         role = EVENT_ROLE.get(event, ROLE_EITHER)
-        if not (_written_before(row, ROLE_RULE_FROM_NS)
+        if not ((event in _PRE_ROLE_RULE_EVENTS
+                 and _written_before(row, ROLE_RULE_FROM_NS))
                 or row_holds_role(
                     role, origin=str(row.get("_origin_slug") or ""),
                     from_slug=current["from_slug"], to=current["to"],
