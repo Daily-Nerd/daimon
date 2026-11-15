@@ -444,12 +444,24 @@ _EVENT_RANK = {
     "withdrawn_delivered": 2,
 }
 _REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
+
+
+def is_request_id(value) -> bool:
+    """Whether `value` is the shape of a request id. The one public name for
+    the check, so a module that must recognise an id (a message received from
+    another machine) neither imports the private pattern nor copies it."""
+    return isinstance(value, str) and _REQUEST_ID_RE.fullmatch(value) is not None
+
+
 # A recipient is validated for SHAPE only, by `scope.parse_bucket` (the one
 # bucket-name parser, #1294) — whether the slug names a bucket that exists is
 # the CLI's check (it can offer near-matches and an --anyway override; this
 # module must stay writable for a project not yet initialized).
 _SPACE_RE = re.compile(r"\s+")
 _MAX_TEXT = 2000
+# The public name of the prose bound, for a module that must hold another
+# person's text to the same limit this one holds its own to.
+MAX_TEXT_CHARS = _MAX_TEXT
 # #1127: the display bound for an ask shown as a title or a skimmable line.
 # One limit for every surface (decide headline, briefing panels, hook inject).
 ASK_CHARS = 160
