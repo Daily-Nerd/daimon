@@ -385,6 +385,7 @@ def _public_entry_points(sub: str):
         ("project_bucket", lambda: store.project_bucket(sub)),
         ("record_bucket_root",
          lambda: store.record_bucket_root(sub)),
+        ("ensure_bucket", lambda: store.ensure_bucket(sub)),
     ]
 
 

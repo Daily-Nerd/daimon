@@ -56,14 +56,13 @@ RECORD_VERSION = 1
 # has one, so treating it as an unrecognized leftover kept the legacy
 # directory alive forever and made a second run merge and receipt again
 # (#963 review). `root` (#1092) is the bucket-root marker
-# `store.record_bucket_root` stamps on first write: once a legacy bucket
+# `store.ensure_bucket` stamps on creation: once a legacy bucket
 # merges into its correctly-resolved target, the legacy directory's record
 # (if it has one at all, since most predate #1092 entirely) names a directory
 # this migration is retiring, never the target the merge just moved rows
-# into. The target either already carries its own record or gets one, first
-# writer wins, the next time anything writes to it: this migration is not
-# that writer, so it leaves the target's record alone and simply drops the
-# legacy one. `.ledger-census` (#1132) is the same shape: a once-per-bucket
+# into. The merge stamps the target itself from the resolved directory (#1337),
+# first writer wins, and simply drops the legacy record.
+# `.ledger-census` (#1132) is the same shape: a once-per-bucket
 # stamp of the census run on the first checkpoint write, so every real legacy
 # bucket carries one and it describes a directory this merge is retiring.
 # Nothing else is ever removed on this list's word.
@@ -586,6 +585,18 @@ def _record(mode: str, legacy: str | None, target: str | None, *,
     }
 
 
+def _restamp_root(target_dir: Path, resolved: str) -> None:
+    """A renamed bucket arrives carrying the LEGACY bucket's root record, which
+    names whatever directory wrote it before 0.42.0 (often a symlinked or
+    nested path), not the directory the target slug resolves from. Drop it and
+    stamp the resolved directory (#1337)."""
+    try:
+        (target_dir / store._BUCKET_ROOT_NAME).unlink()
+    except OSError:
+        pass
+    store.ensure_bucket(resolved)
+
+
 def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     """Move the pre-0.42.0 bucket for `project_dir` into the resolved one.
 
@@ -617,6 +628,7 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     if legacy == target:
         return _record("stable", legacy, target, by=by)
     root = config.checkpoint_dir()
+    resolved = config.resolve_project_dir(project_dir, allow_slug=False)
     legacy_dir = root / legacy
     target_dir = root / target
     if not legacy_dir.is_dir():
@@ -637,11 +649,11 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
         if dry_run:
             return _record("rename", legacy, target, pointers=pointers, by=by)
         try:
-            root.mkdir(parents=True, exist_ok=True)
             os.rename(legacy_dir, target_dir)
         except OSError:
             pass  # cross-device or a race: fall through to the line-wise path
         else:
+            _restamp_root(target_dir, resolved)
             for path in _pointer_files(target_dir):
                 _restamp(path, legacy, target)
             store._record_ledger_census(target, force=True)
@@ -658,7 +670,10 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     # cross-device fall-through above reaches here with no target directory at
     # all, which is exactly that case.
     if not dry_run:
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # The bucket and its root record are made together (#1337): the
+        # target holds the rows this merge moves, so it must say which
+        # directory it belongs to even though the legacy record is dropped.
+        store.ensure_bucket(resolved)
 
     ledgers: dict[str, int] = {}
     unreadable: list[str] = []
