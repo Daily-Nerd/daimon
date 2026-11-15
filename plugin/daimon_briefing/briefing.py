@@ -1798,6 +1798,9 @@ def request_panel(project_dir=None, *, snap=None):
                      f"{requests.headline(row)}"
                      f"{marker}{claim_marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
+        severity = requests.severity_line(row)
+        if severity:  # #1348: nothing at all for a default severity
+            lines.append(severity)
     overflow = entry.get("overflow") or 0
     if overflow:
         plural = "s" if overflow != 1 else ""
@@ -1845,6 +1848,9 @@ def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
                      f"{requests.headline(row)}"
                      f"{kind_marker}{marker}")
         lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
+        severity = requests.severity_line(row)
+        if severity:  # #1348: nothing at all for a default severity
+            lines.append(severity)
     overflow = entry.get("overflow") or 0
     if overflow:
         lines.append(f"  (+{overflow} more owed — "

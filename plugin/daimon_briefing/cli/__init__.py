@@ -357,6 +357,7 @@ from .request import (  # noqa: E402
     _cmd_request_open,  # noqa: F401 — re-exported for compat
     _cmd_request_reply,  # noqa: F401 — re-exported for compat
     _cmd_request_revise,  # noqa: F401 — re-exported for compat
+    _cmd_request_severity,  # noqa: F401 — re-exported for compat
     _cmd_request_withdraw,  # noqa: F401 — re-exported for compat
     _cmd_request_verdict,  # noqa: F401 — re-exported for compat
     _request_channel,  # noqa: F401 — re-exported for compat

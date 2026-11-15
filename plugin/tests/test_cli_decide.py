@@ -249,6 +249,7 @@ def test_decide_cards_claim_marker_guard_is_load_bearing_not_dead_code():
         "context": "", "waiting_since": "", "blocking": False,
         "commands": [("ratify", "daimon ruling ratify r-0123456789ab")],
         "approval": None, "claimed": True,
+        "severity": requests.DEFAULT_SEVERITY, "severity_reason": "",
     }
 
     card = lifecycle._decide_cards([row])[0]

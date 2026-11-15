@@ -187,7 +187,7 @@ def test_the_decision_is_one_function_with_a_typed_answer(world, monkeypatch):
 
 # ---- the structural guard: a new selector cannot skip the decision --------
 
-NON_SELECTORS = {"query", "limit", "session"}
+NON_SELECTORS = {"query", "limit", "session", "min_severity"}
 FOREIGN_VALUE = {"slug": OTHER_SLUG, "all_projects": True, "project": OTHER}
 
 

@@ -1253,6 +1253,11 @@ def _generic_card(row: dict) -> list:
     card = [f"[{tag}] {row['id']}  {row['headline']}{blocking}"]
     if row.get("context"):
         card.append(f"  {row['context']}")
+    # #1348: nothing for a default severity, so every lane that carries the
+    # default (all but the request lane) prints exactly what it did.
+    severity = requests.severity_line(row)
+    if severity:
+        card.append(severity)
     # #1127/#1129: the header carries the bounded headline; each shortened
     # field is a labeled line under it ("Ask: ..."), wrapped with a hanging
     # indent under its label. Header shape unchanged.

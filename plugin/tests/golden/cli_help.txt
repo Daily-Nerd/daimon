@@ -63,6 +63,7 @@ request open
 request reject
 request reply
 request revise
+request severity
 request suppress
 request withdraw
 request-inject
@@ -653,39 +654,47 @@ report what would change and write nothing
 
 === request ===
 usage: daimon request [-h]
-{open,revise,withdraw,accept,reject,needs-info,suppress,done,reply,list,inbox} ... positional
-arguments: {open,revise,withdraw,accept,reject,needs-info,suppress,done,reply,list,inbox} open open
-a request addressed to another project's slug revise answer a needs-info or sharpen an open ask;
+{open,revise,withdraw,severity,accept,reject,needs-info,suppress,done,reply,list,inbox} ...
+positional arguments:
+{open,revise,withdraw,severity,accept,reject,needs-info,suppress,done,reply,list,inbox} open open a
+request addressed to another project's slug revise answer a needs-info or sharpen an open ask;
 capped at 3 revisions per record withdraw take back a request this project sent; an agent may,
 because it is the sender's own ask and not a verdict. Final for that record: open a new one with
---supersedes accept accept an addressed request; a human decision, or an agent under a ruling that
-covers its sender reject reject it with a reason; rejection is final for that record, and the sender
-can open a new one citing it needs-info ask the sender for more before deciding suppress drop it out
-of the briefing panel; it stays in `request list`, and any later verdict reverses it done report the
-ask as satisfied; an agent claim renders as claimed-and-unverified until the byte-check reply send
-the sender a progress note on a request you accepted; it moves no state, and the request stays owed
-until `done` list list this project's requests, undecided first inbox requests addressed TO this
-project, from every sender, undecided first options: -h, --help show this help message and exit
-Examples: daimon request open --to ~/code/api --ask 'publish the 0.32 schema' --why 'the client
+--supersedes severity change how much a request you sent matters to you; an agent may. It moves no
+state and re-sends nothing: the new level shows on the recipient's next brief, inbox and decide. It
+is not --blocking accept accept an addressed request; a human decision, or an agent under a ruling
+that covers its sender reject reject it with a reason; rejection is final for that record, and the
+sender can open a new one citing it needs-info ask the sender for more before deciding suppress drop
+it out of the briefing panel; it stays in `request list`, and any later verdict reverses it done
+report the ask as satisfied; an agent claim renders as claimed-and-unverified until the byte-check
+reply send the sender a progress note on a request you accepted; it moves no state, and the request
+stays owed until `done` list list this project's requests, undecided first inbox requests addressed
+TO this project, from every sender, undecided first options: -h, --help show this help message and
+exit Examples: daimon request open --to ~/code/api --ask 'publish the 0.32 schema' --why 'the client
 cannot ship without it' --by agent daimon request list daimon request accept q-1a2b3c4d5e6f
 
 === request open ===
 usage: daimon request open [-h] --to PROJECT --ask ASK --why WHY [--title TITLE] [--to-human]
-[--kind {info,work}] [--blocking] [--evidence EVIDENCE] [--supersedes REQUEST_ID] [--anyway] [--by
-{agent}] [--project PROJECT] options: -h, --help show this help message and exit --to PROJECT
-recipient project directory, or its slug written as --to=<slug> (a slug starts with '-', which a
-bare --to would read as an option); `daimon projects` lists both --ask ASK what you are asking that
-project to do --why WHY why it matters; the recipient reads this first --title TITLE optional
-headline of a few words (80 characters at most) that leads wherever the request is listed; the ask
-stays the full text --to-human the ask is for that project's human, not its agent --kind {info,work}
-approval requirement: work (default) waits on a person, info is answerable from the recipient's own
+[--kind {info,work}] [--blocking] [--severity {critical,high,normal,low}] [--severity-reason REASON]
+[--evidence EVIDENCE] [--supersedes REQUEST_ID] [--anyway] [--by {agent}] [--project PROJECT]
+options: -h, --help show this help message and exit --to PROJECT recipient project directory, or its
+slug written as --to=<slug> (a slug starts with '-', which a bare --to would read as an option);
+`daimon projects` lists both --ask ASK what you are asking that project to do --why WHY why it
+matters; the recipient reads this first --title TITLE optional headline of a few words (80
+characters at most) that leads wherever the request is listed; the ask stays the full text
+--to-human the ask is for that project's human, not its agent --kind {info,work} approval
+requirement: work (default) waits on a person, info is answerable from the recipient's own
 artifacts; only a human channel may open one as info --blocking mark the sender as blocked on it; a
-flag on the record, never a claim on the recipient's time --evidence EVIDENCE optional source
-backing the ask; recorded, never resolved --supersedes REQUEST_ID the earlier q-… this ask replaces;
-the lineage renders always --anyway record the ask even when the recipient slug has no bucket yet;
-it is never surfaced there until that project serializes --by {agent} declare yourself an agent;
-omit it only from an interactive terminal, which is the human path --project PROJECT project
-directory (default: DAIMON_PROJECT_DIR, then cwd)
+flag on the record, never a claim on the recipient's time --severity {critical,high,normal,low} how
+much the outcome matters to you, which is not --blocking (whether you are stalled): the recipient's
+lists sort by it. Any level but the default needs --severity-reason --severity-reason REASON one
+line, 80 characters at most (refused past that, never cut), shown with the level; required with
+every level but the default --evidence EVIDENCE optional source backing the ask; recorded, never
+resolved --supersedes REQUEST_ID the earlier q-… this ask replaces; the lineage renders always
+--anyway record the ask even when the recipient slug has no bucket yet; it is never surfaced there
+until that project serializes --by {agent} declare yourself an agent; omit it only from an
+interactive terminal, which is the human path --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === request revise ===
 usage: daimon request revise [-h] [--ask ASK] [--why WHY] [--evidence EVIDENCE] [--title TITLE]
@@ -701,6 +710,14 @@ positional arguments: request_id exact q-… id options: -h, --help show this he
 --reason REASON why the ask no longer stands; the recipient reads it --by {agent} declare yourself
 an agent; omit it only from an interactive terminal --project PROJECT project directory (default:
 DAIMON_PROJECT_DIR, then cwd)
+
+=== request severity ===
+usage: daimon request severity [-h] [--reason REASON] [--by {agent}] [--project PROJECT] request_id
+{critical,high,normal,low} positional arguments: request_id exact q-… id {critical,high,normal,low}
+the new level; the default level clears a raised one options: -h, --help show this help message and
+exit --reason REASON one line, 80 characters at most, shown with the level; required with every
+level but the default --by {agent} declare yourself an agent; omit it only from an interactive
+terminal --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request accept ===
 usage: daimon request accept [-h] [--note NOTE] [--by {agent}] [--project PROJECT] [--slug SLUG]
@@ -752,14 +769,16 @@ an interactive terminal. An agent reply reaches the sender labeled unverified --
 project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request list ===
-usage: daimon request list [-h] [--json] [--project PROJECT] options: -h, --help show this help
-message and exit --json machine-readable output --project PROJECT project directory (default:
-DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request list [-h] [--json] [--min-severity {critical,high,normal,low}] [--project
+PROJECT] options: -h, --help show this help message and exit --json machine-readable output
+--min-severity {critical,high,normal,low} only requests at this severity or a more severe one
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request inbox ===
-usage: daimon request inbox [-h] [--json] [--project PROJECT] options: -h, --help show this help
-message and exit --json machine-readable output --project PROJECT project directory (default:
-DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request inbox [-h] [--json] [--min-severity {critical,high,normal,low}] [--project
+PROJECT] options: -h, --help show this help message and exit --json machine-readable output
+--min-severity {critical,high,normal,low} only requests at this severity or a more severe one
+--project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === relations ===
 usage: daimon relations [-h] {list,show,confirm,reject,retract} ... positional arguments:

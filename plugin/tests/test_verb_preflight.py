@@ -29,6 +29,7 @@ VERBS = [
                         "--why", "b", "--anyway"]),
     ("requests.jsonl", ["request", "revise", QID]),
     ("requests.jsonl", ["request", "withdraw", QID, "--reason", "x"]),
+    ("requests.jsonl", ["request", "severity", QID, "high", "--reason", "x"]),
     ("requests.jsonl", ["request", "accept", QID]),
     ("requests.jsonl", ["request", "reject", QID]),
     ("requests.jsonl", ["request", "needs-info", QID]),

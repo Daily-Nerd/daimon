@@ -199,6 +199,7 @@ def test_short_trust_reason_has_no_detail(project):
 def test_multiple_labeled_lines_render_one_per_line_with_hanging_indent():
     row = {"kind": "request", "id": "q-abc", "headline": "h",
            "detail": "Ask: " + "word " * 40 + "\nReason: short",
+           "severity": requests.DEFAULT_SEVERITY, "severity_reason": "",
            "commands": []}
     card = lifecycle._generic_card(row)
     assert card[0].startswith("[request] q-abc  h")

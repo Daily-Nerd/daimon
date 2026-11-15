@@ -71,7 +71,8 @@ HEADLINE_CHARS = 160
 def _row(*, kind, record_id, slug, headline, waiting_since,
          commands, context="", blocking=False,
          claimed=False, request_state=None, amend=None,
-         detail=None) -> dict:
+         detail=None, severity=requests.DEFAULT_SEVERITY,
+         severity_reason="") -> dict:
     return {
         "kind": kind,
         "id": record_id,
@@ -90,6 +91,11 @@ def _row(*, kind, record_id, slug, headline, waiting_since,
         "context": context,
         "waiting_since": waiting_since,
         "blocking": blocking,
+        # #1348: the request lane's own severity, read off the FOLDED record;
+        # every other lane has no sender and carries the table's default, so
+        # one order key and one renderer read every row without a lane test.
+        "severity": severity,
+        "severity_reason": severity_reason,
         "commands": commands,
         # #978: whether the request lane's record carries an agent's
         # completion claim the record has not yet settled (`done_pending`
@@ -144,7 +150,13 @@ def _order_key(row: dict, seq: int) -> tuple:
     # one rotting. `created_at` is second-resolution and ties routinely, so
     # append order in the ledger breaks it: in an append-only log, first
     # written IS first waiting.
-    return (not row["blocking"], row["waiting_since"] or "", seq,
+    #
+    # #1348: severity sits between blocking and age. A stalled sender still
+    # outranks importance in a backlog, then the more severe ask comes first,
+    # then the oldest. Rows of every lane but `request` carry the default, so
+    # a `low` request sinks below every default ruling and amendment.
+    return (not row["blocking"], requests.severity_rank(row["severity"]),
+            row["waiting_since"] or "", seq,
             _KIND_RANK.get(row["kind"], 9), row["id"])
 
 
@@ -227,6 +239,8 @@ def _request_rows(project_dir, slug, joined=None, *, masked=True,
                      if record.get("from_label") else ""),
             waiting_since=record.get("created_at") or "",
             blocking=bool(record.get("blocking")),
+            severity=record["severity"],
+            severity_reason=record["severity_reason"],
             # #978: reads from THIS folded record only — `record` is
             # already `requests.recipient_join`'s output, never a raw row.
             claimed=bool(record.get("done_pending")),

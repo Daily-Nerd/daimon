@@ -99,8 +99,12 @@ DEFAULT_KIND = "work"
 # own ask back) and `withdrawn_delivered` (the live stamp that told the
 # recipient once). An older reader drops both rows: the withdrawn ask reads as
 # still open there, the direction every earlier widening already fails in.
+#
+# #1348 widens it an eighth time with `severity_set` (the sender changes how
+# much a request matters). An older reader drops the row and the request keeps
+# the severity it had: attention order only, the same safe direction.
 EVENTS = frozenset({
-    "opened", "revised",
+    "opened", "revised", "severity_set",
     "surfaced", "verdict_surfaced", "delivered", "verdict_delivered",
     "owed_delivered", "withdrawn_delivered",
     "needs_info", "accepted", "rejected", "done",
@@ -109,7 +113,8 @@ EVENTS = frozenset({
 # #1346: who may write each event, said ONCE. The fold applies an act only
 # when its row sits in its role's bucket (`row_holds_role`), and the write
 # path refuses the wrong side from the same table, so the two cannot drift.
-#   sender     the project that opened the ask: opened, revised, withdrawn
+#   sender     the project that opened the ask: opened, revised, withdrawn,
+#              severity_set
 #   recipient  the project it was sent to: the verdicts, `done`, `suppressed`
 #   either     not an act on the ask: `replied` is labelled by origin (see
 #              `_reply_from_sender`), and the stamps record what a surface
@@ -121,6 +126,7 @@ ROLE_RECIPIENT = "recipient"
 ROLE_EITHER = "either"
 EVENT_ROLE = {
     "opened": ROLE_SENDER, "revised": ROLE_SENDER, "withdrawn": ROLE_SENDER,
+    "severity_set": ROLE_SENDER,
     "accepted": ROLE_RECIPIENT, "rejected": ROLE_RECIPIENT,
     "needs_info": ROLE_RECIPIENT, "done": ROLE_RECIPIENT,
     "suppressed": ROLE_RECIPIENT,
@@ -287,6 +293,14 @@ _EFFECT_REASONS: dict[str, tuple[str, str]] = {
         EFFECT_IGNORED, "{id}: no-op, the sender withdrew this request and "
         "a withdrawal is final; the sender can open a new one with "
         "--supersedes"),
+    # #1348: the sender's severity.
+    "severity_set": (EFFECT_LANDED, "{id}: severity recorded"),
+    "severity_unreadable": (
+        EFFECT_IGNORED, "{id}: no-op, the severity row names no level this "
+        "build knows, or a level without its reason, and changed nothing"),
+    "severity_settled": (
+        EFFECT_IGNORED, "{id}: no-op, a settled request keeps the severity "
+        "it had"),
 }
 
 
@@ -326,6 +340,14 @@ _CLI_CHANNELS = frozenset({"cli-agent", "cli-tty"})
 # human verdict or by a completion claim, and re-opening it from the sender
 # side would be exactly the assertion the wedge principle forbids.
 _SENDER_MOVABLE = frozenset({"open", "needs-info"})
+# States in which the SENDER is still owed something: an ask nobody answered,
+# one sent back for more, one accepted and not yet done. `done`, `rejected`
+# and `withdrawn` are settled for good. Distinct from `_SENDER_MOVABLE` (which
+# excludes `accepted` on purpose, see its note) and from `is_stale`, which asks
+# whether the RECIPIENT looked and did nothing. Two features ask this same
+# question and read this one set: wall-clock overdue (#1281) and a severity
+# change (#1348).
+_SENDER_OWED = frozenset({"open", "needs-info", "accepted"})
 # Receiver consent for `info` asks starts at this `order` (ns since the epoch,
 # 2026-11-08T02:00:00Z). An agent verdict (`accepted`, `done`) on an `info`
 # ask whose row is ordered BEFORE it keeps the state the old rule gave it, so
@@ -344,6 +366,16 @@ RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
 # this order on a wrong-role row is inert. Same shape as
 # `RECEIVER_CONSENT_FROM_NS`, same `_written_before` helper.
 ROLE_RULE_FROM_NS = 1_794_770_231_000_000_000
+# The events that existed when the rule began, FROZEN: only they can have old
+# ledger rows the exemption protects. An event added later (`withdrawn`,
+# `withdrawn_delivered` came with the rule itself) has no history before the
+# cutoff, so a row of it dated earlier is forged or hand-edited and gets no
+# old rule. Never add to this set.
+_PRE_ROLE_RULE_EVENTS = frozenset({
+    "opened", "revised", "surfaced", "verdict_surfaced", "delivered",
+    "verdict_delivered", "owed_delivered", "needs_info", "accepted",
+    "rejected", "done", "suppressed", "done_verified", "replied",
+})
 # #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
 # `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
 # reopen an accepted record, which is exactly the assertion the wedge
@@ -386,6 +418,9 @@ _EVENT_RANK = {
     # landing in the same instant still reverses a suppression.
     "opened": 0,
     "revised": 1,
+    # #1348: beside `revised`: a same-`order` tie with a verdict folds the
+    # severity first, on the pre-verdict state, which is harmless either way.
+    "severity_set": 1,
     "surfaced": 2,
     "verdict_surfaced": 2,
     "delivered": 2,
@@ -422,6 +457,17 @@ ASK_CHARS = 160
 # every other field, and REFUSED when over (never cut: a cut title is a
 # sentence the sender did not write), exactly as an over-long ask is.
 TITLE_CHARS = 80
+# #1348: how much a request matters to its sender. ONE ordered table, most
+# severe first: argparse choices, the write boundary, the fold, every sort and
+# filter, the MCP schema enum and the docs all read it, and a census test fails
+# when another module spells a level. `normal` is "no severity" and the only
+# default; it is set in the fold's `opened` branch and nowhere else.
+SEVERITIES = ("critical", "high", "normal", "low")
+DEFAULT_SEVERITY = "normal"
+# The reason a non-normal level carries: one line, REFUSED past this (never
+# cut), a separate constant from `TITLE_CHARS` because it changes for its own
+# reason (the briefing byte budget).
+SEVERITY_REASON_CHARS = 80
 _LABEL_MAX = 64
 # The verify_done transcript-speaker role, same bound amendments.py's
 # _ROLE_MAX uses for the identical session-end byte-check shape.
@@ -450,6 +496,107 @@ def headline(record) -> str:
     if title:
         return display.shorten(title, ASK_CHARS)
     return short_ask((record or {}).get("ask"))
+
+
+_SEVERITY_RANK = {level: i for i, level in enumerate(SEVERITIES)}
+# What `_severity_of` returns for a severity part that cannot be read.
+_UNREADABLE = object()
+
+
+def severity_rank(level: str) -> int:
+    """#1348: where `level` sorts, most severe first. Raises `KeyError` on a
+    level outside `SEVERITIES`: a caller holding an unknown level has a bug,
+    and a silent default would hide it."""
+    return _SEVERITY_RANK[level]
+
+
+def severity_line(record: dict) -> str:
+    """#1348: the ONE renderer of a request's severity. Nothing for `normal`
+    (the absence of a severity renders as absence, like `blocking: false`),
+    else a line such as `  High: release waits on this`. Every surface that
+    shows it calls this. Indexes the folded fields directly: the fold gives
+    every record both, so a reader-side default would only hide a record the
+    fold did not build. The reason is bounded again here because the fold
+    reads ledger lines that can be edited on disk (the `headline` precedent)."""
+    level = record["severity"]
+    if level == DEFAULT_SEVERITY:
+        return ""
+    reason = display.shorten(record["severity_reason"], SEVERITY_REASON_CHARS)
+    return f"  {level.capitalize()}: {reason}"
+
+
+def _severity_of(row: dict):
+    """#1348: the ONE reader of a row's severity part, so a ledger line edited
+    on disk or written by another build cannot ride into the fold half-formed.
+
+    `None` when the row carries no `severity` key (valid on `opened`, where it
+    means the default). `(level, reason)` when it is readable: a non-normal
+    level with a non-empty reason, or `normal` with none. `_UNREADABLE` for
+    anything else (an unknown level, a missing reason, a reason on `normal`)."""
+    if "severity" not in row:
+        return None
+    level, reason = row.get("severity"), row.get("severity_reason")
+    if not isinstance(level, str) or level not in _SEVERITY_RANK:
+        return _UNREADABLE
+    if reason is None:
+        reason = ""
+    if not isinstance(reason, str):
+        return _UNREADABLE
+    reason = _SPACE_RE.sub(" ", reason).strip()
+    if (level == DEFAULT_SEVERITY) == bool(reason):
+        return _UNREADABLE
+    return level, reason
+
+
+def _attention_sorted(rows: list[dict]) -> list[dict]:
+    """#1348: the ONE order every capped recipient-side attention feed uses
+    (the decision and owed panels and their live-delivery twins), sorted in
+    place: today's newest-first recency order, then a STABLE sort by severity.
+    Within a level the order is exactly what it was, and a ledger with no
+    severities sorts as it always did. The cap applies after this, so a
+    critical ask beats newer normal ones for the slots and the overflow line
+    counts the rest."""
+    rows.sort(key=_recency, reverse=True)
+    rows.sort(key=lambda r: severity_rank(r["severity"]))
+    return rows
+
+
+def _listing_order(rows, min_severity=None) -> list[dict]:
+    """#1348: the ONE order and filter of the two listing verbs (`request
+    list`, `request inbox`): undecided first, as before, then most severe,
+    then today's recency order. `min_severity` keeps that level and anything
+    more severe; an unknown level is refused here, once, for the CLI, MCP and
+    the host API, which all reach this through the same keyword."""
+    if min_severity is not None and min_severity not in _SEVERITY_RANK:
+        raise RequestError(
+            f"min severity must be one of: {', '.join(SEVERITIES)}")
+    floor = None if min_severity is None else severity_rank(min_severity)
+    kept = [r for r in rows
+            if floor is None or severity_rank(r["severity"]) <= floor]
+    return sorted(kept, key=lambda r: (r["state"] not in _SENDER_MOVABLE,
+                                       severity_rank(r["severity"]),
+                                       *_recency(r)))
+
+
+def _validated_severity(level, reason) -> tuple[str, str]:
+    """#1348: the write boundary of a severity, once, for `open_request` and
+    `set_severity`. Returns `(level, reason)` ready for a row: a level outside
+    the table is refused, `normal` carries no reason, every other level needs
+    one, and a reason over `SEVERITY_REASON_CHARS` is REFUSED, never cut."""
+    if level not in _SEVERITY_RANK:
+        raise RequestError(
+            f"severity must be one of: {', '.join(SEVERITIES)}")
+    reason = _scrub("severity_reason", reason, required=False,
+                    limit=SEVERITY_REASON_CHARS)
+    if level == DEFAULT_SEVERITY:
+        if reason:
+            raise RequestError(
+                f"{DEFAULT_SEVERITY} is the default severity and carries no "
+                "reason")
+        return level, ""
+    if not reason:
+        raise RequestError(f"a {level} severity needs a one-line reason")
+    return level, reason
 
 
 # Every field of a ledger row that can hold plaintext (#645 discipline).
@@ -1254,6 +1401,12 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 "to": str(row.get("to") or ""),
                 "to_human": row.get("to_human") is True,
                 "blocking": row.get("blocking") is True,
+                # #1348: the ONE place the default severity is set. Every
+                # record carries both, so `--json`, MCP and the host API
+                # return an explicit `normal` and no consumer owns a default.
+                # The row's own severity is applied below, when readable.
+                "severity": DEFAULT_SEVERITY,
+                "severity_reason": "",
                 "kind": founder_kind,
                 # #961 slice 4 review round 2 (C1): the SAME founder
                 # resolution `_covered_by_policy` matches against, so a
@@ -1395,7 +1548,16 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             title = str(row.get("title") or "")
             if title:
                 out[q_id]["title"] = title
-            _note_effect(out[q_id], row, "opened")
+            # #1348: a severity part this build cannot read never drops the
+            # ask: it lands as the default, and the effect says why.
+            parsed = _severity_of(row)
+            if parsed is _UNREADABLE:
+                _note_effect(out[q_id], row, "opened", severity="unreadable")
+            else:
+                if parsed is not None:
+                    out[q_id]["severity"], out[q_id]["severity_reason"] = (
+                        parsed)
+                _note_effect(out[q_id], row, "opened")
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
@@ -1404,7 +1566,8 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
         # and a row can be hand-edited or written by an older build, so the
         # reader decides again, from the one table both read.
         role = EVENT_ROLE.get(event, ROLE_EITHER)
-        if not (_written_before(row, ROLE_RULE_FROM_NS)
+        if not ((event in _PRE_ROLE_RULE_EVENTS
+                 and _written_before(row, ROLE_RULE_FROM_NS))
                 or row_holds_role(
                     role, origin=str(row.get("_origin_slug") or ""),
                     from_slug=current["from_slug"], to=current["to"],
@@ -1672,6 +1835,23 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             _note_effect(current, row, "already_suppressed"
                          if current["suppressed"] else "suppressed")
             current["suppressed"] = True
+            continue
+        if event == "severity_set":
+            # #1348: the sender changes how much the ask matters. Not a
+            # `revised`: that row moves needs-info back to open, discards a
+            # pending claim, uses up a revision and opens a new epoch, and a
+            # change of importance does none of those. This moves no state,
+            # revision, epoch, claim or recency; the row is counted in history.
+            parsed = _severity_of(row)
+            if parsed is None or parsed is _UNREADABLE:
+                _note_effect(current, row, "severity_unreadable")
+                continue
+            if current["state"] not in _SENDER_OWED:
+                _note_effect(current, row, "severity_settled")
+                continue
+            current["severity"], current["severity_reason"] = parsed
+            current["history_count"] += 1
+            _note_effect(current, row, "severity_set")
             continue
         if event == "revised":
             if current["state"] not in _SENDER_MOVABLE:
@@ -1951,13 +2131,13 @@ def get(request_id: str, project_dir=None) -> dict | None:
     return records(project_dir=project_dir).get(request_id)
 
 
-def listing(project_dir=None) -> list[dict]:
+def listing(project_dir=None, *, min_severity=None) -> list[dict]:
     """`listed(project_dir).rows`: the listing for the callers that have no
     use for the notes. See `listed`."""
-    return listed(project_dir).rows
+    return listed(project_dir, min_severity=min_severity).rows
 
 
-def listed(project_dir=None) -> "Inbox":
+def listed(project_dir=None, *, min_severity=None) -> "Inbox":
     """Every record in this bucket, undecided first — the `request list`
     order, and the notes of the cross-bucket read behind it. Suppressed records are HERE by construction (D5): suppression
     takes away panel placement, never visibility.
@@ -1984,11 +2164,7 @@ def listed(project_dir=None) -> "Inbox":
     which `fold`'s own gate excludes regardless: that must stay human-only,
     the same rule `accept()`'s write boundary already holds for it."""
     folded, notes = _sent_fold(project_dir)
-    return Inbox(sorted(
-        folded.values(),
-        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       *_recency(r))),
-        notes)
+    return Inbox(_listing_order(folded.values(), min_severity), notes)
 
 
 def _sent_fold(project_dir) -> tuple[dict[str, dict], tuple]:
@@ -2097,7 +2273,8 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
                  blocking: bool = False, to_human: bool = False,
                  evidence: str = "", supersedes: str = "",
                  kind: str = DEFAULT_KIND, author: str | None = None,
-                 title: str = "", project_dir=None) -> str:
+                 title: str = "", severity: str = DEFAULT_SEVERITY,
+                 severity_reason: str = "", project_dir=None) -> str:
     """Open a request addressed to another project's slug.
 
     Slug SHAPE is validated here; whether it names a bucket that exists is
@@ -2135,6 +2312,13 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     `TITLE_CHARS` (as an over-long ask is; a cut title is words the sender
     did not write). `supersedes` does not inherit one: the replacement
     carries its own.
+
+    #1348: `severity` is how much the outcome matters to the sender, from
+    `SEVERITIES`; any level but `normal` needs a one-line `severity_reason`
+    (refused past `SEVERITY_REASON_CHARS`, never cut) and `normal` takes none.
+    Validated here, once. Either channel may set it: it lowers no approval
+    bar. A `normal` request writes exactly the row it always did, and
+    `supersedes` does not carry a severity over.
     """
     project_dir = config.resolve_project_dir(project_dir)
     if scope.parse_bucket(str(to or "")) is None:
@@ -2170,6 +2354,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
     why = _scrub("why", why)
     evidence = _scrub("evidence", evidence, required=False)
     title = _scrub("title", title, required=False, limit=TITLE_CHARS)
+    severity, severity_reason = _validated_severity(severity, severity_reason)
     order = clock.now_ns()
     q_id = make_id(slug, ask, why, _ts(order))
     if get(q_id, project_dir=project_dir) is not None:
@@ -2190,6 +2375,9 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
         row["evidence"] = evidence
     if title:
         row["title"] = title
+    if severity != DEFAULT_SEVERITY:
+        row["severity"] = severity
+        row["severity_reason"] = severity_reason
     if supersedes:
         row["supersedes"] = supersedes
     if kind == "info" and of_channel("requests", channel) != "human":
@@ -2308,14 +2496,7 @@ def withdraw(request_id: str, *, reason: str, channel: str,
     changes nothing and the refusal says which. Returns the row's `event_id`
     like every write verb."""
     why = _text("note", reason)
-    record = sent_record(request_id, project_dir=project_dir)
-    if record is None:
-        if (_REQUEST_ID_RE.fullmatch(str(request_id or ""))
-                and recipient_join(project_dir=project_dir).get(request_id)):
-            raise RequestError(
-                f"{request_id} was sent to this project, and only its sender "
-                "can withdraw it; to decline it run `daimon request reject`")
-        raise RequestError(f"unknown request: {request_id}")
+    record = _sent_or_refuse(request_id, "withdraw", project_dir)
     if record["state"] in ("done", "rejected", "withdrawn"):
         raise RequestError(
             f"{request_id} is {record['state']}; "
@@ -2330,6 +2511,54 @@ def withdraw(request_id: str, *, reason: str, channel: str,
     row["note"] = why
     if not append(row, project_dir=project_dir, writer=Writer.HUMAN):
         raise RequestError("withdrawal not written")
+    return row["event_id"]
+
+
+def _sent_or_refuse(request_id: str, act: str, project_dir) -> dict:
+    """The request this project SENT, as `request list` renders it, or the
+    refusal a sender-only act (`withdraw`, `severity`) gives: one for an ask
+    that was sent TO this project (only its sender may), one for an id nobody
+    knows."""
+    record = sent_record(request_id, project_dir=project_dir)
+    if record is None:
+        if (_REQUEST_ID_RE.fullmatch(str(request_id or ""))
+                and recipient_join(project_dir=project_dir).get(request_id)):
+            raise RequestError(
+                f"{request_id} was sent to this project, and only its sender "
+                f"can {act} it; to decline it run `daimon request reject`")
+        raise RequestError(f"unknown request: {request_id}")
+    return record
+
+
+def set_severity(request_id: str, level: str, *, reason: str = "",
+                 channel: str, author: str | None = None,
+                 project_dir=None) -> str:
+    """#1348: the sender changes how much its own ask matters, through its own
+    event and not `revise` (a `revised` row would move needs-info back to
+    open, discard a pending claim, use a revision and re-deliver the ask live,
+    and none of that is a change of importance). Either channel: severity
+    lowers no approval bar.
+
+    Allowed while the sender is still owed something (`_SENDER_OWED`: open,
+    needs-info, accepted); a done, rejected or withdrawn request keeps the
+    severity it had. `normal` clears a raised level. A change that changes
+    nothing is refused, as `revise` refuses one. Returns the row's `event_id`
+    like every write verb."""
+    level, reason = _validated_severity(level, reason)
+    record = _sent_or_refuse(request_id, "change its severity", project_dir)
+    if record["state"] not in _SENDER_OWED:
+        raise RequestError(
+            f"{request_id} is {record['state']}; a settled request keeps "
+            "the severity it had")
+    if (level, reason) == (record["severity"], record["severity_reason"]):
+        raise RequestError(f"{request_id} already has that severity; "
+                           "severity changes nothing")
+    row = _stamp("severity_set", request_id, channel, author=author)
+    row["severity"] = level
+    if reason:
+        row["severity_reason"] = reason
+    if not append(row, project_dir=project_dir, writer=Writer.HUMAN):
+        raise RequestError("severity not written")
     return row["event_id"]
 
 
@@ -3086,23 +3315,21 @@ def join(project_dir=None) -> Join:
         _skipped_notes(skipped, degraded))
 
 
-def inbox(project_dir=None) -> Inbox:
+def inbox(project_dir=None, *, min_severity=None) -> Inbox:
     """Every request addressed to this project, undecided first — the
     `request inbox` order, and the notes of the join that produced it.
     Suppressed records are HERE by construction (D3/D5): suppression takes
-    away panel placement, never visibility."""
+    away panel placement, never visibility. #1348: severity sorts between
+    undecided-first and recency, and `min_severity` keeps that level and
+    anything more severe."""
     got = join(project_dir)
-    return Inbox(sorted(
-        got.by_id.values(),
-        key=lambda r: (r["state"] not in _SENDER_MOVABLE,
-                       *_recency(r))),
-        got.notes)
+    return Inbox(_listing_order(got.by_id.values(), min_severity), got.notes)
 
 
-def inbox_listing(project_dir=None) -> list[dict]:
+def inbox_listing(project_dir=None, *, min_severity=None) -> list[dict]:
     """`inbox(project_dir).rows`: the listing for the callers that have no use
     for the notes (anamnesis iterates it in-process)."""
-    return inbox(project_dir).rows
+    return inbox(project_dir, min_severity=min_severity).rows
 
 
 def _deserves_attention(record: dict, project_dir=None) -> bool:
@@ -3146,8 +3373,7 @@ def owed_renderable(project_dir=None) -> dict:
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
             if _is_owed(r, project_dir=project_dir)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
                        got.notes)
@@ -3246,8 +3472,7 @@ def owed_deliverable(session: str, project_dir=None) -> dict:
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _is_owed(r, project_dir=project_dir)
             and needs_owed_delivered_stamp(r, session)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
@@ -3268,8 +3493,7 @@ def inbox_renderable(project_dir=None) -> dict:
     shape, and several tests exercise it directly."""
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
@@ -3289,8 +3513,7 @@ def decision_renderable(project_dir=None) -> dict:
     got = join(project_dir)
     rows = [r for r in got.by_id.values()
             if _deserves_attention(r, project_dir=project_dir)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return _with_notes({"rows": rows[:RENDER_CAP],
                         "overflow": max(0, len(rows) - RENDER_CAP)},
                        got.notes)
@@ -3320,8 +3543,7 @@ def deliverable(session: str, project_dir=None) -> dict:
     rows = [r for r in recipient_join(project_dir=project_dir).values()
             if _deserves_attention(r, project_dir=project_dir)
             and needs_delivered_stamp(r, session)]
-    rows.sort(key=_recency,
-              reverse=True)
+    _attention_sorted(rows)
     return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
@@ -3374,12 +3596,6 @@ def is_stale(record: dict, project_dir=None) -> bool:
 
 # ---- #1281: wall-clock overdue, the sender's side of liveness --------------
 
-# States in which the SENDER is still owed something: an ask nobody answered,
-# one sent back for more, one accepted and not yet done. `done` and `rejected`
-# are settled for good. Distinct from `_SENDER_MOVABLE` (which excludes
-# `accepted` on purpose, see its note) and from `is_stale`, which asks whether
-# the RECIPIENT looked and did nothing.
-_OVERDUE_STATES = frozenset({"open", "needs-info", "accepted"})
 
 
 def _ts_seconds(ts) -> float | None:
@@ -3419,7 +3635,7 @@ def is_overdue(record: dict, now_ns: int | None = None) -> bool:
 
     A record whose last movement cannot be read is NOT called overdue: the
     flag asserts an age, and an unknown one is not one."""
-    if record.get("state") not in _OVERDUE_STATES:
+    if record.get("state") not in _SENDER_OWED:
         return False
     age = age_seconds(record, now_ns)
     return age is not None and age >= config.request_overdue_days() * 86_400

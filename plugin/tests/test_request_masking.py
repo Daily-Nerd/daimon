@@ -296,3 +296,52 @@ def test_a_title_only_value_is_absent_from_the_serialized_dump_bytes(
     for dump in dumps:
         assert m.FORGOTTEN not in dump
         assert secret not in dump
+
+
+# ---- #1348: a severity reason is masked exactly like an ask on every dump
+
+
+def test_a_quarantined_severity_reason_is_withheld_and_the_level_is_not(
+        tmp_checkpoint_dir, capsys):
+    rid = _ask(ask="a plain ask", severity="high",
+               severity_reason=m.QUARANTINED)
+    tid = m.quarantine()
+    rows = _json(capsys, "request", "inbox", "--json")
+    row = next(r for r in rows if r["request_id"] == rid)
+    assert row["severity"] == "high"
+    assert row["severity_reason"] == f"[withheld: quarantine {tid}]"
+    rc, out, _ = m.run(capsys, "request", "inbox")
+    assert rc == 0 and "SECRET" not in out
+
+    own = requests.open_request(to=OTHER_SLUG, ask="from us", why="w",
+                                severity="low", severity_reason=m.QUARANTINED,
+                                channel="cli-tty", project_dir=m.PROJECT)
+    rows = _json(capsys, "request", "list", "--json")
+    row = next(r for r in rows if r["request_id"] == own)
+    assert row["severity_reason"] == f"[withheld: quarantine {tid}]"
+    rc, out, _ = m.run(capsys, "request", "list")
+    assert rc == 0 and "SECRET" not in out
+
+
+def test_a_severity_reason_never_reaches_any_dump_bytes_once_forgotten_or_a_secret(
+        tmp_checkpoint_dir, capsys, monkeypatch):
+    from daimon_briefing import mcp_tools
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    _ask(ask="a plain ask", severity="critical", severity_reason=m.FORGOTTEN)
+    _ask(ask="another plain ask", severity="high",
+         severity_reason=f"rotate {secret}")
+    requests.open_request(to=OTHER_SLUG, ask="from us", why="w",
+                          severity="low", severity_reason=m.FORGOTTEN,
+                          channel="cli-tty", project_dir=m.PROJECT)
+    m.forget()
+    dumps = []
+    for argv in (("request", "inbox", "--json"), ("request", "list", "--json"),
+                 ("request", "inbox"), ("request", "list")):
+        rc, out, _ = m.run(capsys, *argv)
+        assert rc == 0
+        dumps.append(out)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", m.PROJECT)
+    dumps.append(mcp_tools.HANDLERS["requests_inbox"]({}).text)
+    for dump in dumps:
+        assert m.FORGOTTEN not in dump
+        assert secret not in dump

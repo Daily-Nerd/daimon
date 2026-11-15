@@ -29,6 +29,20 @@ projects daimon already knows about, with a suggestion on a likely typo.
 `--title` is optional: a few words, 80 characters at most, naming what the
 request is about. It leads the request wherever it is listed, and the ask
 keeps the full text. Without one, the first sentence of the ask stands in.
+
+`--severity` says how much the outcome matters to you, on a fixed scale:
+`critical`, `high`, `normal` and `low`. `normal` is the default and shows
+nothing. Any other level needs `--severity-reason`, one line of 80 characters
+at most (longer is refused, not cut), and it is shown with the level:
+`High: the release waits on this`. It is not `--blocking`: severity is
+how much it matters, `--blocking` is that you are stalled. The recipient's
+decision and owed panels, `request inbox`, `request list` and `daimon decide`
+order by it, keeping the age order inside a level, and the panels still show at
+most three rows: severity changes which three. `request inbox --min-severity
+high` (and the MCP `min_severity` argument) shows that level and anything
+more severe. Either channel may set it, because it lowers no approval bar. A
+request that replaces another with `--supersedes` carries no severity over.
+
 Two kinds of ask exist:
 
 - **`work`**, the default: asks the recipient to change something or spend
@@ -60,6 +74,14 @@ Once opened, a handful of verbs move the record forward:
   `reject`, `accept`, `needs-info`, `suppress` or `done` its own ask: each
   request event belongs to one role, and a row written from the other
   side is inert.
+- **`severity`** changes it later: `daimon request severity <id> <level>
+  --reason "<why>"`, from either channel, while the request is open,
+  needs-info or accepted (`normal` clears it). It is its own event and not a
+  revision: it moves no state, uses none of the three revisions, discards no
+  completion claim and re-sends nothing. The new level shows on the
+  recipient's next brief, in `inbox` and in `daimon decide`. Only the sender
+  can change it, and a request that is done, rejected or withdrawn keeps the
+  level it had.
 - **`accept` / `reject` / `needs-info`** are the recipient's decision, and
   they are human-only: an interactive terminal is required. The one carved
   exception covers both kinds alike: an agent can accept an `info` or a

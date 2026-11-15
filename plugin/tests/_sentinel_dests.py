@@ -340,6 +340,8 @@ DESTS = {
         "ask": ("INE", "R6"),
         "why": ("INE", "R6"),
         "title": ("INE", "R6"),
+        "severity": ("INE", "R6"),
+        "severity_reason": ("INE", "R6"),
         "to_human": ("INE", "R6"),
         "kind": ("INE", "R6"),
         "blocking": ("INE", "R6"),
@@ -398,6 +400,13 @@ DESTS = {
         "by": ("INE", "X-HUMAN"),
         "project": ("OUT", "R1"),
     },
+    "request severity": {
+        "request_id": ("OUT", "R2"),
+        "level": ("INE", "R6"),
+        "reason": ("INE", "R6"),
+        "by": ("INE", "X-HUMAN"),
+        "project": ("OUT", "R1"),
+    },
     "request reply": {
         "request_id": ("OUT", "R2"),
         "note": ("INE", "R6"),
@@ -407,10 +416,12 @@ DESTS = {
     },
     "request list": {
         "json": ("OUT", "R4"),
+        "min_severity": ("OUT", "R4"),
         "project": ("OUT", "R1"),
     },
     "request inbox": {
         "json": ("OUT", "R4"),
+        "min_severity": ("OUT", "R4"),
         "project": ("OUT", "R1"),
     },
     "relations list": {

@@ -96,6 +96,18 @@ When you open one (`daimon request open --to <dir> --ask "<what>" --why
 characters. It is the headline the recipient sees first; without one the
 headline is a guess cut from the start of the ask.
 
+To say how much an outcome matters to you, open with `--severity critical`,
+`high` or `low` and a one-line `--severity-reason "<why>"` (80 characters at
+most, refused past that). Leave it out for normal, which is the default and
+carries no reason. This is not `--blocking`: severity says how much the
+outcome matters, `--blocking` says you are stalled until it lands. The
+recipient's lists, the briefing panels and `daimon decide` order by severity
+and show it with the reason. To change it later run `daimon request severity
+<id> <level> --reason "<why>" --by agent` (`normal` clears it): it moves no
+state, uses no revision and sends no nudge, and it works while the request is
+still open, needs-info or accepted. `daimon request inbox --min-severity
+high` shows only that level and anything more severe.
+
 When the briefing shows an active `policy:` line, you may open an ask of
 that kind to that recipient with `daimon request open --kind info`;
 anything asking for a change or effort still stays `work`.

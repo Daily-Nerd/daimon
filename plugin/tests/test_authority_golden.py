@@ -126,8 +126,11 @@ _OPEN_POLICY = ("", "p-recipient", "info", "open", "agent",
 # included, is still hashed exactly as before.
 # #1346: the withdrawal fields join them: they are what a `withdrawn` row adds
 # to the record, and no event this matrix replayed before can set them.
+# #1348: `severity` and `severity_reason` join them: every record now carries
+# the default, and no event this matrix replays sets anything else.
 _OBSERVED_KEYS = ("row_effects", "superseded_claims", "withdrawn_by",
-                  "withdrawn_at", "withdrawn_from", "withdrawn_delivered")
+                  "withdrawn_at", "withdrawn_from", "withdrawn_delivered",
+                  "severity", "severity_reason")
 
 
 def _without_observed(records):
