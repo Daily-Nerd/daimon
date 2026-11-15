@@ -151,8 +151,7 @@ Para un host que corre un solo home de daimon con un directorio de proyecto por 
 
 ## Memoria de equipo
 
-Mirror de memoria compartida opt-in. Mira [memoria de equipo](../team/team.md)
-para el flujo completo.
+Mirror de memoria compartida opt-in. Mirá [memoria de equipo](../team/team.md) para el modelo y [configurar la memoria de equipo](../team/setup.md) para los pasos. El formato de `daimon-team.toml` está en [configuración del equipo](../team/configuration.md).
 
 | Variable | Default | Qué hace |
 |---|---|---|

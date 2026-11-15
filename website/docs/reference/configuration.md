@@ -140,11 +140,11 @@ For a host that runs one daimon home with one project directory per person. A si
 
 ## Team memory
 
-Opt-in shared-memory mirror. See [docs/team.md](../team/team.md) for the full workflow.
+Opt-in shared-memory mirror. See [team memory](../team/team.md) for the model and [set up team memory](../team/setup.md) for the steps. The `daimon-team.toml` format is in [team configuration](../team/configuration.md).
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_TEAM` | off | When truthy, mirror each checkpoint into the shared team dir so `brief --team` can surface teammates. Gates **writes** only, reads of the team dir are always allowed. A synced remote additionally requires the project to be in its scope allowlist (see [team.md](../team/team.md#which-projects-sync-the-scope-allowlist-default-closed)); out-of-scope projects mirror to the local dir only. |
+| `DAIMON_TEAM` | off | When truthy, mirror each checkpoint into the shared team dir so `brief --team` can surface teammates. Gates **writes** only, reads of the team dir are always allowed. A synced remote additionally requires the project to be in its scope allowlist (see [team.md](../team/configuration.md#which-projects-sync-the-scope-allowlist-default-closed)); out-of-scope projects mirror to the local dir only. |
 | `DAIMON_AUTHOR` | git `user.name`, then OS user | Team author identity used to namespace your checkpoints. Falls back to `git config user.name`, then the OS username, then `unknown`. |
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the shared team-memory mirror. |
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path for this machine's sessions (relative, e.g. `core/api-gateway`). Overrides the sidecar's `daimon-team.toml` mapping and the origin-derived fallback when routing checkpoints under `projects/`. |
