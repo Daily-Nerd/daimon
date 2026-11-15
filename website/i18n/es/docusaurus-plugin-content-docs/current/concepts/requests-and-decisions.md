@@ -20,29 +20,7 @@ registrada en su propio bucket. Toda solicitud abarca entonces dos buckets,
 y la vista combinada que ve cualquiera de las dos partes se arma al momento
 de leer; nadie escribe nunca en el ledger de otro proyecto.
 
-```sh
-daimon request open --to <directorio> --ask "…" --why "…" --title "…"
-```
-
-`--to` toma el directorio del proyecto destinatario, validado contra los
-proyectos que daimon ya conoce, con una sugerencia si hay un typo parecido.
-`--title` es opcional: unas pocas palabras, 80 caracteres como máximo, que
-dicen de qué trata el pedido. Lo encabeza donde se lista, y el ask conserva
-el texto completo. Sin título, lo reemplaza la primera oración del ask.
-
-`--severity` dice cuánto importa el resultado para quien pide, en una escala
-fija: `critical`, `high`, `normal` y `low`. `normal` es el default y no muestra
-nada. Cualquier otro nivel necesita `--severity-reason`, una línea de 80
-caracteres como máximo (más largo se rechaza, no se corta), y se muestra junto
-al nivel: `High: the release waits on this`. No es `--blocking`: la severidad
-es cuánto importa, `--blocking` es que estás frenado. Los paneles de decisión y
-de pendientes del destinatario, `request inbox`, `request list` y `daimon
-decide` ordenan por eso, y dentro de un nivel conservan el orden por
-antigüedad; los paneles siguen mostrando como máximo tres filas: la severidad
-cambia cuáles tres. `request inbox --min-severity high` (y el argumento
-`min_severity` de MCP) muestra ese nivel y los más severos. Cualquier canal
-puede fijarla, porque no baja ninguna barra de aprobación. Un pedido que
-reemplaza a otro con `--supersedes` no hereda la severidad.
+Cómo abrir una solicitud, seguirla y responder una está en la [guía para pedirle algo a otro proyecto](../guides/ask-another-project.md).
 
 Hay dos tipos de pedido:
 
@@ -51,87 +29,16 @@ Hay dos tipos de pedido:
   aceptado.
 - **`info`**: se puede responder con los propios artefactos del
   destinatario. Responder uno expone lo que sabe el proyecto destinatario,
-  así que primero decide su lado (ver `accept` más abajo). Abrir un pedido
+  así que primero decide su lado (ver [Quién decide](#quién-decide) más abajo). Abrir un pedido
   `info` normalmente requiere un canal humano también del lado del emisor. Un agente solo
   puede abrir uno bajo una [regla](./rulings.md) activa de tipo `verb=open`
   que su propio proyecto ratificó para ese destinatario, y el registro lo
   dice claramente, así que un pedido abierto por una regla nunca parece uno
   que abrió una persona a mano.
 
-Una vez abierta, un puñado de verbos la hacen avanzar:
+### Quién decide
 
-- **`revise`** responde un needs-info, o afina el pedido, hasta tres veces
-  por registro; al cuarto intento se abre una solicitud nueva con
-  `--supersedes` en vez de reescribir en silencio, así que el linaje queda
-  visible.
-- **`withdraw`** es la forma en que un remitente retira su propio pedido:
-  `daimon request withdraw <id> --reason "<por qué>"`, desde cualquier canal,
-  porque retirar tu propio pedido es un acto del remitente y no una decisión del destinatario.
-  Funciona sobre un pedido abierto, en needs-info, aceptado o con un reclamo
-  pendiente, y lo deja como `withdrawn`, con el motivo en `note`; no se
-  completa ningún campo de decisión. Una solicitud ya terminada, rechazada o
-  retirada queda como está, y el comando dice por qué. Es definitivo para ese
-  registro: para volver a pedir, usá `--supersedes`. Un destinatario que ya
-  había aceptado el pedido recibe un aviso de una línea, una sola vez, por la
-  entrega en vivo. Solo el remitente puede retirarlo, y un remitente ya no
-  puede hacer `reject`, `accept`, `needs-info`, `suppress` ni `done` sobre su
-  propio pedido: cada evento de una solicitud pertenece a un rol, y una fila
-  escrita desde el otro lado queda inerte.
-- **`severity`** la cambia después: `daimon request severity <id> <nivel>
-  --reason "<por qué>"`, desde cualquier canal, mientras el pedido está
-  abierto, en needs-info o aceptado (`normal` la borra). Es un evento propio y
-  no una revisión: no mueve el estado, no gasta ninguna de las tres
-  revisiones, no descarta un reclamo de finalización y no vuelve a enviar nada.
-  El nuevo nivel aparece en el próximo brief del destinatario, en `inbox` y en
-  `daimon decide`. Solo el remitente puede cambiarla, y un pedido terminado,
-  rechazado o retirado conserva el nivel que tenía.
-- **`accept` / `reject` / `needs-info`** son la decisión del destinatario, y
-  son solo para humanos: hace falta una terminal interactiva. La única
-  excepción tallada vale igual para los dos tipos: un agente solo puede
-  aceptar un pedido `info` o `work` cuando una
-  [regla de permiso de solicitud](./rulings.md#los-permisos-de-solicitud-también-son-una-clase-de-regla)
-  activa del proyecto destinatario (`verb=accept`, el `kind` del pedido,
-  `by=agent`) nombra a ese emisor puntual, y el registro entonces también
-  nombra la regla. Vale en todo canal de agente. Sin esa regla el pedido
-  sigue abierto en la cola de decisiones del propio destinatario, y el
-  rechazo al agente nombra al emisor y la regla que una persona ratificaría.
-  Un `done` de un agente sobre un pedido que nadie aceptó es un reclamo que
-  espera a una persona, igual que en `work`, y `reply` necesita un registro
-  aceptado. Los accepts escritos antes de esta regla conservan su estado.
-  `reject` es definitivo para ese registro: el emisor abre una solicitud
-  nueva en vez de volver a pedir.
-- **`suppress`** saca un pedido del panel de briefing propio del
-  destinatario, solo atención, solo humano; el registro sigue totalmente
-  visible en `list` e `inbox`, y cualquier decisión posterior revierte la
-  supresión.
-- **`done`** reporta el pedido como satisfecho, desde cualquiera de los dos
-  canales (humano o agente), por el proyecto al que se envió el pedido. El reclamo de un agente se renderiza sin verificar hasta que el
-  próximo fin de sesión del destinatario verifica byte a byte la cita de
-  evidencia contra su propia transcripción; un `done` humano se renderiza
-  como está. En una solicitud `work` que nadie aceptó todavía, el `done` de
-  un agente registra el reclamo pero deja abierta la cola de decisión, a la
-  espera de `accept` o `reject`.
-- **`reply`** le manda al remitente una nota de avance sobre una solicitud
-  que aceptaste y no terminaste. No mueve ningún estado, así que la
-  solicitud sigue pendiente hasta el `done`. La nota de un agente llega
-  marcada como un reclamo de agente sin verificar. Cualquier otro estado la
-  rechaza y nombra el verbo que corresponde. Una respuesta tardía se
-  muestra una vez, aunque la decisión ya haya salido del panel.
-
-```sh
-daimon request list    # las solicitudes que este proyecto envió
-daimon request inbox   # las solicitudes dirigidas A este proyecto
-```
-
-Las dos aceptan `--json`. El propio briefing lleva cuatro paneles chicos con
-los mismos datos: "solicitudes esperando por vos" y "solicitudes que aceptaste
-y todavía debés" del lado del destinatario, y "decisiones sobre solicitudes que
-enviaste" y "solicitudes que enviaste y nadie mueve" del lado del emisor, cada uno
-con un tope y una línea de exceso bien visible en vez de un descarte
-silencioso. El [servidor MCP](../reference/mcp.md) expone la vista del
-destinatario en modo solo lectura, como la herramienta `requests_inbox`;
-ningún verbo que escriba una solicitud es alcanzable por MCP, y
-`daimon_brief` en sí nunca lleva contenido de solicitudes.
+**`accept` / `reject` / `needs-info`** son la decisión del destinatario, y son solo para humanos: hace falta una terminal interactiva. La única excepción tallada vale igual para los dos tipos: un agente solo puede aceptar un pedido `info` o `work` cuando una [regla de permiso de solicitud](./rulings.md#los-permisos-de-solicitud-también-son-una-clase-de-regla) activa del proyecto destinatario (`verb=accept`, el `kind` del pedido, `by=agent`) nombra a ese emisor puntual, y el registro entonces también nombra la regla. Vale en todo canal de agente. Sin esa regla el pedido sigue abierto en la cola de decisiones del propio destinatario, y el rechazo al agente nombra al emisor y la regla que una persona ratificaría. Un `done` de un agente sobre un pedido que nadie aceptó es un reclamo que espera a una persona, igual que en `work`, y `reply` necesita un registro aceptado. Los accepts escritos antes de esta regla conservan su estado. `reject` es definitivo para ese registro: el emisor abre una solicitud nueva en vez de volver a pedir.
 
 ## `decide`: qué está esperando por vos
 
@@ -140,10 +47,7 @@ este proyecto, la contraparte de lectura de cerrar uno con `resolve`.
 `daimon decide` es su espejo del lado humano: todo lo que de verdad está
 esperando una persona, cada cosa con el comando exacto que la cierra.
 
-```sh
-daimon decide
-daimon decide --all-projects
-```
+Los comandos están en la [guía de decidir y ratificar](../guides/decide-and-ratify.md).
 
 Lo que entra en esta cola es estructural, no una cuestión de gusto: un
 registro pertenece acá solo cuando su propio camino de escritura rechaza un
@@ -163,14 +67,6 @@ Una enmienda dice que el estado de un ítem del briefing avanzó mientras el
 reverify (nada se puso viejo): es el verbo para el paso intermedio, con
 evidencia, como "se aprobó el issue al que hacía referencia" o "se destrabó
 el bloqueo".
-
-```sh
-daimon amend propose <item-id> --change progressed \
-  --evidence "se mergeó el PR" --by agent
-daimon amend ratify a-0f1e2d3c4b5a
-daimon amend reject a-0f1e2d3c4b5a --note "el PR se mergeó pero el ítem es de otro repo"
-daimon amend list
-```
 
 `--change` es un conjunto cerrado: `progressed`, `blocked` o `changed`. La
 `--evidence` es una cita textual de la transcripción, no un resumen,

@@ -11,7 +11,7 @@ Instalar las piezas de daimon en una máquina, llenar el primer briefing y servi
 Esta página se genera a partir de los parsers de argumentos de la CLI. No la edites: cambiá el flag o su texto de ayuda en el código y corré `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` desde `plugin/`. El texto de cada flag está en inglés porque es el que imprime la CLI.
 :::
 
-Ver también: [Configuración](../../reference/configuration.md), [Servidor MCP](../../reference/mcp.md).
+Ver también: [Importar sesiones pasadas](../../guides/import-past-sessions.md), [Actualizar daimon](../../guides/upgrade.md), [Resolución de problemas](../../guides/troubleshooting.md), [Configuración](../../reference/configuration.md), [Servidor MCP](../../reference/mcp.md).
 
 ## `daimon configure`
 

@@ -101,9 +101,9 @@ descubre uno: pásalo por ruta,
 `--project` escrito en la línea de comandos, porque nada en el archivo puede
 confirmar el proyecto. Cómo una corrida planifica, se detiene y se reanuda
 está en
-[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas),
+[Importar sesiones pasadas](../guides/import-past-sessions.md),
 y los rechazos, el chequeo de proyecto incluido, están en la
-[fila de `daimon import`](../reference/cli/setup.md#daimon-import).
+[guía de importación](../guides/import-past-sessions.md).
 
 ## MCP
 

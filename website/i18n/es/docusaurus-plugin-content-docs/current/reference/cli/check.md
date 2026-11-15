@@ -11,7 +11,7 @@ Preguntar por qué se confía en un item y comprobar lo que el store promete.
 Esta página se genera a partir de los parsers de argumentos de la CLI. No la edites: cambiá el flag o su texto de ayuda en el código y corré `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` desde `plugin/`. El texto de cada flag está en inglés porque es el que imprime la CLI.
 :::
 
-Ver también: [Clases de confianza](../../concepts/trust-classes.md), [Recibos](../../concepts/receipts.md), [Visor](../../reference/viewer.md), [Relaciones](../../reference/relations.md).
+Ver también: [Inspeccionar un item](../../guides/inspect-an-item.md), [Clases de confianza](../../concepts/trust-classes.md), [Recibos](../../concepts/receipts.md), [Visor](../../reference/viewer.md), [Relaciones](../../reference/relations.md).
 
 ## `daimon why`
 

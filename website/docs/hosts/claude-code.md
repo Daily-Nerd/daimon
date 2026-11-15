@@ -215,8 +215,8 @@ because a code may be added.
 lists `~/.claude/projects/<slug>/*.jsonl` and matches each file on the working
 directory its rows recorded, never on the directory name, which is a lossy
 slug. The plan, the bound and the resume are in
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions);
-every refusal is in the [`daimon import` row](../reference/cli/setup.md#daimon-import).
+[Import past sessions](../guides/import-past-sessions.md);
+every refusal is in the [command notes](../reference/cli/notes.md).
 
 ## Teach the agent the protocol
 

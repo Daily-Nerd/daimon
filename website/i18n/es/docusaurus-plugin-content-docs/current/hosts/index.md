@@ -19,7 +19,7 @@ profundidad del soporte varía según los eventos de hook que cada host expone.
 
 La columna Importación es lo que `daimon import` hace con las sesiones pasadas
 de un host, el primer llenado acotado de
-[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas).
+[Importar sesiones pasadas](../guides/import-past-sessions.md).
 Un host marcado «automática» se descubre solo con `--project`. Uno marcado
 «por ruta» entra por `--transcript`, porque nada en su archivo nombra el
 proyecto. Uno marcado «no soportada» no tiene una raíz de transcripciones que

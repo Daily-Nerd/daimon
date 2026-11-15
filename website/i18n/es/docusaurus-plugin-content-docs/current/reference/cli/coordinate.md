@@ -11,7 +11,7 @@ Pedirle algo a otro proyecto y responder lo que te piden.
 Esta página se genera a partir de los parsers de argumentos de la CLI. No la edites: cambiá el flag o su texto de ayuda en el código y corré `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` desde `plugin/`. El texto de cada flag está en inglés porque es el que imprime la CLI.
 :::
 
-Ver también: [Pedidos y decisiones](../../concepts/requests-and-decisions.md).
+Ver también: [Pedirle algo a otro proyecto](../../guides/ask-another-project.md), [Decidir y ratificar](../../guides/decide-and-ratify.md), [Pedidos y decisiones](../../concepts/requests-and-decisions.md).
 
 ## `daimon request`
 

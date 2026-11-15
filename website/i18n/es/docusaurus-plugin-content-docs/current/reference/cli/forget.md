@@ -11,7 +11,7 @@ Quitar el contenido de un item y levantar un olvido.
 Esta página se genera a partir de los parsers de argumentos de la CLI. No la edites: cambiá el flag o su texto de ayuda en el código y corré `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` desde `plugin/`. El texto de cada flag está en inglés porque es el que imprime la CLI.
 :::
 
-Ver también: [Ciclo de vida](../../concepts/lifecycle.md).
+Ver también: [Corregir la memoria](../../guides/correct-memory.md), [Ciclo de vida](../../concepts/lifecycle.md).
 
 ## `daimon forget`
 

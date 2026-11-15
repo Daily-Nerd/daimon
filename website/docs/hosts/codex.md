@@ -114,8 +114,8 @@ transcript text.
 `$CODEX_HOME/sessions` and `archived_sessions` (`~/.codex` by default) and
 matches each rollout on the `cwd` its `session_meta` row recorded; a rollout
 present in both roots counts once.
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions)
-walks through a run; the [`daimon import` row](../reference/cli/setup.md#daimon-import) lists
+[Import past sessions](../guides/import-past-sessions.md)
+walks through a run; the [import guide](../guides/import-past-sessions.md) lists
 the refusals.
 
 ## MCP

@@ -11,7 +11,7 @@ Remove an item's content and lift a forget.
 This page is generated from the CLI's argument parsers. Do not edit it: change the flag or its help text in the code, then run `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` from `plugin/`.
 :::
 
-See also: [Lifecycle](../../concepts/lifecycle.md).
+See also: [Correct memory](../../guides/correct-memory.md), [Lifecycle](../../concepts/lifecycle.md).
 
 ## `daimon forget`
 

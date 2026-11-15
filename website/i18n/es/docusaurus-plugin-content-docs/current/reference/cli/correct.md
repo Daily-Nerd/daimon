@@ -5,13 +5,13 @@ description: "Cada comando `daimon` del grupo Corregir: uso, argumentos y valore
 
 # Corregir
 
-Cambiar lo que daimon arrastra: cerrar, reafirmar, enmendar, refutar y dictaminar.
+Cambiar lo que daimon arrastra: cerrar, reafirmar, enmendar, refutar y fijar reglas.
 
 :::note
 Esta página se genera a partir de los parsers de argumentos de la CLI. No la edites: cambiá el flag o su texto de ayuda en el código y corré `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` desde `plugin/`. El texto de cada flag está en inglés porque es el que imprime la CLI.
 :::
 
-Ver también: [Ciclo de vida](../../concepts/lifecycle.md), [Dictámenes](../../concepts/rulings.md), [Conocimiento negativo](../../concepts/negative-knowledge.md).
+Ver también: [Corregir la memoria](../../guides/correct-memory.md), [Reglas y checks](../../guides/rulings-and-checks.md), [Ciclo de vida](../../concepts/lifecycle.md), [Reglas](../../concepts/rulings.md), [Conocimiento negativo](../../concepts/negative-knowledge.md).
 
 ## `daimon resolve`
 

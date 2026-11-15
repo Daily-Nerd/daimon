@@ -228,8 +228,8 @@ host: lista `~/.claude/projects/<slug>/*.jsonl` y compara cada archivo por el
 directorio de trabajo que registraron sus filas, nunca por el nombre del
 directorio, que es un slug con pérdida. El plan, el tope y la reanudación
 están en
-[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas);
-cada rechazo está en la [fila de `daimon import`](../reference/cli/setup.md#daimon-import).
+[Importar sesiones pasadas](../guides/import-past-sessions.md);
+cada rechazo está en las [notas de comandos](../reference/cli/notes.md).
 
 ## Enséñale el protocolo al agente
 

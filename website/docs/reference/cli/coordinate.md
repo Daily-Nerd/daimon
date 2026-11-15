@@ -11,7 +11,7 @@ Ask another project for something and answer what is asked of you.
 This page is generated from the CLI's argument parsers. Do not edit it: change the flag or its help text in the code, then run `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` from `plugin/`.
 :::
 
-See also: [Requests and decisions](../../concepts/requests-and-decisions.md).
+See also: [Ask another project](../../guides/ask-another-project.md), [Decide and ratify](../../guides/decide-and-ratify.md), [Requests and decisions](../../concepts/requests-and-decisions.md).
 
 ## `daimon request`
 

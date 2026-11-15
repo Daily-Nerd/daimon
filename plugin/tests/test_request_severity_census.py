@@ -98,7 +98,9 @@ DOCS = {
 @pytest.mark.parametrize("lang", sorted(DOCS))
 def test_the_website_docs_cover_flag_verb_filter_and_mcp_argument(lang):
     root = DOCS[lang]
-    concepts = (root / "concepts" / "requests-and-decisions.md").read_text(
+    # The how-to for severity lives in the guide; the flags and the filter are
+    # generated from the CLI, the argument from the MCP schema.
+    concepts = (root / "guides" / "ask-another-project.md").read_text(
         encoding="utf-8")
     cli = (root / "reference" / "cli" / "coordinate.md").read_text(encoding="utf-8")
     mcp = (root / "reference" / "mcp.md").read_text(encoding="utf-8")

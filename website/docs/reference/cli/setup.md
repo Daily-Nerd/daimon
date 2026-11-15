@@ -11,7 +11,7 @@ Install daimon's pieces on a machine, fill the first briefing and serve the tool
 This page is generated from the CLI's argument parsers. Do not edit it: change the flag or its help text in the code, then run `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` from `plugin/`.
 :::
 
-See also: [Configuration](../../reference/configuration.md), [MCP server](../../reference/mcp.md).
+See also: [Import past sessions](../../guides/import-past-sessions.md), [Upgrade daimon](../../guides/upgrade.md), [Troubleshooting](../../guides/troubleshooting.md), [Configuration](../../reference/configuration.md), [MCP server](../../reference/mcp.md).
 
 ## `daimon configure`
 

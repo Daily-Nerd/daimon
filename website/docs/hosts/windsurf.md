@@ -91,9 +91,9 @@ one: pass it by path,
 (or the `.md` daimon accumulates under `~/.daimon/windsurf/transcripts/`),
 with `--project` typed on the command line, since nothing in the file can
 confirm the project. How a run plans, stops and resumes is in
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions),
+[Import past sessions](../guides/import-past-sessions.md),
 and the refusals, the project check included, are in the
-[`daimon import` row](../reference/cli/setup.md#daimon-import).
+[import guide](../guides/import-past-sessions.md).
 
 ## MCP
 

@@ -11,7 +11,7 @@ Ask why an item is trusted and prove what the store promises.
 This page is generated from the CLI's argument parsers. Do not edit it: change the flag or its help text in the code, then run `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` from `plugin/`.
 :::
 
-See also: [Trust classes](../../concepts/trust-classes.md), [Receipts](../../concepts/receipts.md), [Viewer](../../reference/viewer.md), [Relations](../../reference/relations.md).
+See also: [Inspect an item](../../guides/inspect-an-item.md), [Trust classes](../../concepts/trust-classes.md), [Receipts](../../concepts/receipts.md), [Viewer](../../reference/viewer.md), [Relations](../../reference/relations.md).
 
 ## `daimon why`
 

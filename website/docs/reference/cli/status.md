@@ -11,7 +11,7 @@ Look at the store, its ledgers and the other projects.
 This page is generated from the CLI's argument parsers. Do not edit it: change the flag or its help text in the code, then run `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` from `plugin/`.
 :::
 
-See also: [Team memory](../../team/team.md).
+See also: [Troubleshooting](../../guides/troubleshooting.md), [Team memory](../../team/team.md).
 
 ## `daimon status`
 

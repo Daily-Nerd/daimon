@@ -11,7 +11,7 @@ Mirar el store, sus ledgers y los otros proyectos.
 Esta página se genera a partir de los parsers de argumentos de la CLI. No la edites: cambiá el flag o su texto de ayuda en el código y corré `UPDATE_DOCS_REFERENCE=1 uv run pytest tests/test_docs_generated.py` desde `plugin/`. El texto de cada flag está en inglés porque es el que imprime la CLI.
 :::
 
-Ver también: [Memoria de equipo](../../team/team.md).
+Ver también: [Resolución de problemas](../../guides/troubleshooting.md), [Memoria de equipo](../../team/team.md).
 
 ## `daimon status`
 

@@ -19,43 +19,7 @@ ruling says what must hold from now on.
 
 ## The lifecycle
 
-Four verbs move a ruling through its life:
-
-```sh
-daimon ruling propose --subject "public posts" --scope publishing \
-  --evidence issue:693 --by agent
-daimon ruling ratify r-1a2b3c4d5e6f
-daimon ruling revise r-1a2b3c4d5e6f --evidence issue:700
-daimon ruling retire r-1a2b3c4d5e6f
-```
-
-(`propose` and `revise` also take the flag that carries the rule text
-itself; see the [CLI reference](../reference/cli/index.md) for the exact syntax.)
-
-- **`propose`** founds a candidate. An agent proposal stays a candidate:
-  nothing renders, nothing enforces, until a human acts on it.
-- **`ratify`** activates it. This is the only verb that turns a candidate
-  into a standing rule, and it is deliberately theatrical: it prints the
-  full rule text, discloses what it will mean for every future session, and
-  asks for an explicit `y`. The append is bound to the exact text it just
-  showed you, by content hash, so a race between the display and the
-  confirm can never activate different words than the ones you read.
-- **`revise`** changes the text, scope, or evidence. On an active ruling, an
-  agent's revise writes a *proposal* and the ruling keeps its current text
-  until a human accepts it with `ratify` (which shows the pending proposal,
-  not the old text, before asking again). A human's revise on an active
-  ruling applies immediately, no separate ratify needed for the edit itself.
-- **`retire`** ends it. A human retires directly; an agent's retire is
-  recorded as a proposal and the ruling stands. Evidence is optional here,
-  because a rule that simply stopped applying often has no citation to give.
-  The ledger records why the ruling ended: a candidate that never earned
-  ratification reads **rejected**, an active ruling that stopped applying
-  reads **retired**. Both end in the same state, `overturned`; the word is
-  the label `ruling show` and `ruling list` print, so months later you can
-  tell a proposal you turned down from a rule you used and then dropped.
-  `daimon decide` lists only candidates and offers turning one down as
-  `reject`; the command it gives is `ruling retire`. Rulings ended before
-  this label existed keep reading `retired`.
+Four verbs move a ruling through its life: `propose`, `ratify`, `revise` and `retire`. Only a human `ratify` turns a candidate into a standing rule. The [rulings guide](../guides/rulings-and-checks.md) walks through each verb.
 
 ## Authority channels
 
@@ -107,13 +71,6 @@ picture.
 A ruling can carry a `check`: a shell script matched against a command
 string, run before that command executes on a host that supports it.
 
-```sh
-daimon ruling propose --subject "commit messages" --scope git \
-  --evidence issue:900 \
-  --check-body-file check.sh --check-match '^git commit' \
-  --check-intent enforce
-```
-
 The author asks for an *intent* (`enforce`, `warn`, or `record-only`); the
 host delivers a *mode*, which is always the weaker of what was asked and
 what that host can actually do. Claude Code delivers `enforce` and `warn` as
@@ -159,11 +116,6 @@ for what `kind` and the accept/open verbs actually do.
 A ruling does not have to belong to one repository. Ratify it against a
 plain directory above your projects, one that is not itself a git working
 tree, and every project underneath inherits it:
-
-```sh
-daimon ruling propose --project ~/work --subject "shared secrets" \
-  --scope "every repo under ~/work" --evidence issue:1092 --ratify
-```
 
 The directory qualifies as a layer once it sits at or below your home
 directory, is not shadowed by a `.git` anywhere at or above it, and has its

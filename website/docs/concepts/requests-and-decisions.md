@@ -20,28 +20,7 @@ Every request therefore spans two buckets, and the combined view either side
 sees is assembled at read time; nobody ever writes into another project's
 ledger.
 
-```sh
-daimon request open --to <dir> --ask "…" --why "…" --title "…"
-```
-
-`--to` takes the recipient's project directory, validated against the
-projects daimon already knows about, with a suggestion on a likely typo.
-`--title` is optional: a few words, 80 characters at most, naming what the
-request is about. It leads the request wherever it is listed, and the ask
-keeps the full text. Without one, the first sentence of the ask stands in.
-
-`--severity` says how much the outcome matters to you, on a fixed scale:
-`critical`, `high`, `normal` and `low`. `normal` is the default and shows
-nothing. Any other level needs `--severity-reason`, one line of 80 characters
-at most (longer is refused, not cut), and it is shown with the level:
-`High: the release waits on this`. It is not `--blocking`: severity is
-how much it matters, `--blocking` is that you are stalled. The recipient's
-decision and owed panels, `request inbox`, `request list` and `daimon decide`
-order by it, keeping the age order inside a level, and the panels still show at
-most three rows: severity changes which three. `request inbox --min-severity
-high` (and the MCP `min_severity` argument) shows that level and anything
-more severe. Either channel may set it, because it lowers no approval bar. A
-request that replaces another with `--supersedes` carries no severity over.
+How to open a request, follow it and answer one is in the [guide to asking another project](../guides/ask-another-project.md).
 
 Two kinds of ask exist:
 
@@ -49,81 +28,16 @@ Two kinds of ask exist:
   effort, and it waits on a person there before it counts as accepted.
 - **`info`**: answerable from the recipient's own existing artifacts.
   Answering one exposes what the recipient project knows, so the recipient's
-  side decides first (see `accept` below). Opening an `info` ask normally
+  side decides first (see [Who decides](#who-decides) below). Opening an `info` ask normally
   requires a human
   channel on the sender's side too. An agent may open one only under an
   active `verb=open` [ruling](./rulings.md) its own project ratified for
   that recipient, and the record then says so plainly, so a ruling-opened
   ask never looks like one a person opened by hand.
 
-Once opened, a handful of verbs move the record forward:
+### Who decides
 
-- **`revise`** answers a needs-info reply, or sharpens the ask, up to three
-  times per record; a fourth attempt opens a new request with
-  `--supersedes` instead, so the lineage stays visible rather than silently
-  rewritten.
-- **`withdraw`** is how a sender takes its own ask back: `daimon request
-  withdraw <id> --reason "<why>"`, from either channel, because retracting
-  your own ask is the sender's act and not the recipient's decision. It works on an open,
-  needs-info, accepted or claim-pending ask and ends it as `withdrawn`, with
-  the reason in `note`; no decision field is set. A done, rejected or
-  already withdrawn request is left as it is, and the command says why. It
-  is final for that record: ask again with `--supersedes`. A recipient that
-  had already accepted the ask is told once, in one line, through live
-  delivery. Only the sender can withdraw, and a sender can no longer
-  `reject`, `accept`, `needs-info`, `suppress` or `done` its own ask: each
-  request event belongs to one role, and a row written from the other
-  side is inert.
-- **`severity`** changes it later: `daimon request severity <id> <level>
-  --reason "<why>"`, from either channel, while the request is open,
-  needs-info or accepted (`normal` clears it). It is its own event and not a
-  revision: it moves no state, uses none of the three revisions, discards no
-  completion claim and re-sends nothing. The new level shows on the
-  recipient's next brief, in `inbox` and in `daimon decide`. Only the sender
-  can change it, and a request that is done, rejected or withdrawn keeps the
-  level it had.
-- **`accept` / `reject` / `needs-info`** are the recipient's decision, and
-  they are human-only: an interactive terminal is required. The one carved
-  exception covers both kinds alike: an agent can accept an `info` or a
-  `work` ask only when an active [request-policy ruling](./rulings.md#request-policies-are-a-ruling-class-too)
-  of the recipient project (`verb=accept`, the ask's `kind`, `by=agent`)
-  names that exact sender, and the record then names the ruling too. This
-  holds on every agent channel. Without such a ruling the ask stays open in
-  the recipient's own decision queue, and the agent's refusal names the
-  sender and the ruling a person would ratify. An agent's `done` on an ask
-  nobody has accepted is a claim waiting for a person, the same as for
-  `work`, and `reply` needs an accepted record. Accepts written before this
-  rule keep their state.
-  Rejection is final for that record: the sender opens a new request rather
-  than asking again.
-- **`suppress`** drops a request out of the recipient's own briefing panel,
-  attention only, human-only; the record stays fully visible in `list` and
-  `inbox`, and any later decision reverses the suppression.
-- **`done`** reports the ask as satisfied, from either channel (human or agent), by the project the request was sent to. An agent's
-  claim renders as unverified until the recipient's next session-end
-  byte-checks the evidence quote against its own transcript; a human `done`
-  renders as stated. On a `work` request nobody has accepted yet, an
-  agent's `done` records the claim but leaves the decision queue open,
-  waiting for `accept` or `reject`.
-- **`reply`** sends the sender a progress note on a request you accepted
-  and have not finished. It moves no state, so the request stays owed until
-  `done`. An agent's note reaches the sender labeled as an unverified agent
-  claim. Any other state refuses it and names the verb that fits. A late
-  reply is shown once, even after the decision aged out of the panel.
-
-```sh
-daimon request list    # this project's own sent requests
-daimon request inbox   # requests addressed TO this project
-```
-
-Both take `--json`. The briefing itself carries four small panels drawn from
-the same data: the recipient's "requests waiting on you" and "requests you
-accepted and still owe," and the sender's "decisions on requests you sent"
-and "requests you sent that nobody is moving," each capped with a loud overflow line
-rather than a silent drop. The [MCP server](../reference/mcp.md) exposes the
-recipient's view read-only, as the `requests_inbox` tool; no request-writing
-verb is reachable over MCP, and `daimon_brief` itself never carries request
-content.
+**`accept` / `reject` / `needs-info`** are the recipient's decision, and they are human-only: an interactive terminal is required. The one carved exception covers both kinds alike: an agent can accept an `info` or a `work` ask only when an active [request-policy ruling](./rulings.md#request-policies-are-a-ruling-class-too) of the recipient project (`verb=accept`, the ask's `kind`, `by=agent`) names that exact sender, and the record then names the ruling too. This holds on every agent channel. Without such a ruling the ask stays open in the recipient's own decision queue, and the agent's refusal names the sender and the ruling a person would ratify. An agent's `done` on an ask nobody has accepted is a claim waiting for a person, the same as for `work`, and `reply` needs an accepted record. Accepts written before this rule keep their state. Rejection is final for that record: the sender opens a new request rather than asking again.
 
 ## `decide`: what is waiting on you
 
@@ -132,10 +46,7 @@ read counterpart to closing one with `resolve`. `daimon decide` is its
 human-side mirror: everything actually waiting on a person, each with the
 exact command that closes it.
 
-```sh
-daimon decide
-daimon decide --all-projects
-```
+The commands are in the [decide and ratify guide](../guides/decide-and-ratify.md).
 
 What qualifies is structural, not a matter of taste: a record belongs on
 this queue only when its own write path refuses a non-human channel, the
@@ -154,14 +65,6 @@ stays open. Not a resolution (the loop has not closed) and not a reverify
 (nothing about it went stale): it is the verb for the middle, evidence-
 carrying step, such as "the referenced issue got approved" or "the blocker
 cleared."
-
-```sh
-daimon amend propose <item-id> --change progressed \
-  --evidence "the PR merged" --by agent
-daimon amend ratify a-0f1e2d3c4b5a
-daimon amend reject a-0f1e2d3c4b5a --note "the PR merged but the item covers a different repo"
-daimon amend list
-```
 
 `--change` is a closed set: `progressed`, `blocked`, or `changed`. The
 `--evidence` is a verbatim transcript quote, not a summary, byte-checked
