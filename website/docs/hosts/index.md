@@ -1,5 +1,5 @@
 ---
-description: "Which agent hosts daimon supports and how deep each goes: capture and briefing injection on Claude Code, Codex, Gemini CLI and Windsurf."
+description: "Which agent hosts daimon supports and how deep each goes: capture and briefing injection on Claude Code, Codex, Kimi Code, Gemini CLI and Windsurf."
 ---
 
 # Host setup guides
@@ -11,7 +11,7 @@ hook events each host actually exposes.
 
 | Host | Install | Capture | Briefing injection | Import | Status |
 |---|---|---|---|---|---|
-| [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) or manual `hook/daimon-hooks.py install` | `SessionEnd` hook spawns `daimon serialize` detached | `SessionStart` hook injects the briefing; `UserPromptSubmit` hook adds proactive recall | automatic: `~/.claude/projects/<slug>/*.jsonl`, matched on the recorded cwd | live-validated daily |
+| [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) or manual `hook/daimon-hooks.py install` | `SessionEnd` hook spawns `daimon serialize` detached | `SessionStart` hook injects the briefing; `UserPromptSubmit` hook adds proactive recall (plugin only) | automatic: `~/.claude/projects/<slug>/*.jsonl`, matched on the recorded cwd | live-validated daily |
 | [Codex](./codex.md) | `daimon hooks install codex` | `SessionEnd` hook serializes on graceful end; throttled `Stop` hook covers everything else | `SessionStart` hook injects via `additionalContext` | automatic: `$CODEX_HOME/sessions` and `archived_sessions`, matched on the `session_meta` cwd | live-validated capture (since 2026-08-06) |
 | [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (from a clone) | `SessionEnd` hook spawns `daimon serialize` once `transcript_path` is non-empty (gemini-cli v0.21.0 or later; the `gemini-cli#14715` stub is fixed there) | `SessionStart` hook injects via `additionalContext` | unsupported (no registered root) | capture unverified: no real Gemini session run through serialize since the upstream fix |
 | [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Throttled serialize on `pre_user_prompt` / `post_cascade_response(_with_transcript)` | None: Cascade has no session-start-equivalent event; the skill instructs the agent to run `daimon brief --team` in the terminal at session start | path-given (records no project, pass `--transcript`) | live-validated |

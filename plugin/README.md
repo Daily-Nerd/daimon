@@ -75,14 +75,21 @@ your shell profile). Kill switch: `DAIMON_DISABLE=1`.
 
 The plugin registers the `SessionStart`/`SessionEnd` hooks itself.
 
-**Windsurf** (and other hosts that ship packaged hooks):
+**Windsurf** (and any host that ships packaged hooks):
 
 ```sh
 daimon hooks install windsurf    # copies the hook script + prints the registration snippet
 daimon hooks list                # hosts with packaged hook scripts
 ```
 
-**Codex and other hosts** use the manual hook installer from a repository clone — see
+**Codex and Kimi Code** use the same packaged installer:
+
+```sh
+daimon hooks install codex
+daimon hooks install kimi
+```
+
+**Gemini CLI** uses the manual `hook/gemini-hooks.py` from a repository clone, see
 the [GitHub docs](https://github.com/Daily-Nerd/daimon).
 
 Then end a session → a checkpoint is written; start the next → the briefing appears.
@@ -103,7 +110,7 @@ Hooks capture your sessions; the skill teaches the agent on the other side to re
 briefing at session start and treat `verbatim` items as immutable quotes:
 
 ```sh
-daimon skill install claude    # also: codex, windsurf, cursor, gemini
+daimon skill install claude    # also: codex, windsurf, cursor, gemini, kimi
 daimon skill list              # which scopes each host supports
 ```
 

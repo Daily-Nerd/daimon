@@ -1,5 +1,5 @@
 ---
-description: "Que hosts soporta daimon y hasta donde llega cada uno: captura e inyeccion de briefings en Claude Code, Codex, Gemini CLI y Windsurf."
+description: "Que hosts soporta daimon y hasta donde llega cada uno: captura e inyeccion de briefings en Claude Code, Codex, Kimi Code, Gemini CLI y Windsurf."
 ---
 
 # Guías de configuración por host
@@ -11,7 +11,7 @@ profundidad del soporte varía según los eventos de hook que cada host expone.
 
 | Host | Instalación | Captura | Inyección del briefing | Importación | Estado |
 |---|---|---|---|---|---|
-| [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) o manual `hook/daimon-hooks.py install` | El hook `SessionEnd` lanza `daimon serialize` en segundo plano | El hook `SessionStart` inyecta el briefing; el hook `UserPromptSubmit` agrega recall proactivo | automática: `~/.claude/projects/<slug>/*.jsonl`, por el cwd registrado | validado en uso real a diario |
+| [Claude Code](./claude-code.md) | Plugin (`/plugin install daimon@daimon`) o manual `hook/daimon-hooks.py install` | El hook `SessionEnd` lanza `daimon serialize` en segundo plano | El hook `SessionStart` inyecta el briefing; el hook `UserPromptSubmit` agrega recall proactivo (solo plugin) | automática: `~/.claude/projects/<slug>/*.jsonl`, por el cwd registrado | validado en uso real a diario |
 | [Codex](./codex.md) | `daimon hooks install codex` | El hook `SessionEnd` serializa al cierre ordenado; el hook `Stop` con throttle cubre el resto | El hook `SessionStart` inyecta vía `additionalContext` | automática: `$CODEX_HOME/sessions` y `archived_sessions`, por el cwd de `session_meta` | captura validada en uso real (desde 2026-08-06) |
 | [Gemini CLI](./gemini.md) | Manual `hook/gemini-hooks.py install` (desde un clon) | El hook `SessionEnd` lanza `daimon serialize` cuando `transcript_path` no está vacío (gemini-cli v0.21.0 o posterior; el stub de `gemini-cli#14715` está corregido ahí) | El hook `SessionStart` inyecta vía `additionalContext` | no soportada (sin raíz registrada) | captura no verificada: ninguna sesión real de Gemini pasó por serialize desde la corrección upstream |
 | [Windsurf (Cascade)](./windsurf.md) | `daimon hooks install windsurf` | Serialización con throttle en `pre_user_prompt` / `post_cascade_response(_with_transcript)` | Ninguna: Cascade no tiene evento equivalente a inicio de sesión; la skill instruye al agente a ejecutar `daimon brief --team` en la terminal al empezar | por ruta (no registra proyecto, pasa `--transcript`) | validado en uso real |

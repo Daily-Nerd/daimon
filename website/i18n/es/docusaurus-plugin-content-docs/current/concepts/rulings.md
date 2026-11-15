@@ -157,8 +157,9 @@ check, o junto con uno. Dos formas, según el `verb`:
 
 - `sender=<slug> kind=work|info verb=accept by=agent` deja que el propio
   agente de ese proyecto emisor registre `accept` sobre una solicitud
-  `work` que este proyecto le debe, sin que una persona intervenga para ese
-  emisor puntual.
+  `work` o `info` que este proyecto le debe, sin que una persona intervenga para ese
+  emisor puntual. Para `info`, la regla es el consentimiento de este proyecto
+  para exponer lo que sabe.
 - `to=<slug> kind=info verb=open by=agent` deja que el propio agente de
   este proyecto abra una solicitud de tipo `info` hacia ese destinatario,
   también sin que ninguna persona la toque.
