@@ -142,8 +142,9 @@ A ruling can grant a request-handling permission instead of, or alongside,
 a check. Two shapes, chosen by `verb`:
 
 - `sender=<slug> kind=work|info verb=accept by=agent` lets that sender
-  project's own agent record `accept` on a `work` request this project owes
-  it, without a person in the loop for that specific sender.
+  project's own agent record `accept` on a `work` or `info` request this project owes
+  it, without a person in the loop for that specific sender. For `info`, the
+  ruling is this project's consent to expose what it knows.
 - `to=<slug> kind=info verb=open by=agent` lets this project's own agent
   open an `info`-kind ask toward that recipient, again with no person
   touching it.

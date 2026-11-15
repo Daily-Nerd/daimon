@@ -10,7 +10,7 @@
 
 Daimon is a **dream-briefing skill** for coding agents. At session end it writes a small cognitive checkpoint; at the next session's start it reconstructs that into a short, skimmable briefing — "while you were away / here's where we left off." The agent resumes from a faithful prior state instead of confidently guessing.
 
-The primary integration is native host hooks (Claude Code, Codex, Windsurf) shelling out to the `daimon` CLI; an opt-in read-only MCP server covers hosts without hooks. See [Runtime Architecture](./RUNTIME-ARCHITECTURE.md) for the current component map and [hosts/](./hosts/) for the current adapter matrix.
+The primary integration is native host hooks (Claude Code, Codex, Kimi Code, Windsurf) shelling out to the `daimon` CLI; an opt-in read-only MCP server covers hosts without hooks. See [Runtime Architecture](./RUNTIME-ARCHITECTURE.md) for the current component map and [hosts/](./hosts/) for the current adapter matrix.
 
 ---
 

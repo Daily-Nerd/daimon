@@ -173,6 +173,20 @@ aparecer más seguido, lo que lo inyectaría en más transcripts, lo que
 produciría más reafirmaciones — un ciclo que mide cuántas veces daimon se
 mostró un ítem a sí mismo, y nada sobre el mundo.
 
+## Cuarentena
+
+Una etiqueta dice cómo se capturó un valor. Una cuarentena dice que una
+persona decidió que el valor no es seguro para actuar. Mientras una cuarentena
+está activa, el valor se retiene de todo briefing, recall y lectura MCP del
+proyecto, y se publica al equipo para que las lecturas de un compañero también
+lo retengan.
+
+Un agente solo puede proponer una (`daimon trust propose --by agent`), que
+queda como candidata. Una candidata sigue siendo una propuesta hasta que una persona corre
+`daimon trust confirm`; `dismiss` la rechaza y `release` levanta una
+cuarentena activa. Mirá la
+[referencia del CLI](../reference/cli.md) para el conjunto completo de verbos.
+
 ## VERIFY BEFORE TRUSTING
 
 Los briefings incluyen una sección de ítems que describen estado que pudo

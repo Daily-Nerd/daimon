@@ -105,7 +105,7 @@ Una vez abierta, un puñado de verbos la hacen avanzar:
   visible en `list` e `inbox`, y cualquier decisión posterior revierte la
   supresión.
 - **`done`** reporta el pedido como satisfecho, desde cualquiera de los dos
-  lados. El reclamo de un agente se renderiza sin verificar hasta que el
+  canales (humano o agente), por el proyecto al que se envió el pedido. El reclamo de un agente se renderiza sin verificar hasta que el
   próximo fin de sesión del destinatario verifica byte a byte la cita de
   evidencia contra su propia transcripción; un `done` humano se renderiza
   como está. En una solicitud `work` que nadie aceptó todavía, el `done` de

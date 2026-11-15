@@ -23,7 +23,7 @@ emerged, but they are not the current component map.
 flowchart LR
     User["Developer"]
 
-    Hosts["AI coding hosts<br/>Claude Code, Codex, Gemini,<br/>Windsurf, and Hermes"]
+    Hosts["AI coding hosts<br/>Claude Code, Codex, Kimi Code,<br/>Gemini, Windsurf, and Hermes"]
     Daimon["Daimon local runtime"]
     LLM["Configured LLM backend"]
     Local["Local Daimon state"]
@@ -56,6 +56,7 @@ flowchart TB
     subgraph HostProducts["Host products"]
         Claude["Claude Code"]
         Codex["Codex"]
+        Kimi["Kimi Code"]
         Gemini["Gemini"]
         Windsurf["Windsurf"]
         Hermes["Hermes"]

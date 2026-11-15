@@ -42,7 +42,9 @@ python3 hook/daimon-hooks.py status
 
 Install copia los scripts de hook a `~/.claude/hooks/` y los registra bajo
 `SessionStart` / `SessionEnd` / `PreToolUse` en `~/.claude/settings.json` (idempotente; los
-settings se respaldan antes de cada mutación). Requiere el CLI `daimon` en el
+settings se respaldan antes de cada mutación). El recall proactivo (el hook
+`UserPromptSubmit` de más abajo) viene solo con el plugin; la instalación
+manual registra únicamente estos tres eventos. Requiere el CLI `daimon` en el
 PATH — `uv tool install 'daimon-briefing[pretty]'`, mira el
 [inicio rápido](../getting-started/quickstart) — y los hooks también aceptan
 el alias obsoleto `daimon-briefing` como respaldo. Después de actualizar el

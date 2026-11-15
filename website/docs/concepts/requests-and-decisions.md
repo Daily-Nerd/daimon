@@ -99,7 +99,7 @@ Once opened, a handful of verbs move the record forward:
 - **`suppress`** drops a request out of the recipient's own briefing panel,
   attention only, human-only; the record stays fully visible in `list` and
   `inbox`, and any later decision reverses the suppression.
-- **`done`** reports the ask as satisfied, from either side. An agent's
+- **`done`** reports the ask as satisfied, from either channel (human or agent), by the project the request was sent to. An agent's
   claim renders as unverified until the recipient's next session-end
   byte-checks the evidence quote against its own transcript; a human `done`
   renders as stated. On a `work` request nobody has accepted yet, an

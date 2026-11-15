@@ -159,6 +159,19 @@ often, which would inject it into more transcripts, which would produce more
 restatements — a loop that measures how often daimon showed an item to itself
 rather than anything about the world.
 
+## Quarantine
+
+A tag says how a value was captured. A quarantine says a person decided the
+value is unsafe to act on. While a quarantine is active, the value is withheld
+from every briefing, recall and MCP read of the project, and it is published
+to the team so a teammate's reads withhold it too.
+
+An agent can only propose one (`daimon trust propose --by agent`), which lands
+a candidate. A candidate stays a proposal until a person runs
+`daimon trust confirm`; `dismiss` rejects it, and `release` lifts an active
+quarantine. See the
+[CLI reference](../reference/cli.md) for the full verb set.
+
 ## VERIFY BEFORE TRUSTING
 
 Briefings carry a section of items describing state that may have changed

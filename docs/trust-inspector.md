@@ -336,8 +336,8 @@ cure and the run exits 4; run it again after fixing the cause. A forget made
 before the key row existed is a single id row that a reopen still lifts.
 `--resume` writes the missing key row and prints one line with the count, and
 from then on only `unforget` lifts those too. `--only <phase>` runs one phase,
-and `--republish` is the publish phase (`--resume --only publish`); it goes in
-the next release. `--dry-run` previews a resume (how many forgets, how many
+and `--republish` is the publish phase (`--resume --only publish`).
+`--dry-run` previews a resume (how many forgets, how many
 would get a key row, which phases, which ACTIVE rulings) and writes nothing.
 A checkpoint copy or team mirror copy that cannot be parsed keeps `forget` at
 exit 4 until a person fixes the file by hand; `--resume` reports it each run.
