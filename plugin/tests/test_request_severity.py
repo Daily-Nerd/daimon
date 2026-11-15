@@ -442,3 +442,36 @@ def test_a_level_renders_one_line_with_its_reason(level, word):
 def test_the_renderer_reads_the_folded_field_directly():
     with pytest.raises(KeyError):
         requests.severity_line({})
+
+
+# ---- plaintext: one registry, every consumer ---------------------------------
+
+
+def test_the_reason_is_scalar_prose_in_the_registry_and_the_level_is_not():
+    from daimon_briefing import surfaces
+    fields = surfaces.scalar_prose_fields("requests.jsonl")
+    assert "severity_reason" in fields
+    assert "severity" not in fields
+
+
+def test_forget_on_a_reason_only_value_removes_the_record(project):
+    from daimon_briefing import normalize
+    q_id, _ = _sent(project, severity="high",
+                    severity_reason="only-in-the-reason-7c1d")
+    keep, _ = _sent(project, ask="a different ask", severity="low",
+                    severity_reason="another reason")
+    key = normalize.content_key("only-in-the-reason-7c1d")
+    assert q_id in requests.forget_content_key(key, project_dir=project)
+    text = requests._path(project).read_text()
+    assert "only-in-the-reason-7c1d" not in text
+    assert keep in text
+
+
+def test_a_foreign_read_keeps_only_the_presence_of_a_reason():
+    from daimon_briefing import pending
+    row = {"severity": "high", "severity_reason": "private words"}
+    out = pending._strip_plaintext(row)
+    assert out == {"severity": "high", "severity_reason": "x"}
+    # and the fold still reads that stripped row as a high severity
+    q_id, _, opened = _hand_rows(**out)
+    assert fold_rows([opened])[q_id]["severity"] == "high"
