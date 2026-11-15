@@ -112,7 +112,7 @@ never discovers one: pass it by path,
 with `--project` typed on the command line; the session id is the directory,
 as everywhere else on this host. See
 [Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions)
-for a run end to end and the [`daimon import` row](../reference/cli#set-up)
+for a run end to end and the [`daimon import` row](../reference/cli/setup.md#daimon-import)
 for what refuses.
 
 ## MCP

@@ -191,7 +191,7 @@ terminan solos la primera vez que una captura en vivo pasa a ser el último
 checkpoint. No hay nada que limpiar.
 
 Cada rechazo y código de salida está en la
-[fila de `daimon import`](../reference/cli#preparar) de la referencia CLI, y
+[fila de `daimon import`](../reference/cli/setup.md#daimon-import) de la referencia CLI, y
 cada [página de host](../hosts/) dice hasta dónde llega la importación en ese
 host.
 
@@ -288,7 +288,7 @@ después. Historia completa en [el ciclo de vida](../concepts/lifecycle.md).
 
 ## Adónde seguir
 
-- [Referencia CLI](../reference/cli.md) — todos los verbos, una página.
+- [Referencia CLI](../reference/cli/index.md) — todos los verbos, una página.
 - [Configuración](../reference/configuration.md) — todas las variables de entorno,
   incluido el interruptor de apagado `DAIMON_DISABLE`.
 - [Hosts](../hosts/) — detalle de configuración por host y

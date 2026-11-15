@@ -775,7 +775,7 @@ def register(sub, fmt) -> None:
     """Register this family's parsers on the top-level subparsers."""
     p_stats = sub.add_parser(
         "stats",
-        help="local usage + capture aggregates (#54) — nothing is transmitted; "
+        help="local usage + capture aggregates (#54): nothing is transmitted; "
              "sharing the output is a deliberate paste",
     )
     p_stats.add_argument("--json", action="store_true", help="machine-readable output")

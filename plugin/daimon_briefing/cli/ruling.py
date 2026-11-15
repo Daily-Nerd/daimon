@@ -801,7 +801,7 @@ def register(sub, fmt) -> None:
                "  daimon ruling propose --subject 'public posts' "
                "--verdict 'internal numbers never appear in public posts' "
                "--scope publishing --evidence issue:693 --by agent\n"
-               "  daimon ruling ratify r-1a2b3c4d5e6f\n",
+               "  daimon ruling ratify r-5b19c3\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ruling_sub = p_ruling.add_subparsers(dest="ruling_cmd", required=True)
 

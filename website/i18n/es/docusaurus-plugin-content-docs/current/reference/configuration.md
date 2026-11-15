@@ -281,56 +281,7 @@ de sesión. Mira [Hosts](../hosts/) para la configuración por host.
 | `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Dónde guarda el adaptador de Windsurf los transcripts que acumula. Lo leen tanto el hook que los escribe como las rutas de `forget`/`heal` que los borran — cámbialo en un solo sitio, o el que escribe y el que borra dejan de coincidir. |
 | `DAIMON_WINDSURF_STATE_DAYS` | `7` | Ventana de antigüedad para los transcripts de Windsurf que escribe daimon y los volcados `unparsed`, recogidos por `daimon heal`. Es un límite de privacidad: un valor olvidado no puede localizarse dentro de la prosa, así que esto acota cuánto tiempo permanece la conversación de origen entre ejecuciones de `forget`. Con mínimo 1 — a diferencia de los otros ajustes de Windsurf, `0` no lo desactiva. |
 
-## Hosts que embeben daimon: la superficie git sellada
-
-Un programa que embebe daimon y trabaja en directorios escritos por alguien de
-menor confianza elige la postura sellada (`DAIMON_GIT_POSTURE=sealed`, o
-`hostgit.configure(posture="sealed", ceiling=...)` antes de la primera lectura
-de proyecto) y hace todo su git a través de `daimon_briefing.hostgit`. Estas
-llamadas existen solo bajo esa postura, salvo `project`, que responde en ambas.
-
-| Llamada | Qué hace |
-|---|---|
-| `project(path)` | El checkout al que pertenece `path`, o un código de rechazo. Corre la verificación de forma y la compuerta de la lista de claves de config antes de devolver un checkout. |
-| `run(checkout, *args)` | Una llamada a git sobre un checkout que devolvió `project`, de una tabla fija de subcomandos (`diff`, `show`, `log`, `diff-tree`, `diff-index`, `diff-files`, `status`, `init`, `rev-parse`, `ls-files`, `ls-tree`, `cat-file`, `symbolic-ref`, `for-each-ref`, `rev-list`, `add`). La compuerta corre de nuevo en cada llamada. Un checkout rechazado responde con código 125, un cuelgue con 124. |
-| `init(path)` | Crea un repositorio con un directorio de plantillas vacío y devuelve `project(path)`. |
-| `fetch_local(lead, member, branch, member_name)` | Trae la rama del clon del miembro al lead como `refs/members/<member_name>/<branch>`, solo transporte local, sin tags ni submódulos. Ambos repositorios pasan la compuerta. |
-| `declare(root, slug=..., origin_url=...)` | Declara la identidad de un proyecto una vez por proceso. También expuesto como `api.declare_project`. Es un dato: la raíz igual pasa la compuerta. |
-
-Códigos de rechazo: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
-`gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
-`worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (una
-clave de config fuera de la lista permitida), `checkout-changed`, `init-failed`.
-
-La lista permite `branch.<name>.vscode-merge-base`, que VS Code usa como
-metadato para seleccionar una rama. Otras claves del editor requieren su propia
-revisión.
-
-El briefing del proyecto muestra el motivo de un rechazo de checkout sellado,
-incluso cuando todavía no tiene checkpoint. El diagnóstico corresponde al
-proyecto y a la respuesta actuales. También aparece en `daimon status`. Las
-verificaciones de estado que necesitan Git conservan el motivo de omisión
-`git-refused` cuando se rechaza el checkout.
-
-| Host o superficie | Entrega del diagnóstico de rechazo |
-|---|---|
-| Claude Code, Codex, Gemini CLI | Briefing al iniciar sesión mediante la CLI compartida. |
-| Kimi Code | Briefing del primer prompt mediante la CLI compartida. |
-| Hermes | Preparación y renderizado compartidos en proceso. |
-| API de Python, MCP | Briefing compartido para consumidores automáticos. |
-| Windsurf | Briefing por CLI o MCP. La inyección automática del briefing por el hook de captura no está soportada. |
-
-Para mantener las llamadas a git en un solo lugar, el censo se corre sobre el
-propio árbol del host desde un test:
-
-```python
-from daimon_briefing import testing
-
-testing.assert_single_git_owner(host_module_paths, allowlist)
-```
-
-`testing.git_spawn_sites(paths)` devuelve los sitios que encontró, como
-`{(módulo, función, primitiva): números de línea}`.
+La superficie git sellada que usan los hosts que embeben daimon está descrita en la [API de Python](./python-api.md#hosts-que-embeben-daimon-la-superficie-git-sellada).
 
 ## Cosecha de scars
 

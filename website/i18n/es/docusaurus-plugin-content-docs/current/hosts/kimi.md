@@ -119,7 +119,7 @@ Un transcript de Kimi no registra un proyecto que daimon pueda leer, así que
 con `--project` escrito en la línea de comandos; el id de sesión es el
 directorio, como en todo este host. Mira
 [Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas)
-para una corrida de punta a punta y la [fila de `daimon import`](../reference/cli#preparar)
+para una corrida de punta a punta y la [fila de `daimon import`](../reference/cli/setup.md#daimon-import)
 para ver qué se rechaza.
 
 ## MCP

@@ -94,7 +94,7 @@ python3 hook/codex-hooks.py status
   para una advertencia, así que la intención `warn` degrada acá a
   `record-only`: la corrida queda en el registro y no se muestra nada. Sale
   con 0 en todos los caminos. Mira
-  [Checks en ejecución](../reference/cli#checks-en-ejecución).
+  [Checks en ejecución](../reference/check-runtime.md).
 
   Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
@@ -126,7 +126,7 @@ lista `$CODEX_HOME/sessions` y `archived_sessions` (`~/.codex` por defecto) y
 compara cada rollout por el `cwd` que registró su fila `session_meta`; un
 rollout presente en ambas raíces cuenta una sola vez.
 [Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas)
-recorre una corrida entera; la [fila de `daimon import`](../reference/cli#preparar)
+recorre una corrida entera; la [fila de `daimon import`](../reference/cli/setup.md#daimon-import)
 enumera los rechazos.
 
 ## MCP

@@ -592,9 +592,9 @@ def test_reply_is_taught_in_the_skill_and_documented_in_both_languages():
     repo = Path(__file__).resolve().parents[2]
     es = "website/i18n/es/docusaurus-plugin-content-docs/current/"
     for rel in ("skills/daimon-briefing/SKILL.md", "skills/daimon-end/SKILL.md",
-                "website/docs/reference/cli.md",
+                "website/docs/reference/cli/coordinate.md",
                 "website/docs/concepts/requests-and-decisions.md",
-                es + "reference/cli.md",
+                es + "reference/cli/coordinate.md",
                 es + "concepts/requests-and-decisions.md"):
         text = (repo / rel).read_text(encoding="utf-8")
         assert "request reply" in text or "**`reply`**" in text, rel

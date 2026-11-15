@@ -260,53 +260,7 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them — change it in one place only, or the writer and the deleter stop agreeing. |
 | `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1 — unlike the other Windsurf knobs, `0` does not disable it. |
 
-## Embedding hosts: the sealed git surface
-
-A program that embeds daimon and works in directories written by a less trusted
-party selects the sealed posture (`DAIMON_GIT_POSTURE=sealed`, or
-`hostgit.configure(posture="sealed", ceiling=...)` before the first project
-read) and then does all of its git through `daimon_briefing.hostgit`. These
-calls exist only under that posture, except `project`, which answers in both.
-
-| Call | What it does |
-|---|---|
-| `project(path)` | The checkout `path` belongs to, or a refusal code. Runs the shape check and the config allowlist gate before it returns a checkout. |
-| `run(checkout, *args)` | One git call on a checkout `project` returned, from a fixed table of subcommands (`diff`, `show`, `log`, `diff-tree`, `diff-index`, `diff-files`, `status`, `init`, `rev-parse`, `ls-files`, `ls-tree`, `cat-file`, `symbolic-ref`, `for-each-ref`, `rev-list`, `add`). The gate runs again on every call. A refused checkout answers with exit code 125, a hang with 124. |
-| `init(path)` | Creates a repository with an empty template directory and returns `project(path)`. |
-| `fetch_local(lead, member, branch, member_name)` | Fetches the member clone's branch into the lead as `refs/members/<member_name>/<branch>`, local transport only, no tags, no submodules. Both repositories pass the gate. |
-| `declare(root, slug=..., origin_url=...)` | States a project's identity once per process. Also exposed as `api.declare_project`. It is data: the root still passes the gate. |
-
-Refusal codes: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
-`gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
-`worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (a
-config key outside the allowlist), `checkout-changed`, `init-failed`.
-
-The allowlist includes `branch.<name>.vscode-merge-base`, which VS Code uses
-as branch-selection metadata. Other editor keys require their own review.
-
-A sealed checkout refusal appears in the project's briefing with its reason,
-including when the project has no checkpoint. The diagnostic belongs to the
-current project and response. It also appears in `daimon status`. Git-backed
-world checks keep the `git-refused` skip reason when the checkout is refused.
-
-| Host or surface | Refusal diagnostic delivery |
-|---|---|
-| Claude Code, Codex, Gemini CLI | Session-start briefing through the shared CLI. |
-| Kimi Code | First-prompt briefing through the shared CLI. |
-| Hermes | Shared in-process briefing preparation and rendering. |
-| Python API, MCP | Shared machine briefing. |
-| Windsurf | CLI or MCP briefing. Automatic briefing injection by the capture hook is unsupported. |
-
-To keep git calls in one place, call the census over your own tree from a test:
-
-```python
-from daimon_briefing import testing
-
-testing.assert_single_git_owner(host_module_paths, allowlist)
-```
-
-`testing.git_spawn_sites(paths)` returns the sites it found, as
-`{(module, function, primitive): line numbers}`.
+The sealed git surface that embedding hosts use is described in the [Python API](./python-api.md#embedding-hosts-the-sealed-git-surface).
 
 ## Scar harvest
 

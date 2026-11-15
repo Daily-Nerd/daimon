@@ -31,7 +31,7 @@ daimon ruling retire r-1a2b3c4d5e6f
 ```
 
 (`propose` y `revise` también toman la bandera que lleva el texto mismo de
-la regla; mirá la [referencia de CLI](../reference/cli.md) para la sintaxis
+la regla; mirá la [referencia de CLI](../reference/cli/index.md) para la sintaxis
 exacta.)
 
 - **`propose`** funda una candidata. Una propuesta de agente queda como
@@ -148,7 +148,7 @@ install` mantienen sincronizado con el ledger el manifiesto en disco que
 lee un anfitrión; `daimon ruling checks` muestra qué está armado, en qué
 anfitrión, y si alguna vez corrió. La mecánica completa, incluyendo
 exactamente qué recibe un check como su sujeto y cada modo de falla, está
-en la [referencia de CLI](../reference/cli.md#checks-en-ejecución).
+en la [referencia de CLI](../reference/check-runtime.md).
 
 ## Los permisos de solicitud también son una clase de regla
 
@@ -200,5 +200,5 @@ Cuando hay más reglas vigentes de las que un briefing tiene lugar para
 mostrar, heredadas incluidas, la nota de exceso apunta a `daimon ruling
 list --inherited` para la vista combinada.
 
-Mirá la [referencia de CLI](../reference/cli.md) para la superficie
+Mirá la [referencia de CLI](../reference/cli/index.md) para la superficie
 completa de banderas de cada verbo de arriba.

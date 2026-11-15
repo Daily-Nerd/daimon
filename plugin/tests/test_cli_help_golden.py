@@ -15,23 +15,15 @@ Regenerate deliberately (a real CLI change, never a move):
     UPDATE_CLI_GOLDEN=1 uv run pytest tests/test_cli_help_golden.py
 """
 
-import argparse
 import os
 import re
 import textwrap
 from pathlib import Path
 
 from daimon_briefing import cli
+from daimon_briefing.cli._surface import walk
 
 GOLDEN = Path(__file__).parent / "golden" / "cli_help.txt"
-
-
-def _walk(parser, path=()):
-    yield path, parser
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            for name, sub in action.choices.items():
-                yield from _walk(sub, path + (name,))
 
 
 def _flow(text: str) -> str:
@@ -44,7 +36,7 @@ def _flow(text: str) -> str:
 
 def render() -> str:
     parts = []
-    walked = list(_walk(cli.build_parser()))
+    walked = list(walk(cli.build_parser()))
     parts.append("COMMANDS\n" + "\n".join(
         " ".join(path) or "<root>" for path, _p in sorted(walked)) + "\n")
     for path, parser in walked:

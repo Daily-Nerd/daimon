@@ -183,7 +183,7 @@ rather than `here`. Both the note and the qualifier end on their own the first
 time a live capture becomes the latest checkpoint. There is nothing to clear.
 
 Every refusal and exit code is in the
-[`daimon import` row](../reference/cli#set-up) of the CLI reference, and
+[`daimon import` row](../reference/cli/setup.md#daimon-import) of the CLI reference, and
 each [host page](../hosts/) says how far import reaches on that host.
 
 ## 5. Teach your agent the protocol (optional, recommended)
@@ -275,7 +275,7 @@ next. Full story in [the item lifecycle](../concepts/lifecycle.md).
 
 ## Where to next
 
-- [CLI reference](../reference/cli.md) — every verb, one page.
+- [CLI reference](../reference/cli/index.md) — every verb, one page.
 - [Configuration](../reference/configuration.md) — every environment variable, including
   the `DAIMON_DISABLE` kill switch.
 - [Hosts](../hosts/index.md) — per-host setup detail and known limitations.

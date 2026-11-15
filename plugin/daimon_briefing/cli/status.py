@@ -879,6 +879,6 @@ def register_mcp(sub, fmt) -> None:
         mcp_sub.add_parser, formatter_class=fmt)
     pm_serve = mcp_sub.add_parser(
         "serve",
-        help="serve MCP over stdio until EOF — reads only, never writes; "
+        help="serve MCP over stdio until EOF: reads only, never writes; "
              "register in your host's MCP config (see the docs site)")
     pm_serve.set_defaults(func=_cmd_mcp_serve)

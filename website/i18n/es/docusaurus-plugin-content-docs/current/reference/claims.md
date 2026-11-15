@@ -118,7 +118,7 @@ Las claves son `verified`, `measured`, `stitched`, `cross_message`, `cross_role`
 `daimon audit quotes` re-chequea cada cita verbatim contra su transcripción de
 origen, solo lectura. `daimon audit privacy` hashea cada campo con texto plano
 en cada superficie declarada y lo intersecta con el registro de borrados. Los
-dos comparten un [contrato de salida](./cli.md#comprobar): `0` es limpio
+dos comparten un [contrato de salida](./cli/check.md): `0` es limpio
 probado, `1` nombra el residuo por superficie y hash, y `3` significa que una
 superficie no se pudo leer — nunca trates `3` como limpio. Ese último código
 existe porque "no pude chequear" reportado como "todo limpio" es exactamente

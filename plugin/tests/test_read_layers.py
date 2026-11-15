@@ -124,6 +124,8 @@ LAYER: dict[str, str] = {
     "daimon_briefing/cli/_cap_refusal.py": "entry",  # shared over-cap refusal text
     "daimon_briefing/cli/_observe.py": "entry",  # the one place the CLI asks the terminal for a channel (#1301)
     "daimon_briefing/cli/_hookhosts.py": "entry",  # hook host table and drift checks
+    "daimon_briefing/cli/_surface.py": "entry",  # the parser tree as data, shared by the help golden test and the docs generator
+    "daimon_briefing/_docgen.py": "entry",  # writes the generated reference pages (a dev command, not a runtime path)
     "daimon_briefing/cli/_lifecycle.py": "entry",  # no-host-named branch shared by hooks and skill
     "daimon_briefing/cli/check.py": "entry",  # check sync
     "daimon_briefing/cli/configure_cmd.py": "entry",  # configure wizard

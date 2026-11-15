@@ -302,7 +302,7 @@ def register(sub, fmt) -> None:
                               "url:<source>")
     pt_prop.add_argument("--item-id",
                          help="the checkpoint item id this was observed on "
-                              "(an accelerator only — identity is the "
+                              "(an accelerator only: identity is the "
                               "value, not this id)")
     pt_prop.add_argument("--by", choices=["agent"], default=None,
                          help="declare yourself an agent; omit it only from "

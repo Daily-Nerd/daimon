@@ -85,7 +85,7 @@ python3 hook/codex-hooks.py status
   reports a violation or daimon could not read what the command sends. Codex
   documents no channel for a warning, so intent `warn` degrades to
   `record-only` here: the run is logged and nothing is shown. Exits 0 on every
-  path. See [Checks at runtime](../reference/cli#checks-at-runtime).
+  path. See [Checks at runtime](../reference/check-runtime.md).
 
   Every run appends one row to `~/.daimon/logs/checks.jsonl`. A row proves the
   check RAN. Only `decision_emitted: deny` under `enforce` closes the gap
@@ -115,7 +115,7 @@ transcript text.
 matches each rollout on the `cwd` its `session_meta` row recorded; a rollout
 present in both roots counts once.
 [Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions)
-walks through a run; the [`daimon import` row](../reference/cli#set-up) lists
+walks through a run; the [`daimon import` row](../reference/cli/setup.md#daimon-import) lists
 the refusals.
 
 ## MCP

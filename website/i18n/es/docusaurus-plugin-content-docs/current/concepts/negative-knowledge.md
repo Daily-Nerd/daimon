@@ -18,7 +18,7 @@ daimon refute add --subject "diseño original del recibo de #502" \
 ```
 
 (la bandera que lleva el texto mismo de la afirmación rechazada va entre
-`--subject` y `--scope`; mirá la [referencia de CLI](../reference/cli.md)
+`--subject` y `--scope`; mirá la [referencia de CLI](../reference/cli/index.md)
 para la sintaxis exacta.)
 
 Las refutaciones viven en el mismo ledger que las
@@ -96,7 +96,7 @@ revise su propio próximo movimiento antes de hacerlo.
 
 Los comandos `daimon why`, `daimon diff` y `daimon blame` (mirá
 [el ciclo de vida del ítem](./lifecycle.md) y la
-[referencia de CLI](../reference/cli.md)) responden una pregunta distinta:
+[referencia de CLI](../reference/cli/index.md)) responden una pregunta distinta:
 inspeccionan ítems de checkpoint a través de las generaciones que daimon
 conserva. Una refutación no es un ítem de checkpoint y no pasa a una
 generación más vieja, así que ahí no hay nada para que esos tres comparen o

@@ -623,7 +623,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmt = _formatter_class()
     parser = argparse.ArgumentParser(
         prog="daimon",
-        description="Cognitive checkpoints — serialize sessions, brief on resume.",
+        description="Cognitive checkpoints: serialize sessions, brief on resume.",
         epilog="Examples:\n"
                "  daimon brief                 render the latest briefing\n"
                "  daimon status                checkpoint presence + last serialize\n"

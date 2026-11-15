@@ -100,7 +100,7 @@ def test_the_website_docs_cover_flag_verb_filter_and_mcp_argument(lang):
     root = DOCS[lang]
     concepts = (root / "concepts" / "requests-and-decisions.md").read_text(
         encoding="utf-8")
-    cli = (root / "reference" / "cli.md").read_text(encoding="utf-8")
+    cli = (root / "reference" / "cli" / "coordinate.md").read_text(encoding="utf-8")
     mcp = (root / "reference" / "mcp.md").read_text(encoding="utf-8")
     for level in RAISED:
         assert level in concepts, level

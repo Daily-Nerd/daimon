@@ -290,7 +290,7 @@ def register(sub, fmt) -> None:
         "--apply-forget", action="store_true", dest="apply_forget",
         help="also rewrite THIS machine's checkpoints under teammates' forget "
              "tombstones (#600). Requires DAIMON_TEAM_APPLY_FORGET=1; typed "
-             "only — the SessionStart hook spawns a bare sync, so this can "
+             "only: the SessionStart hook spawns a bare sync, so this can "
              "never delete your belief state unattended. Without the "
              "standing consent, refuses at rc 2 before syncing anything",
     )

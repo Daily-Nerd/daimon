@@ -186,9 +186,9 @@ def register(sub, fmt) -> None:
         "amend",
         help="record an evidence-carrying state transition on a briefed item (#691)",
         epilog="Examples:\n"
-               "  daimon amend o-1a2b3c4d5e6f --change progressed "
+               "  daimon amend o-3f8a2c --change progressed "
                "--evidence 'the PR merged' --by agent\n"
-               "  daimon amend ratify a-0f1e2d3c4b5a\n",
+               "  daimon amend ratify a-7d41e0\n",
     )
     amend_sub = p_amend.add_subparsers(dest="amend_cmd", required=True)
     amend_sub.add_parser = functools.partial(

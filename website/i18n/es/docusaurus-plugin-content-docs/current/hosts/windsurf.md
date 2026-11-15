@@ -103,7 +103,7 @@ confirmar el proyecto. Cómo una corrida planifica, se detiene y se reanuda
 está en
 [Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas),
 y los rechazos, el chequeo de proyecto incluido, están en la
-[fila de `daimon import`](../reference/cli#preparar).
+[fila de `daimon import`](../reference/cli/setup.md#daimon-import).
 
 ## MCP
 

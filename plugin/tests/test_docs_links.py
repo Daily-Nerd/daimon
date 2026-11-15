@@ -102,6 +102,8 @@ def _resolve(page_url: str, page: Path, root: Path, href: str):
         return (target if target.startswith("/docs") else None), anchor
     if href.endswith(".md"):
         dest = (page.parent / href).resolve()
+        if not dest.exists():
+            return "/missing/" + href, anchor
         return _url(dest.relative_to(root.resolve())), anchor
     folder_page = page.stem in ("index", "README") or (
         page.stem == page.parent.name and page.parent != root)

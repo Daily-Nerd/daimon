@@ -30,7 +30,7 @@ daimon ruling retire r-1a2b3c4d5e6f
 ```
 
 (`propose` and `revise` also take the flag that carries the rule text
-itself; see the [CLI reference](../reference/cli.md) for the exact syntax.)
+itself; see the [CLI reference](../reference/cli/index.md) for the exact syntax.)
 
 - **`propose`** founds a candidate. An agent proposal stays a candidate:
   nothing renders, nothing enforces, until a human acts on it.
@@ -134,7 +134,7 @@ anything, which is the right way to rehearse one before you ratify it.
 host reads in step with the ledger; `daimon ruling checks` shows what is
 armed, on which host, and whether it has ever fired. The full mechanics,
 including exactly what a check receives as its subject and every failure
-mode, are in the [CLI reference](../reference/cli.md#checks-at-runtime).
+mode, are in the [CLI reference](../reference/check-runtime.md).
 
 ## Request policies are a ruling class too
 
@@ -183,5 +183,5 @@ are in force than a briefing has room to show, including inherited ones, the
 over-cap note points at `daimon ruling list --inherited` for the merged
 view.
 
-See the [CLI reference](../reference/cli.md) for the full flag surface on
+See the [CLI reference](../reference/cli/index.md) for the full flag surface on
 every verb above.

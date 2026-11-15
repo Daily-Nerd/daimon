@@ -440,7 +440,7 @@ def register(sub, fmt) -> None:
     p_brief.add_argument(
         "--slug", metavar="SLUG",
         help="brief another project's bucket by its slug (see `daimon "
-             "projects`) — deliberate cross-project read, provenance-labeled, "
+             "projects`): deliberate cross-project read, provenance-labeled, "
              "no fallback (#243)",
     )
     p_brief.add_argument(

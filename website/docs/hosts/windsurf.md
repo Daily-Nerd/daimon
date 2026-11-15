@@ -93,7 +93,7 @@ with `--project` typed on the command line, since nothing in the file can
 confirm the project. How a run plans, stops and resumes is in
 [Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions),
 and the refusals, the project check included, are in the
-[`daimon import` row](../reference/cli#set-up).
+[`daimon import` row](../reference/cli/setup.md#daimon-import).
 
 ## MCP
 
