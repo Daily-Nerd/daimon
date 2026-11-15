@@ -303,8 +303,7 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
     if not rows:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        store.record_bucket_root(project_dir)  # #1092: first writer wins
+        store.ensure_bucket(project_dir)  # #1337: dir + root
         # A forget is a cure: it writes the tombstone whatever the ledger's
         # health, so the posture is PROCEED and no read is made.
         jsonl.append_lines(
@@ -716,8 +715,7 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
             "subject", "verdict", "scope", "revisit_when", "note", "author"),
     )
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        store.record_bucket_root(project_dir)  # #1092: first writer wins
+        store.ensure_bucket(project_dir)  # #1337: dir + root
         return jsonl.append_as(path, admitted, writer)
     except jsonl.Refused:
         raise  # only when the run surfaces refusals (jsonl.append_as)

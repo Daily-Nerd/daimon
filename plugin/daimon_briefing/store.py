@@ -160,9 +160,10 @@ def record_bucket_root(project_dir) -> None:
     names whichever directory actually created the bucket, not whichever
     directory happened to write to it most recently.
 
-    Called from every write path that can CREATE a bucket directory (the
-    checkpoint pointer write, the events/verification/forget-hits ledger
-    appenders here, and the refutations ledger append), never from a read.
+    Called through `ensure_bucket`, the one owner of creating a bucket
+    directory (#1337), never from a read. A root record names an ABSOLUTE
+    directory or is not written: a bucket slug handed in by `--slug` routing
+    names no directory, so nothing is stamped for it.
     Idempotent and silent under the kill switch, the same never-fatal
     contract `append_event` holds: a bookkeeping record must never fail, or
     even visibly affect, the write it rides along with."""
@@ -171,7 +172,7 @@ def record_bucket_root(project_dir) -> None:
     try:
         resolved = _resolved(project_dir)
         slug = project_slug(resolved)
-        if not slug:
+        if not slug or not os.path.isabs(str(resolved)):
             return
         root_path = config.checkpoint_dir() / slug / _BUCKET_ROOT_NAME
         if root_path.exists():
@@ -180,6 +181,33 @@ def record_bucket_root(project_dir) -> None:
         _atomic_write(root_path, f"{resolved}\n")
     except OSError:
         pass
+
+
+def ensure_bucket(project_dir) -> Path | None:
+    """The ONE owner of "create a bucket" (#1337): make the bucket directory
+    for `project_dir` and stamp its root record, together, so a bucket never
+    exists without the record that says which directory it belongs to. Every
+    ledger writer calls this instead of `mkdir` on a bucket path; a census
+    test fails when a module outside this one makes a directory unlisted.
+
+    Returns the bucket directory, or None when the project is unknown. A
+    filesystem failure creating the directory raises OSError, which each
+    writer already handles as its own best-effort contract; the stamp itself
+    is never fatal (`record_bucket_root`).
+
+    The slug-routed case is decided here, once: a `--slug` verb hands in a
+    bucket name, not a directory. The bucket is created and written normally,
+    and NO root is stamped, because a root record names an absolute directory
+    and the slug text is not one. The bucket stays unstamped until a write
+    that knows its directory lands, and first writer wins from there."""
+    resolved = _resolved(project_dir)
+    slug = project_slug(resolved)
+    if not slug:
+        return None
+    bucket = config.checkpoint_dir() / slug
+    bucket.mkdir(parents=True, exist_ok=True)
+    record_bucket_root(resolved)  # #1092: first writer to this bucket wins
+    return bucket
 
 
 def _record_ledger_census(slug: str, *, force: bool = False) -> None:
@@ -2168,8 +2196,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
             _atomic_write(d / _LATEST, blob)
     if slug:
         pdir = d / slug
-        pdir.mkdir(parents=True, exist_ok=True)
-        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
         _record_ledger_census(slug)  # #1132: one census per bucket, ever
         with _pointer_lock(pdir):
             if not _pointer_regresses(pdir, new_epoch):
@@ -2978,8 +3005,7 @@ def append_verification(item_ref: str, check: str, reason: str,
         if claim_key is not None:
             row["claim_key"] = claim_key
         row = policy.admit_row(row, redact_fields=("check", "reason"))
-        path.parent.mkdir(parents=True, exist_ok=True)
-        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
         return jsonl.append_as(path, row, Writer.EMITTER)
     except OSError:
         return False
@@ -3098,8 +3124,7 @@ def append_world_outcomes(rows, project_dir=None) -> bool:
                           "outcome": outcome, "claim_key": claim_key})
         if not fresh:
             return False
-        path.parent.mkdir(parents=True, exist_ok=True)
-        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
         return jsonl.append_rows_as(path, fresh, Writer.EMITTER)
     except OSError:
         return False
@@ -3325,8 +3350,7 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
         return False
     try:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
         lines = []
         for item in items:
             if not isinstance(item, dict):
@@ -3580,8 +3604,7 @@ def append_events(specs, project_dir=None, allow_disabled: bool = False,
         for spec in specs:
             evt = _event_row(**spec)
             rows.append(evt)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        record_bucket_root(project_dir)  # #1092: first writer to this bucket wins
+        ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
         # `writer` picks the row of the registry's write column (#1132 PR
         # 10b): a person and an admission are REFUSED an unproven events
         # ledger, a machine row is SKIPPED, a cure always writes.

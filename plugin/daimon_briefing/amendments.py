@@ -185,7 +185,7 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
         return False
     admitted = policy.admit_row(row, redact_fields=("evidence", "note", "author"))
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        store.ensure_bucket(project_dir)  # #1337: dir + root
         return jsonl.append_as(path, admitted, writer)
     except jsonl.Refused:
         raise  # only when the run surfaces refusals (jsonl.append_as)
