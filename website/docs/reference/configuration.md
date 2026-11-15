@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 description: "Every daimon environment variable, how the process environment overrides the env file at ~/.daimon/env, and why hooks need that file at all."
 ---
 

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 description: "Todas las variables de entorno de daimon, como el entorno del proceso le gana al archivo en ~/.daimon/env, y por que los hooks necesitan ese archivo."
 ---
 
