@@ -106,6 +106,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/privacy.py": "write",  # residue audit: it must see raw bytes to prove a forget reached them
     "daimon_briefing/provenance.py": "write",  # quote provenance receipts bound at capture
     "daimon_briefing/redact.py": "write",  # secret scrubbing at every write boundary
+    "daimon_briefing/peer_messages.py": "write",  # pure grammar and custody decision for a message another person sent; reads no store (#1350)
     "daimon_briefing/scope.py": "write",  # the one bucket-name parser; a leaf, stdlib only
     "daimon_briefing/schema.py": "write",  # ITEM_FIELDS, the one table of item sections and kinds
     "daimon_briefing/scoring.py": "write",  # effective weights used by capture and rendering
