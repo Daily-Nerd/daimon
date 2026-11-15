@@ -94,19 +94,72 @@ DEFAULT_KIND = "work"
 # verdict. An attention row like `surfaced`, never a state.
 # #1117 widens it a fifth time with `replied` (progress note): an older
 # reader drops the row and nothing else changes. Its guards live in the fold.
+#
+# #1346 widens it a sixth and seventh time: `withdrawn` (the sender takes its
+# own ask back) and `withdrawn_delivered` (the live stamp that told the
+# recipient once). An older reader drops both rows: the withdrawn ask reads as
+# still open there, the direction every earlier widening already fails in.
 EVENTS = frozenset({
     "opened", "revised",
     "surfaced", "verdict_surfaced", "delivered", "verdict_delivered",
-    "owed_delivered",
+    "owed_delivered", "withdrawn_delivered",
     "needs_info", "accepted", "rejected", "done",
-    "suppressed", "done_verified", "replied",
+    "suppressed", "done_verified", "replied", "withdrawn",
 })
+# #1346: who may write each event, said ONCE. The fold applies an act only
+# when its row sits in its role's bucket (`row_holds_role`), and the write
+# path refuses the wrong side from the same table, so the two cannot drift.
+#   sender     the project that opened the ask: opened, revised, withdrawn
+#   recipient  the project it was sent to: the verdicts, `done`, `suppressed`
+#   either     not an act on the ask: `replied` is labelled by origin (see
+#              `_reply_from_sender`), and the stamps record what a surface
+#              showed, from whichever bucket showed it
+# A self-addressed ask is one project holding both roles. A new event without
+# an entry here fails `test_every_event_has_a_role`.
+ROLE_SENDER = "sender"
+ROLE_RECIPIENT = "recipient"
+ROLE_EITHER = "either"
+EVENT_ROLE = {
+    "opened": ROLE_SENDER, "revised": ROLE_SENDER, "withdrawn": ROLE_SENDER,
+    "accepted": ROLE_RECIPIENT, "rejected": ROLE_RECIPIENT,
+    "needs_info": ROLE_RECIPIENT, "done": ROLE_RECIPIENT,
+    "suppressed": ROLE_RECIPIENT,
+    "replied": ROLE_EITHER, "done_verified": ROLE_EITHER,
+    "surfaced": ROLE_EITHER, "delivered": ROLE_EITHER,
+    "owed_delivered": ROLE_EITHER, "withdrawn_delivered": ROLE_EITHER,
+    "verdict_surfaced": ROLE_EITHER, "verdict_delivered": ROLE_EITHER,
+}
+
+
+def row_holds_role(role: str, *, origin: str, from_slug: str, to: str,
+                   home_slugs: frozenset = frozenset()) -> bool:
+    """Whether a row written in bucket `origin` may act in `role` on a request
+    founded in `from_slug` and addressed `to`. `""` is the composer's own
+    bucket on both sides, exactly as `_stamped` writes it, so a local founder
+    (`from_slug == ""`) owns every local row and a foreign one owns the rows
+    stamped with its slug.
+
+    Self-addressed (the founder's bucket IS the recipient) holds both roles.
+    For a local founder that bucket is one of `home_slugs`, the composer's own
+    slug and aliases; for a foreign founder it is `from_slug` itself."""
+    if role == ROLE_EITHER:
+        return True
+    from_sender = origin == from_slug
+    if role == ROLE_SENDER:
+        return from_sender
+    if not from_sender:
+        return True
+    founder_slugs = ({from_slug} | buckets.aliases_for(from_slug)
+                     if from_slug else home_slugs)
+    return to in founder_slugs
+
 # What a folded record may render as. `stale` is derived from consumption
 # (PR 3's baton count), never appended — an expiry that writes a row would
 # make attention decay indistinguishable from a verdict. `suppressed` is
 # deliberately NOT here: it is a marker on a record that still has a state.
 RENDER_STATES = frozenset({
     "open", "needs-info", "accepted", "rejected", "done", "stale",
+    "withdrawn",
 })
 _STATE_BY_EVENT = {
     "needs_info": "needs-info",
@@ -210,6 +263,30 @@ _EFFECT_REASONS: dict[str, tuple[str, str]] = {
     "reply_from_sender": (
         EFFECT_IGNORED, "{id}: no-op, the sender cannot reply to its own "
         "ask; `daimon request revise` adds to it"),
+    # #1346: the role table and the sender's retraction.
+    "not_from_sender": (
+        EFFECT_IGNORED, "{id}: no-op, only the sender can do this and the "
+        "row was not written on the sender's side"),
+    "not_from_recipient": (
+        EFFECT_IGNORED, "{id}: no-op, this is the recipient's decision and "
+        "the row was written on the sender's side; the sender takes its own "
+        "ask back with `daimon request withdraw`"),
+    "withdrawn": (
+        EFFECT_LANDED, "{id}: withdrawn; final for this request, and the "
+        "sender can open a new one with --supersedes"),
+    "claim_withdrawn": (
+        EFFECT_DISCARDED, "{id}: withdrawn, and the completion claim on file "
+        "stays on the record as a superseded claim; final for this request, "
+        "and the sender can open a new one with --supersedes"),
+    "already_withdrawn": (
+        EFFECT_IGNORED, "{id}: no-op, the request was already withdrawn"),
+    "not_withdrawable": (
+        EFFECT_IGNORED, "{id}: no-op, a finished request is not withdrawn: "
+        "it is already done or rejected"),
+    "record_withdrawn": (
+        EFFECT_IGNORED, "{id}: no-op, the sender withdrew this request and "
+        "a withdrawal is final; the sender can open a new one with "
+        "--supersedes"),
 }
 
 
@@ -257,6 +334,16 @@ _SENDER_MOVABLE = frozenset({"open", "needs-info"})
 # under a `verb=accept` ruling of the receiving project, and an agent's `done`
 # on an ask nobody has accepted stays a pending claim.
 RECEIVER_CONSENT_FROM_NS = 1_794_103_200_000_000_000
+# #1346: the role rule (`EVENT_ROLE`) starts at this `order` (ns since the
+# epoch, 2026-11-15T20:17:11Z, later than every row in any ledger written
+# before the rule and earlier than any row a build with it can write). A row
+# ordered BEFORE it keeps the meaning it had when written: some ledgers hold
+# a human `accepted` or an agent `done` in the sender's own bucket, which
+# the old fold applied, and refolding them under the rule would reopen
+# requests that were closed. Append-only history is not reinterpreted. From
+# this order on a wrong-role row is inert. Same shape as
+# `RECEIVER_CONSENT_FROM_NS`, same `_written_before` helper.
+ROLE_RULE_FROM_NS = 1_794_770_231_000_000_000
 # #885. States in which the RECIPIENT owes work. Deliberately NOT folded into
 # `_SENDER_MOVABLE`: widening that set would let a sender-side `revised` event
 # reopen an accepted record, which is exactly the assertion the wedge
@@ -309,11 +396,17 @@ _EVENT_RANK = {
     "needs_info": 5,
     "accepted": 6,
     "rejected": 7,
+    # #1346: after the verdicts, so a same-`order` tie ends the way the
+    # record's own terminal rules say: a finished `done` and a `rejected`
+    # fold first and the withdraw is ignored, while a same-instant `accepted`
+    # folds first and the sender's retraction still lands.
+    "withdrawn": 8,
     # #1117: after every verdict, so a same-`order` verdict folds FIRST.
-    "replied": 8,
+    "replied": 9,
     # Verification always answers a `done` row that already landed; ranked
     # last so a same-`order` tie (test clocks) can never process it first.
-    "done_verified": 9,
+    "done_verified": 10,
+    "withdrawn_delivered": 2,
 }
 _REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
 # A recipient is validated for SHAPE only, by `scope.parse_bucket` (the one
@@ -866,15 +959,19 @@ def _covered_by_policy(row: dict, origin_slugs, policies, *,
     return False
 
 
-def _before_receiver_consent(row: dict) -> bool:
-    """Whether `row` was written before receiver consent for `info` asks
-    began (`RECEIVER_CONSENT_FROM_NS`). A row with no readable positive
-    `order` is NOT before it: an unreadable order never buys the old rule."""
+def _written_before(row: dict, effective_from_ns: int) -> bool:
+    """Whether `row` was written before a rule that took effect at
+    `effective_from_ns` (`RECEIVER_CONSENT_FROM_NS`, `ROLE_RULE_FROM_NS`).
+    A row with no readable positive `order` is NOT before it: an unreadable
+    order never buys the old rule, and a bool read off disk is not one."""
+    raw = row.get("order")
+    if isinstance(raw, bool):
+        return False
     try:
-        order = int(row.get("order") or 0)
+        order = int(raw or 0)
     except (TypeError, ValueError):
         return False
-    return 0 < order < RECEIVER_CONSENT_FROM_NS
+    return 0 < order < effective_from_ns
 
 
 def _epoch_of(row: dict, fallback: int) -> int:
@@ -905,11 +1002,17 @@ class FoldInputs:
     differently from the others. See `fold`'s docstring for what each field
     means: `policies` (flat accept history), `policies_by_to` (per-recipient
     accept history, `None` = use the flat set), `own_slug`, `open_policies`
-    (per-origin `verb=open` history)."""
+    (per-origin `verb=open` history), `home_slugs` (#1346, the local bucket
+    for the role check)."""
     policies: frozenset
     policies_by_to: Mapping[str, frozenset] | None
     own_slug: str
     open_policies: Mapping[str, frozenset]
+    # #1346: the composer's own bucket and its aliases, the founder's side
+    # when a founder is local (`from_slug == ""`). `own_slug` cannot serve:
+    # it is `""` for LOCAL and RECIPIENT on purpose (it widens covered
+    # accepts) while the role check needs to know which bucket "local" is.
+    home_slugs: frozenset
 
 
 class Perspective(Enum):
@@ -965,6 +1068,13 @@ class PolicyReads:
         return self._cache[project_dir]
 
 
+def _home_slugs(project_dir) -> frozenset:
+    """The composer's own bucket plus every alias that reaches it: what a LOCAL
+    founder's `to` is compared with to tell a self-addressed ask (#1346)."""
+    mine = store.project_slug(config.resolve_project_dir(project_dir)) or ""
+    return frozenset({mine} | buckets.aliases_for(mine)) - {""}
+
+
 def fold_inputs(rows: list[dict], *, perspective: Perspective,
                 project_dir=None, policy: frozenset | None = None,
                 reads: PolicyReads | None = None) -> FoldInputs:
@@ -979,20 +1089,24 @@ def fold_inputs(rows: list[dict], *, perspective: Perspective,
     hand before this existed; the module-level comments on `fold` and on the
     composers explain why each direction differs."""
     reads = reads if reads is not None else PolicyReads()
+    home = (frozenset() if perspective is Perspective.FLEET
+            else _home_slugs(project_dir))
     if perspective is Perspective.LOCAL:
         return FoldInputs(
             policies=frozenset(),
             policies_by_to=MappingProxyType(_policies_by_to(rows, reads)),
             own_slug="",
             open_policies=MappingProxyType(
-                {"": policy if policy is not None else reads.of(project_dir)}))
+                {"": policy if policy is not None else reads.of(project_dir)}),
+            home_slugs=home)
     if perspective is Perspective.SENDER:
         return FoldInputs(
             policies=frozenset(),
             policies_by_to=MappingProxyType(_policies_by_to(rows, reads)),
             own_slug=store.project_slug(
                 config.resolve_project_dir(project_dir)) or "",
-            open_policies=MappingProxyType({"": reads.of(project_dir)}))
+            open_policies=MappingProxyType({"": reads.of(project_dir)}),
+            home_slugs=home)
     if perspective is Perspective.RECIPIENT:
         my_slug = store.project_slug(config.resolve_project_dir(project_dir))
         open_policies = {"": reads.of(my_slug)}
@@ -1003,7 +1117,7 @@ def fold_inputs(rows: list[dict], *, perspective: Perspective,
                     open_policies[origin] = reads.of(origin)
         return FoldInputs(
             policies=reads.of(project_dir), policies_by_to=None, own_slug="",
-            open_policies=MappingProxyType(open_policies))
+            open_policies=MappingProxyType(open_policies), home_slugs=home)
     founder = next((r for r in rows if r.get("event") == "opened"), {})
     to = str(founder.get("to") or "")
     origin = str(founder.get("_origin_slug") or "")
@@ -1011,7 +1125,31 @@ def fold_inputs(rows: list[dict], *, perspective: Perspective,
         policies=reads.of(to) if to else frozenset(), policies_by_to=None,
         own_slug="",
         open_policies=MappingProxyType(
-            {origin: reads.of(origin) if origin else frozenset()}))
+            {origin: reads.of(origin) if origin else frozenset()}),
+        home_slugs=home)
+
+
+def _supersede_claim(current: dict, meta: dict, row: dict,
+                     answered_revision: int) -> None:
+    """#1333: move a PENDING completion claim off the record into
+    `superseded_claims`, never silently, and clear every field that said the
+    ask was answered. Shared by the two sender acts that discard a claim, a
+    `revised` row (the ask changed) and a `withdrawn` one (the ask is gone):
+    one move, so a claim cannot leave a record without a trace by either."""
+    current["superseded_claims"].append({
+        "evidence": current["done_evidence"],
+        "by": current["done_by"],
+        "author": meta.get("author"),
+        "claimed_at": meta.get("ts"),
+        "verified_at": current["done_verified_at"],
+        "revision": answered_revision,
+        "superseded_at": row.get("ts"),
+    })
+    current["done_pending"] = False
+    current["done_claimed"] = False
+    current["done_evidence"] = ""
+    current["done_by"] = None
+    current["done_verified_at"] = None
 
 
 def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
@@ -1237,6 +1375,15 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 # as sets: `request list --json` and MCP `json.dumps` the fold.
                 "replies_surfaced": {},
                 "replies_delivered": {},
+                # #1346: the sender's retraction. `withdrawn_from` is the
+                # state it took the ask out of, so the recipient who had
+                # ACCEPTED it can be told once. These are NOT `verdict_*`:
+                # those mean "the recipient decided". Each later landing of
+                # an attention row is `withdrawn_delivered`, {session: ts}.
+                "withdrawn_by": None,
+                "withdrawn_at": None,
+                "withdrawn_from": None,
+                "withdrawn_delivered": {},
                 "revision": 0,
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
@@ -1252,6 +1399,19 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             continue
         if current is None:
             continue  # orphan lifecycle event: visible in raw audit, inert here
+        # #1346: an act is applied only from the bucket of the role that owns
+        # it. The write path proves the caller's side, but `append` is public
+        # and a row can be hand-edited or written by an older build, so the
+        # reader decides again, from the one table both read.
+        role = EVENT_ROLE.get(event, ROLE_EITHER)
+        if not (_written_before(row, ROLE_RULE_FROM_NS)
+                or row_holds_role(
+                    role, origin=str(row.get("_origin_slug") or ""),
+                    from_slug=current["from_slug"], to=current["to"],
+                    home_slugs=inputs.home_slugs)):
+            _note_effect(current, row, "not_from_sender"
+                         if role == ROLE_SENDER else "not_from_recipient")
+            continue
         if event in _HUMAN_ONLY and authority != "human":
             # The fold re-check the write boundary cannot be trusted for: a
             # row appended off-path or edited on disk claiming an agent
@@ -1285,7 +1445,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 event == "accepted" and authority == "agent"
                 and current["kind"] == "info"
                 and current["state"] in _SENDER_MOVABLE
-                and _before_receiver_consent(row))
+                and _written_before(row, RECEIVER_CONSENT_FROM_NS))
             if (event == "accepted" and authority == "agent"
                     and not current["to_human"]
                     and current["state"] in _SENDER_MOVABLE):
@@ -1343,6 +1503,11 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             # the record instead of being overwritten by the next ask.
             _note_effect(current, row, "record_rejected")
             continue
+        if event in _STATE_BY_EVENT and current["state"] == "withdrawn":
+            # #1346: a withdrawal is final for this id, as a rejection is. The
+            # sender opens a new ask with `--supersedes`.
+            _note_effect(current, row, "record_withdrawn")
+            continue
         if event in ("accepted", "rejected") and current["state"] == "done":
             # #1021: `done` is terminal for a VERDICT row, the same shape the
             # rule above gives `rejected` — a finished record stays finished.
@@ -1368,6 +1533,33 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             # for it to clear. A human `done` was never claimed.
             _note_effect(current, row, "already_done_unverified"
                          if current["done_claimed"] else "already_done")
+            continue
+        if event == "withdrawn":
+            # #1346: the sender takes its own ask back. Not a verdict, so no
+            # `verdict_*` field is set, and open to either authority: the
+            # fold's role gate above already proved it is the sender's row.
+            # A finished request stays finished, and a rejection stays final.
+            if current["state"] == "withdrawn":
+                _note_effect(current, row, "already_withdrawn")
+                continue
+            if current["state"] in ("done", "rejected"):
+                _note_effect(current, row, "not_withdrawable")
+                continue
+            current["withdrawn_from"] = current["state"]
+            current["history_count"] += 1
+            current["updated_at"] = row.get("ts") or current["updated_at"]
+            current["updated_order"] = _row_order(row)
+            if current["done_pending"]:
+                _supersede_claim(current, claim_meta.pop(q_id, {}), row,
+                                 current["revision"])
+                _note_effect(current, row, "claim_withdrawn")
+            else:
+                _note_effect(current, row, "withdrawn")
+            current["state"] = "withdrawn"
+            current["withdrawn_by"] = authority
+            current["withdrawn_at"] = row.get("ts")
+            if "note" in row:
+                current["note"] = str(row.get("note") or "")
             continue
         if event == "replied":
             # #1117: no state moves, so `continue` BEFORE the generic
@@ -1449,6 +1641,16 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             if session:
                 current["owed_delivered"].setdefault(current["revision"], {}) \
                     .setdefault(session, row.get("ts"))
+            continue
+        if event == "withdrawn_delivered":
+            # #1346, same posture as `owed_delivered`: an attention row the
+            # recipient's live delivery wrote after telling a session the
+            # sender withdrew an ask it had accepted. Once per session.
+            current["history_count"] += 1
+            session = str(row.get("session") or "").strip()
+            if session:
+                current["withdrawn_delivered"].setdefault(session,
+                                                          row.get("ts"))
             continue
         if event == "delivered":
             # Same attention-row posture as `surfaced`: counted in history,
@@ -1533,21 +1735,8 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 # person who decides later can see it existed. Gated on the
                 # same `done_pending` as the clear above, for the same
                 # reason: a human `done` is not a claim and is not moved.
-                meta = claim_meta.pop(q_id, {})
-                current["superseded_claims"].append({
-                    "evidence": current["done_evidence"],
-                    "by": current["done_by"],
-                    "author": meta.get("author"),
-                    "claimed_at": meta.get("ts"),
-                    "verified_at": current["done_verified_at"],
-                    "revision": answered_revision,
-                    "superseded_at": row.get("ts"),
-                })
-                current["done_pending"] = False
-                current["done_claimed"] = False
-                current["done_evidence"] = ""
-                current["done_by"] = None
-                current["done_verified_at"] = None
+                _supersede_claim(current, claim_meta.pop(q_id, {}), row,
+                                 answered_revision)
                 _note_effect(current, row, "claim_discarded",
                              revision=answered_revision)
             else:
@@ -1561,7 +1750,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
         if (event == "done" and authority != "human"
                 and current["state"] in _SENDER_MOVABLE
                 and (current["kind"] == "work"
-                     or not _before_receiver_consent(row))):
+                     or not _written_before(row, RECEIVER_CONSENT_FROM_NS))):
             # #978: the #961 amendment's own sentence — an agent answering an
             # ask stays owed until a person accepts, rejects, or ratifies a
             # reclassification — was never wired into this fold. Without this
@@ -1683,7 +1872,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                     str(row.get("under_ruling") or "") or None
                     if authority == "agent" and (
                         current["kind"] == "work"
-                        or not _before_receiver_consent(row))
+                        or not _written_before(row, RECEIVER_CONSENT_FROM_NS))
                     else None)
             if "note" in row:
                 current["note"] = str(row.get("note") or "")
@@ -2106,7 +2295,45 @@ def revise(request_id: str, *, channel: str, ask: str | None = None,
     return row["event_id"]
 
 
-def _answering(request_id: str, project_dir) -> dict | None:
+def withdraw(request_id: str, *, reason: str, channel: str,
+             author: str | None = None, project_dir=None) -> str:
+    """#1346: the sender takes its own ask back. Either channel, because the
+    sender retracting what it asked is the sender's act, not a verdict: an
+    agent whose own follow-up write failed must be able to say so, and
+    `reject` was only ever the recipient's word. The reason is required and
+    travels in `note`, which the recipient reads.
+
+    Moves open, needs-info, accepted and pending-claim asks to the terminal
+    `withdrawn`. A request that is already done, rejected or withdrawn
+    changes nothing and the refusal says which. Returns the row's `event_id`
+    like every write verb."""
+    why = _text("note", reason)
+    record = sent_record(request_id, project_dir=project_dir)
+    if record is None:
+        if (_REQUEST_ID_RE.fullmatch(str(request_id or ""))
+                and recipient_join(project_dir=project_dir).get(request_id)):
+            raise RequestError(
+                f"{request_id} was sent to this project, and only its sender "
+                "can withdraw it; to decline it run `daimon request reject`")
+        raise RequestError(f"unknown request: {request_id}")
+    if record["state"] in ("done", "rejected", "withdrawn"):
+        raise RequestError(
+            f"{request_id} is {record['state']}; "
+            + ("a finished request is not withdrawn"
+               if record["state"] == "done"
+               else "a rejection is final"
+               if record["state"] == "rejected"
+               else "a withdrawal is already on record")
+            + f"; open a new request with `--supersedes {request_id}` to "
+            "ask again")
+    row = _stamp("withdrawn", request_id, channel, author=author)
+    row["note"] = why
+    if not append(row, project_dir=project_dir, writer=Writer.HUMAN):
+        raise RequestError("withdrawal not written")
+    return row["event_id"]
+
+
+def _answering(request_id: str, project_dir, event: str) -> dict | None:
     """The local record a recipient-side row answers, or None when this
     bucket cannot see it.
 
@@ -2119,7 +2346,26 @@ def _answering(request_id: str, project_dir) -> dict | None:
     """
     if not _REQUEST_ID_RE.fullmatch(str(request_id or "")):
         raise RequestError(f"invalid request id: {request_id!r}")
-    return get(request_id, project_dir=project_dir)
+    current = get(request_id, project_dir=project_dir)
+    # #1346: a record found in THIS bucket was sent by this project. The role
+    # table the fold reads says whether `event` may be written from the
+    # sender's side, and refusing here, with the verb that does fit, beats
+    # writing a row the fold would only mark inert.
+    if current is not None and not row_holds_role(
+            EVENT_ROLE[event], origin="", from_slug=current["from_slug"],
+            to=current["to"], home_slugs=_home_slugs(project_dir)):
+        raise RequestError(
+            f"{request_id} is a request this project sent, and "
+            f"{_EVENT_VERB.get(event, event)} is the recipient's call; to "
+            "take your own ask back run `daimon request withdraw "
+            f"{request_id} --reason \"...\"`")
+    return current
+
+
+# What the sender-side refusal calls each recipient act.
+_EVENT_VERB = {"accepted": "accepting", "rejected": "rejecting",
+               "needs_info": "asking for more", "done": "closing it",
+               "suppressed": "suppressing"}
 
 
 def _require(request_id: str, project_dir) -> dict:
@@ -2176,7 +2422,7 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
         raise RequestError(
             f"{article} {state} verdict requires a human channel; this call "
             f"arrived through {channel!r}")
-    current = _answering(request_id, project_dir)
+    current = _answering(request_id, project_dir, event)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected, and a rejection is final for that "
@@ -2275,7 +2521,7 @@ def accept(request_id: str, *, channel: str, note: str = "",
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
                 f"arrived through {channel!r}")
-        current = _answering(request_id, project_dir)
+        current = _answering(request_id, project_dir, "accepted")
         if current is None:
             current = recipient_join(project_dir=project_dir).get(
                 request_id)
@@ -2388,7 +2634,7 @@ def suppress(request_id: str, *, channel: str, note: str = "",
         raise RequestError(
             "suppressing an addressed request requires a human channel; this "
             f"call arrived through {channel!r}")
-    _answering(request_id, project_dir)
+    _answering(request_id, project_dir, "suppressed")
     row = _stamp("suppressed", request_id, channel, author=author)
     note = _text("note", note, required=False)
     if note:
@@ -2409,7 +2655,7 @@ def done(request_id: str, *, channel: str, evidence: str,
     with a per-act identity may carry one — an agent's claim is signed by
     the process that made it, as it always was. Refused by `_stamp` below,
     which is the one chokepoint every row on this path passes through."""
-    current = _answering(request_id, project_dir)
+    current = _answering(request_id, project_dir, "done")
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected; a rejected request cannot be "
@@ -2434,6 +2680,8 @@ def _reply_refusal(request_id: str, state: str) -> str:
         "rejected": ("a rejected request takes no more text; the sender "
                      "opens a new one"),
         "done": "it is already closed; `done --evidence` carried the answer",
+        "withdrawn": ("the sender withdrew it, and a withdrawal is final; "
+                      "there is nothing left to report on"),
     }
     return (f"{request_id} is {state}, and a reply only attaches to an "
             f"accepted request: {hints.get(state, 'wait for the accept')}")
@@ -2936,6 +3184,52 @@ def stamp_owed_delivered(request_id: str, session: str,
     row["session"] = session
     return append(row, project_dir=project_dir,
                   writer=Writer.EMITTER)
+
+
+def needs_withdrawn_delivered_stamp(record: dict, session: str) -> bool:
+    """#1346: whether THIS session was already told the sender withdrew this
+    ask. Write-once per (request id, session); a withdrawal is final, so there
+    is no revision epoch to key by."""
+    return (str(session or "").strip()
+            not in (record.get("withdrawn_delivered") or {}))
+
+
+def stamp_withdrawn_delivered(request_id: str, session: str,
+                              project_dir=None) -> bool:
+    """Write a `withdrawn_delivered` row to THIS project's own bucket (the
+    RECIPIENT's), recording that the live surface told `session` the sender
+    withdrew an ask this project had accepted. Channel `mechanical`, the same
+    posture as `stamp_owed_delivered`: the surface stamped what it showed."""
+    session = str(session or "").strip()
+    if not session:
+        raise RequestError("withdrawn_delivered stamp requires a session id")
+    row = _stamp("withdrawn_delivered", request_id, "mechanical")
+    row["session"] = session
+    return append(row, project_dir=project_dir, writer=Writer.EMITTER)
+
+
+def withdrawn_deliverable(session: str, project_dir=None) -> dict:
+    """#1346: the asks this project had ACCEPTED that the sender then
+    withdrew, which `session` has not yet been told about. `{"rows": [...],
+    "overflow": N}`.
+
+    Only an accepted ask needs the notice: one that was merely open or
+    waiting on the sender never became this project's work, so it leaves the
+    decision lane quietly. An accepted ask would leave the owed lane with no
+    word, and an agent mid-work would keep going. It is told for
+    `VERDICT_PANEL_SESSIONS` serialized sessions past the withdrawal, then the
+    notice expires (the record stays readable in `request inbox`). No session
+    id means no dedup key, so it returns nothing."""
+    session = str(session or "").strip()
+    if not session:
+        return {"rows": [], "overflow": 0}
+    rows = [r for r in recipient_join(project_dir=project_dir).values()
+            if r["state"] == "withdrawn" and r["withdrawn_from"] == "accepted"
+            and needs_withdrawn_delivered_stamp(r, session)
+            and store.sessions_since_count(
+                r["withdrawn_at"], project_dir) < VERDICT_PANEL_SESSIONS]
+    rows.sort(key=_recency, reverse=True)
+    return {"rows": rows[:RENDER_CAP], "overflow": max(0, len(rows) - RENDER_CAP)}
 
 
 def owed_deliverable(session: str, project_dir=None) -> dict:

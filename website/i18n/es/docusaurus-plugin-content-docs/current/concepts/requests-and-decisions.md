@@ -49,6 +49,19 @@ Una vez abierta, un puñado de verbos la hacen avanzar:
   por registro; al cuarto intento se abre una solicitud nueva con
   `--supersedes` en vez de reescribir en silencio, así que el linaje queda
   visible.
+- **`withdraw`** es la forma en que un remitente retira su propio pedido:
+  `daimon request withdraw <id> --reason "<por qué>"`, desde cualquier canal,
+  porque retirar tu propio pedido es un acto del remitente y no una decisión del destinatario.
+  Funciona sobre un pedido abierto, en needs-info, aceptado o con un reclamo
+  pendiente, y lo deja como `withdrawn`, con el motivo en `note`; no se
+  completa ningún campo de decisión. Una solicitud ya terminada, rechazada o
+  retirada queda como está, y el comando dice por qué. Es definitivo para ese
+  registro: para volver a pedir, usá `--supersedes`. Un destinatario que ya
+  había aceptado el pedido recibe un aviso de una línea, una sola vez, por la
+  entrega en vivo. Solo el remitente puede retirarlo, y un remitente ya no
+  puede hacer `reject`, `accept`, `needs-info`, `suppress` ni `done` sobre su
+  propio pedido: cada evento de una solicitud pertenece a un rol, y una fila
+  escrita desde el otro lado queda inerte.
 - **`accept` / `reject` / `needs-info`** son la decisión del destinatario, y
   son solo para humanos: hace falta una terminal interactiva. La única
   excepción tallada vale igual para los dos tipos: un agente solo puede

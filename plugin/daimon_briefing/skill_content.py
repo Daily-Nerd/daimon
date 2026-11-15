@@ -325,7 +325,9 @@ first, so say what is being asked rather than how the ask begins.
 
 `daimon request list` shows this project's asks and where each stands.
 `request revise` answers a needs-info (three per record, then a new one with
-`--supersedes <id>`). `request done --evidence "<quote>"` renders as an
+`--supersedes <id>`). `request withdraw <id> --reason "<why>" --by agent`
+takes your own ask back; `reject` is the recipient's.
+`request done --evidence "<quote>"` renders as an
 unverified claim until the quote is byte-checked. `reject`, `needs-info`,
 `suppress` are human-only: print the command, never run it. `accept` is
 the one exception — an agent may run `request accept <id> --by agent`

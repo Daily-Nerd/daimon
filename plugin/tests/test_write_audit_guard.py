@@ -728,6 +728,17 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
              "--ask", "publish the 0.32 schema before Friday",
              "--by", "agent"], 0)
 
+    def r_request_withdraw():
+        # Its own ask: a withdrawn request is final, and the recipes after
+        # this one decide `ctx["request_id"]`.
+        known = set(requests.records(project_dir=str(proj)))
+        run(["request", "open", "--to", str(proj), "--ask",
+             "publish the 0.33 schema", "--why", "the release note needs it",
+             "--by", "agent"], 0)
+        (taken_back,) = set(requests.records(project_dir=str(proj))) - known
+        run(["request", "withdraw", taken_back,
+             "--reason", "no longer needed", "--by", "agent"], 0)
+
     def r_request_needs_info():
         run(["request", "needs-info", ctx["request_id"],
              "--note", "which schema version"], 0)
@@ -1016,6 +1027,7 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("ledger", "repair"): r_ledger_repair,
         ("request", "open"): r_request_open,
         ("request", "revise"): r_request_revise,
+        ("request", "withdraw"): r_request_withdraw,
         ("request", "needs-info"): r_request_needs_info,
         ("request", "suppress"): r_request_suppress,
         ("request", "accept"): r_request_accept,
@@ -1109,6 +1121,7 @@ def test_every_command_write_carries_an_admit_frame(
     assert saw("refute add", "refutations.jsonl")  # negative ledger append
     assert saw("request open", "requests.jsonl")   # cross-project ledger
     assert saw("request reply", "requests.jsonl")  # #1117
+    assert saw("request withdraw", "requests.jsonl")  # #1346
     # #599: the ledger REWRITE (scrub_event_fields) must have run and been
     # governed — not merely the tombstone append hitting the same file.
     assert any(cmd == "forget" and rel.name == "events.jsonl" and governed

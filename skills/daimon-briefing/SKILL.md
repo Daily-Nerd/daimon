@@ -81,6 +81,12 @@ An accepted request still in progress takes `daimon request reply <id> --note
 "<what moved>" --by agent`. It moves no state, so the request stays owed until
 `request done`. The sender sees it labeled as an unverified agent claim.
 
+A request this project sent that no longer stands takes `daimon request
+withdraw <id> --reason "<why>" --by agent`, not `reject`: a verdict is the
+recipient's, and a sender's `reject` is refused. A withdrawal is final for
+that record (ask again with `--supersedes <id>`), and a recipient that had
+already accepted it is told once.
+
 Request text fields (`ask`, `why`, `evidence`) cap at 2000 characters. Long
 content belongs in an artifact the request points at (a file, an issue, a
 PR), with the request itself carrying the pointer, not the full text.

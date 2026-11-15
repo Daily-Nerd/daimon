@@ -71,6 +71,7 @@ REQUIRED = (
     "_cmd_request_reply",
     "_cmd_request_revise",
     "_cmd_request_verdict",
+    "_cmd_request_withdraw",
     "_cmd_resolve",
     "_cmd_reverify",
     "_cmd_ruling_check_try",

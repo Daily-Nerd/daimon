@@ -292,8 +292,10 @@ def test_cli_open_refuses_another_tenants_slug_and_suggests_nothing(
     (requests.RECEIVER_CONSENT_FROM_NS, False),
     (requests.RECEIVER_CONSENT_FROM_NS + 1, False),
     (0, False), (None, False), ("not a number", False), (-5, False),
+    (True, False),
 ])
 def test_only_a_positive_order_before_the_anchor_keeps_the_old_rule(
         order, expected):
     row = {} if order is None else {"order": order}
-    assert requests._before_receiver_consent(row) is expected
+    assert requests._written_before(
+        row, requests.RECEIVER_CONSENT_FROM_NS) is expected

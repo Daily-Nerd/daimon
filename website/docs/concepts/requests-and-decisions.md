@@ -48,6 +48,18 @@ Once opened, a handful of verbs move the record forward:
   times per record; a fourth attempt opens a new request with
   `--supersedes` instead, so the lineage stays visible rather than silently
   rewritten.
+- **`withdraw`** is how a sender takes its own ask back: `daimon request
+  withdraw <id> --reason "<why>"`, from either channel, because retracting
+  your own ask is the sender's act and not the recipient's decision. It works on an open,
+  needs-info, accepted or claim-pending ask and ends it as `withdrawn`, with
+  the reason in `note`; no decision field is set. A done, rejected or
+  already withdrawn request is left as it is, and the command says why. It
+  is final for that record: ask again with `--supersedes`. A recipient that
+  had already accepted the ask is told once, in one line, through live
+  delivery. Only the sender can withdraw, and a sender can no longer
+  `reject`, `accept`, `needs-info`, `suppress` or `done` its own ask: each
+  request event belongs to one role, and a row written from the other
+  side is inert.
 - **`accept` / `reject` / `needs-info`** are the recipient's decision, and
   they are human-only: an interactive terminal is required. The one carved
   exception covers both kinds alike: an agent can accept an `info` or a

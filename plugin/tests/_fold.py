@@ -6,7 +6,7 @@ from daimon_briefing import requests
 
 
 def fold_rows(rows, policies=frozenset(), *, policies_by_to=None,
-              own_slug="", open_policies=None):
+              own_slug="", open_policies=None, home_slugs=frozenset()):
     return requests.fold(rows, requests.FoldInputs(
         policies=policies, policies_by_to=policies_by_to, own_slug=own_slug,
-        open_policies=open_policies or {}))
+        open_policies=open_policies or {}, home_slugs=home_slugs))

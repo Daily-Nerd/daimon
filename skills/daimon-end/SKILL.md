@@ -157,6 +157,7 @@ never reads it, so a fact placed there is lost to every other host.
 | A briefed loop this session closed | `daimon resolve <id> --by agent --evidence "<quote>"` | the briefing withholds it once byte-checked |
 | An accepted inbound request this session satisfied | `daimon request done <id> --evidence "<quote>" --by agent` | the sender's brief and `daimon request inbox`, as a claim until byte-checked |
 | An accepted inbound request still in progress | `daimon request reply <id> --note "<what moved>" --by agent` | the sender's brief and live nudge, as an unverified agent claim |
+| A request this project sent that no longer stands | `daimon request withdraw <id> --reason "<why>" --by agent` | the recipient's inbox as `withdrawn`, and a one-line live notice if it had accepted |
 | A rule that must never decay (a threshold, a boundary, a standing constraint) | `daimon ruling propose --subject ... --verdict ... --scope ... --evidence ... --by agent` | every briefing, once a human ratifies; 7 active per project by default |
 | An approach that was tried and failed | `daimon refute add ... --by agent` | `daimon refute guard` before anyone revives it |
 | A briefed item that moved but did not close | `daimon amend <id> --change progressed|blocked|changed --evidence "<quote>" --by agent` | the briefing, as an unconfirmed claim until a human settles it |
