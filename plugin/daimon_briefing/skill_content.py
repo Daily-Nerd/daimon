@@ -322,6 +322,8 @@ daimon request open --to <dir> --ask "<what>" --why "<why>" --title "<few words>
 
 `--title` is optional, at most 80 characters: the headline the recipient sees
 first, so say what is being asked rather than how the ask begins.
+`--severity high --severity-reason "<one line>"` (critical, high, low; omit
+for normal) says how much the outcome matters to you.
 
 `daimon request list` shows this project's asks and where each stands.
 `request revise` answers a needs-info (three per record, then a new one with
@@ -337,12 +339,10 @@ record says so. Otherwise it needs `accept` from a human channel like the
 rest: an `info` ask exposes this project's knowledge to the sender, so a
 person consents first. Until then the ask waits in `daimon decide`, and the
 refusal names the ruling to ratify.
-`daimon decide` lists every human-only command still waiting on a person,
-across this project's ledgers, so say it lands there and stop repeating
-the ask.
-`ask`, `why` and `evidence` cap at 2000 characters: long content belongs in
-an artifact the request points at (a file, an issue, a PR), with the
-request carrying the pointer, not the full text.
+`daimon decide` lists every human-only command waiting on a person: say it
+lands there and stop repeating the ask.
+`ask`, `why` and `evidence` cap at 2000 characters: put long content in a
+file, issue or PR and point at it.
 
 While an accepted request is still in progress, `daimon request reply <id>
 --note "<text>" --by agent` sends the sender an update without closing it.

@@ -29,6 +29,21 @@ proyectos que daimon ya conoce, con una sugerencia si hay un typo parecido.
 `--title` es opcional: unas pocas palabras, 80 caracteres como máximo, que
 dicen de qué trata el pedido. Lo encabeza donde se lista, y el ask conserva
 el texto completo. Sin título, lo reemplaza la primera oración del ask.
+
+`--severity` dice cuánto importa el resultado para quien pide, en una escala
+fija: `critical`, `high`, `normal` y `low`. `normal` es el default y no muestra
+nada. Cualquier otro nivel necesita `--severity-reason`, una línea de 80
+caracteres como máximo (más largo se rechaza, no se corta), y se muestra junto
+al nivel: `High: the release waits on this`. No es `--blocking`: la severidad
+es cuánto importa, `--blocking` es que estás frenado. Los paneles de decisión y
+de pendientes del destinatario, `request inbox`, `request list` y `daimon
+decide` ordenan por eso, y dentro de un nivel conservan el orden por
+antigüedad; los paneles siguen mostrando como máximo tres filas: la severidad
+cambia cuáles tres. `request inbox --min-severity high` (y el argumento
+`min_severity` de MCP) muestra ese nivel y los más severos. Cualquier canal
+puede fijarla, porque no baja ninguna barra de aprobación. Un pedido que
+reemplaza a otro con `--supersedes` no hereda la severidad.
+
 Hay dos tipos de pedido:
 
 - **`work`**, el default: le pide al destinatario que cambie algo o gaste
@@ -62,6 +77,14 @@ Una vez abierta, un puñado de verbos la hacen avanzar:
   puede hacer `reject`, `accept`, `needs-info`, `suppress` ni `done` sobre su
   propio pedido: cada evento de una solicitud pertenece a un rol, y una fila
   escrita desde el otro lado queda inerte.
+- **`severity`** la cambia después: `daimon request severity <id> <nivel>
+  --reason "<por qué>"`, desde cualquier canal, mientras el pedido está
+  abierto, en needs-info o aceptado (`normal` la borra). Es un evento propio y
+  no una revisión: no mueve el estado, no gasta ninguna de las tres
+  revisiones, no descarta un reclamo de finalización y no vuelve a enviar nada.
+  El nuevo nivel aparece en el próximo brief del destinatario, en `inbox` y en
+  `daimon decide`. Solo el remitente puede cambiarla, y un pedido terminado,
+  rechazado o retirado conserva el nivel que tenía.
 - **`accept` / `reject` / `needs-info`** son la decisión del destinatario, y
   son solo para humanos: hace falta una terminal interactiva. La única
   excepción tallada vale igual para los dos tipos: un agente solo puede
