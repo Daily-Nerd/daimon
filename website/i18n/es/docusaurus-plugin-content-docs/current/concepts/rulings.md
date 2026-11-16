@@ -20,48 +20,7 @@ tiene que valer de ahora en más.
 
 ## El ciclo de vida
 
-Cuatro verbos mueven una regla a través de su vida:
-
-```sh
-daimon ruling propose --subject "posts públicos" --scope publicaciones \
-  --evidence issue:693 --by agent
-daimon ruling ratify r-1a2b3c4d5e6f
-daimon ruling revise r-1a2b3c4d5e6f --evidence issue:700
-daimon ruling retire r-1a2b3c4d5e6f
-```
-
-(`propose` y `revise` también toman la bandera que lleva el texto mismo de
-la regla; mirá la [referencia de CLI](../reference/cli.md) para la sintaxis
-exacta.)
-
-- **`propose`** funda una candidata. Una propuesta de agente queda como
-  candidata: no se renderiza nada, no se hace cumplir nada, hasta que un
-  humano actúe sobre ella.
-- **`ratify`** la activa. Es el único verbo que convierte una candidata en
-  una regla vigente, y es deliberadamente teatral: imprime el texto
-  completo, avisa qué va a significar para cada sesión futura, y pide una
-  confirmación explícita con `y`. El registro queda atado al texto exacto
-  que te mostró, por hash, así que una carrera entre lo que se mostró y lo
-  que confirmaste nunca puede activar palabras distintas de las que leíste.
-- **`revise`** cambia el texto, el alcance o la evidencia. Sobre una regla
-  activa, el revise de un agente escribe una *propuesta* y la regla
-  conserva su texto actual hasta que un humano la acepta con `ratify` (que
-  muestra la propuesta pendiente, no el texto viejo, antes de volver a
-  preguntar). El revise de un humano sobre una regla activa se aplica de
-  inmediato, sin necesitar un ratify aparte para esa edición.
-- **`retire`** la termina. Un humano la retira directamente; el retire de un
-  agente queda registrado como propuesta y la regla sigue en pie. La
-  evidencia es opcional acá, porque una regla que simplemente dejó de
-  aplicar muchas veces no tiene nada que citar.
-  El ledger registra por qué terminó: una candidata que nunca fue
-  ratificada se lee como **rejected**, una regla activa que dejó de aplicar
-  se lee como **retired**. Las dos terminan en el mismo estado,
-  `overturned`; la palabra es la etiqueta que imprimen `ruling show` y
-  `ruling list`, así meses después podés distinguir una propuesta que
-  rechazaste de una regla que usaste y después dejaste. `daimon decide`
-  lista solo candidatas y ofrece rechazar una como `reject`; el comando que
-  da es `ruling retire`. Las reglas terminadas antes de que existiera esta
-  etiqueta se siguen leyendo como `retired`.
+Cuatro verbos llevan a una regla por su vida: `propose`, `ratify`, `revise` y `retire`. Solo un `ratify` humano convierte un candidato en una regla vigente. La [guía de reglas](../guides/rulings-and-checks.md) recorre cada verbo.
 
 ## Canales de autoridad
 
@@ -119,13 +78,6 @@ Una regla puede llevar un `check`: un script de shell que se compara contra
 una línea de comando, y que corre antes de que ese comando se ejecute en un
 anfitrión que lo soporte.
 
-```sh
-daimon ruling propose --subject "mensajes de commit" --scope git \
-  --evidence issue:900 \
-  --check-body-file check.sh --check-match '^git commit' \
-  --check-intent enforce
-```
-
 Quien la propone pide una *intención* (`enforce`, `warn` o `record-only`);
 el anfitrión entrega un *modo*, que siempre es el más débil entre lo que se
 pidió y lo que ese anfitrión puede hacer de verdad. Claude Code entrega
@@ -148,7 +100,7 @@ install` mantienen sincronizado con el ledger el manifiesto en disco que
 lee un anfitrión; `daimon ruling checks` muestra qué está armado, en qué
 anfitrión, y si alguna vez corrió. La mecánica completa, incluyendo
 exactamente qué recibe un check como su sujeto y cada modo de falla, está
-en la [referencia de CLI](../reference/cli.md#checks-en-ejecución).
+en la [referencia de CLI](../reference/check-runtime.md).
 
 ## Los permisos de solicitud también son una clase de regla
 
@@ -176,11 +128,6 @@ Una regla no tiene por qué pertenecer a un solo repositorio. Ratificala
 contra un directorio simple por encima de tus proyectos, uno que no sea en
 sí mismo un árbol de trabajo de git, y cada proyecto debajo la hereda:
 
-```sh
-daimon ruling propose --project ~/work --subject "secretos compartidos" \
-  --scope "cada repo bajo ~/work" --evidence issue:1092 --ratify
-```
-
 El directorio califica como capa una vez que está en el home o por debajo
 de él, no está tapado por un `.git` en ningún punto arriba, y tiene su
 propio bucket. Cada proyecto debajo entonces renderiza esa regla *antes*
@@ -200,5 +147,5 @@ Cuando hay más reglas vigentes de las que un briefing tiene lugar para
 mostrar, heredadas incluidas, la nota de exceso apunta a `daimon ruling
 list --inherited` para la vista combinada.
 
-Mirá la [referencia de CLI](../reference/cli.md) para la superficie
+Mirá la [referencia de CLI](../reference/cli/index.md) para la superficie
 completa de banderas de cada verbo de arriba.

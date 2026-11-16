@@ -73,8 +73,8 @@ Same quote discipline, same byte-check at session end.
 
 Closing an accepted request needs no human: run `daimon request done <id>
 --evidence ...` the moment evidence exists, in the same turn, not at session
-end. Accept and reject stay the human's decisions (or an agent's under a
-covering ruling). On an ask nobody accepted, an agent `done` is only a
+end. Only `accept` has an agent path, under a covering ruling; reject and
+needs-info are a person's. On an ask nobody accepted, an agent `done` is only a
 pending claim that lands when a person accepts.
 
 An accepted request still in progress takes `daimon request reply <id> --note

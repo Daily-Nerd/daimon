@@ -18,6 +18,8 @@ and renaming them breaks callers.
 import re
 from pathlib import Path
 
+from daimon_briefing import _docgen
+
 REPO = Path(__file__).resolve().parents[2]
 
 # Reader-facing surfaces. `docs/` is deliberately absent — it holds working
@@ -67,6 +69,14 @@ ALLOWED = (
 )
 
 
+# The generated CLI reference reproduces the CLI's own surface: flag names such
+# as `--verdict` and the help text the code prints. That is machine-facing text
+# the code owns, which this guard deliberately leaves out (see the module
+# docstring), and a word changed on the page would only be overwritten by the
+# next regeneration. Every other page, hand-written, stays covered.
+GENERATED = {REPO / rel for rel in _docgen.render_cli()}
+
+
 def _prose_files():
     for surface in SURFACES:
         target = REPO / surface
@@ -74,7 +84,8 @@ def _prose_files():
             yield target
             continue
         for path in sorted(target.rglob("*")):
-            if path.suffix in (".md", ".mdx") and path.is_file():
+            if (path.suffix in (".md", ".mdx") and path.is_file()
+                    and path not in GENERATED):
                 yield path
 
 

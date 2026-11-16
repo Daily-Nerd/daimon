@@ -318,7 +318,7 @@ def register(sub, fmt) -> None:
     p_cfg.add_argument("--output", help="command: DAIMON_LLM_COMMAND_OUTPUT (text|json:<key>)")
     p_cfg.add_argument(
         "--input",
-        help="command: DAIMON_LLM_COMMAND_INPUT (stdin|arg|file:<flag>) — how the "
+        help="command: DAIMON_LLM_COMMAND_INPUT (stdin|arg|file:<flag>): how the "
              "prompt reaches a CLI that doesn't read stdin, e.g. --input "
              "'file:--prompt-file' for the Devin CLI (#58)",
     )
@@ -335,12 +335,12 @@ def register(sub, fmt) -> None:
     p_cfg.add_argument("--author", help="--init: DAIMON_AUTHOR for team memory")
     p_cfg.add_argument(
         "--team-remote",
-        help="--init: git remote URL — sets DAIMON_TEAM=1 and runs "
+        help="--init: git remote URL: sets DAIMON_TEAM=1 and runs "
              "`daimon team init <url>`",
     )
     p_cfg.add_argument(
         "--test", action="store_true",
         help="send one tiny prompt through the resolved backend and report "
-             "pass/fail — run this right after configuring (#56)",
+             "pass/fail: run this right after configuring (#56)",
     )
     p_cfg.set_defaults(func=_cmd_configure)

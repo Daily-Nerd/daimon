@@ -19,7 +19,7 @@ hook events each host actually exposes.
 
 The Import column is what `daimon import` does with a host's past sessions,
 the bounded first fill in
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions).
+[Import past sessions](../guides/import-past-sessions.md).
 An `automatic` host is discovered from `--project` alone. A `path-given` host
 goes in by `--transcript`, because nothing in its file names the project. An
 `unsupported` host has no transcript root daimon registers, so import reaches

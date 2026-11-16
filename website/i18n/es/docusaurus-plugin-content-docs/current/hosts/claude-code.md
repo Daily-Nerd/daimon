@@ -63,7 +63,7 @@ custodia las acciones de shell:
   checkpoint. El `cwd` del payload se reenvía al CLI vía `DAIMON_PROJECT_DIR`,
   y `daimon brief --label` lee el checkpoint de este proyecto (regla de slug
   del bucket: `/Users/x/proj` -> `-Users-x-proj`; corré
-  [`daimon slug <path>`](../reference/cli#estado) para imprimirlo para
+  [`daimon slug <path>`](../reference/cli/status.md) para imprimirlo para
   cualquier ruta; no es el esquema que usa Claude Code para
   `~/.claude/projects`, que pliega `_` donde daimon lo conserva) e imprime la
   línea `DAIMON BRIEFING (checkpoint: ..., written ... ago)` sobre el
@@ -129,7 +129,7 @@ custodia las acciones de shell:
   se carga desde al lado del script, y el script solo nombra a su anfitrión.
   Sale con 0 en todos los caminos, no escribe nada en stderr y escribe o bien
   un objeto JSON o bien nada. Mira
-  [Checks en ejecución](../reference/cli#checks-en-ejecución).
+  [Checks en ejecución](../reference/check-runtime.md).
 
   Cada corrida agrega una fila a `~/.daimon/logs/checks.jsonl`. Una fila
   prueba que el check CORRIÓ. Solo `decision_emitted: deny` bajo `enforce`
@@ -228,8 +228,8 @@ host: lista `~/.claude/projects/<slug>/*.jsonl` y compara cada archivo por el
 directorio de trabajo que registraron sus filas, nunca por el nombre del
 directorio, que es un slug con pérdida. El plan, el tope y la reanudación
 están en
-[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas);
-cada rechazo está en la [fila de `daimon import`](../reference/cli#preparar).
+[Importar sesiones pasadas](../guides/import-past-sessions.md);
+cada rechazo está en las [notas de comandos](../reference/cli/notes.md).
 
 ## Enséñale el protocolo al agente
 

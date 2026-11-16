@@ -206,7 +206,7 @@ def register(sub, fmt) -> None:
     )
     p_recall.add_argument(
         "--slug", metavar="SLUG",
-        help="scope to a project bucket by its slug (see `daimon projects`) — "
+        help="scope to a project bucket by its slug (see `daimon projects`): "
              "reaches buckets whose source path no longer exists (#243)",
     )
     p_recall.add_argument(

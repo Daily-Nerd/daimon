@@ -102,11 +102,11 @@ def register(sub, fmt) -> None:
     """Register this family's parsers on the top-level subparsers."""
     p_handoff = sub.add_parser(
         "handoff",
-        help="leave an authored baton for the next session — renders above "
+        help="leave an authored baton for the next session: renders above "
              "everything in its next briefing (#523)",
     )
     p_handoff.add_argument("text", nargs="?", default=None,
-                           help="the baton: imperative, small — what to do "
+                           help="the baton: imperative, small: what to do "
                                 "first and what to beware")
     p_handoff.add_argument("--clear", action="store_true",
                            help="retract the active baton")

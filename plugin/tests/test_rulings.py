@@ -1460,9 +1460,9 @@ def test_the_reference_states_where_a_change_to_this_surface_shows_up(
     page is owed the same warning."""
     root = Path(__file__).parent.parent.parent
     pages = [
-        root / "website/docs/reference/cli.md",
+        root / "website/docs/reference/cli/index.md",
         root / ("website/i18n/es/docusaurus-plugin-content-docs"
-                "/current/reference/cli.md"),
+                "/current/reference/cli/index.md"),
     ]
     for page in pages:
         text = page.read_text(encoding="utf-8")
@@ -1478,9 +1478,9 @@ def test_the_reference_names_the_resolver_a_host_shares_with_the_cli(
     host reading the Spanish page is owed the same contract."""
     root = Path(__file__).parent.parent.parent
     pages = [
-        root / "website/docs/reference/cli.md",
+        root / "website/docs/reference/python-api.md",
         root / ("website/i18n/es/docusaurus-plugin-content-docs"
-                "/current/reference/cli.md"),
+                "/current/reference/python-api.md"),
     ]
     for page in pages:
         text = page.read_text(encoding="utf-8")
@@ -1495,9 +1495,9 @@ def test_the_reference_names_all_four_rulings_read_states(tmp_checkpoint_dir):
     get back, or one of them can drift silently out of the doc."""
     root = Path(__file__).parent.parent.parent
     pages = [
-        root / "website/docs/reference/cli.md",
+        root / "website/docs/reference/python-api.md",
         root / ("website/i18n/es/docusaurus-plugin-content-docs"
-                "/current/reference/cli.md"),
+                "/current/reference/python-api.md"),
     ]
     states = ('"unresolved"', '"no-bucket"', '"unreadable"', '"read"')
     for page in pages:

@@ -37,7 +37,7 @@ _TEXT_SUFFIXES = {".md", ".py", ".yml", ".yaml", ".json", ".toml", ".txt"}
 
 _RELATIVE_LINK = re.compile(r"(?:\.\./|\./|\b)docs/hosts/")
 _TOP_PAGE_LINK = re.compile(
-    r"(?:\.\./|\./|\b)docs/(?:backends-tested|configuration|team)\.md"
+    r"(?:\.\./|\./|\b)docs/(?:backends-tested|configuration|team|trust-inspector)\.md"
 )
 _URL = re.compile(r"https://\S+")
 
@@ -74,9 +74,14 @@ TOP_PAGES = {
         re.compile(_SITE + r"es/docs/reference/backends-tested/"),
     ),
     "configuration.md": (
-        "getting-started/configuration.md",
-        re.compile(_SITE + r"docs/getting-started/configuration/"),
-        re.compile(_SITE + r"es/docs/getting-started/configuration/"),
+        "reference/configuration.md",
+        re.compile(_SITE + r"docs/reference/configuration/"),
+        re.compile(_SITE + r"es/docs/reference/configuration/"),
+    ),
+    "trust-inspector.md": (
+        "guides/inspect-an-item.md",
+        re.compile(_SITE + r"docs/guides/inspect-an-item/"),
+        re.compile(_SITE + r"es/docs/guides/inspect-an-item/"),
     ),
     "team.md": (
         "team/team.md",

@@ -170,7 +170,7 @@ An agent can only propose one (`daimon trust propose --by agent`), which lands
 a candidate. A candidate stays a proposal until a person runs
 `daimon trust confirm`; `dismiss` rejects it, and `release` lifts an active
 quarantine. See the
-[CLI reference](../reference/cli.md) for the full verb set.
+[CLI reference](../reference/cli/index.md) for the full verb set.
 
 ## VERIFY BEFORE TRUSTING
 

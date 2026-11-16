@@ -15,13 +15,19 @@ daimon mcp serve   # blocks, serves JSON-RPC on stdio until EOF
 
 ## Tools
 
-| Tool | What it returns |
-|------|-----------------|
-| `daimon_recall` | Search results with full provenance: trust class (`verbatim` = exact quote, `inferred` = model conclusion), author, origin project slug, and a `status` field in plain words when a row is resolved, superseded, or contradicted (`null` for a live row) |
-| `daimon_brief` | The latest briefing for the current project — deterministic render, trust-tagged, resolutions withheld |
-| `daimon_projects` | Every project daimon has memory for: slug, session, branch, last topic |
-| `daimon_status` | Capture health: checkpoint freshness, last serialize result, outstanding failures, alarms — same payload as `daimon status --json` |
-| `requests_inbox` | Requests other projects have addressed to this one — the read-only pull side of the [cross-project request ledger](cli.md#coordinate). `daimon_brief` never carries this content; opening, answering, or deciding a request is CLI-only. Quarantined or forgotten text in its rows comes back as a marker or blank. Takes an optional `min_severity` argument (`critical`, `high`, `normal` or `low`) that keeps that level and anything more severe. Every row carries `severity` and `severity_reason`; `normal` rows carry an empty reason. |
+{/* generated:mcp-tools (daimon_briefing._docgen) */}
+
+| Tool | What it does | Arguments |
+| --- | --- | --- |
+| `daimon_recall` | Search daimon's cross-session memory. Rows carry provenance: trust class (verbatim = exact quote, inferred = model conclusion), author, origin project slug, and a `status` field in plain words when a row is resolved, superseded or contradicted (null for a live row). Searches this project only. | `query` `string` required: search terms<br />`limit` `integer` default `20`<br />`session` `string`: the live session id this pull should be attributed to, if known<br />`all_projects` `boolean` only with `DAIMON_MODEL_CROSS_PROJECT`: search every project<br />`slug` `string` only with `DAIMON_MODEL_CROSS_PROJECT`: search one other project by slug |
+| `daimon_brief` | The latest briefing for this project: what the last session was doing, decisions, open loops, trust-tagged. Strictly project-scoped: no checkpoint here answers 'none', never another project's content. | `slug` `string` only with `DAIMON_MODEL_CROSS_PROJECT`: read another project by slug<br />`project` `string` only with `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+| `daimon_projects` | This project's own entry: slug, age, last topic. | - |
+| `daimon_status` | Capture health for this project: checkpoint freshness, last serialize result, outstanding failures, alarms. | `project` `string` only with `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+| `requests_inbox` | Requests other daimon projects have addressed to this one (the cross-project ask ledger, #694). Deliberate pull, never ambient: daimon_brief does not carry this content. Read-only: opening, answering, or deciding a request is CLI-only (`daimon request ...`). | `min_severity` `critical\|high\|normal\|low`: only requests at this severity or a more severe one<br />`project` `string` only with `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+
+{/* end generated:mcp-tools */}
+
+`requests_inbox` rows carry `severity` and `severity_reason` (a `normal` row has an empty reason), and quarantined or forgotten text in them comes back as a marker or blank. The table above lists the arguments of the tools as the server sends them to a client.
 
 All five carry `readOnlyHint`. Item-id verbs exist on the CLI, the viewer and
 the in-process api; the MCP tools take no item id by design (pinned by test).
@@ -37,7 +43,7 @@ witnessed the claim, on its own axis and never a higher trust class. See
 With `DAIMON_WORLDCHECK` on, `daimon_brief` also runs world evidence on the
 current project's carried claims and records the result, as `daimon brief`
 does. A read by `slug` never does. See
-[Worldcheck](../getting-started/configuration.md#worldcheck) for the cost.
+[Worldcheck](../reference/configuration.md#worldcheck) for the cost.
 
 ## Scoping rules
 

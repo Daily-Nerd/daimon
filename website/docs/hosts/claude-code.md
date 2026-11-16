@@ -61,7 +61,7 @@ close the capture -> inject loop; the fourth guards shell actions:
   choose a checkpoint. The payload `cwd` is forwarded to the CLI via
   `DAIMON_PROJECT_DIR`, and `daimon brief --label` reads this project's
   checkpoint (bucket slug rule: `/Users/x/proj` -> `-Users-x-proj`; run
-  [`daimon slug <path>`](../reference/cli#status) to print it for any path;
+  [`daimon slug <path>`](../reference/cli/status.md) to print it for any path;
   it is not the scheme Claude Code uses for `~/.claude/projects`, which folds
   `_` where daimon keeps it) and prints the one `DAIMON BRIEFING (checkpoint:
   ..., written ... ago)` line above the briefing; the hook prints it as given.
@@ -123,7 +123,7 @@ close the capture -> inject loop; the fourth guards shell actions:
   lives in `checks_host.py`, loaded from beside the script, and the script
   itself only names its host. Exits 0 on every path, writes nothing to stderr,
   and writes either one JSON object or nothing at all. See
-  [Checks at runtime](../reference/cli#checks-at-runtime).
+  [Checks at runtime](../reference/check-runtime.md).
 
   Every run appends one row to `~/.daimon/logs/checks.jsonl`. A row proves the
   check RAN. Only `decision_emitted: deny` under `enforce` closes the gap
@@ -215,8 +215,8 @@ because a code may be added.
 lists `~/.claude/projects/<slug>/*.jsonl` and matches each file on the working
 directory its rows recorded, never on the directory name, which is a lossy
 slug. The plan, the bound and the resume are in
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions);
-every refusal is in the [`daimon import` row](../reference/cli#set-up).
+[Import past sessions](../guides/import-past-sessions.md);
+every refusal is in the [command notes](../reference/cli/notes.md).
 
 ## Teach the agent the protocol
 

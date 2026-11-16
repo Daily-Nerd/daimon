@@ -307,7 +307,7 @@ def register(sub, fmt) -> None:
     ph_install = hooks_sub.add_parser(
         "install",
         help="copy a host's hook script(s) to the stable path ~/.daimon/hooks/ "
-             "and print the registration snippet — re-run after every upgrade",
+             "and print the registration snippet: re-run after every upgrade",
     )
     ph_install.add_argument("host", nargs="?",
                             help="host to install (see `daimon hooks list`); "

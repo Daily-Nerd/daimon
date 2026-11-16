@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 description: "Every daimon environment variable, how the process environment overrides the env file at ~/.daimon/env, and why hooks need that file at all."
 ---
 
@@ -11,25 +11,25 @@ set there falls back to the env file at `~/.daimon/env`. Override the file's
 location with `DAIMON_ENV_FILE`.
 
 The env file exists because hooks run in whatever environment the host process
-happened to inherit — a GUI-launched agent has no shell profile, so shell
+happened to inherit, a GUI-launched agent has no shell profile, so shell
 exports are not a reliable channel. Its format is `KEY=VALUE` lines; a leading
 `export `, surrounding quotes, blank lines, and `#` comments are tolerated.
-Keep it `chmod 600` — it can hold API keys.
+Keep it `chmod 600`, it can hold API keys.
 
 `daimon configure` manages the LLM backend knobs (see [LLM backend](#llm-backend))
 and writes them to `~/.daimon/env`. Everything else you set by editing that file
 or exporting the variable.
 
 **Boolean variables** accept `1`, `true`, `yes`, or `on` as truthy (matched
-case-insensitively where noted). A handful use different conventions — kill
-switches that are on unless set to `0`, or presence-based flags — and those are
+case-insensitively where noted). A handful use different conventions, kill
+switches that are on unless set to `0`, or presence-based flags, and those are
 called out in the "What it does" column.
 
 ## Core
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_DISABLE` | off | Kill switch. When truthy, every hook becomes a no-op — no capture, no briefing. |
+| `DAIMON_DISABLE` | off | Kill switch. When truthy, every hook becomes a no-op, no capture, no briefing. |
 | `DAIMON_ENV_FILE` | `~/.daimon/env` | Path to the env file that backs every other variable. Read from the process env only (it names the file, so it can't live inside it). |
 | `DAIMON_PROJECT_DIR` | unset | Working directory of the session being briefed or serialized, used to route per-project checkpoints. Hooks pass the host's cwd through it; unset means daimon uses the working directory. A host with no project identity at all (the Hermes in-process hook) gets no briefing: an unknown project reads nothing. |
 | `DAIMON_MODEL_CROSS_PROJECT` | off | When truthy, the MCP tools may read outside this project's own scope: `daimon_recall` and `daimon_brief` accept `slug`, `all_projects` and a `project` path, `daimon_status` and `requests_inbox` accept a `project` path, and `daimon_projects` lists every bucket. Off, any request that leaves the own bucket is refused out loud with a message naming this setting, and `daimon_projects` lists only the own bucket; the tool descriptions then do not offer those arguments. A `project` that resolves to the own bucket is always answered. Read at process start from the process env or the env file, never from prompt content. Under `DAIMON_TENANT_SCOPED` it has no effect and the tenant refusal stands. The CLI is not governed by this setting: off tenant scope a shell can always choose its own directory. `DAIMON_TENANT_SCOPED` closes that for the CLI verbs. |
@@ -49,73 +49,7 @@ called out in the "What it does" column.
 | `DAIMON_CHECKPOINT_HISTORY` | `3` | How many checkpoint pointers to retain per directory (`latest.json` plus `prev-1` … `prev-(N-1)`), so a failed serialize can fall back to a prior pointer. Minimum 1 (latest only). |
 | `DAIMON_GC_PIN_IMPORTANCE` | `9` | Item-importance threshold that pins a checkpoint file against GC: a file whose max item importance reaches this survives outside the newest-N window. `0` disables pinning (pure recency window); values above 10 are clamped to 10. |
 
-### Upgrading across 0.42.0
-
-Before 0.42.0 the library named a project's bucket from the literal path it
-was handed. Since 0.42.0 every entry point resolves the path first: made
-absolute, symlinks collapsed, then normalized to the git toplevel. Two path
-shapes therefore name a different bucket than they used to:
-
-- a path with a **symlink anywhere in it** — on macOS that includes anything
-  reached through `/tmp`, and any mount point that is itself a link;
-- a path **below a git toplevel**, when the write came through the library
-  rather than the command line.
-
-The CLI already resolved both of these before 0.42.0, so a bucket written by
-running `daimon` in a terminal is unaffected. A bucket written by a host
-process that called the library from such a path sits under the old name, and
-nothing reads it.
-
-`daimon status` says so. Whenever a bucket written under the old rule exists
-for the path you are standing in, the health block carries a `legacy:` line
-naming it. Move it once:
-
-```sh
-daimon bucket migrate                                # this project
-daimon bucket migrate --project /path/to/project
-daimon bucket migrate --project /path/to/project --dry-run
-```
-
-The move renames the old directory when the new one does not exist yet, and
-merges otherwise. A merge appends every ledger line the new bucket does not
-already hold, and adds the old bucket's pointers to the new bucket's chain.
-Pointers already in the new bucket are never removed and never displaced: they
-belong to the live project. Old pointers go into whatever slots
-`DAIMON_CHECKPOINT_HISTORY` leaves free, newest first, except that an old copy
-of a session the new bucket already points at simply replaces that one slot
-when it is the newer of the two. Anything else, an old pointer with no free
-slot or a file daimon does not write, is left exactly where it is and named in
-the report with what to do about it.
-
-Running it twice is safe: a second run over an unchanged state writes nothing
-new and returns the code that matches the state it finds. `--dry-run` prints
-the same plan and writes nothing.
-
-Exit 0 means the move finished and the old bucket is gone. Exit 1 means it did
-not, and stdout names each thing left with its own remedy: raise
-`DAIMON_CHECKPOINT_HISTORY` to the number it names and run again for pointers
-with no free slot; fix or move a file that could not be read; move a file
-daimon does not write out of the old bucket. A partial move does not count as
-migrated, so the old bucket's rows are not yet read as this project's history.
-If you finish the job yourself by clearing the old directory, the next run
-records that and the migration is complete.
-
-Exit 2 is a refusal. A `--project` containing a `..` component is refused
-because the old rule collapses `..` before following a symlink and the current
-one follows the symlink first, so the two name different directories; a bucket
-written before 0.42.0 was written under the literal slug of the collapsed path,
-so pass that path. On a tenant-scoped home (`DAIMON_TENANT_SCOPED`) an explicit
-`--project` is refused outright and the project comes from
-`DAIMON_PROJECT_DIR`, else the working directory: a migration writes a lasting
-alias between two buckets, and choosing which two is a scope choice. The same rule covers every verb: on a tenant-scoped home a `--project` that names another bucket is refused, whatever the verb.
-
-Every completed move appends one line to
-`~/.daimon/checkpoints/migrations.jsonl`. That file is what keeps `daimon
-recall` and the request inbox finding history under the old bucket name once
-the directory is gone: per-session checkpoint files keep the name they were
-stamped with, because their receipts bind their exact bytes. Once a bucket
-has absorbed another, `daimon status` shows a `migrated: from <old bucket> on
-<date>` line in place of the warning.
+Upgrading across 0.42.0, and what to run after any upgrade, is in the [upgrade guide](../guides/upgrade.md).
 
 ## Carry
 
@@ -137,7 +71,7 @@ Deterministic cross-session carry-over of unresolved items.
 | `DAIMON_BRIEF_GLOBAL_FALLBACK` | header-only | Controls the cross-project global-pointer fallback when a project has no checkpoint of its own. Default shows a header only; set to `full` (or `1`) to inject the full foreign body. A project with no identity never reads the global pointer, and on a `DAIMON_TENANT_SCOPED` home this setting and `brief --global-fallback` have no effect (the flag is refused). |
 | `DAIMON_STALE_DAYS` | `7.0` | Age threshold (days) past which a carried item's effective last-verified stamp (its `last_verified`, else the latest resolutions.jsonl event, else `first_seen`) is stale enough for `brief` to warn about it. `0` warns on every carried item. Past the threshold, the item itself renders as `[? unverified]` with its stored tag and age in a trailing suffix, instead of the stored trust tag (render-time only; `daimon reverify` restores the tag on the next brief). |
 | `DAIMON_REQUEST_OVERDUE_DAYS` | `7.0` | Days without any movement (opened, revised, accepted, needs-info, replied to, or claimed done) before a request its sender still has open reads `overdue` in `daimon request list` and in the sender's brief. Wall-clock, derived on read, independent of recipient sessions. `0` marks every open request overdue; a malformed value falls back to `7.0`. |
-| `DAIMON_PLAIN` | off | When truthy (case-insensitive), forces plain-text output — disables the rich tables/panels in `status`, `brief`, and `--help`. |
+| `DAIMON_PLAIN` | off | When truthy (case-insensitive), forces plain-text output, disables the rich tables/panels in `status`, `brief`, and `--help`. |
 | `NO_COLOR` | unset | Presence-based, per the [NO_COLOR convention](https://no-color.org/): if the variable is set to *any* value (even empty), rich output is disabled. |
 
 ### Host output limits behind the `DAIMON_BRIEF_MAX_BYTES` default
@@ -157,7 +91,7 @@ Raising `DAIMON_BRIEF_MAX_BYTES` above 9728 can push the briefing past the Claud
 ## Worldcheck
 
 Opt-in (#365): a brief-time spot-check of carried PR/issue-state claims
-against reality, via read-only `gh` probes. Default off — `daimon brief` runs
+against reality, via read-only `gh` probes. Default off, `daimon brief` runs
 on the SessionStart hook's latency-critical injection path (an 8s subprocess
 budget inside a 10s hook budget), so even budget-bounded network probes there
 must be deliberately opted into. Flag off, no probe runs and nothing is
@@ -190,7 +124,7 @@ Hermes hook), through one shared commit; the renderer itself writes nothing.
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_RECALL_DB` | per store (see right) | Test-only: pins one explicit recall index file and skips the per-store naming. Leave it unset. The derived recall index (SQLite FTS) is never a source of truth, so it is safe to delete at any time. The default store keeps `~/.daimon/recall.db`; any other store (`DAIMON_CHECKPOINT_DIR`, `--data-dir`) gets its own `~/.daimon/recall/<hash>.db`. `daimon heal` removes per-store indexes whose store is gone or that went 30 days unused. |
-| `DAIMON_RECALL_SEEN_DIR` | `~/.daimon/recall_seen` | Per-session suggestion-cooldown state so a repeated topic never re-injects. Disposable — deleting it only resets cooldowns. |
+| `DAIMON_RECALL_SEEN_DIR` | `~/.daimon/recall_seen` | Per-session suggestion-cooldown state so a repeated topic never re-injects. Disposable, deleting it only resets cooldowns. |
 
 ## Tenant scope
 
@@ -206,17 +140,17 @@ For a host that runs one daimon home with one project directory per person. A si
 
 ## Team memory
 
-Opt-in shared-memory mirror. See [docs/team.md](../team/team.md) for the full workflow.
+Opt-in shared-memory mirror. See [team memory](../team/team.md) for the model and [set up team memory](../team/setup.md) for the steps. The `daimon-team.toml` format is in [team configuration](../team/configuration.md).
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_TEAM` | off | When truthy, mirror each checkpoint into the shared team dir so `brief --team` can surface teammates. Gates **writes** only — reads of the team dir are always allowed. A synced remote additionally requires the project to be in its scope allowlist (see [team.md](../team/team.md#which-projects-sync-the-scope-allowlist-default-closed)); out-of-scope projects mirror to the local dir only. |
+| `DAIMON_TEAM` | off | When truthy, mirror each checkpoint into the shared team dir so `brief --team` can surface teammates. Gates **writes** only, reads of the team dir are always allowed. A synced remote additionally requires the project to be in its scope allowlist (see [team.md](../team/configuration.md#which-projects-sync-the-scope-allowlist-default-closed)); out-of-scope projects mirror to the local dir only. |
 | `DAIMON_AUTHOR` | git `user.name`, then OS user | Team author identity used to namespace your checkpoints. Falls back to `git config user.name`, then the OS username, then `unknown`. |
 | `DAIMON_TEAM_DIR` | `~/.daimon/team` | Root of the shared team-memory mirror. |
 | `DAIMON_TEAM_PROJECT` | unset | Explicit logical project path for this machine's sessions (relative, e.g. `core/api-gateway`). Overrides the sidecar's `daimon-team.toml` mapping and the origin-derived fallback when routing checkpoints under `projects/`. |
 | `DAIMON_TEAM_RETENTION_DAYS` | `365` | Read-time age window: teammates' checkpoints older than this many days are skipped when reading. `0` = keep all. Never physically deletes from the shared append-only branch. |
-| `DAIMON_TEAM_APPLY_FORGET` | off | Standing consent for a TEAMMATE's published forget tombstone to rewrite this machine's own checkpoints. NOT sufficient alone — the apply also requires the typed `daimon team sync --apply-forget`, because a bare `daimon team sync` is spawned detached at SessionStart. Default off: a foreign tombstone always suppresses the value on read and in the index, but deleting local belief state from someone else's hash is a decision to make knowingly — the shared branch is append-only, so there is no undo. Without it, `daimon team sync --apply-forget` refuses at exit code 2 before syncing anything. When set, `daimon team status` and the team line of `daimon status` report it as armed. |
-| `DAIMON_LIVE_DELIVERY` | off | When truthy, an undecided request addressed to this project is delivered to a session that was already running when it arrived, at that session's next turn boundary, instead of waiting for its next SessionStart briefing. Render surface only: the ledger stays store-and-forward, the delivered nudge is the same pull-only record the next briefing would have shown, and the verbs that decide stay human-only. Once per session per revision; a `request revise` re-delivers the sharpened ask. Same daimon home only. Default off — briefing-only is the right posture for short sessions, so an always-on consumer turns this on deliberately. |
+| `DAIMON_TEAM_APPLY_FORGET` | off | Standing consent for a TEAMMATE's published forget tombstone to rewrite this machine's own checkpoints. NOT sufficient alone, the apply also requires the typed `daimon team sync --apply-forget`, because a bare `daimon team sync` is spawned detached at SessionStart. Default off: a foreign tombstone always suppresses the value on read and in the index, but deleting local belief state from someone else's hash is a decision to make knowingly, the shared branch is append-only, so there is no undo. Without it, `daimon team sync --apply-forget` refuses at exit code 2 before syncing anything. When set, `daimon team status` and the team line of `daimon status` report it as armed. |
+| `DAIMON_LIVE_DELIVERY` | off | When truthy, an undecided request addressed to this project is delivered to a session that was already running when it arrived, at that session's next turn boundary, instead of waiting for its next SessionStart briefing. Render surface only: the ledger stays store-and-forward, the delivered nudge is the same pull-only record the next briefing would have shown, and the verbs that decide stay human-only. Once per session per revision; a `request revise` re-delivers the sharpened ask. Same daimon home only. Default off, briefing-only is the right posture for short sessions, so an always-on consumer turns this on deliberately. |
 
 ## Receipts
 
@@ -225,23 +159,23 @@ paired with a [vitni](https://github.com/Daily-Nerd/vitni) `local`-binding
 receipt: an Ed25519-signed statement that binds the checkpoint's exact on-disk
 bytes (`outputs_hash`) to its source transcript (`inputs_hash`), written to a
 `<session>.receipt` sidecar. This makes a post-hoc edit to a checkpoint file
-detectable. Receipts are fully valid offline — nothing leaves the machine.
+detectable. Receipts are fully valid offline, nothing leaves the machine.
 
 Every step is **fail-open**: a missing CLI, missing openssl, timeout, or bad
-output logs one line to `serialize.log` and proceeds without a receipt — a
+output logs one line to `serialize.log` and proceeds without a receipt, a
 receipts failure never blocks or fails a serialize or a briefing. Verify a
 checkpoint on demand with `daimon verify-receipt [session]`; at briefing time a
 receipt-era checkpoint whose receipt is missing or no longer matches its bytes
 has its `✓ verbatim` labels degraded with a visible note.
 
 Public-key derivation prefers the vitni CLI's `keygen` command (vitni 0.5.0+) and
-falls back to openssl on older CLIs or a failed probe — so on macOS, where Apple's
+falls back to openssl on older CLIs or a failed probe, so on macOS, where Apple's
 LibreSSL has no Ed25519 in `openssl pkey`, receipts work once vitni ≥ 0.5.0 is
 installed, with no openssl-with-Ed25519 required.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DAIMON_RECEIPTS` | off | When truthy, mint a signed receipt beside each checkpoint. Default off — a new subprocess per serialize is opt-in. |
+| `DAIMON_RECEIPTS` | off | When truthy, mint a signed receipt beside each checkpoint. Default off, a new subprocess per serialize is opt-in. |
 | `DAIMON_VITNI_CLI` | `vitni-verify` (on PATH) | The vitni verifier CLI used to sign/verify. A path or a name resolved on PATH. Contract: `<cli> <command>` with one JSON object on stdin and one JSON line on stdout. |
 | `DAIMON_KEYS_DIR` | `~/.daimon/keys` | Where the Ed25519 signing seed (`signing.seed`, mode 0600, auto-created on first mint) and cached public key (`signing.pub.json`) live. |
 
@@ -253,60 +187,20 @@ Serialize-throttle knobs for hosts that lack a clean session-end event. See
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_CODEX_SERIALIZE_ON_STOP` | on | Whether the Codex `Stop` hook serializes at all. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). |
-| `DAIMON_CODEX_SERIALIZE_ON_SESSION_END` | on | Whether the Codex `SessionEnd` hook serializes at all — the real end of a session, fired once on graceful teardown with the complete transcript, deliberately unthrottled. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). Does not replace `Stop`, which stays as crash insurance for a SIGKILL or a closed terminal that never reaches `SessionEnd`. |
+| `DAIMON_CODEX_SERIALIZE_ON_SESSION_END` | on | Whether the Codex `SessionEnd` hook serializes at all, the real end of a session, fired once on graceful teardown with the complete transcript, deliberately unthrottled. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). Does not replace `Stop`, which stays as crash insurance for a SIGKILL or a closed terminal that never reaches `SessionEnd`. |
 | `DAIMON_CODEX_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Codex serialize spawns. `0` serializes on every `Stop`. |
+| `DAIMON_KIMI_SERIALIZE_ON_STOP` | on | Whether the Kimi `Stop` hook serializes at all. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). `Stop` is the capture path for `kimi -p` print mode, which never fires `SessionEnd`, so turning it off leaves print-mode sessions uncaptured. |
+| `DAIMON_KIMI_SERIALIZE_ON_SESSION_END` | on | Whether the Kimi `SessionEnd` hook serializes at all. On unless set to `0`, `false`, `no`, or `off` (case-insensitive). |
+| `DAIMON_KIMI_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Kimi `Stop` serialize spawns for one session. `0` serializes on every `Stop`. |
+| `DAIMON_ACTION_RECALL` | on | Whether the pre-action recall hook may add one prior-work line before a shell command. On unless set to `0`, `false`, `no`, or `off`. Read from the process environment or `~/.daimon/env`, so a host launched from a desktop session sees it too. |
+| `DAIMON_MCP_TOOL_AVAILABLE` | off | Set by the hook entry that registered the read-only [MCP server](./mcp.md) for its host, never by hand. When on, the per-prompt recall hint tells the model to call the MCP tool instead of printing the `daimon recall` shell command. |
+| `DAIMON_MCP_TOOL_NAME` | `daimon_recall` | Set by the same hook, next to `DAIMON_MCP_TOOL_AVAILABLE`: the name this host shows for the recall tool, which differs between hosts. A value that is not 1 to 128 letters, digits or underscores is ignored and the default is used. |
 | `DAIMON_WINDSURF_MIN_SERIALIZE_INTERVAL` | `300` | Minimum seconds between Windsurf serialize spawns (Windsurf has no session-end event, so capture runs on this throttle). `0` serializes every turn. |
-| `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state — covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
-| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them — change it in one place only, or the writer and the deleter stop agreeing. |
-| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1 — unlike the other Windsurf knobs, `0` does not disable it. |
+| `DAIMON_WINDSURF_FINALIZER_QUIET_SECONDS` | `600` | Quiet period after the last Windsurf activity before a debounced finalizer serializes the trajectory's final transcript state, covers sessions whose last turns land inside the throttle window. Fractional values accepted; `0` disables the finalizer. |
+| `DAIMON_WINDSURF_DIR` | `~/.daimon/windsurf` | Where the Windsurf adapter keeps the transcripts it accumulates. Read by both the hook that writes them and the `forget`/`heal` paths that delete them, change it in one place only, or the writer and the deleter stop agreeing. |
+| `DAIMON_WINDSURF_STATE_DAYS` | `7` | Age window for daimon-authored Windsurf transcripts and unparsed payload dumps, reaped by `daimon heal`. A privacy bound: a forgotten value cannot be located inside prose, so this limits how long the source conversation lingers between `forget` runs. Clamped to at least 1, unlike the other Windsurf knobs, `0` does not disable it. |
 
-## Embedding hosts: the sealed git surface
-
-A program that embeds daimon and works in directories written by a less trusted
-party selects the sealed posture (`DAIMON_GIT_POSTURE=sealed`, or
-`hostgit.configure(posture="sealed", ceiling=...)` before the first project
-read) and then does all of its git through `daimon_briefing.hostgit`. These
-calls exist only under that posture, except `project`, which answers in both.
-
-| Call | What it does |
-|---|---|
-| `project(path)` | The checkout `path` belongs to, or a refusal code. Runs the shape check and the config allowlist gate before it returns a checkout. |
-| `run(checkout, *args)` | One git call on a checkout `project` returned, from a fixed table of subcommands (`diff`, `show`, `log`, `diff-tree`, `diff-index`, `diff-files`, `status`, `init`, `rev-parse`, `ls-files`, `ls-tree`, `cat-file`, `symbolic-ref`, `for-each-ref`, `rev-list`, `add`). The gate runs again on every call. A refused checkout answers with exit code 125, a hang with 124. |
-| `init(path)` | Creates a repository with an empty template directory and returns `project(path)`. |
-| `fetch_local(lead, member, branch, member_name)` | Fetches the member clone's branch into the lead as `refs/members/<member_name>/<branch>`, local transport only, no tags, no submodules. Both repositories pass the gate. |
-| `declare(root, slug=..., origin_url=...)` | States a project's identity once per process. Also exposed as `api.declare_project`. It is data: the root still passes the gate. |
-
-Refusal codes: `not-a-dir`, `outside-ceiling`, `no-git-below-ceiling`,
-`gitfile`, `symlink`, `empty-gitdir`, `commondir`, `unreadable`,
-`worktree-config`, `alternates`, `config-unreadable`, `config-key:<key>` (a
-config key outside the allowlist), `checkout-changed`, `init-failed`.
-
-The allowlist includes `branch.<name>.vscode-merge-base`, which VS Code uses
-as branch-selection metadata. Other editor keys require their own review.
-
-A sealed checkout refusal appears in the project's briefing with its reason,
-including when the project has no checkpoint. The diagnostic belongs to the
-current project and response. It also appears in `daimon status`. Git-backed
-world checks keep the `git-refused` skip reason when the checkout is refused.
-
-| Host or surface | Refusal diagnostic delivery |
-|---|---|
-| Claude Code, Codex, Gemini CLI | Session-start briefing through the shared CLI. |
-| Kimi Code | First-prompt briefing through the shared CLI. |
-| Hermes | Shared in-process briefing preparation and rendering. |
-| Python API, MCP | Shared machine briefing. |
-| Windsurf | CLI or MCP briefing. Automatic briefing injection by the capture hook is unsupported. |
-
-To keep git calls in one place, call the census over your own tree from a test:
-
-```python
-from daimon_briefing import testing
-
-testing.assert_single_git_owner(host_module_paths, allowlist)
-```
-
-`testing.git_spawn_sites(paths)` returns the sites it found, as
-`{(module, function, primitive): line numbers}`.
+The sealed git surface that embedding hosts use is described in the [Python API](./python-api.md#embedding-hosts-the-sealed-git-surface).
 
 ## Scar harvest
 
@@ -340,7 +234,7 @@ checkpoints, so candidate files are committable.
 
 Opt-in (#360): `daimon heal`'s default retry re-runs the same extraction
 shape that already failed. Escalation re-serializes from several distinct
-perspectives instead, merged by the ordinary merge pass — multiplying the LLM
+perspectives instead, merged by the ordinary merge pass, multiplying the LLM
 token cost roughly by the perspective count on your own backend, which is why
 it ships off by default. Gates the heal path only: the session-end default
 serialize never escalates, flag or no flag.
@@ -366,7 +260,6 @@ is gone.
 | Claude Code, Codex, Gemini CLI, Kimi Code | Supported: counted, briefed and retried by `daimon heal` while the host keeps the transcript. |
 | Windsurf | Supported, with one limit: daimon's own 7-day reap of Windsurf transcripts (`DAIMON_WINDSURF_STATE_DAYS`) still applies, so a session refused for longer than that is lost and counted as unrecoverable. |
 | Hermes in-process capture | Supported only when the host passes a transcript path that exists. Without one it is counted as unrecoverable and cannot be retried. |
-| anamnesis pods | Supported, through the same CLI. |
 
 ## Scene traces
 
@@ -384,7 +277,7 @@ become default.
 | Variable | Default | What it does |
 |---|---|---|
 | `DAIMON_LOG_DIR` | `~/.daimon/logs` | Log directory. The hooks resolve it exactly as the CLI does (process env, then this file), so `serialize.log`, the heartbeats and `serialize-crash.log` move together: what a hook writes under a redirected directory is what `daimon status`, `daimon heal` and `daimon forget` read and purge there, and nothing lands under the default. |
-| `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where host transcripts live (`<slug>/<session>.jsonl`). Read-only — the quote-reverification audit reads them to re-check stored quotes against their source. |
+| `DAIMON_CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where host transcripts live (`<slug>/<session>.jsonl`). Read-only, the quote-reverification audit reads them to re-check stored quotes against their source. |
 | `DAIMON_LOG_STDOUT` | off | When truthy, serialize result lines also reach stdout, the stream a container runtime collects. The session-end hook lets the detached serialize child inherit stdout instead of discarding it, and the CLI mirrors its `error:` lines there too, so success, skip and error all land on one surface. Intended for container hosts, where a line written only to `serialize.log` on a volume is invisible to the platform. Off by default: on a terminal host these lines arrive in your shell minutes after the session ended. It does not touch stderr, which stays reserved for `serialize-crash.log`. |
 
 ## LLM backend
@@ -399,7 +292,7 @@ The URL, key, and model each fall back to a `LITELLM_*` variable if
 the `DAIMON_*` form is unset. The `litellm` backend needs **both**
 `DAIMON_LLM_MODEL` and `DAIMON_LLM_API_KEY`; while either is missing,
 `daimon configure` reports `backend: litellm — missing: ...` naming exactly
-what is absent — that line means the config is incomplete, not that the
+what is absent, that line means the config is incomplete, not that the
 endpoint is down.
 
 | Variable | Default | What it does |
@@ -411,9 +304,9 @@ endpoint is down.
 | `DAIMON_LLM_TEMPERATURE` | `0.0` | Sampling temperature for every chat call. `0.0` for deterministic extraction; some upstreams reject anything but a fixed value. |
 | `DAIMON_LLM_FALLBACK` | on | When the primary backend fails, auto-fall-back to the rescue command (`DAIMON_LLM_COMMAND_FALLBACK`). Applies to both a litellm and a `command` primary. Set to `0` to disable. |
 | `DAIMON_FALLBACK_MIN_SECONDS` | `DAIMON_TIMEOUT` | Minimum budget the rescue command is guaranteed on entry. The primary may have drained the shared serialize deadline retrying the very failure the rescue exists to fix, which would kill the rescue on arrival; a healthy remaining budget is never shrunk. |
-| `DAIMON_RESAMPLE_MIN_SECONDS` | `DAIMON_TIMEOUT` | #553: minimum budget the validation resample is guaranteed on entry — the same failure #341 fixed for the command fallback, one path over. The shared deadline can be drained by the attempt whose output just got rejected, which would hand the resample nothing to work with. Defaults to `timeout_seconds()` for the same reason `DAIMON_FALLBACK_MIN_SECONDS` does. |
+| `DAIMON_RESAMPLE_MIN_SECONDS` | `DAIMON_TIMEOUT` | #553: minimum budget the validation resample is guaranteed on entry, the same failure #341 fixed for the command fallback, one path over. The shared deadline can be drained by the attempt whose output just got rejected, which would hand the resample nothing to work with. Defaults to `timeout_seconds()` for the same reason `DAIMON_FALLBACK_MIN_SECONDS` does. |
 | `DAIMON_LLM_STREAM` | on | Stream the litellm response so the socket timeout bounds the inter-frame gap rather than the whole completion. Without it, a long completion trips the timeout and retries from scratch. Set to `0` to disable. |
-| `DAIMON_LLM_NO_CACHE` | off | When truthy, bypass gateway response caching per request — needed when a cached bad response pins a failure or runs must be statistically independent. |
+| `DAIMON_LLM_NO_CACHE` | off | When truthy, bypass gateway response caching per request, needed when a cached bad response pins a failure or runs must be statistically independent. |
 | `DAIMON_LLM_BRIEFING` | off | When truthy, render the briefing via the LLM instead of the deterministic template. |
 | `DAIMON_LLM_COMMAND` | unset | Full CLI invocation for the `command` backend (binary + model + flags). Required for `command`, and required for a `claude` on PATH to be used by any backend other than `claude-cli`. |
 | `DAIMON_LLM_COMMAND_OUTPUT` | unset | How to extract assistant text from the command's stdout: `text` (raw stdout) or `json:<key>` (parse JSON, read `<key>`). |
@@ -445,6 +338,6 @@ only matter if your sessions routinely run very long.
 | `DAIMON_CHUNK_LINES` | `1200` | Rendered-transcript line count above which serialization switches to chunked mode. |
 | `DAIMON_CHUNK_OVERLAP` | `100` | Lines of overlap between adjacent chunks, so an item straddling a boundary is seen whole by at least one chunk. |
 | `DAIMON_CHUNK_CONCURRENCY` | `4` | Parallel chunk-serialize LLM calls. Minimum 1 (sequential). |
-| `DAIMON_MERGE_GROUP_SIZE` | `3` | Max partial checkpoints merged per hierarchical merge call. Minimum 2. A group is split further when its request would exceed the `arg`-mode input limit of the primary or the rescue. Lower to `2` if merge calls die on a gateway with a server-side request ceiling (reasoning models generating 3-way merges can exceed it; raising `DAIMON_TIMEOUT` won't help — the kill is server-side). |
-| `DAIMON_CHUNK_CACHE` | on | #48: content-addressed cache of chunk-extraction output, keyed on the chunk's own bytes, so a re-run of a heal or retry re-pays a call only when the chunk source actually changed. Kill switch — on unless set to `0`. |
-| `DAIMON_CHUNK_CACHE_DAYS` | `3` | Rotation window for the chunk cache, in days. Cached output is pre-redaction (the #125 quote-verification ordering forces this), so the window is a privacy bound as much as a disk bound — 3 days covers the heal/retry window while keeping exposure short. |
+| `DAIMON_MERGE_GROUP_SIZE` | `3` | Max partial checkpoints merged per hierarchical merge call. Minimum 2. A group is split further when its request would exceed the `arg`-mode input limit of the primary or the rescue. Lower to `2` if merge calls die on a gateway with a server-side request ceiling (reasoning models generating 3-way merges can exceed it; raising `DAIMON_TIMEOUT` won't help, the kill is server-side). |
+| `DAIMON_CHUNK_CACHE` | on | #48: content-addressed cache of chunk-extraction output, keyed on the chunk's own bytes, so a re-run of a heal or retry re-pays a call only when the chunk source actually changed. Kill switch, on unless set to `0`. |
+| `DAIMON_CHUNK_CACHE_DAYS` | `3` | Rotation window for the chunk cache, in days. Cached output is pre-redaction (the #125 quote-verification ordering forces this), so the window is a privacy bound as much as a disk bound, 3 days covers the heal/retry window while keeping exposure short. |

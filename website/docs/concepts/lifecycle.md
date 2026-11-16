@@ -21,41 +21,7 @@ without writing anything — look before the write.
 One caveat the contract cannot cover: a confident match on the *wrong* item is
 not ambiguous, so the refusal never fires. That is what `--dry-run` is for.
 
-## `daimon resolve` — close a loop
-
-```sh
-daimon resolve "retry policy for the payments webhook" --dry-run
-daimon resolve o-3f8a2c --note "shipped exponential backoff in #212"
-```
-
-Resolving records an append-only event; from then on, briefings **withhold**
-the item instead of carrying it stale. The item is not deleted — its history
-stays searchable, and the event trail shows when and why it closed.
-`--status` accepts a free-form lifecycle status; any status starting with
-`reopen` revives the item. A status starting with `forgotten:` is refused:
-that is a tombstone, and only `daimon forget` writes one (it also removes
-the value from the files). Only `daimon unforget` lifts one.
-
-## `daimon reverify` — assert it's still true
-
-```sh
-daimon reverify o-3f8a2c --evidence "checked the release page"
-```
-
-Reverify is the answer to the [staleness warning](./carry.md#the-staleness-warning):
-a carried item aged past the threshold, you checked the world, and it still
-holds. The event resets the item's last-verified stamp, so the warning clock
-restarts. Reverify takes **exact ids only** — re-asserting a claim is
-deliberate, so there is no fuzzy match to mis-fire.
-
-Reverify is also the **reject** half of a supersession candidate (below).
-
 ## `daimon forget` — remove, provably
-
-```sh
-daimon forget o-3f8a2c --reason "contains client name"
-daimon forget "wrong belief about retry nonce" --dry-run
-```
 
 Resolve closes an item but keeps its content in history. Forget is for the
 cases where the content itself must go — a name that should never have been
@@ -97,22 +63,6 @@ What happens on forget:
   reach is named with its cure and the exit code is 4. `daimon forget --resume`
   finishes every phase for every standing forget once the cause is fixed.
 
-### `daimon unforget`: lift a forget on this machine
-
-```sh
-daimon unforget o-3f8a2c --reason "forgot the wrong one"
-daimon unforget o-3f8a2c --dry-run
-```
-
-Unforget takes the id the forget receipt printed, from a person at a terminal
-(an agent has no way to run it), and lifts the forget on every ref that carries
-its key. It restores nothing: the value was removed from every surface, so the
-lift only lets a new capture of the same claim back in. It exits 0 only when
-nothing else still withholds the value; if another project on this machine, a
-teammate's published row or a ledger it could not prove does, it says which
-and exits 4. A published tombstone row has no retraction, so the row you
-published stays and your teammates keep withholding the value until they lift it.
-
 ### Deletion-durability compliance
 
 The claim "a forgotten memory stays forgotten" is not asserted — it is
@@ -152,32 +102,6 @@ command, and the `chunk_cache_days` reaper (default 3 days) remains the
 independent upper bound for anything written after a forget. The claim is
 scoped to this machine: the cache never syncs anywhere.
 
-## `daimon handoff` — the baton
-
-Checkpoints are reconstructive: extracted from the transcript, ranked,
-budget-trimmed, competing for slots. The moment of deliberate handoff —
-"next session: do THIS first, watch out for THAT" — has different semantics:
-intentional, small, imperative, and it must never lose rank to ambient noise.
-
-```sh
-daimon handoff "Ship the release first. Beware: the cache key rotated."
-daimon handoff --clear
-```
-
-The baton leads the next briefing, above every section:
-
-```text
-HANDOFF (left deliberately by previous session, 2026-08-03T03:43:58Z):
-→ Ship the release first. Beware: the cache key rotated.
-```
-
-It is stored as an event, never as a cognitive item — so it cannot enter
-ranking, dedup, or carry scoring, and it cannot resolve anything. One baton
-per project; a new one supersedes the old (the event trail keeps history).
-It stays active until the session that read it ends and serializes — a
-crashed session never consumes it. Capped small on purpose: a baton is
-"do X, beware Y", not a second checkpoint.
-
 ## Decisions carry their because
 
 A decision without its reasoning invites the next session to re-litigate it.
@@ -212,19 +136,5 @@ the machine". Those are different claims, and only the first is made:
   described above: local-only, mode 0600, age-reaped, purged wholesale by
   `forget`.
 
-## Supersession candidates
 
-When a newer session contradicts a carried item, the briefing presents a
-**supersession candidate**: both sides, with the confirm/reject commands
-inline. You verify which side is true in the world, then answer with exactly
-those commands:
-
-- **Confirm** — `daimon resolve <id>`: the old item is genuinely superseded;
-  future briefings withhold it.
-- **Reject** — `daimon reverify <id>`: the contradiction was apparent, not
-  real; the item stands, freshly verified.
-
-The design principle across the whole lifecycle: daimon flags, you decide.
-Contradiction, staleness, and removal are all surfaced with evidence and
-resolved by an explicit human (or explicitly-instructed agent) action —
-never by a silent merge.
+How to run the verbs is in the [guide to correcting memory](../guides/correct-memory.md).

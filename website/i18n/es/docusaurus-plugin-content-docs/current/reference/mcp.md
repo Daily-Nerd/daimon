@@ -16,13 +16,19 @@ daimon mcp serve   # bloquea y sirve JSON-RPC por stdio hasta EOF
 
 ## Herramientas
 
-| Herramienta | Qué devuelve |
-|-------------|--------------|
-| `daimon_recall` | Resultados de búsqueda con procedencia completa: clase de confianza (`verbatim` = cita exacta, `inferred` = conclusión del modelo), autor, slug del proyecto de origen, y un campo `status` en palabras claras cuando una fila está resuelta, reemplazada o contradicha (`null` para una fila vigente) |
-| `daimon_brief` | El último briefing del proyecto actual — render determinista, etiquetado por confianza, con resoluciones retenidas |
-| `daimon_projects` | Cada proyecto del que daimon tiene memoria: slug, sesión, rama, último tema |
-| `daimon_status` | Salud de captura: frescura del checkpoint, resultado del último serialize, fallas pendientes, alarmas — el mismo payload que `daimon status --json` |
-| `requests_inbox` | Solicitudes que otros proyectos dirigieron a este — el lado de lectura del [ledger de solicitudes entre proyectos](cli.md#coordinar). `daimon_brief` nunca lleva este contenido; abrir, responder o decidir una solicitud es exclusivo de la CLI. El texto en cuarentena u olvidado de sus filas llega como marcador o en blanco. Acepta un argumento opcional `min_severity` (`critical`, `high`, `normal` o `low`) que conserva ese nivel y los más severos. Cada fila lleva `severity` y `severity_reason`; las filas `normal` llevan el motivo vacío. |
+{/* generated:mcp-tools (daimon_briefing._docgen) */}
+
+| Herramienta | Qué hace | Argumentos |
+| --- | --- | --- |
+| `daimon_recall` | Search daimon's cross-session memory. Rows carry provenance: trust class (verbatim = exact quote, inferred = model conclusion), author, origin project slug, and a `status` field in plain words when a row is resolved, superseded or contradicted (null for a live row). Searches this project only. | `query` `string` obligatorio: search terms<br />`limit` `integer` por defecto `20`<br />`session` `string`: the live session id this pull should be attributed to, if known<br />`all_projects` `boolean` solo con `DAIMON_MODEL_CROSS_PROJECT`: search every project<br />`slug` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: search one other project by slug |
+| `daimon_brief` | The latest briefing for this project: what the last session was doing, decisions, open loops, trust-tagged. Strictly project-scoped: no checkpoint here answers 'none', never another project's content. | `slug` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: read another project by slug<br />`project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+| `daimon_projects` | This project's own entry: slug, age, last topic. | - |
+| `daimon_status` | Capture health for this project: checkpoint freshness, last serialize result, outstanding failures, alarms. | `project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+| `requests_inbox` | Requests other daimon projects have addressed to this one (the cross-project ask ledger, #694). Deliberate pull, never ambient: daimon_brief does not carry this content. Read-only: opening, answering, or deciding a request is CLI-only (`daimon request ...`). | `min_severity` `critical\|high\|normal\|low`: only requests at this severity or a more severe one<br />`project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+
+{/* end generated:mcp-tools */}
+
+Las filas de `requests_inbox` llevan `severity` y `severity_reason` (una fila `normal` tiene la razón vacía), y el texto en cuarentena u olvidado vuelve como marcador o en blanco. La tabla de arriba lista los argumentos de las herramientas tal como el servidor se los envía a un cliente.
 
 Las cinco llevan `readOnlyHint`. Los verbos por id de item existen en la CLI,
 el visor y la api en proceso; las herramientas MCP no reciben ningún id de item
@@ -39,7 +45,7 @@ nunca una clase de confianza superior. Ver
 Con `DAIMON_WORLDCHECK` activo, `daimon_brief` también ejecuta evidencia del
 mundo sobre las afirmaciones arrastradas del proyecto actual y registra el
 resultado, igual que `daimon brief`. Una lectura por `slug` nunca lo hace. Ver
-[Worldcheck](../getting-started/configuration.md#worldcheck) para el costo.
+[Worldcheck](../reference/configuration.md#worldcheck) para el costo.
 
 ## Reglas de alcance
 

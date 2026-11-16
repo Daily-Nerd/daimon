@@ -11,6 +11,10 @@
     "message": "Hosts",
     "description": "Sidebar category label: Hosts"
   },
+  "sidebar.tutorialSidebar.category.Guides": {
+    "message": "Guías",
+    "description": "Sidebar category label: Guides"
+  },
   "sidebar.tutorialSidebar.category.Team": {
     "message": "Equipo",
     "description": "Sidebar category label: Team"

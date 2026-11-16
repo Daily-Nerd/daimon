@@ -185,7 +185,7 @@ Un agente solo puede proponer una (`daimon trust propose --by agent`), que
 queda como candidata. Una candidata sigue siendo una propuesta hasta que una persona corre
 `daimon trust confirm`; `dismiss` la rechaza y `release` levanta una
 cuarentena activa. Mirá la
-[referencia del CLI](../reference/cli.md) para el conjunto completo de verbos.
+[referencia del CLI](../reference/cli/index.md) para el conjunto completo de verbos.
 
 ## VERIFY BEFORE TRUSTING
 

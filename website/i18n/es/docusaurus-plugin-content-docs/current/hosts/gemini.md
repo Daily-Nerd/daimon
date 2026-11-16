@@ -54,7 +54,7 @@ plan lo nombra en su última línea como `gemini (no registered root)`. Un
 archivo de Gemini dado con `--transcript` se rechaza antes de gastar, con
 salida 2 y una línea que nombra el archivo, el host y ese mismo motivo. El
 comando y los hosts que cubre están en
-[Llena el briefing con sesiones pasadas](../getting-started/quickstart#4-llena-el-briefing-con-sesiones-pasadas).
+[Importar sesiones pasadas](../guides/import-past-sessions.md).
 
 ## MCP
 

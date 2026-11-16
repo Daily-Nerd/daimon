@@ -114,7 +114,7 @@ the project directory or set `DAIMON_PROJECT_DIR`. The keys are `verified`,
 `daimon audit quotes` re-checks every stored verbatim quote against its source
 transcript, read-only. `daimon audit privacy` hashes every plaintext field on
 every declared surface and intersects with the deletion ledger. Both share one
-[exit contract](./cli.md#check): `0` is proven clean, `1` names the residue by
+[exit contract](./cli/check.md): `0` is proven clean, `1` names the residue by
 surface and hash, and `3` means a surface could not be read — never treat `3`
 as clean. That last code exists because "could not check" reported as "all
 clean" is how audit theater works.

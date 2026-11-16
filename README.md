@@ -68,7 +68,7 @@ uv tool install 'daimon-briefing[pretty]'   # pipx works identically
 ```
 
 > [!TIP]
-> If the `claude` CLI is on your PATH you are **zero-config**: `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works. See [configuration](https://daily-nerd.github.io/daimon/docs/getting-started/configuration/).
+> If the `claude` CLI is on your PATH you are **zero-config**: `daimon configure` prints `✓ ready` and you're done. Otherwise any OpenAI-compatible endpoint or headless CLI works. See [configuration](https://daily-nerd.github.io/daimon/docs/reference/configuration/).
 
 **Claude Code (plugin, recommended):**
 
@@ -101,7 +101,7 @@ That's it. End a session → a checkpoint is written; start the next → the bri
 ## Beyond the briefing
 
 - **`daimon recall <terms>`:** full-text search over your whole checkpoint history (and your team's, if enabled). This is also the working-set boundary, stated plainly: one live checkpoint per project feeds the briefing, and an item that falls out of [carry](https://daily-nerd.github.io/daimon/docs/concepts/carry/) never re-enters a briefing on its own. It stays reachable here, permanently, but only when asked for.
-- **`daimon why <item-id>`:** inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [Trust Inspector guide](docs/trust-inspector.md).
+- **`daimon why <item-id>`:** inspect a recalled item's independent capture, provenance, source, byte-integrity, current-support, verifier, lifecycle, and corroboration evidence. Add `--source` for one bounded redacted source window. See the [inspect-an-item guide](https://daily-nerd.github.io/daimon/docs/guides/inspect-an-item/).
 - **Context switching:** `daimon projects`, `daimon brief --slug <slug>`: read another project's memory deliberately, provenance-labeled, never automatic.
 - **Proactive recall:** when a new prompt overlaps prior work from an older session, the briefing surfaces it, in English or Spanish.
 - **Code anchors:** `daimon anchor <file> <symbol>` pins a belief to a code symbol; drift is flagged in the next briefing. Offline, stdlib `ast`.
@@ -151,6 +151,7 @@ current component map is documented in
 
 - **[Documentation site](https://daily-nerd.github.io/daimon/)**: setup, hosts, configuration, concepts
 - [Runtime Architecture](./docs/RUNTIME-ARCHITECTURE.md): current layers, components, and data flow
+- [Docs folder index](./docs/README.md): which documents are current and which are historical
 - [MVP: Dream-Briefing](./docs/MVP-DREAM-BRIEFING.md): historical foundation of the shipped runtime
 - [Research Logbook](./research/README.md): findings, decisions, evidence trail
 - [Contributing](./CONTRIBUTING.md): dev setup, tests, lint, pre-commit hooks

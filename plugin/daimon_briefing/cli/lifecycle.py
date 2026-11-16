@@ -1471,7 +1471,7 @@ def _cmd_decide(args) -> int:
 def register(sub, fmt) -> None:
     """Register the `lifecycle` parser family on the top-level subparsers."""
     p_resolve = sub.add_parser(
-        "resolve", help="mark a checkpoint item resolved — append-only event, "
+        "resolve", help="mark a checkpoint item resolved: append-only event, "
         "folds at read so the item stops carrying (#102)",
         epilog="Examples:\n  daimon resolve o-3f8a2c\n"
                "  daimon resolve \"release pipeline approval\" --note \"shipped in 0.9\"\n",
@@ -1487,17 +1487,17 @@ def register(sub, fmt) -> None:
              "omit for the human path (default)")
     p_resolve.add_argument(
         "--evidence",
-        help="verbatim transcript quote proving the claim — required with "
+        help="verbatim transcript quote proving the claim: required with "
              "--by agent, rejected without it")
     p_resolve.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_resolve.add_argument(
         "--dry-run", action="store_true",
-        help="show what would resolve without writing an event — look before the write (#304)")
+        help="show what would resolve without writing an event: look before the write (#304)")
     p_resolve.set_defaults(func=_cli._cmd_resolve)
 
     p_forget = sub.add_parser(
         "forget", help="remove ONE item from the live checkpoint and record a "
-        "signed-state tombstone — content leaves disk and index; the event "
+        "signed-state tombstone: content leaves disk and index; the event "
         "carries only a hash (#321)",
         epilog="Examples:\n  daimon forget o-3f8a2c --reason \"contains client name\"\n"
                "  daimon forget \"wrong belief about retry nonce\" --dry-run\n",
@@ -1508,7 +1508,7 @@ def register(sub, fmt) -> None:
     p_forget.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_forget.add_argument(
         "--dry-run", action="store_true",
-        help="show what would be forgotten without writing — look before a destructive op")
+        help="show what would be forgotten without writing: look before a destructive op")
     p_forget.add_argument(
         "--resume", action="store_true",
         help="finish every phase for every forget already recorded: the cure "
@@ -1521,8 +1521,7 @@ def register(sub, fmt) -> None:
         "--republish", action="store_true",
         help="publish every local forget the team sidecar is missing "
              "(the cure for a publish that failed); takes no target; the "
-             "same as --resume --only publish, and it goes in the next "
-             "release")
+             "same as --resume --only publish")
     p_forget.set_defaults(func=_cli._cmd_forget)
 
     p_unforget = sub.add_parser(
@@ -1541,21 +1540,21 @@ def register(sub, fmt) -> None:
     p_unforget.set_defaults(func=_cli._cmd_unforget)
 
     p_reverify = sub.add_parser(
-        "reverify", help="evidence-gated human reopen of a resolved item (#103) — "
+        "reverify", help="evidence-gated human reopen of a resolved item (#103): "
         "requires an interactive terminal and refuses without proof",
         epilog="Examples:\n"
                "  daimon reverify o-3f8a2c --evidence \"checked release page\"\n"
                "  daimon reverify o-3f8a2c   # reopens only if the anchor still checks live\n"
-               "  daimon reverify o-3f8a2c   # rejects an unconfirmed supersede candidate — no evidence needed\n",
+               "  daimon reverify o-3f8a2c   # rejects an unconfirmed supersede candidate: no evidence needed\n",
     )
-    p_reverify.add_argument("target", help="item id (exact only — reverify is deliberate, no fuzzy match)")
+    p_reverify.add_argument("target", help="item id (exact only: reverify is deliberate, no fuzzy match)")
     p_reverify.add_argument("--evidence", help="why this claim can be trusted again")
     p_reverify.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")
     p_reverify.set_defaults(func=_cli._cmd_reverify)
 
     p_loops = sub.add_parser(
         "loops", help="list open, briefable loop items with ids for this "
-        "project (#480) — the read counterpart to daimon resolve's write path",
+        "project (#480): the read counterpart to daimon resolve's write path",
         epilog="Examples:\n  daimon loops\n  daimon loops --stale\n"
                "  daimon loops --project .\n",
     )
@@ -1568,7 +1567,7 @@ def register(sub, fmt) -> None:
 
     p_decide = sub.add_parser(
         "decide", help="list what is waiting on YOU with the command that "
-        "closes each (#766) — the human-side mirror of daimon loops",
+        "closes each (#766): the human-side mirror of daimon loops",
         epilog="Examples:\n  daimon decide\n  daimon decide --project .\n",
     )
     p_decide.add_argument("--project", help="project directory (default: DAIMON_PROJECT_DIR, then cwd)")

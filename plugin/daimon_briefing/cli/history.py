@@ -528,11 +528,11 @@ def register(sub, fmt) -> None:
     p_diff = sub.add_parser(
         "diff",
         help="what changed between two retained checkpoints of this project "
-             "(#975) — added, restated, re-tagged, and every item the chain "
+             "(#975): added, restated, re-tagged, and every item the chain "
              "stopped carrying, with the reason the record gives",
         description="Compare two retained checkpoints of one project and "
                     "report every item that changed. Read-only: it stamps "
-                    "nothing. Rollback is a non-goal — a checkpoint records "
+                    "nothing. Rollback is a non-goal: a checkpoint records "
                     "what a session did, so restoring one would assert a "
                     "different past; use forget, resolve or reverify to say "
                     "so on the record instead.",
@@ -560,7 +560,7 @@ def register(sub, fmt) -> None:
 
     p_blame = sub.add_parser(
         "blame",
-        help="how one item got here (#975) — the session that first stated "
+        help="how one item got here (#975): the session that first stated "
              "it, every carry since, and every event that changed its state, "
              "in order",
         description="Trace one item through this project's retained "

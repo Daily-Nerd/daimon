@@ -10258,7 +10258,7 @@ def test_cli_slug_keeps_underscore(capsys):
 
 
 def test_cli_slug_matches_the_documented_example(capsys):
-    # #913: the worked example in website/docs/reference/cli.md and its
+    # #913: the worked example in website/docs/reference/cli/notes.md and its
     # Spanish mirror, pinned literally so drift there fails a test instead
     # of only failing store.project_slug's own oracle.
     assert cli.main(["slug", "/Users/x/my.proj"]) == 0

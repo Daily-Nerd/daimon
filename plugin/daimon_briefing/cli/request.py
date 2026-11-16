@@ -868,7 +868,7 @@ def register(sub, fmt) -> None:
                "--ask 'publish the 0.32 schema' "
                "--why 'the client cannot ship without it' --by agent\n"
                "  daimon request list\n"
-               "  daimon request accept q-1a2b3c4d5e6f\n",
+               "  daimon request accept q-9c24d7\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     request_sub = p_request.add_subparsers(dest="request_cmd", required=True)
     request_sub.add_parser = functools.partial(
@@ -996,7 +996,7 @@ def register(sub, fmt) -> None:
         "accept": (
             "declare yourself an agent; permitted only for an addressed "
             "ask (`info` or `work`) an active ruling of this project covers "
-            "for its sender — otherwise it needs `daimon request accept` "
+            "for its sender; otherwise it needs `daimon request accept` "
             "from a human channel"),
     }
     _BY_AGENT_HELP_DEFAULT = (

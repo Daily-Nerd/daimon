@@ -18,7 +18,7 @@ daimon refute add --subject "original #502 receipt design" \
 ```
 
 (the flag that carries the rejected claim's own text sits between `--subject`
-and `--scope`; see the [CLI reference](../reference/cli.md) for the exact
+and `--scope`; see the [CLI reference](../reference/cli/index.md) for the exact
 syntax.)
 
 Refutations live on the same ledger as [standing rulings](./rulings.md): one
@@ -90,7 +90,7 @@ a command on its own; it exists for an agent to check its own next move
 before taking it.
 
 The `daimon why`, `daimon diff`, and `daimon blame` commands (see the
-[item lifecycle](./lifecycle.md) and the [CLI reference](../reference/cli.md))
+[item lifecycle](./lifecycle.md) and the [CLI reference](../reference/cli/index.md))
 answer a different question: they inspect checkpoint items across the
 generations daimon retains. A refutation is not a checkpoint item and does
 not roll off into an older generation, so there is nothing for those three

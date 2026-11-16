@@ -111,8 +111,8 @@ never discovers one: pass it by path,
 `daimon import --project <dir> --transcript ~/.kimi-code/sessions/<workspace>/<session id>/agents/main/wire.jsonl`,
 with `--project` typed on the command line; the session id is the directory,
 as everywhere else on this host. See
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions)
-for a run end to end and the [`daimon import` row](../reference/cli#set-up)
+[Import past sessions](../guides/import-past-sessions.md)
+for a run end to end and the [import guide](../guides/import-past-sessions.md)
 for what refuses.
 
 ## MCP

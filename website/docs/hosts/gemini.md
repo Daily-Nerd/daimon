@@ -51,7 +51,7 @@ last line as `gemini (no registered root)`. A Gemini file given with
 `--transcript` is refused before any spend, exit 2, with a line that names the
 file, the host and that same reason. The command and the hosts it covers are
 in
-[Fill the briefing from past sessions](../getting-started/quickstart#4-fill-the-briefing-from-past-sessions).
+[Import past sessions](../guides/import-past-sessions.md).
 
 ## MCP
 

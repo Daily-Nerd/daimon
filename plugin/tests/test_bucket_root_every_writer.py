@@ -129,6 +129,7 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("__init__.py", "_note_usage"): _LOGS,
     ("buckets.py", "_append_record"): _CKPT_ROOT,
     ("checks_runtime.py", "log_firing"): _LOGS,
+    ("_docgen.py", "write"): "the generated documentation pages in the repo's website tree, not a bucket",
     ("checks_sync.py", "_sync"): "the armed-check body directory, not a bucket",
     ("codex_hooks.py", "_save"): _HOST,
     ("codex_hooks.py", "_save_toml"): _HOST,

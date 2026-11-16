@@ -65,7 +65,7 @@ Unclosed items do not accumulate forever:
   intended way items leave, decay is the backstop.
 
 All knobs live in the
-[configuration reference](../getting-started/configuration.md), including
+[configuration reference](../reference/configuration.md), including
 `DAIMON_CARRY` (master switch, on by default).
 
 ## What leaving carry means
