@@ -5,6 +5,47 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.0](https://github.com/Daily-Nerd/daimon/compare/v0.67.2...v0.68.0) (2026-11-16)
+
+
+### Features
+
+* **briefing:** both recipient panels and the decide card show a request's severity, and the decide queue orders blocking, then severity, then oldest ([65633a8](https://github.com/Daily-Nerd/daimon/commit/65633a835f9891675d732b6163d427d1b6fb4ddd))
+* **cli:** request open takes --severity and --severity-reason, request severity changes it, and list and inbox take --min-severity ([9cb5c93](https://github.com/Daily-Nerd/daimon/commit/9cb5c9331df8f01cca31016be0ec48395bb923b7))
+* **mcp:** requests_inbox takes an optional min_severity argument whose enum is the severity table ([4fe7d43](https://github.com/Daily-Nerd/daimon/commit/4fe7d438993ced5ed4dd32a2e645a54ef93f46e8))
+* **peer-messages:** admit decides whether this machine can take custody of a message another person sent, and only Custody can lead to an acknowledgement ([a4357e5](https://github.com/Daily-Nerd/daimon/commit/a4357e5b42308da93c58866c500dc19c553ff1c7))
+* **requests:** a sender withdraws its own request, and each request event applies only from its role's bucket ([3beea8d](https://github.com/Daily-Nerd/daimon/commit/3beea8d40cb8f52110223b59341971e80b6ec6bf))
+* **requests:** every request folds with a severity, set at open or changed by the sender's own severity_set event ([4500025](https://github.com/Daily-Nerd/daimon/commit/4500025d1ac26d13973af6892a0bcd492924e646))
+* **requests:** is_request_id and MAX_TEXT_CHARS are the public names for the request id check and the prose bound ([6f0dbb5](https://github.com/Daily-Nerd/daimon/commit/6f0dbb5bc5fb2d38bf5b360dd178bad2644bb650))
+* **requests:** severity_reason is registered prose, so forget, the audit and every masked surface cover it ([00648ac](https://github.com/Daily-Nerd/daimon/commit/00648aca5d0a22c05afe86516f7f798698828c12))
+* **requests:** the recipient's capped feeds sort by severity then recency, and request list and inbox take a min-severity filter ([12865ef](https://github.com/Daily-Nerd/daimon/commit/12865ef59857ed47389dbbe1ca8682bf1e1d1b93))
+
+
+### Bug Fixes
+
+* **requests:** a sender no longer sees a pending done claim's text before the recipient accepts ([df1308b](https://github.com/Daily-Nerd/daimon/commit/df1308b381ab0fa928606412c70e0e8b19ab7760))
+* **requests:** fold takes one FoldInputs bundle from fold_inputs and decide names a failed fold ([3c39178](https://github.com/Daily-Nerd/daimon/commit/3c3917800b37469ef0729414894a867a50afd535))
+* **requests:** resolve an aliased recipient in one place so decide counts it like the sender surfaces ([02dd31b](https://github.com/Daily-Nerd/daimon/commit/02dd31b701de78d31675ab0119400a7693832c77))
+* **requests:** say once, in every surface an agent reads, that closing an accepted request needs no human ([fb3e046](https://github.com/Daily-Nerd/daimon/commit/fb3e046bc4494d4509bbc97cc344d123366fb266))
+* **requests:** the pre-rule role exemption covers only events that existed at ROLE_RULE_FROM_NS, so a backdated withdrawn row no longer bypasses the role check ([3abf93d](https://github.com/Daily-Nerd/daimon/commit/3abf93db7ad24178591ed33986014cfcb2d8e9e3))
+* **requests:** the role rule applies only to rows ordered at or after ROLE_RULE_FROM_NS, so older ledgers keep their meaning ([232350f](https://github.com/Daily-Nerd/daimon/commit/232350f60580a511c4257045eeca1f0c48ebaf7e))
+* **store:** every bucket-creating writer stamps the bucket root, and merges keep it ([8a15201](https://github.com/Daily-Nerd/daimon/commit/8a152018a871cbd45f09b77ed3e44529b12a8355))
+* the skills stop telling agents to run reverify or reject, and forget --republish help no longer promises a future release ([b9e305a](https://github.com/Daily-Nerd/daimon/commit/b9e305a58caf6f63f385b215de541f3dbacb9792))
+
+
+### Documentation
+
+* align public docs with the code on accept rules, quarantine, hook installers and host lists ([b68ae3e](https://github.com/Daily-Nerd/daimon/commit/b68ae3ed51719d6f6b3940e074322b98f95a69ab))
+* **requests:** the skill text, the plugin skill and the website docs in English and Spanish cover --severity, request severity, --min-severity and min_severity ([7ef504e](https://github.com/Daily-Nerd/daimon/commit/7ef504efc0d0fa43e2db76d9e4f5b28647c2333a))
+* **scars:** the role-rule exemption stays a frozen allowlist of events ([a6270c1](https://github.com/Daily-Nerd/daimon/commit/a6270c16b525f337dfc484f8c29ee07dffd6a43f))
+* task guides for importing sessions, asking another project, deciding, correcting memory, rulings, inspecting an item, upgrading and troubleshooting, with a test that every command in them exists ([7ab5ca0](https://github.com/Daily-Nerd/daimon/commit/7ab5ca015715fb26e263dfa0f7243cc9f88c1243))
+* team memory splits into explanation, setup and configuration, the trust inspector guide leaves the repo for the site, and the historical design documents have one index ([89bbc78](https://github.com/Daily-Nerd/daimon/commit/89bbc780900f99f33b20565a2f8776f29c5de21f))
+* the CLI reference has its own sidebar category ([d5f8c8f](https://github.com/Daily-Nerd/daimon/commit/d5f8c8f879368bb0d602239dbe390eff12e035e2))
+* the CLI reference is generated from the argparse parsers, one page per command group, and a test fails when a page is stale ([85210d0](https://github.com/Daily-Nerd/daimon/commit/85210d02dfffce3cb3a4602bcf42e2e7eeba0d0f))
+* the configuration reference moves to reference/, the old address redirects in both languages, and a test checks every docs link ([9528fc6](https://github.com/Daily-Nerd/daimon/commit/9528fc6136e7aacadba76c29a5877b237a31ff46))
+* the lines this pass touched use colons instead of dashes ([36cea4e](https://github.com/Daily-Nerd/daimon/commit/36cea4eb6af7b432f1546831171cb8528f3dcc80))
+* the MCP tool table is generated from the server's tool schemas and checked for staleness ([8253132](https://github.com/Daily-Nerd/daimon/commit/825313225f10920f1be97ce6702cb98f8e065c44))
+
 ## [0.67.2](https://github.com/Daily-Nerd/daimon/compare/v0.67.1...v0.67.2) (2026-11-14)
 
 
