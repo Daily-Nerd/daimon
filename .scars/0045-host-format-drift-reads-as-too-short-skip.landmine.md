@@ -12,10 +12,11 @@ evidence:
   - commit: 4222243
   - pr: 623
   - note: issue #622 — Codex CLI 0.146.0→0.147.0 replaced event_msg/user_message and agent_message with item_completed (PascalCase item.type, content-block lists); a 13MB real session parsed to 0 messages and serialize skipped it 9 times as 'transcript too short (0 < 10 messages)' with nothing recorded for heal
+  - note: archived 2026-11-19: Expiry condition met: #1292 (f472df0, 2026-11-07) added serializer.require_readable, so rows that parse to zero messages raise UnreadableTranscript (loud, heal-visible) instead of a too-short skip; regression coverage in plugin/tests/test_unreadable_transcript.py.
 expires:
   condition: "serializer treats a multi-record transcript that parses to 0 messages as a parse failure (loud, heal-visible) instead of a too-short skip"
   review_after: 2026-11-07
-status: active
+status: archived
 ---
 
 Host JSONL schemas are explicitly unstable (Codex says so in its docs), and
