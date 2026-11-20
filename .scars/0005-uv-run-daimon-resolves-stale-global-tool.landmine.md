@@ -7,12 +7,12 @@ confidence: 0.95
 created: 2026-07-02
 authors: [claude, Kibukx]
 anchors:
-  - command: "uv run (?!--project\b)daimon\b"
-violation: "uv run daimon"
+  - command: "\A(?!(?s:.*)\bcd [^\n;&|]*plugin\b)(?s:.*)uv run (?!--project\b)daimon\b"
 evidence:
   - note: "2026-07-02: live verification of D-011 importance emission ran a 320s chunked serialize that silently produced a D-010 checkpoint — `uv run daimon serialize` from repo root had executed ~/.local/share/uv/tools/daimon-briefing (last `uv tool install` snapshot), not the branch code"
   - note: "2026-07-02, same day, second bite: bare `uv run pytest` resolved a leaked foreign VIRTUAL_ENV (fabcap/.venv), so the hook-subprocess e2e tests exercised the stale global tool via PATH — the new recall-inject hook test failed until rerun as `uv run --project plugin pytest`"
   - note: "firing-review 2026-09-24: dropped the README.md and docs/ path anchors — this scar is about RUNNING the stale global tool, not about editing prose that mentions it, and the two paths matched 1 + 27 = 28/948 tracked files for no act-proof signal. Narrowed the command anchor from a bare substring to `uv run (?!--project\\b)daimon\\b` so it fires only on the dangerous bare invocation and stops matching the already-fixed `uv run --project plugin daimon ...` form. Note: with no path/pattern anchor left, `violation:` can no longer arm — armed_candidates (match.py:387) only evaluates path/pattern anchors against edited files, never command anchors, so this scar's violation regex is now dead code; flagged for the maintainer, not fixed here since the instruction was anchor-only."
+  - note: "firing-review 2026-11-19: 238 fires in this repo since 2026-09-24, 0 demoted (every one injected full-body). 123 (52%) were `cd .../plugin && uv run daimon`, the correct form; 10 only mention the string inside a heredoc or request body; 105 are bare with the shell cwd unknown. The `violation: uv run daimon` line was removed: command anchors never arm it (lint warning), so it protected nothing and read as if it did. The command anchor now skips a command that cd's into plugin (238 -> 115 matches over the real log). A command anchor cannot see the shell cwd, so the remaining bare fires stay advisory. Root cause is structural (no pyproject.toml at the repo root, so uv falls through to PATH silently); see the expiry condition."
 expires:
   condition: "pyproject.toml moves to the repo root, or the global `daimon` uv tool is installed --editable"
   review_after: 2027-01-01
