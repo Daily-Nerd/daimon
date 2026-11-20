@@ -12,11 +12,12 @@ anchors:
 evidence:
   - note: 2026-07-30 live probe: a request naming claude-haiku-4-5-via-meridian was served by unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF (response.model field; local fallback lane). The operator's gateway defines silent fallback chains ending in a local model — resilience by design, active since 2026-06-25, so any alias-labeled call may have been served by a different model with no error.
   - note: benchmark/results/longmemeval-s-baseline.json stamps model: claude-haiku-4-5-via-meridian for 192 serialize calls (2026-07-12); the fallback chain was live that day, so per-call model purity is unprovable post-hoc. A no-fallback bench lane was added gateway-side 2026-07-17 for exactly this reason.
-  - note: "firing-review 2026-09-08: 26 fires since the last revision, all on serializer.py; anchors reviewed and confirmed on-target, hazard still live"
+  - note: firing-review 2026-09-08: 26 fires since the last revision, all on serializer.py; anchors reviewed and confirmed on-target, hazard still live
+  - note: archived 2026-11-19: Expiry condition met: #460 (7ceb422) stamps llm_model_served from the response; #458 warns on multi-model substitution; bench adapter fails a row on served-vs-pin mismatch (plugin/tests/bench/adapter.py:169-178). The body claim that daimon discards response.model has been false since 2026-07-30.
 expires:
   condition: "provenance stamping records the served model from the response (response.model) alongside the requested alias, and surfaces a mismatch"
   review_after: 2026-10-30
-status: active
+status: archived
 ---
 
 `_stamp_llm_provenance` and the bench config stamp record the model NAME THE

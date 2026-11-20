@@ -14,7 +14,7 @@ evidence:
   - note: three catch-up commits across two PRs: 71feff7/efa57aa (#205), post-review sweep (#207) — each time local intersect said 0 missing, codecov said otherwise
 expires:
   condition: "openssl subprocess path removed from receipts.py (vitni keygen becomes the only derivation), or CI adds a macOS/LibreSSL coverage job"
-  review_after: 2026-10-01
+  review_after: 2027-02-19
 status: active
 ---
 
@@ -31,3 +31,5 @@ monkeypatched-subprocess twin that walks BOTH branches deterministically on
 any box, or (b) pull codecov's per-line report for the pushed sha
 (api.codecov.io /report/?path=...&sha=...) instead of trusting the local
 intersect. Local green is necessary, never sufficient, on this file.
+
+Re-verified 2026-11-19: receipts.py still branches vitni keygen vs openssl (_derive_pubkey, _derive_pubkey_x) and CI is ubuntu-only (.github/workflows/ci.yml), so the local/CI split remains.

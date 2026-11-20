@@ -21,7 +21,7 @@ evidence:
   - note: "firing-review 2026-09-08: 10 fires since the last revision, on .github/workflows/ci.yml, plugin/pyproject.toml and docs/ pages that reference uv sync; anchors reviewed and confirmed on-target, hazard still live"
 expires:
   condition: "dev/pretty move from [project.optional-dependencies] to default dependency-groups, or a sync wrapper/Makefile target becomes the documented path"
-  review_after: 2026-10-29
+  review_after: 2027-02-19
 status: active
 ---
 
@@ -33,3 +33,5 @@ regressions in modules nobody touched, inviting a debugging spiral on healthy
 code. Both extras are required for a green suite: `uv sync --extra dev --extra
 pretty`. If the suite suddenly fails wide on render/version tests right after
 an env operation, fix the env first, read the diffs second.
+
+Re-verified 2026-11-19: dev and pretty are still [project.optional-dependencies] (plugin/pyproject.toml:38,44), so a bare uv sync still strips them.

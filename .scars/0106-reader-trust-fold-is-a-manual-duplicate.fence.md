@@ -13,10 +13,11 @@ anchors:
   - pattern: "_active_quarantine_keys"
 evidence:
   - note: "#1109 PR 2 (Daily-Nerd/daimon) — daimon_ui/reader.py module
+  - note: archived 2026-11-19: Hazard gone: plugin/daimon_ui/reader.py no longer folds trust.jsonl itself. _active_quarantine_keys was deleted in #1157/#1158 (f8f5f87, 76b787f, 2026-10-07); the viewer reads through daimon_briefing.view (reader.py:9), which is the expiry condition.
 expires:
   condition: ""daimon_ui gains a supported way to call into daimon_briefing"
   review_after: 2027-03-24
-status: active
+status: archived
 ---
 
 `daimon_ui/reader.py` carries no import of `daimon_briefing` by design (file

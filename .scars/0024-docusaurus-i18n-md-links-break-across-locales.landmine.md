@@ -15,7 +15,7 @@ evidence:
   - note: "firing-review 2026-09-24: re-verified, hazard live, anchors on target"
 expires:
   condition: "the site moves off .md-relative doc links entirely (URL-style everywhere), or i18n gains a build-time guarantee that no locale can fall back. NOTE: 100% es coverage does NOT retire this scar — coverage was already 15/15 when it was promoted, and the hazard returns the moment one untranslated page is added."
-  review_after: 2026-10-01
+  review_after: 2027-02-19
 status: active
 ---
 
@@ -34,12 +34,17 @@ links (no `.md`; category-index pages like `hosts/index.md` and
 anchors with `{#custom-id}` heading syntax — in this site's MDX pipeline the
 brace block is parsed as a JSX expression and acorn fails the whole es build
 (third #334 failure, run of 2026-07-18T21:22Z). A fragment pointing at a
-heading that only exists in the other locale is a build WARNING
-(onBrokenAnchors default), which is acceptable; a broken page link is not.
+heading that only exists in the other locale used to be a build WARNING; it
+is a build FAILURE now (onBrokenAnchors: 'throw' since #771,
+website/docusaurus.config.ts:33), so a fragment crossing the line needs a
+URL-style link as well.
 
-Coverage note (verified 2026-07-28): es translation is currently complete,
-15/15 docs pages, so no fallback page exists and the hazard is DORMANT, not
-gone. Do not read "no untranslated pages" as evidence this scar is stale. It
-fires the moment a 16th English page lands without its es copy, which is the
+Coverage note (re-verified 2026-11-19): es translation is currently complete,
+46/46 docs pages (identical file sets under website/docs and
+website/i18n/es/.../current), so no fallback page exists and the hazard is
+DORMANT, not gone. Do not read "no untranslated pages" as evidence this scar
+is stale. plugin/tests/test_docs_links.py checks each tree on its own, so it
+does not model the mixed fallback map. The hazard fires the moment a 47th
+English page lands without its es copy, which is the
 exact moment someone is adding docs and least likely to be thinking about the
 locale build.

@@ -16,7 +16,7 @@ evidence:
   - note: "Both original commits of PR #441 (a7d08f8, f755588) landed with no gpgsig header at all; branch protection rejected the merge. Re-signed as a29707d/2fd85ac."
 expires:
   condition: "signing config no longer depends on repo-local git config (e.g. enforced by a pre-push hook or CI check that rejects unsigned commits)"
-  review_after: 2026-10-30
+  review_after: 2027-02-19
 status: active
 ---
 
@@ -35,3 +35,5 @@ after cloning. After ANY automated commit, verify with
 `git log -1 --format=%G?` (must print G, never N) before pushing. Never pass
 `--no-gpg-sign` to get past a signing error — report and stop instead
 (standing user rule: report-and-fail, never silent-unsigned).
+
+Re-verified 2026-11-19: commit.gpgsign and user.signingkey are still only git config (no pre-push hook or CI check rejects unsigned commits), so the silent-unsigned path remains.

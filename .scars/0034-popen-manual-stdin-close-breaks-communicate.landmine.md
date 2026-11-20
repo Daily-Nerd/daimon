@@ -12,7 +12,7 @@ evidence:
   - note: #439 implementation session 2026-07-31: every stdin-bearing vitni probe skipped silently; answer was on stdout the whole time
 expires:
   condition: "worldcheck._run_probes stops writing probe stdin manually (e.g. moves to communicate(input=...) with its own timeout discipline)"
-  review_after: 2026-10-31
+  review_after: 2027-02-19
 status: active
 ---
 
@@ -29,3 +29,5 @@ immediately after the manual close (worldcheck._run_probes does this — do not
 "clean it up"). Sibling trap: do not swap the runner for `receipts._run_cli`;
 its blocking `subprocess.run(timeout=10)` is 12× worldcheck's whole 0.8s
 budget.
+
+Re-verified 2026-11-19: worldcheck._run_probes still writes and closes probe stdin manually and then sets proc.stdin = None (plugin/daimon_briefing/worldcheck.py:798-812).

@@ -13,10 +13,11 @@ anchors:
   - pattern: "def withhold"
 evidence:
   - note: #1132 PR 7a: the quarantine and resolution branches moved to view (classify, closing_event, live); withhold keeps one guard and exists only for status --suppressed and its tests until PR 7b.
+  - note: archived 2026-11-19: Premise gone: the withhold compatibility wrapper this scar describes was deleted in #1152 (a12b574); its own expiry condition (withhold deleted) is met. The live rule (new withhold reasons go in view.classify) is carried by scars 0123 and 0126.
 expires:
   condition: "withhold is deleted with the status --suppressed conversion (PR 7b)"
   review_after: 2027-04-07
-status: active
+status: archived
 ---
 
 Scar 0108's expiry condition ("withhold() is refactored to a single dispatch
