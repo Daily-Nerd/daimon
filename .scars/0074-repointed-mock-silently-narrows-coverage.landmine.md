@@ -49,6 +49,8 @@ refactor at all. And make the fake count its own invocations so a bypassed patch
 fails loudly, which is issue #968.
 
 Same family as the hand-shaped fixtures in #963: in both cases a test described
-the code instead of checking it, and a green suite proved nothing. There are 77
-files under `plugin/tests/` using `monkeypatch.setattr`; not all are failure
-simulations, but every one of them is a place this can happen again.
+the code instead of checking it, and a green suite proved nothing. There are 258
+files under `plugin/tests/` using `monkeypatch.setattr` (re-counted 2026-11-19;
+#1016 added invocation asserts to six modules, so #968 closed without the
+condition above being met for the rest); not all are failure simulations, but
+every one of them is a place this can happen again.
