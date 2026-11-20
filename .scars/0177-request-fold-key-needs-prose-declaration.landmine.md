@@ -1,20 +1,23 @@
 ---
-id: 0
+id: 177
 type: landmine
 title: A new request fold key that carries a person's text must be declared in folded_prose, MASK_POLICY, the pin test and the sentinel world, or the read-sentinel suite fails
 severity: medium
 confidence: 0.8
 created: 2026-11-13
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config
+promoted_from: candidates/request-fold-key-needs-prose-declaration.md
 anchors:
   - path: plugin/daimon_briefing/surfaces.py
   - path: plugin/daimon_briefing/view.py
 evidence:
-  - note: "issue 1333, superseded_claims[].evidence added to the request fold"
+  - note: issue 1333, superseded_claims[].evidence added to the request fold
 expires:
   condition: "folded prose is derived from the fold itself instead of declared by hand in four places"
   review_after: 2027-05-13
-status: candidate
+status: active
 ---
 
 The request fold copies prose into keys that sit outside the row paths (`done_evidence`,

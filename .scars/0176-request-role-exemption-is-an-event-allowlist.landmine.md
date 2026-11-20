@@ -1,19 +1,22 @@
 ---
-id: 0
+id: 176
 type: landmine
 title: The pre-rule exemption from the request role check must stay a frozen allowlist of events, never "any row dated before the cutoff"
 severity: high
 confidence: 0.85
 created: 2026-11-15
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config
+promoted_from: candidates/request-role-exemption-is-an-event-allowlist.md
 anchors:
   - path: plugin/daimon_briefing/requests.py
 evidence:
-  - note: "issue 1348, narrowing the ROLE_RULE_FROM_NS exemption to _PRE_ROLE_RULE_EVENTS"
+  - note: issue 1348, narrowing the ROLE_RULE_FROM_NS exemption to _PRE_ROLE_RULE_EVENTS
 expires:
   condition: "request events carry a schema version the fold can read, so a row's age no longer decides which rule applies"
   review_after: 2027-05-15
-status: candidate
+status: active
 ---
 
 `ROLE_RULE_FROM_NS` lets a row ordered before the cutoff skip the sender/recipient role check,
