@@ -13,10 +13,11 @@ anchors:
   - pattern: "not resolved_refs and not candidate_refs and not agent_claim_refs"
 evidence:
   - note: "#1109 PR 2 (Daily-Nerd/daimon) — implementing quarantine's read-path
+  - note: archived 2026-11-19: Hazard gone: briefing.withhold() was deleted in #1152 (a12b574, 2026-10-07); no def withhold remains under plugin/. The quarantine and resolution decisions live in view.classify; the two early-return guards this scar named no longer exist.
 expires:
   condition: ""withhold() is refactored to a single dispatch table over named"
   review_after: 2027-03-24
-status: active
+status: archived
 ---
 
 `withhold(checkpoint, resolutions, amendments=None, quarantine=None)` has two

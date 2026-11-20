@@ -12,7 +12,7 @@ anchors:
   - path: plugin/daimon_briefing/trust.py
   - path: plugin/daimon_briefing/surfaces.py
   - path: plugin/daimon_briefing/cli/lifecycle.py
-  - pattern: "trust\.forget_content_key"
+violation: "trust\.forget_content_key|def forget_content_key"
 evidence:
   - note: #1132 stage 2c-1: trust.forget_content_key dropped every row of a matching quarantine and had no caller; replaced by trust.redact_content_key
 expires:

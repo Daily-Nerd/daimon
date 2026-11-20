@@ -10,7 +10,7 @@ promoted_by: Kibukx
 promoted_by_source: explicit
 anchors:
   - path: plugin/daimon_briefing/recall.py
-  - pattern: "INSERT INTO items_fts\(items_fts, rowid"
+violation: "INSERT INTO items_fts\(items_fts, rowid|DELETE FROM items"
 evidence:
   - note: #1132 PR 9a: tests/test_recall_judged.py pins that no withheld byte reaches the index file, including after an upgrade from a schema-9 index; tests/test_read_sentinel.py scans the file bytes
 expires:
