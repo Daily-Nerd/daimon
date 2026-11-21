@@ -525,7 +525,30 @@ def _failed_session_stems() -> set:
         return set()
 
 
-def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
+_SESSION_TRANSCRIPT: list = []
+
+
+def _session_transcript():
+    """The shared `session_transcript` module (#1362), loaded from beside this
+    file by location (a standalone hook cannot import the package), or None
+    when the install lacks it. None means "host unverified": the sweep then
+    behaves exactly as it did before the module existed. Cached."""
+    if not _SESSION_TRANSCRIPT:
+        module = None
+        try:
+            import importlib.util
+            path = Path(__file__).resolve().parent / "session_transcript.py"
+            spec = importlib.util.spec_from_file_location(
+                "_daimon_session_transcript", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001 - fail open, see docstring
+            module = None
+        _SESSION_TRANSCRIPT.append(module)
+    return _SESSION_TRANSCRIPT[0]
+
+
+def sweep_orphans(cli, cwd, session_id, transcript_path, host=None) -> None:
     """Catch-up sweep for a transcript that was never captured because the
     host's own end-of-session capture path silently missed it. Two callers,
     same shared logic (host-agnostic by design — nothing below is Claude- or
@@ -559,7 +582,13 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
     spawned serialize hits the #185 identical-bytes guard and no-ops if the
     transcript actually WAS captured, and the existing too-short skip handles
     noise/tiny files. Fail-open — this must run AFTER briefing emission and
-    never affect it, so every error here is swallowed, at most logged."""
+    never affect it, so every error here is swallowed, at most logged.
+
+    `host` (#1362) names the host whose folder this is (`claude-code` or
+    `codex`, the two callers). With it, a file that is provably not one of
+    that host's session transcripts (`session_transcript.not_a_transcript`:
+    name and rows both) is never a candidate; the next newest is tried. None,
+    or a module missing from the install, keeps every `.jsonl` a candidate."""
     if cli is None or not transcript_path:
         return
     try:
@@ -571,8 +600,8 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
         ckpt_dir = checkpoint_dir()
         failed_stems = _failed_session_stems()
         in_flight_stems = _in_flight_stems()
-        best_path = None
-        best_mtime = None
+        shape = _session_transcript() if host else None
+        candidates = []
         for candidate in directory.glob("*.jsonl"):
             if candidate.stem == session_id or candidate == current:
                 continue  # never sweep the session that is starting right now
@@ -592,8 +621,15 @@ def sweep_orphans(cli, cwd, session_id, transcript_path) -> None:
                     continue  # already captured at/after this transcript's mtime
             except OSError:
                 pass  # no checkpoint on disk at all -> orphan candidate
-            if best_mtime is None or mtime > best_mtime:
-                best_path, best_mtime = candidate, mtime
+            candidates.append((mtime, candidate))
+        best_path = None
+        # Newest first, stable on ties; the shape probe runs only until the
+        # first real candidate, so a folder of transcripts costs one read.
+        for _mtime, candidate in sorted(candidates, key=lambda c: -c[0]):
+            if shape is not None and shape.not_a_transcript(candidate, host):
+                continue  # another tool's log in the host's folder (#1362)
+            best_path = candidate
+            break
         if best_path is None:
             return
         spawn_serialize(cli, str(best_path), project_env(cwd))

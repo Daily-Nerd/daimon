@@ -35,6 +35,13 @@ SYNC_PAIRS = (
     ("plugin/daimon_briefing/checks_host.py",
      "plugin/daimon_briefing/_hooks/checks_host.py"),
     ("plugin/daimon_briefing/checks_host.py", "hook/checks_host.py"),
+    # #1362: the one definition of "is this file a session transcript of host
+    # H", read by the catch-up sweep (standalone hook) and the serializer
+    # (package). Same direction as checks_runtime: the PACKAGE file is
+    # canonical, edit plugin/daimon_briefing/session_transcript.py.
+    ("plugin/daimon_briefing/session_transcript.py",
+     "plugin/daimon_briefing/_hooks/session_transcript.py"),
+    ("plugin/daimon_briefing/session_transcript.py", "hook/session_transcript.py"),
     ("hook/daimon-windsurf-hooks.py", "plugin/daimon_briefing/_hooks/daimon-windsurf-hooks.py"),
     ("hook/daimon-codex-session-start.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-start.py"),
     ("hook/daimon-codex-stop.py", "plugin/daimon_briefing/_hooks/daimon-codex-stop.py"),

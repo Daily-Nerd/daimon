@@ -89,7 +89,7 @@ def main() -> int:
     # transcript directory at the NEXT session's start instead. Runs LAST, after
     # the briefing is already on stdout — its own fail-open guarantee (see
     # lib.sweep_orphans) means it can never affect what the user already saw.
-    lib.sweep_orphans(cli, cwd, session_id, transcript_path)
+    lib.sweep_orphans(cli, cwd, session_id, transcript_path, host="claude-code")
     return 0
 
 
