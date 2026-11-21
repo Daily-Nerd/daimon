@@ -1,7 +1,7 @@
 ---
 id: 25
 type: landmine
-title: "append_event with ANY kind hides the item — resolutions() ignores kind and is_resolved() defaults unknown statuses to resolved"
+title: "a new event kind on a real item ref still hides the item from an older daimon that folds kind-blind"
 severity: critical
 confidence: 1.0
 created: 2026-07-28
@@ -18,35 +18,32 @@ evidence:
   - note: 2026-07-28 probe while designing #376: append_event(ref, 'quote-verification-failed', kind='verification') then resolutions() then is_resolved() returned True — the item would vanish from briefing, recall and carry
   - note: "2026-08-02 whitelist amendment (#523): kind='handoff' added — the baton is REF-LESS by contract (item_ref always \"\"), and the resolutions fold ignores ref-less lines, so a handoff event cannot resolve anything; guarded by test_handoff_event_never_resolves_an_item in test_store.py"
 expires:
-  condition: "resolutions() filters by kind (or the ledger moves to its own stream) AND is_resolved() no longer treats unknown statuses as resolved"
+  condition: "no daimon older than the release that added LIFECYCLE_KINDS (#1363) can read a store this version writes"
   review_after: 2027-07-28
 status: active
 ---
 
-`store.append_event` takes a `kind` argument, which reads as if it namespaces
-the event. It does not. `resolutions()` folds strictly on `item_ref` and never
-looks at `kind`, so the newest event for a ref wins whatever kind it carries.
-`is_resolved()` then applies a deliberate default: only `reopen*` and
-`supersede-candidate*` keep an item live, and "unknown statuses resolve
-(the writer bothered to record a lifecycle fact) rather than vanish".
+Since #1363 the CURRENT fold is safe: `store._fold` reads lifecycle rows only
+(`store.LIFECYCLE_KINDS`: no kind, `resolution`, and the forget pair
+`tombstone` and `lift`), so a row of any other kind, known or unknown, is
+inert and the item stays visible. `is_resolved()` still resolves an unknown
+status on a lifecycle row, as designed.
 
-Combined: writing ANY new event kind against a real `item_ref` silently
-RESOLVES that item. Three readers act on it — `briefing.py:214`,
-`cli.py:300`, `recall.py:404` — so the item disappears from the briefing,
-from carry, and from recall.
+The trap that remains is the OLDER reader. Before #1363, `resolutions()` folded
+strictly on `item_ref` and never looked at `kind`, and `is_resolved()` resolved
+every status except `reopen*`, `supersede-candidate*` and `corroborat*`. A
+daimon of that vintage reading the same store (a teammate's clone, an
+un-upgraded host) still treats a new kind written on a real `item_ref` as a
+resolution: the item disappears from its briefing, carry and recall.
 
-Probed 2026-07-28 while designing the #376 rejection ledger, whose first
-design was "reuse the existing event trail, do not invent a second one".
-That design would have hidden every item verification downgraded, which is
-the exact inverse of the intent: a downgraded item must stay visible and
-merely be relabelled inferred.
+Original probe, 2026-07-28, while designing the #376 rejection ledger:
+`append_event(ref, 'quote-verification-failed', kind='verification')` then
+`resolutions()` then `is_resolved()` returned True. That design would have
+hidden every item verification downgraded, the inverse of the intent.
 
-Why this has stayed invisible: `kind` has exactly ONE non-default use today,
-`kind="tombstone"` for `daimon forget` (`tests/test_recall.py:1502`), and
-that test asserts the item DISAPPEARS from recall. For tombstone, resolving
-is the intended effect, so the coupling has never once been wrong in
-practice and reads like deliberate design.
-
-Before adding any non-lifecycle event kind: either give it its own stream,
-or teach `resolutions()` to filter by kind FIRST and re-check all three
-readers. Do not assume `kind` isolates anything.
+Rule while old readers can exist: a non-lifecycle event must keep an `item_ref`
+no item id can equal, either empty (the handoff baton) or namespaced
+(`corroboration:<id>`), or live in its own stream (`verification.jsonl`,
+`forget-hits.jsonl`). Do not rely on `kind` to isolate a row from an old
+reader, and do not add a kind to `LIFECYCLE_KINDS` unless it really is a
+lifecycle fact: listing it makes the fold read it.

@@ -28,8 +28,8 @@ from . import channels as _channels
 # peers of `cli`, not replacements: the ledger is append-only and every row
 # already written says `cli`, so the set widens and never renames. `cli` is
 # the legacy human source. Widening it widens WHO counts, never WHAT counts:
-# callers must still filter on `kind` themselves (scar 0025 - kind never
-# isolates a fold on its own).
+# callers counting events must still filter on `kind` themselves (the
+# lifecycle fold reads lifecycle kinds only, a plain count does not).
 HUMAN_EVENT_SOURCES = frozenset({"cli", "cli-tty", "ui"})
 # Sources a machine path names itself with. They are agent tier; which of the
 # two a row carries (`serializer` verified a claim, `agent` made one) is a

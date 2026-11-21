@@ -1598,11 +1598,13 @@ def test_resolutions_latest_wins_by_timestamp_not_line_order(tmp_checkpoint_dir)
         '{"ts": "2026-07-07T10:00:00Z", "kind": "resolution", "item_ref": "o-a", "status": "reopened"}\n'
         '{"ts": "2026-07-06T10:00:00Z", "kind": "resolution", "item_ref": "o-a", "status": "resolved"}\n'
         'not json at all\n'
-        '{"ts": "2026-07-07T09:00:00Z", "kind": "future-kind", "item_ref": "o-b", "status": "done", "extra": 1}\n'
+        '{"ts": "2026-07-07T09:00:00Z", "kind": "resolution", "item_ref": "o-b", "status": "done", "extra": 1}\n'
+        '{"ts": "2026-07-07T09:00:00Z", "kind": "future-kind", "item_ref": "o-c", "status": "done"}\n'
     )
     r = store.resolutions(project_dir="/p/A")
     assert r["o-a"]["status"] == "reopened"
-    assert r["o-b"]["extra"] == 1  # unknown kind + field preserved
+    assert r["o-b"]["extra"] == 1  # extra fields ride along
+    assert "o-c" not in r  # an unknown kind is inert to the fold (#1363)
 
 
 def test_is_resolved_semantics():
