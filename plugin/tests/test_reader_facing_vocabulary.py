@@ -89,16 +89,84 @@ def _prose_files():
                 yield path
 
 
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+
+
+def _prose_lines(text):
+    """One entry per source line, code blanked, so line numbers stay real.
+
+    Inline code spans (any backtick run length) and fenced blocks (backticks
+    or tildes, closed by the same character at least as long) are replaced by
+    nothing. A fence that never closes is prose from the fence on: a stray
+    marker must not blind the gate to the rest of the page.
+    """
+    lines = text.splitlines()
+    fenced = set()
+    open_at = marker = None
+    for n, line in enumerate(lines):
+        m = _FENCE.match(line)
+        if open_at is None:
+            if m:
+                open_at, marker = n, m.group(1)
+        elif (m and m.group(1)[0] == marker[0] and len(m.group(1)) >= len(marker)
+              and not m.group(2).strip()):
+            fenced.update(range(open_at, n + 1))
+            open_at = None
+    return ["" if n in fenced else _CODE_SPAN.sub(" ", line)
+            for n, line in enumerate(lines)]
+
+
 def _hits(path):
-    """(line number, matched word) for every occurrence in one file."""
+    """(line number, matched word) for every prose occurrence in one file."""
     out = []
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    text = path.read_text(encoding="utf-8")
+    for n, line in enumerate(_prose_lines(text), 1):
         out.extend((n, m.group(0)) for m in EXCLUDED.finditer(line))
     return out
 
 
 def _allowed_words(rel):
     return {word.lower() for path, word, _ in ALLOWED if path == rel}
+
+
+def _words(text):
+    return [m.group(0) for line in _prose_lines(text)
+            for m in EXCLUDED.finditer(line)]
+
+
+def test_inline_code_span_is_not_prose():
+    assert _words("set `verdict` to a string") == []
+    assert _words("the field ``a `verdict` key`` is fine") == []
+
+
+def test_prose_next_to_a_code_span_is_still_caught():
+    assert _words("the `--flag` carries a verdict") == ["verdict"]
+    assert _words("a `code` span and `more` then a trial") == ["trial"]
+
+
+def test_fenced_block_is_not_prose_with_or_without_language():
+    assert _words("a\n```\nverdict\n```\nb") == []
+    assert _words("a\n```json\n{\"verdict\": 1}\n```\nb") == []
+    assert _words("````\n```\nverdict\n```\n````\nafter") == []
+    assert _words("  ```sh\n  verdict\n  ```\nverdict") == ["verdict"]
+
+
+def test_tilde_fence_is_not_prose():
+    assert _words("~~~\nverdict\n~~~\nafter") == []
+
+
+def test_unclosed_fence_counts_as_prose_from_the_fence_on():
+    assert _words("```json\nverdict\n") == ["verdict"]
+    assert _words("a `verdict` b\n~~~\nverdict") == ["verdict"]
+
+
+def test_line_numbers_survive_blanking():
+    text = "one\n```\nverdict\n```\nlast verdict\n"
+    lines = _prose_lines(text)
+    assert len(lines) == len(text.splitlines())
+    assert [n for n, line in enumerate(lines, 1)
+            if EXCLUDED.search(line)] == [5]
 
 
 def test_the_pattern_still_matches_what_this_test_assumes():

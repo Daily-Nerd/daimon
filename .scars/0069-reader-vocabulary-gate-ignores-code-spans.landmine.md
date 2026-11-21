@@ -16,11 +16,12 @@ anchors:
 evidence:
   - pr: 931
   - note: 2026-09-05: a new CLI-reference section listed a ruling row's keys, one of them backticked. Local ruff, mypy and the two touched test files were green; CI failed on tests/test_reader_facing_vocabulary.py on both Python versions. The fix was to describe the field in words on both language mirrors.
+  - note: archived 2026-11-21: expiry condition met: tests/test_reader_facing_vocabulary.py now blanks inline code spans and fenced blocks before matching (#1364)
 expires:
   condition: "tests/test_reader_facing_vocabulary.py strips inline code spans or fenced blocks before matching, or the gate is removed"
   review_after: 2027-03-05
 violation: "\b(trials?|verdicts?|judge[sd]?|judgement|judgment|jury|testimon\w*|hearsay|prosecutes?|guilty|innocent|veredictos?|juicios?|jurado|testimonios?|culpable|inocente)\b"
-status: active
+status: archived
 ---
 
 `plugin/tests/test_reader_facing_vocabulary.py` keeps a short list of courtroom
