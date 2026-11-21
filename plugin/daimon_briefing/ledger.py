@@ -22,7 +22,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, display, jsonl, provenance, store, transcript
+from . import (config, display, jsonl, provenance, session_transcript, store,
+               transcript)
 
 
 def _append_serialize_log(line: str) -> None:
@@ -327,7 +328,7 @@ _LEDGER_SPAWN_TRANSCRIPT_RE = re.compile(r"\(transcript: (.+?)\)\s*$")
 # failure in status. The stamp shape is matched exactly because both halves
 # contain dashes — a looser split would be ambiguous. Non-Codex stems (a Claude
 # checkpoint stem IS the session id) must pass through untouched.
-_ROLLOUT_STEM_RE = re.compile(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$")
+_ROLLOUT_STEM_RE = session_transcript.ROLLOUT_STEM_RE
 
 
 def _session_key(stem: str) -> str:

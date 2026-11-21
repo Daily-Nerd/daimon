@@ -96,7 +96,7 @@ def main() -> int:
     # directory at the NEXT session's start recovers it. Runs LAST, after the
     # briefing is already emitted — lib.sweep_orphans' own fail-open guarantee
     # means it can never affect what Codex already saw.
-    lib.sweep_orphans(cli, cwd, session_id, transcript_path)
+    lib.sweep_orphans(cli, cwd, session_id, transcript_path, host="codex")
     return 0
 
 
