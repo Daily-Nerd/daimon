@@ -29,12 +29,14 @@ daimon heal --force       # gasta otro intento en una sesión que usó su reinte
 | razón | qué significa |
 | --- | --- |
 | `retry-exhausted` | el reintento ya corrió y la sesión sigue fallando; volvé a correr con `--force` |
-| `unrecoverable` | no hay registro de lanzamiento, o el transcript ya no está, así que no se puede reparar |
-| `hung` | el serialize arrancó y nunca informó resultado, y el transcript no está disponible |
+| `unrecoverable` | no hay registro de lanzamiento, así que no se puede reparar |
+| `hung` | el serialize arrancó y nunca informó resultado, y no se registró la ruta del transcript |
 | `admission-refused` | el ledger de eventos del proyecto no se puede leer (mirá abajo) |
 | `repairing` | ya está corriendo una reparación de ese ledger |
 | `project-unknown` | un transcript archivado bajo un directorio de proyecto cuyo proyecto no se puede recuperar; corré `daimon serialize <transcript> --project <dir>` |
 | `import` | un intento de importación, que heal nunca reintenta; volvé a correr `daimon import` para retomar |
+
+Una falla sigue pendiente hasta que algo la resuelve: un éxito posterior, un skip final, un checkpoint que cubre la sesión, o que su transcript ya no exista. La cantidad de otras sesiones que escribieron en el log nunca termina una falla. Una sesión cuyo archivo de transcript ya no está no tiene nada más que capturar, así que `daimon status` la cuenta aparte (`lost: N (never captured, transcript gone)`), `heal` nunca la lista y la salud la ignora. El conteo se lee del disco cada vez, así que si el transcript vuelve, la sesión vuelve a estar pendiente. Status y heal leen los últimos 4 MB de `serialize.log`; cuando el log es más largo, `daimon status` avisa que las líneas más viejas no se leen.
 
 ## Un ledger no se puede leer
 

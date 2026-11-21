@@ -249,7 +249,7 @@ When a project's `events.jsonl` cannot be read (a conflict marker, a bad byte,
 an OS error), daimon will not write a checkpoint for it: the forget gate would
 have to guess, and a forgotten value could come back. The session is refused
 before the model is called, which costs nothing. The refusal is an ordinary
-failed serialize. `daimon status` counts it from the whole log and names the
+failed serialize. `daimon status` counts it from the last 4 MB of the log and names the
 cure, the project's next briefing says how many sessions are waiting, and
 `daimon heal` retries them one per session start once the ledger reads again,
 without spending the single retry. A refusal is lost only when its transcript
@@ -258,8 +258,8 @@ is gone.
 | Host | Refused capture |
 |---|---|
 | Claude Code, Codex, Gemini CLI, Kimi Code | Supported: counted, briefed and retried by `daimon heal` while the host keeps the transcript. |
-| Windsurf | Supported, with one limit: daimon's own 7-day reap of Windsurf transcripts (`DAIMON_WINDSURF_STATE_DAYS`) still applies, so a session refused for longer than that is lost and counted as unrecoverable. |
-| Hermes in-process capture | Supported only when the host passes a transcript path that exists. Without one it is counted as unrecoverable and cannot be retried. |
+| Windsurf | Supported, with one limit: daimon's own 7-day reap of Windsurf transcripts (`DAIMON_WINDSURF_STATE_DAYS`) still applies, so a session refused for longer than that is lost and counted as lost. |
+| Hermes in-process capture | Supported only when the host passes a transcript path that exists. Without one it is counted as unrecoverable (no transcript path was recorded) and cannot be retried. |
 
 ## Scene traces
 
