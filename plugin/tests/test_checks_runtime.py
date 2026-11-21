@@ -1700,3 +1700,175 @@ def test_a_megabyte_of_inline_argument_returns_well_inside_the_budget(
     elapsed = _time.monotonic() - started
     assert isinstance(got, rt.Unresolved)
     assert elapsed < 0.5, f"resolve took {elapsed:.2f}s on a 1 MiB command"
+
+
+# ---- #1358: a file flag belongs to the program that defines it ------------
+#
+# `-F` is gh's body-file shorthand and git's message-file flag. For awk it is
+# a field separator, for grep and rg it is "fixed strings", for ls it is
+# "classify", for ssh it is a config file. The resolver reads a value as a
+# path only when the command's program is one it models.
+
+@pytest.mark.parametrize("command", [
+    "awk -F: '{print $1}' f.txt",
+    "awk -F\"$SEP\" '{print $1}' f.txt",
+    "rg -F 'a b' src",
+    "rg -F 'foo*' src",
+    "grep -F x f.txt",
+    "ls -F",
+    "ssh -F cfg host",
+    "git grep -F needle",
+    "git log -F",
+    "git rev-parse @{u}",
+    "tar -xf @archive",
+])
+def test_a_flag_on_a_program_daimon_does_not_model_reads_nothing(
+        command, tmp_path):
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert got.files == ()
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("prefix", [
+    "X=1 ", "A=1 B=2 ", "/usr/bin/", "(", "! ", "if ", "env ", "command ",
+])
+def test_the_program_is_found_through_the_command_position_forms(
+        prefix, tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("the body text\n", encoding="utf-8")
+    got = _resolve(f"{prefix}gh pr create --body-file {body}", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert "the body text" in _text_of(got)
+    rt.discard(got)
+
+
+def test_an_unmodelled_program_behind_an_env_prefix_reads_nothing(tmp_path):
+    got = _resolve("LC_ALL=C awk -F: '{print $1}' f", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert got.files == ()
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -F {p}",
+    "git commit -F{p}",
+    "git -C . commit -F {p}",
+    "git -c user.name=x commit -F {p}",
+    "git tag -F {p} v1",
+])
+def test_git_commit_and_tag_read_their_message_file(command, tmp_path):
+    msg = tmp_path / "msg.txt"
+    msg.write_text("the message text\n", encoding="utf-8")
+    got = _resolve(command.format(p=msg), tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert "the message text" in _text_of(got)
+    rt.discard(got)
+
+
+def test_a_missing_git_message_file_is_file_missing_and_names_git(tmp_path):
+    got = _resolve("git commit -F nope.txt", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+    assert "git commit" in got.reason and "-F" in got.reason
+
+
+def test_a_mixed_line_still_fails_closed_on_the_modelled_program(tmp_path):
+    got = _resolve(
+        "awk -F: '{print $1}' f | gh pr create --body-file /missing",
+        tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+    assert "gh" in got.reason and "--body-file" in got.reason
+
+
+def test_the_reason_names_the_program_for_a_shell_expression(tmp_path):
+    got = _resolve("gh pr create --body-file $F", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "shell-expansion"
+    assert "gh" in got.reason and "--body-file" in got.reason
+
+
+def test_an_at_token_on_a_modelled_program_is_still_unparsed(tmp_path):
+    got = _resolve("gh api repos/x @body.md", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+def test_an_unmodelled_segment_with_a_heredoc_reads_nothing(tmp_path):
+    got = _resolve("cat -F - <<EOF\nbody\nEOF", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert got.files == ()
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("command", [
+    "curl -d @{p} https://x",
+    "/usr/bin/curl --data @{p} https://x",
+])
+def test_an_at_file_word_on_an_http_client_is_still_unparsed(command, tmp_path):
+    """The `@file` convention is real for curl, which posts a body
+    from a file, so there the word stays a form daimon will not call safe."""
+    got = _resolve(command.format(p=tmp_path / "payload.json"), tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "arg-form-unparsed"
+
+
+# ---- #1358: a wrapper must not hide the program it runs --------------------
+
+_WRAPPERS = [
+    "timeout 5 ", "sudo -u x ", "env -i ", "xargs ", "nice -n 5 ",
+    "env A=1 B=2 timeout 9 ",
+]
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS)
+def test_a_wrapper_does_not_hide_the_program_it_runs(wrapper, tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("the body text\n", encoding="utf-8")
+    got = _resolve(f"{wrapper}gh pr create --body-file {body}", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert "the body text" in _text_of(got)
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS)
+def test_a_wrapped_program_with_a_missing_file_fails_closed(wrapper, tmp_path):
+    got = _resolve(f"{wrapper}gh pr create --body-file /missing", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+    assert "gh" in got.reason and "--body-file" in got.reason
+
+
+def test_a_wrapped_git_commit_reads_its_message_file(tmp_path):
+    msg = tmp_path / "msg.txt"
+    msg.write_text("the message text\n", encoding="utf-8")
+    got = _resolve(f"timeout 5 git -C . commit -F {msg}", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert "the message text" in _text_of(got)
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("command", [
+    "rg -F gh notes.txt",
+    "awk -F: '{print $1}' gh",
+    "ls -F git",
+    "rg git commit src",
+])
+def test_a_modelled_name_used_as_a_plain_argument_reads_nothing(
+        command, tmp_path):
+    """The flag sits before the modelled word and nothing after it is a flag
+    of that program, so there is nothing to read."""
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert got.files == ()
+    rt.discard(got)
+
+
+def test_a_modelled_name_followed_by_a_flag_is_read_as_that_program(tmp_path):
+    """The accepted cost of finding the program by name: `echo gh
+    --body-file x` is read as gh and can fail closed. That is the safe
+    direction and matches #1282."""
+    got = _resolve("echo gh pr create --body-file /missing", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
