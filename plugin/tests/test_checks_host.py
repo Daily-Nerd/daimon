@@ -557,6 +557,23 @@ def test_an_unresolved_subject_denies_under_enforce_and_names_the_cause(
     assert d.rows[0]["cause"] == "file-missing"
 
 
+@pytest.mark.parametrize("command", [
+    "awk -F: '{print $1}' f.txt",
+    "rg -F 'a b' src",
+    "rg -F 'foo*' src",
+    "ls -F",
+])
+def test_a_matched_command_with_an_unrelated_dash_f_is_not_denied(
+        command, tmp_path):
+    """#1358: the prefilter matched, the subject resolves with no reads, and
+    the clean body allows. Before, `-F` was read as a body-file path for any
+    program and enforce denied the unresolved subject."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    d = ch.decide(ch.PROFILES[CC], _payload(f"{MATCH}; {command}", tmp_path))
+    assert d.stdout == ""
+    assert d.rows[0]["outcome"] == "clean"
+
+
 def test_a_check_that_crashes_is_unresolved_and_not_a_violation(tmp_path):
     _arm(tmp_path, body=CRASHES, intent="enforce")
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))

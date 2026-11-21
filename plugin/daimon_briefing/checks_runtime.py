@@ -303,7 +303,75 @@ SUBJECT_SEPARATOR = "--- daimon:subject ---"
 # so it appears in both tables and the value's shape decides.
 _PATH_FLAGS = ("--body-file", "--notes-file", "-F")
 _FIELD_FLAGS = ("-F", "--field")
-_KNOWN_FLAGS = frozenset(_PATH_FLAGS) | frozenset(_FIELD_FLAGS)
+
+
+class _Program:
+    """What daimon knows about one program's file arguments.
+
+    A flag has a meaning only inside the program that defines it: `-F` is a
+    body file for gh, a message file for git, a field separator for awk, a
+    "fixed strings" switch for grep and rg, a config file for ssh. So the
+    table is keyed by program and a segment whose program is not in it reads
+    nothing (#1358)."""
+
+    def __init__(self, path_flags, field_flags=(), strict_forms=False):
+        # strict_forms: a bare `@file` word or a lone `-` after a flag is read
+        # as a file argument in a form daimon does not parse. True only for a
+        # program whose arguments really use that convention: gh, and the
+        # HTTP clients (`curl -d @file`) that post a body from a file.
+        self.strict_forms = strict_forms
+        self.path_flags = tuple(path_flags)
+        self.field_flags = tuple(field_flags)
+        self.known = frozenset(self.path_flags) | frozenset(self.field_flags)
+
+
+_GH = _Program(_PATH_FLAGS, _FIELD_FLAGS, strict_forms=True)
+_HTTP_CLIENT = _Program((), (), strict_forms=True)
+_HTTP_CLIENTS = frozenset({"curl", "http", "https", "xh"})
+# `git commit -F <file>` and `git tag -F <file>` read the message from a file.
+_GIT_MESSAGE = _Program(("-F",))
+_GIT_MESSAGE_SUBCOMMANDS = frozenset({"commit", "tag"})
+
+# Words that stand in command position without being the program: shell
+# keywords and grouping that may precede a command, and wrappers that run the
+# next word unchanged. A wrapper that takes options of its own (`sudo -u x`,
+# `env -i`) is NOT peeled: guessing where its options end is parsing a shell.
+_COMMAND_PREFIXES = frozenset({
+    "(", "{", "!", "if", "then", "else", "elif", "while", "until", "do",
+    "time", "env", "command", "exec", "nohup", "builtin",
+})
+# git global options that take their value as the next token.
+_GIT_VALUE_OPTIONS = frozenset({"-C", "-c", "--git-dir", "--work-tree",
+                                "--namespace", "--exec-path"})
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _program_of(tokens):
+    """(program table or None, index of the first argument, display name).
+
+    The program is the first word in command position, after environment
+    assignments and the prefixes above, matched by basename so
+    `/usr/bin/gh` is gh. A program daimon does not model gives None, and the
+    segment is then not interpreted at all."""
+    index = 0
+    while index < len(tokens) and (tokens[index] in _COMMAND_PREFIXES
+                                   or _ASSIGNMENT_RE.match(tokens[index])):
+        index += 1
+    if index >= len(tokens):
+        return None, index, ""
+    name = os.path.basename(tokens[index])
+    index += 1
+    if name == "gh":
+        return _GH, index, "gh"
+    if name in _HTTP_CLIENTS:
+        return _HTTP_CLIENT, index, name
+    if name == "git":
+        while index < len(tokens) and tokens[index].startswith("-"):
+            index += 2 if tokens[index] in _GIT_VALUE_OPTIONS else 1
+        if index < len(tokens) and tokens[index] in _GIT_MESSAGE_SUBCOMMANDS:
+            return _GIT_MESSAGE, index + 1, f"git {tokens[index]}"
+    return None, index, name
+
 
 # A heredoc puts the body INSIDE the command string, so `--body-file -` is
 # resolvable after all. The terminator may be quoted (no expansion), and
@@ -364,7 +432,7 @@ def _segments(tokens):
     return out
 
 
-def _split_attached(token):
+def _split_attached(token, known):
     """`--body-file=x` -> ("--body-file", "x", True); anything else is left
     for the two-token form.
 
@@ -377,7 +445,7 @@ def _split_attached(token):
     the subject holding only the command string, which reports CLEAN for a
     file that was never opened."""
     if (token.startswith("-") and not token.startswith("--")
-            and len(token) > 2 and token[:2] in _KNOWN_FLAGS):
+            and len(token) > 2 and token[:2] in known):
         value = token[2:]
         # pflag treats a leading `=` after a shorthand as the separator, so
         # `-F=body.md` names the file body.md and not a field with an empty
@@ -385,23 +453,23 @@ def _split_attached(token):
         return token[:2], value[1:] if value.startswith("=") else value, True
     if token.startswith("-") and "=" in token:
         head, _, tail = token.partition("=")
-        if head in _KNOWN_FLAGS:
+        if head in known:
             return head, tail, True
     return token, "", False
 
 
-def _walk(tokens):
+def _walk(tokens, known):
     """(flag, value, previous token) for each step of the command.
 
-    `flag` is None for a token that names no known flag, and `value` is None
+    `flag` is None for a token that names no flag of this program, and `value` is None
     when a known flag ran off the end with nothing after it. One generator,
     two readers: the dash-consumer count below and the resolver itself, so
     the two can never disagree about what a token means."""
     index = 0
     while index < len(tokens):
         previous = tokens[index - 1] if index else ""
-        flag, value, attached = _split_attached(tokens[index])
-        if flag not in _KNOWN_FLAGS:
+        flag, value, attached = _split_attached(tokens[index], known)
+        if flag not in known:
             index += 1
             yield None, tokens[index - 1], previous
             continue
@@ -450,15 +518,17 @@ def _read_file(raw, base, flag="the path argument"):
         with open(path, "rb") as handle:
             data = handle.read(MAX_SUBJECT_FILE_BYTES + 1)
     except FileNotFoundError:
-        return Unresolved("file-missing", f"{raw} does not exist")
+        return Unresolved("file-missing",
+                          f"{flag} names {raw}, which does not exist")
     except OSError as exc:
-        return Unresolved("file-unreadable", f"{raw}: {exc.strerror or exc}")
+        return Unresolved("file-unreadable",
+                          f"{flag} names {raw}: {exc.strerror or exc}")
     except ValueError as exc:
         # A NUL in the path: `open` rejects it before the OS ever sees it, and
         # it raises ValueError rather than OSError, so it walks straight past
         # the clause above. The command string comes from a host payload and
         # can carry one.
-        return Unresolved("file-unreadable", f"{raw}: {exc}")
+        return Unresolved("file-unreadable", f"{flag} names {raw}: {exc}")
     if len(data) > MAX_SUBJECT_FILE_BYTES:
         return Unresolved(
             "file-oversize",
@@ -492,27 +562,37 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
     # reads past the end of the list and the resolver raises, which is the
     # one thing this module promises never to do.
     marks = [index for index in marks if 0 <= index < len(heredocs)]
+    # A flag or an `@file` word means something only to the program that
+    # defines it. Any other program's arguments are not ours to interpret.
+    program, first_arg, name = _program_of(tokens)
+    if program is None:
+        return None
+    tokens = tokens[first_arg:]
     # Counted per segment: binding is only safe with exactly one candidate on
     # each side, and the sides are this command's, not the whole string's.
-    consumers = sum(1 for flag, value, _ in _walk(tokens)
+    consumers = sum(1 for flag, value, _ in _walk(tokens, program.known)
                     if flag is not None and value == "-")
-    for flag, value, previous in _walk(tokens):
+    for flag, value, previous in _walk(tokens, program.known):
         if flag is None:
             # Row 6: a form outside the table is never assumed harmless.
             token = value
+            if not program.strict_forms:
+                continue
             if token == "-" and previous.startswith("-"):
                 return Unresolved(
                     "arg-form-unparsed",
-                    f"{previous} reads standard input in a form daimon does "
+                    f"{name} {previous} reads standard input in a form daimon does "
                     "not parse")
             if token.startswith("@") and len(token) > 1:
                 return Unresolved(
                     "arg-form-unparsed",
-                    f"{token} names a file in a form daimon does not parse")
+                    f"{name} {token} names a file in a form daimon does not "
+                    "parse")
             continue
         if value is None:
             return Unresolved("arg-form-unparsed",
-                              f"{flag} was given no value")
+                              f"{name} {flag} was given no value")
+        label = f"{name} {flag}"
 
         if value == "-":
             if len(marks) == 1 and consumers == 1:
@@ -522,7 +602,7 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
                 if piped:
                     return Unresolved(
                         "stdin-pipe",
-                        f"{flag} reads standard input and a pipe fills it, so "
+                        f"{name} {flag} reads standard input and a pipe fills it, so "
                         "the bytes come from a process daimon cannot see")
                 # A heredoc elsewhere in the string belongs to the command it
                 # is attached to, never to this one. Borrowing it would build
@@ -530,7 +610,7 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
                 # text is clean the record says the real body was proven safe.
                 return Unresolved(
                     "arg-form-unparsed",
-                    f"{flag} reads standard input and this command carries no "
+                    f"{name} {flag} reads standard input and this command carries no "
                     "heredoc of its own, so daimon cannot see what fills it")
             # Inside one command the counts still have to be one and one:
             # which heredoc feeds which argument is not something the token
@@ -541,7 +621,7 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
                 f"{consumers} argument(s) reading standard input; daimon "
                 "binds one to one or not at all")
         raw = value
-        if flag in _FIELD_FLAGS and "=" in value:
+        if flag in program.field_flags and "=" in value:
             _, _, rhs = value.partition("=")
             if not rhs.startswith("@"):
                 # A literal field value names no file. Reporting unresolved
@@ -549,14 +629,14 @@ def _resolve_segment(tokens, marks, piped, heredocs, base, reads):
                 # nothing.
                 continue
             raw = rhs[1:]
-        elif flag in _FIELD_FLAGS and value.startswith("@"):
+        elif flag in program.field_flags and value.startswith("@"):
             raw = value[1:]
-        elif flag not in _PATH_FLAGS:
+        elif flag not in program.path_flags:
             continue
         if not raw:
             return Unresolved("arg-form-unparsed",
-                              f"{flag} was given an empty path")
-        text = _read_file(raw, base, flag)
+                              f"{label} was given an empty path")
+        text = _read_file(raw, base, label)
         if isinstance(text, Unresolved):
             return text
         reads.append((flag, raw, text))
