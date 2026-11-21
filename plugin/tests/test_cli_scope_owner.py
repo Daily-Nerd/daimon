@@ -50,9 +50,13 @@ def world(tmp_checkpoint_dir, monkeypatch):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", MINE)
 
 
-@pytest.fixture
-def tenant(monkeypatch):
+@pytest.fixture(params=[False, True], ids=["tenant", "tenant-layers"])
+def tenant(request, monkeypatch):
+    """Tenant scope, with and without the host's layer declaration (#1370):
+    every refusal in this file must hold unchanged under both."""
     monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    if request.param:
+        monkeypatch.setenv("DAIMON_TENANT_LAYERS", "1")
 
 
 # ---- --project naming another bucket -----------------------------------

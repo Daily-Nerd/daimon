@@ -490,8 +490,8 @@ def _cmd_ruling_list(args) -> int:
     # directory never wants a read here to cross into another tenant's
     # layer, and staying silent about the refusal would let the flag look
     # honored while quietly returning only this project's own rows.
-    if getattr(args, "inherited", False) and config.tenant_scoped():
-        print(f"error: {config.TENANT_SCOPE_REFUSAL}", file=sys.stderr)
+    if getattr(args, "inherited", False) and not config.layers_readable():
+        print(f"error: {config.TENANT_LAYERS_REFUSAL}", file=sys.stderr)
         return 2
     # #969: ask the shared reader for its STATE before asking `listing` for
     # rows. `listing` reaches `_path` through `records` and `fold` with no
@@ -982,8 +982,8 @@ def register(sub, fmt) -> None:
         "--inherited", action="store_true",
         help="also list active rulings inherited from a ruling layer above "
              "this project (#1092); each row (each `--json` row too) carries "
-             "`inherited_from`; refused on a tenant-scoped home, the same "
-             "as every caller-chosen cross-project scope (#899)")
+             "`inherited_from`; refused on a tenant-scoped home unless the host "
+             "declares DAIMON_TENANT_LAYERS (#899)")
     rl_list.set_defaults(func=_cli._cmd_ruling_list)
 
     rl_show = ruling_sub.add_parser("show", help="show one ruling, including "
