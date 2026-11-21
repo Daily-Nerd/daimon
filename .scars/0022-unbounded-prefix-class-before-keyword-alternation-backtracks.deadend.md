@@ -14,7 +14,7 @@ evidence:
 expires:
   condition: "redaction moves off Python re (e.g. re2/hyperscan) or gains a timeout wrapper"
   review_after: 2027-07-07
-violation: "\[\\w-\]\*\(\?:"
+violation: "\[[\\]w-\]\*\(\?:"
 status: active
 ---
 
