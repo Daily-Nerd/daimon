@@ -30,6 +30,7 @@ from .. import (
     redact,
     render,
     schema,
+    serialize_log_window,
     serializer,
     store,
     transcript,
@@ -587,7 +588,7 @@ def _cmd_heal(args) -> int:
         if (getattr(args, "all", False) or project
                 or getattr(args, "session", None)):
             return _heal_loop(args, dry_run=dry_run, force=force)
-        text = _read_serialize_log()
+        text = _read_serialize_window()
         now = time.time()
         plan = _cli._heal_plan(text, now, force=force)
         render.render_heal(plan, dry_run=dry_run, force=force)
@@ -601,6 +602,15 @@ def _cmd_heal(args) -> int:
 def _read_serialize_log() -> str:
     try:
         return (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _read_serialize_window() -> str:
+    """The part of serialize.log a heal decision reads. `daimon import` keeps
+    `_read_serialize_log`: its done-set needs every success line ever written."""
+    try:
+        return serialize_log_window.read(config.log_dir() / "serialize.log")[0]
     except OSError:
         return ""
 
@@ -661,7 +671,7 @@ def _heal_loop(args, *, dry_run: bool, force: bool) -> int:
     first = True
     while True:
         plan = _cli._heal_plan_all(
-            _read_serialize_log(), time.time(), force=force, slug=slug,
+            _read_serialize_window(), time.time(), force=force, slug=slug,
             sessions=sessions, attempted=frozenset(attempted),
             presumed_dead_before=since)
         if first:

@@ -688,13 +688,18 @@ def test_cli_status_log_interleaved_last_result_wins(
     tmp_checkpoint_dir, tmp_log_dir, capsys, monkeypatch
 ):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
+    # The transcript must exist: a failure whose file is gone is lost, not
+    # outstanding.
+    tmp_log_dir.mkdir(parents=True, exist_ok=True)
+    transcript_a = tmp_log_dir / "S-A.md"
+    transcript_a.write_text("x")
     # Two overlapping sessions: spawn A, spawn B, A's error, B's success.
     _write_log(
         tmp_log_dir,
         [
             "2026-06-10T12:00:00Z session-end: spawned serialize for S-A (reason: exit, project: /p/A)",
             "2026-06-10T12:00:05Z session-end: spawned serialize for S-B (reason: exit, project: /p/B)",
-            "error: too short (transcript: /t/S-A.md) after 1s",
+            f"error: too short (transcript: {transcript_a}) after 1s",
             "wrote checkpoint: /tmp/ck/S-B.json (took 42s)",
         ],
     )
@@ -808,7 +813,7 @@ def test_cli_status_json_shape(
                          "plugin_drift", "skill_drift", "rescue_gap",
                          "rescue_posture",
                          "forget_hits", "requests", "handoff", "checks",
-                         "identity", "ledgers"}
+                         "identity", "ledgers", "lost", "serialize_log_cut"}
     # #694 PR 3: the requests summary — {open_sent, awaiting_you}, always
     # present (zeros when nothing is recorded, never absent/null).
     assert data["requests"] == {"open_sent": 0, "awaiting_you": 0}
@@ -3448,10 +3453,10 @@ def test_outstanding_force_promotes_retry_exhausted_to_healable():
 
 def test_outstanding_force_does_not_resurrect_missing_transcript():
     # --force can't repair what genuinely can't be repaired: transcript gone
-    # is still unrecoverable even when forced.
+    # is still lost even when forced.
     ledger = {"X": _led(retried=True, transcript="/gone/X.jsonl")}
     out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: False, force=True)
-    assert out[0]["class"] == "unrecoverable"
+    assert out[0]["class"] == "lost"
 
 
 def test_outstanding_without_force_retry_exhausted_stays_exhausted():
@@ -3480,10 +3485,10 @@ def test_outstanding_sorted_newest_first():
     assert [f["sid"] for f in out] == ["NEW", "OLD"]
 
 
-def test_outstanding_error_missing_transcript_is_unrecoverable():
+def test_outstanding_error_missing_transcript_is_lost():
     ledger = {"X": _led(transcript="/gone/X.jsonl")}
     out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: False)
-    assert out[0]["class"] == "unrecoverable"
+    assert out[0]["class"] == "lost"
 
 
 def test_outstanding_error_not_spawned_is_unrecoverable():
@@ -6852,10 +6857,10 @@ def test_outstanding_hung_without_transcript_stays_hung():
     assert out[0]["class"] == "hung"
 
 
-def test_outstanding_hung_transcript_gone_stays_hung():
+def test_outstanding_hung_transcript_gone_is_lost():
     ledger = {"X": _led(result_kind=None, result_line=None, spawn_age=3600)}
     out = cli._outstanding_failures(ledger, 0.0, lambda sid: False, 1800, lambda p: False)
-    assert out[0]["class"] == "hung"
+    assert out[0]["class"] == "lost"
 
 
 def test_outstanding_hung_already_retried_stays_hung():
@@ -10884,8 +10889,11 @@ def test_compute_outstanding_reads_real_heartbeat(tmp_log_dir,
     from daimon_briefing import ledger
     stamp = (datetime.now(timezone.utc) - timedelta(seconds=3600)).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
+    tmp_log_dir.parent.mkdir(parents=True, exist_ok=True)
+    transcript = tmp_log_dir.parent / "HB1.jsonl"
+    transcript.write_text("{}\n")
     text = (f"{stamp} session-end: spawned serialize for HB1 "
-            "(reason: exit, project: /p/A) (transcript: /t/HB1.jsonl)\n")
+            f"(reason: exit, project: /p/A) (transcript: {transcript})\n")
     # No heartbeat: the old-age spawn classifies hung (legacy).
     assert len(cli._compute_outstanding(text, time.time())) == 1
     # Fresh heartbeat: alive — vanishes from outstanding, heal stays away.

@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from daimon_briefing import api, cli, config, heal, heal_host, ledger
+from daimon_briefing import (api, cli, config, heal, ledger,
+                             serialize_log_window)
 
 NOW = 1_800_000_000.0
 
@@ -115,8 +116,9 @@ def test_heal_plan_codes_match_what_status_classifies(tmp_path):
 
     status_view = {f["sid"]: f["class"]
                    for f in ledger._compute_outstanding(text, NOW)}
-    assert status_view == {"S-ok": "healable", "S-ex": "retry-exhausted",
-                           "S-gone": "unrecoverable"}
+    # S-gone is lost (its transcript is gone): not outstanding, so neither
+    # status nor the plan lists it.
+    assert status_view == {"S-ok": "healable", "S-ex": "retry-exhausted"}
     assert [t.session_id for t in plan.targets] == ["S-ok"]
     assert {s.session_id: s.reason for s in plan.skipped} == {
         sid: cls for sid, cls in status_view.items() if cls != "healable"}
@@ -241,7 +243,7 @@ def test_heal_plan_an_unreadable_log_becomes_a_note_not_a_raise(tmp_path):
 def test_heal_plan_reads_a_bounded_window_and_says_so(tmp_path, monkeypatch):
     proj = _project(tmp_path)
     _fail(tmp_path, "S-ok", 100, proj, now=NOW)
-    monkeypatch.setattr(heal_host, "_HEAL_WINDOW_BYTES", 120)    # smaller than the log
+    monkeypatch.setattr(serialize_log_window, "WINDOW_BYTES", 120)    # smaller than the log
     plan = api.heal_plan(proj, now=NOW)
     assert any("window" in n for n in plan.notes)
 

@@ -22,8 +22,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (config, display, jsonl, provenance, session_transcript, store,
-               transcript)
+from . import (config, display, jsonl, provenance, serialize_log_window,
+               session_transcript, store, transcript)
 
 
 def _append_serialize_log(line: str) -> None:
@@ -246,17 +246,19 @@ def _format_age(seconds) -> str:
 
 
 def _parse_serialize_log(path, now) -> dict | None:
-    """Tail of serialize.log -> {spawn, result}, or None when there's no log.
+    """Last spawn and last result of serialize.log -> {spawn, result}, or None
+    when there's no log. Reads the same window every fold reads.
 
     Lines from overlapping sessions interleave, so spawn and result are
     reported INDEPENDENTLY (last of each kind) — no pairing is attempted.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        path.stat()  # a missing log is "no history", not an empty one
+        text, _cut = serialize_log_window.read(path)
     except OSError:
         return None
     spawn = result = None
-    for line in text.splitlines()[-200:]:  # tail is plenty; the log only appends
+    for line in text.splitlines():
         line = line.strip()
         m = _SPAWN_RE.match(line)
         if m:
@@ -338,7 +340,7 @@ def _session_key(stem: str) -> str:
     return m.group(1) if m else stem
 
 
-def has_checkpoint(sid: str) -> bool:
+def has_checkpoint(sid: str, rollout_keys=None) -> bool:
     """Did this session's serialize land a checkpoint? One answer for the
     classifier (through `_compute_outstanding`) and for the done-set of
     `daimon import` (#1236), so heal and the import never disagree about
@@ -352,11 +354,23 @@ def has_checkpoint(sid: str) -> bool:
     readers: `Path.glob` swallows a missing directory, a path that is a file
     rather than a directory, and a permission-denied directory, returning an
     empty iterator for all three (verified on 3.10 and 3.13, the versions CI
-    runs). A `try/except OSError` here would be unreachable."""
+    runs). A `try/except OSError` here would be unreachable.
+
+    `rollout_keys` is `_rollout_keys()` taken once by a caller that asks about
+    many sessions, so the directory is listed once per scan, not once per
+    session."""
     if store.read_checkpoint(sid) is not None:
         return True
-    return any(_session_key(p.stem) == sid
-               for p in config.checkpoint_dir().glob("rollout-*.json"))
+    if rollout_keys is None:
+        rollout_keys = _rollout_keys()
+    return sid in rollout_keys
+
+
+def _rollout_keys() -> frozenset:
+    """The canonical session keys of every Codex `rollout-...` checkpoint on
+    disk: one listing of the checkpoint directory."""
+    return frozenset(_session_key(p.stem)
+                     for p in config.checkpoint_dir().glob("rollout-*.json"))
 
 
 def captured_sessions(text: str) -> frozenset:
@@ -388,8 +402,7 @@ def _spawn_routing(line: str) -> dict:
     overwrites whatever the previous attempt said. The Codex, Kimi and
     Windsurf adapters write no reason group; without this a live spawn of a
     session that was imported once would keep `import` and the classifier
-    would hand its failure to nobody. One reader for the fold and for the
-    long-window pass that feeds it."""
+    would hand its failure to nobody."""
     facts: dict = {}
     pm = _LEDGER_PROJECT_RE.search(line)
     if pm:
@@ -403,51 +416,28 @@ def _spawn_routing(line: str) -> dict:
     return facts
 
 
-def _routing_before_tail(lines: list, tail: int, text: str) -> dict:
-    """Session key -> routing facts of the spawn-style lines that precede the
-    last `tail` lines, read over the same long window the admission fold uses.
-    A busy log scrolls a session's spawn out of the tail while its retry and
-    error lines stay in; the facts the spawn line alone carried (project,
-    transcript) are recovered here, and the tail still decides everything
-    else (#1213)."""
-    window = _admission_window(text).splitlines()
-    facts: dict = {}
-    for line in window[:max(0, len(window) - tail)]:
-        m = _SPAWN_RE.match(line.strip())
-        if m:
-            facts.setdefault(_session_key(m.group(2)), {}).update(
-                _spawn_routing(line.strip()))
-    return facts
-
-
-def _session_ledger(text: str, now: float, tail: int | None = 200) -> dict:
+def _session_ledger(text: str, now: float) -> dict:
     """Fold serialize.log into per-session terminal state. Unlike
     _parse_serialize_log (last-of-each-kind, no pairing), this attributes every
     line to its session_id — spawn regex group, success checkpoint-path stem, or
     error transcript stem — so a failure is never masked by a later session's
     success. Pre-flight errors (no transcript) carry no session and are dropped.
 
-    `tail` is how many of the last lines are folded; `None` folds them all, for
-    the admission pass, which must not lose a refusal to the 200-line window
-    (D10.4). A refused admission carrying a `(session: <id>)` group is keyed by
-    that id rather than the transcript stem.
-
-    Routing facts (`project`, `transcript`) are the exception to the tail: a
-    session first met inside it is seeded with what its earlier spawn-style
-    lines said, read over the admission window (#1213)."""
+    Every line of `text` is folded: the caller hands over the part of the log
+    that is read (`serialize_log_window`), so a session's spawn, retry marker
+    and result are all seen together or all absent. A refused admission
+    carrying a `(session: <id>)` group is keyed by that id rather than the
+    transcript stem."""
     sessions: dict = {}
-    lines = text.splitlines()
-    earlier = {} if tail is None else _routing_before_tail(lines, tail, text)
 
     def _entry(sid: str) -> dict:
         return sessions.setdefault(sid, {
             "spawned": False, "spawn_ts": None, "spawn_age": None,
             "project": None, "result_kind": None, "result_line": None,
             "transcript": None, "retried": False, "reason": None,
-            **earlier.get(sid, {}),
         })
 
-    for line in lines if tail is None else lines[-tail:]:
+    for line in text.splitlines():
         line = line.strip()
         m = _SPAWN_RE.match(line)
         if m:
@@ -558,6 +548,16 @@ def admission_state(project) -> tuple[str, str] | None:
     return store.admission_state(project)
 
 
+def _transcript_gone(transcript_path, transcript_exists) -> bool:
+    """A known transcript path whose file does not exist. An unknown path
+    (None, empty) is not gone: nothing says there was ever a file. Neither is
+    a token that is no path at all: an in-process capture with no transcript
+    file logs the bare session id in the transcript group (`hooks.
+    _ledger_failure`), and that failure stays outstanding."""
+    return (bool(transcript_path) and Path(transcript_path).is_absolute()
+            and not transcript_exists(transcript_path))
+
+
 def _is_admission_refusal(e) -> bool:
     return str(e["result_line"] or "").startswith(jsonl.ADMISSION_PREFIX)
 
@@ -566,18 +566,28 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
                           force=False, heartbeat_age=None,
                           checkpoint_covers=None, admission_state=None,
                           presumed_dead=None, project_bound=None) -> list:
-    """Sessions still LOST — no checkpoint AND latest state != success.
-    `has_checkpoint(sid)` and `transcript_exists(path)` are injected so this
-    stays pure/testable. error+spawn+transcript-on-disk+not-retried -> healable
-    (exactly what heal will repair); error but retried -> retry-exhausted; error
-    but no spawn record or transcript gone -> unrecoverable (lost, heal can't
-    retry it); spawn with no result older than `ceiling` -> hung.
+    """Sessions that failed or never finished: no checkpoint AND latest state
+    not success or skipped. `has_checkpoint(sid)` and `transcript_exists(path)`
+    are injected so this stays pure/testable. error+spawn+transcript-on-disk+
+    not-retried -> healable (exactly what heal will repair); error but retried
+    -> retry-exhausted; error with no spawn record (transcript on disk) ->
+    unrecoverable (heal can't retry it); spawn with no result older than
+    `ceiling` -> hung.
+
+    A failure ends by a fact, never by its position in the log: a later
+    success, a final skip, a covering checkpoint, or class `lost`, a known
+    transcript path whose file no longer exists, so nothing is left to
+    capture. `lost` items are yielded here so a caller can count them, but
+    they are not outstanding: `_scan_failures` splits them off. The class is
+    derived from the filesystem on every call, never recorded, so a transcript
+    that comes back makes its session outstanding again. A session whose
+    transcript path is unknown keeps its other classification.
 
     `force` (#15) is the `daimon heal --force` escape hatch: it ignores the
     `retried` gate on both the error and hung paths, so a retry-exhausted (or
     retried-hung) session reclassifies as `healable` again PROVIDED its
     transcript still exists — force can't repair what's genuinely gone, so
-    those stay `unrecoverable`/`hung`. Callers that don't pass `force` (e.g.
+    those are `lost`. Callers that don't pass `force` (e.g.
     `status`, and default `heal`) see classification exactly as before.
 
     `presumed_dead(sid, entry) -> bool` (#1179, D11) is a host's assertion that
@@ -627,7 +637,9 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
         age = e["spawn_age"]
         if e["result_kind"] == "error":
             held = None
-            if _is_admission_refusal(e):
+            if _transcript_gone(e["transcript"], transcript_exists):
+                cls = "lost"
+            elif _is_admission_refusal(e):
                 # D10.4: a refused admission never burns the single retry
                 # (#26): it is held while its ledger is unproven, and once
                 # proven it ignores the `retried` gate (no transcript is
@@ -689,9 +701,12 @@ def _outstanding_failures(ledger, now, has_checkpoint, ceiling, transcript_exist
             # one-retry-ever policy (#26) applies unchanged via `retried`,
             # unless `force` (#15) overrides it.
             t = e["transcript"]
-            cls = settle("healable"
-                         if t and transcript_exists(t) and (not e["retried"] or force)
-                         else "hung", e)
+            if _transcript_gone(t, transcript_exists):
+                cls = "lost"
+            else:
+                cls = settle("healable"
+                             if t and transcript_exists(t) and (not e["retried"] or force)
+                             else "hung", e)
             out.append({"sid": sid, "kind": "hung", "class": cls, "age": age,
                         "age_str": _format_age(age), "transcript": t,
                         "project": e["project"], "spawned": True, "line": None,
@@ -728,16 +743,16 @@ def admission_notes(slug: str, *, text: str | None = None,
         return ()
     if text is None:
         try:
-            text = (config.log_dir() / "serialize.log").read_text(
-                encoding="utf-8")
+            text, _cut = serialize_log_window.read(
+                config.log_dir() / "serialize.log")
         except OSError:
             return ()
     t = now if now is not None else time.time()
-    long_fold = _admission_ledger(text, t)
-    if not long_fold:
+    refused = _refused_sessions(text, t)
+    if not refused:
         return ()
     held = [f for f in _outstanding_failures(
-                long_fold, t, has_checkpoint, config.hung_after_seconds(),
+                refused, t, has_checkpoint, config.hung_after_seconds(),
                 lambda p: bool(p) and Path(p).exists(),
                 checkpoint_covers=checkpoint_covers,
                 admission_state=_memoized_admission_state())
@@ -759,27 +774,21 @@ def admission_waiting(slug: str, *, text: str | None = None,
         return 0
     if text is None:
         try:
-            text = (config.log_dir() / "serialize.log").read_text(
-                encoding="utf-8")
+            text, _cut = serialize_log_window.read(
+                config.log_dir() / "serialize.log")
         except OSError:
             return 0
     t = now if now is not None else time.time()
-    long_fold = _admission_ledger(text, t)
-    if not long_fold:
+    refused = _refused_sessions(text, t)
+    if not refused:
         return 0
     return sum(
         1 for f in _outstanding_failures(
-            long_fold, t, has_checkpoint, config.hung_after_seconds(),
+            refused, t, has_checkpoint, config.hung_after_seconds(),
             lambda p: bool(p) and Path(p).exists(),
             checkpoint_covers=checkpoint_covers,
             admission_state=_memoized_admission_state())
         if f["class"] == "healable" and _slug_of(f["project"]) == slug)
-
-
-# The admission pass folds this many trailing bytes of serialize.log. A
-# refusal is the one failure that must outlive the 200-line tail, because it
-# waits for a ledger repair that can take days; the window bounds the cost.
-_ADMISSION_WINDOW_BYTES = 4 * 1024 * 1024
 
 
 def _checkpoint_stamp(key: str) -> tuple[bool, float | None]:
@@ -814,22 +823,15 @@ def _memoized_admission_state():
     return state_of
 
 
-def _admission_window(text: str) -> str:
-    """The last `_ADMISSION_WINDOW_BYTES` of the log, from a line start."""
-    if len(text) <= _ADMISSION_WINDOW_BYTES:
-        return text
-    window = text[-_ADMISSION_WINDOW_BYTES:]
-    return window[window.find("\n") + 1:]
-
-
-def _admission_ledger(text: str, now: float) -> dict:
-    """The sessions whose LATEST result line is a refused admission, folded
-    over the long window (spawn and result lines both, so `project`, `spawned`
-    and the transcript are known)."""
-    window = _admission_window(text)
-    if jsonl.ADMISSION_PREFIX not in window:
+def _refused_sessions(text: str, now: float) -> dict:
+    """The sessions whose LATEST result line is a refused admission, from the
+    one fold of the window (spawn and result lines both, so `project`,
+    `spawned` and the transcript are known). The briefing asks this on its
+    hot path, so a window with no refusal in it is answered without a fold."""
+    text, _cut = serialize_log_window.trim(text)
+    if jsonl.ADMISSION_PREFIX not in text:
         return {}
-    return {sid: e for sid, e in _session_ledger(window, now, tail=None).items()
+    return {sid: e for sid, e in _session_ledger(text, now).items()
             if e["result_kind"] == "error" and _is_admission_refusal(e)}
 
 
@@ -842,19 +844,28 @@ def _compute_outstanding(text: str, now: float, force: bool = False) -> list:
 
 def _scan_outstanding(text: str, now: float, force: bool = False,
                       presumed_dead=None) -> list:
-    """Wire the pure ledger/classifier to the live store + filesystem. Single
-    source for both `status` (display) and `heal` (repair) so their notion of
-    'outstanding' can never drift. `force` (#15) is forwarded to
-    `_outstanding_failures`; callers that don't pass it get unchanged default
-    classification.
+    """The outstanding failures of the log window: `_scan_failures` without
+    the `lost` ones. Single source for both `status` (display) and `heal`
+    (repair) so their notion of 'outstanding' can never drift. `force` (#15)
+    is forwarded to `_outstanding_failures`; callers that don't pass it get
+    unchanged default classification."""
+    return _scan_failures(text, now, force, presumed_dead)[0]
 
-    Two folds, one answer: every class keeps the 200-line window it always
-    had, and a refused admission (D10.4) is read over the last 4 MB instead,
-    so it is never counted, briefed or healed late. An admission entry from
-    the long fold replaces the same session's entry from the short one."""
+
+def _scan_failures(text: str, now: float, force: bool = False,
+                   presumed_dead=None) -> tuple[list, list]:
+    """`(outstanding, lost)`: wire the pure ledger/classifier to the live
+    store and filesystem, over ONE fold of the window `serialize_log_window`
+    defines, so every class (a refused admission included) is seen for as
+    long as its lines are in that window. `lost` are the sessions whose
+    transcript is gone, derived on this call and never recorded. The
+    checkpoint directory is listed once for the whole scan."""
+    text, _cut = serialize_log_window.trim(text)
+    rollout_keys = _rollout_keys()
     state_of = _memoized_admission_state()
-    common = dict(
-        has_checkpoint=has_checkpoint,
+    found = _outstanding_failures(
+        _session_ledger(text, now), now,
+        has_checkpoint=lambda sid: has_checkpoint(sid, rollout_keys),
         ceiling=config.hung_after_seconds(),
         transcript_exists=lambda p: bool(p) and Path(p).exists(),
         force=force,
@@ -868,13 +879,8 @@ def _scan_outstanding(text: str, now: float, force: bool = False,
         presumed_dead=presumed_dead,
         project_bound=_project_bound,
     )
-    out = _outstanding_failures(_session_ledger(text, now), now, **common)
-    long_fold = _admission_ledger(text, now)
-    if long_fold:
-        out = [f for f in out if f["sid"] not in long_fold]
-        out += _outstanding_failures(long_fold, now, **common)
-        out.sort(key=lambda f: (f["age"] is None, f["age"] or 0))
-    return out
+    return ([f for f in found if f["class"] != "lost"],
+            [f for f in found if f["class"] == "lost"])
 
 
 _HEAL_SKIP_REASON = {

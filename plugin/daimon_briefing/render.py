@@ -1002,6 +1002,18 @@ def _print_skips_plain(n) -> None:
         print(f"recent sessions skipped (too short to serialize): {n}")
 
 
+def _ledger_window_lines(data: dict) -> list:
+    """The two facts about what the failure fold covered: sessions that are
+    lost (transcript gone, never outstanding) and the log being longer than
+    the window that is read. Empty when neither applies."""
+    lines = []
+    if data.get("lost"):
+        lines.append(display.lost_sessions_line(data["lost"]))
+    if data.get("serialize_log_cut"):
+        lines.append(display.serialize_log_cut_line())
+    return lines
+
+
 def _print_crash_plain(crash) -> None:
     """One line for the newest child-process crash (#28). serialize-crash.log
     is where spawn_serialize points child stderr; before this, nothing ever
@@ -1476,6 +1488,8 @@ def _plain_status(data: dict) -> None:
     if idx:
         print(idx)
     _print_skips_plain(data.get("skipped_recent"))
+    for line in _ledger_window_lines(data):
+        print(line)
 
     outstanding = data.get("outstanding") or []
     if outstanding:
@@ -1597,6 +1611,8 @@ def _rich_status(data: dict) -> None:
     if data.get("skipped_recent"):
         console.print(f"[dim]recent sessions skipped (too short to serialize): "
                       f"{data['skipped_recent']}[/dim]")
+    for line in _ledger_window_lines(data):
+        console.print(f"[dim]{line}[/dim]")
 
     outstanding = data.get("outstanding") or []
     if outstanding:

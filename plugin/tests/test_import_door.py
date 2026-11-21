@@ -533,14 +533,12 @@ def test_a_reasonless_live_failure_after_a_failed_import_is_healable(tmp_path, l
     assert [x.session_id for x in heal.plan_all(text, now).targets] == [SID]
 
 
-def test_a_reasonless_live_spawn_before_the_tail_still_owns_the_attempt(
+def test_a_reasonless_live_spawn_after_an_import_still_owns_the_attempt(
     tmp_path, log_dir
 ):
-    """Both spawns scrolled out of the tail, both errors inside it: the
-    long-window pass replays the lines in order, so the later reasonless
-    spawn overwrites the import's reason. The attempt is unrecoverable only
-    because its spawn is outside the tail, the pre-existing #1213 reading,
-    never because it reads as an import."""
+    """Two spawns, then many lines, then two errors: the fold replays the lines
+    in order, so the later reasonless spawn overwrites the import's reason.
+    The attempt is a plain failure that heal may retry, never an import."""
     now = time.time()
     t = _transcript(tmp_path)
     filler = [f"note for S-other-{i}: compact-summary-only-context" for i in range(250)]
@@ -559,8 +557,8 @@ def test_a_reasonless_live_spawn_before_the_tail_still_owns_the_attempt(
     e = ledger._session_ledger(text, now)[SID]
     assert e["reason"] is None and e["project"] == PROJECT
     out = ledger._compute_outstanding(text, now)
-    assert [f["class"] for f in out] == ["unrecoverable"]
-    assert [s.reason for s in heal.plan_all(text, now).skipped] == ["unrecoverable"]
+    assert [f["class"] for f in out] == ["healable"]
+    assert [x.session_id for x in heal.plan_all(text, now).targets] == [SID]
 
 
 def test_a_hung_reasonless_live_spawn_after_an_import_is_healable(

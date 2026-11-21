@@ -348,6 +348,18 @@ def serialize_outside_window_note() -> str:
                          "serialize.log that was read; their state is unknown")
 
 
+def lost_sessions_line(n: int) -> str:
+    """`status`: sessions that failed and whose transcript is gone. Nothing is
+    left to capture, so they are counted apart from the outstanding failures."""
+    return f"lost: {n} (never captured, transcript gone)"
+
+
+def serialize_log_cut_line() -> str:
+    """`status`: serialize.log is longer than the window that is read."""
+    return ("serialize.log is longer than the window that is read; "
+            "older lines are not read")
+
+
 def heal_epoch_ignored_note() -> str:
     """`presumed_dead_before` was passed with a heal that names no single
     project (`everywhere=True`, or only `sessions`): the assertion is scoped to
