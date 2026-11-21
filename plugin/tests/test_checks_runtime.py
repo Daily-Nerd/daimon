@@ -1812,3 +1812,63 @@ def test_an_at_file_word_on_an_http_client_is_still_unparsed(command, tmp_path):
     got = _resolve(command.format(p=tmp_path / "payload.json"), tmp_path)
     assert isinstance(got, rt.Unresolved)
     assert got.cause == "arg-form-unparsed"
+
+
+# ---- #1358: a wrapper must not hide the program it runs --------------------
+
+_WRAPPERS = [
+    "timeout 5 ", "sudo -u x ", "env -i ", "xargs ", "nice -n 5 ",
+    "env A=1 B=2 timeout 9 ",
+]
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS)
+def test_a_wrapper_does_not_hide_the_program_it_runs(wrapper, tmp_path):
+    body = tmp_path / "body.md"
+    body.write_text("the body text\n", encoding="utf-8")
+    got = _resolve(f"{wrapper}gh pr create --body-file {body}", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert "the body text" in _text_of(got)
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS)
+def test_a_wrapped_program_with_a_missing_file_fails_closed(wrapper, tmp_path):
+    got = _resolve(f"{wrapper}gh pr create --body-file /missing", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"
+    assert "gh" in got.reason and "--body-file" in got.reason
+
+
+def test_a_wrapped_git_commit_reads_its_message_file(tmp_path):
+    msg = tmp_path / "msg.txt"
+    msg.write_text("the message text\n", encoding="utf-8")
+    got = _resolve(f"timeout 5 git -C . commit -F {msg}", tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert "the message text" in _text_of(got)
+    rt.discard(got)
+
+
+@pytest.mark.parametrize("command", [
+    "rg -F gh notes.txt",
+    "awk -F: '{print $1}' gh",
+    "ls -F git",
+    "rg git commit src",
+])
+def test_a_modelled_name_used_as_a_plain_argument_reads_nothing(
+        command, tmp_path):
+    """The flag sits before the modelled word and nothing after it is a flag
+    of that program, so there is nothing to read."""
+    got = _resolve(command, tmp_path)
+    assert isinstance(got, rt.Subject), getattr(got, "reason", "")
+    assert got.files == ()
+    rt.discard(got)
+
+
+def test_a_modelled_name_followed_by_a_flag_is_read_as_that_program(tmp_path):
+    """The accepted cost of finding the program by name: `echo gh
+    --body-file x` is read as gh and can fail closed. That is the safe
+    direction and matches #1282."""
+    got = _resolve("echo gh pr create --body-file /missing", tmp_path)
+    assert isinstance(got, rt.Unresolved)
+    assert got.cause == "file-missing"

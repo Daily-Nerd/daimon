@@ -574,6 +574,18 @@ def test_a_matched_command_with_an_unrelated_dash_f_is_not_denied(
     assert d.rows[0]["outcome"] == "clean"
 
 
+def test_a_wrapped_gh_with_a_missing_body_file_still_denies(tmp_path):
+    """#1358 review: finding the program by name keeps `timeout 60 gh ...`
+    fail-closed under enforce."""
+    _arm(tmp_path, body=CLEAN, intent="enforce")
+    command = f"timeout 60 {MATCH} --body-file missing.md"
+    d = ch.decide(ch.PROFILES[CC], _payload(command, tmp_path))
+    assert d.rows[0]["outcome"] == "unresolved"
+    assert d.rows[0]["cause"] == "file-missing"
+    assert json.loads(d.stdout)["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
 def test_a_check_that_crashes_is_unresolved_and_not_a_violation(tmp_path):
     _arm(tmp_path, body=CRASHES, intent="enforce")
     d = ch.decide(ch.PROFILES[CC], _payload(MATCH, tmp_path))

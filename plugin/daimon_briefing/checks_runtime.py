@@ -332,45 +332,38 @@ _HTTP_CLIENTS = frozenset({"curl", "http", "https", "xh"})
 _GIT_MESSAGE = _Program(("-F",))
 _GIT_MESSAGE_SUBCOMMANDS = frozenset({"commit", "tag"})
 
-# Words that stand in command position without being the program: shell
-# keywords and grouping that may precede a command, and wrappers that run the
-# next word unchanged. A wrapper that takes options of its own (`sudo -u x`,
-# `env -i`) is NOT peeled: guessing where its options end is parsing a shell.
-_COMMAND_PREFIXES = frozenset({
-    "(", "{", "!", "if", "then", "else", "elif", "while", "until", "do",
-    "time", "env", "command", "exec", "nohup", "builtin",
-})
 # git global options that take their value as the next token.
 _GIT_VALUE_OPTIONS = frozenset({"-C", "-c", "--git-dir", "--work-tree",
                                 "--namespace", "--exec-path"})
-_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def _program_of(tokens):
     """(program table or None, index of the first argument, display name).
 
-    The program is the first word in command position, after environment
-    assignments and the prefixes above, matched by basename so
-    `/usr/bin/gh` is gh. A program daimon does not model gives None, and the
-    segment is then not interpreted at all."""
-    index = 0
-    while index < len(tokens) and (tokens[index] in _COMMAND_PREFIXES
-                                   or _ASSIGNMENT_RE.match(tokens[index])):
-        index += 1
-    if index >= len(tokens):
-        return None, index, ""
-    name = os.path.basename(tokens[index])
-    index += 1
-    if name == "gh":
-        return _GH, index, "gh"
-    if name in _HTTP_CLIENTS:
-        return _HTTP_CLIENT, index, name
-    if name == "git":
-        while index < len(tokens) and tokens[index].startswith("-"):
-            index += 2 if tokens[index] in _GIT_VALUE_OPTIONS else 1
-        if index < len(tokens) and tokens[index] in _GIT_MESSAGE_SUBCOMMANDS:
-            return _GIT_MESSAGE, index + 1, f"git {tokens[index]}"
-    return None, index, name
+    The program is the FIRST word whose basename names a program daimon
+    models (`/usr/bin/gh` is gh; git counts only when, after its global
+    options, it is followed by commit or tag). Every word before it is a
+    wrapper (`timeout 5`, `sudo -u x`, `env -i`, `A=1`, `xargs`) and is not
+    interpreted, so no list of wrappers has to be kept and none can hide the
+    program. A segment with no such word reads nothing.
+
+    Accepted cost: a modelled name used as a plain argument (`echo gh
+    --body-file x`) is read as that program and can fail closed. That is the
+    safe direction and matches #1282."""
+    for position, token in enumerate(tokens):
+        name = os.path.basename(token)
+        index = position + 1
+        if name == "gh":
+            return _GH, index, "gh"
+        if name in _HTTP_CLIENTS:
+            return _HTTP_CLIENT, index, name
+        if name == "git":
+            while index < len(tokens) and tokens[index].startswith("-"):
+                index += 2 if tokens[index] in _GIT_VALUE_OPTIONS else 1
+            if (index < len(tokens)
+                    and tokens[index] in _GIT_MESSAGE_SUBCOMMANDS):
+                return _GIT_MESSAGE, index + 1, f"git {tokens[index]}"
+    return None, len(tokens), ""
 
 
 # A heredoc puts the body INSIDE the command string, so `--body-file -` is
