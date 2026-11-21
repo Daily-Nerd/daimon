@@ -354,7 +354,7 @@ def _program_of(tokens):
         name = os.path.basename(token)
         index = position + 1
         if name == "gh":
-            return _GH, index, "gh"
+            return _GH, index, name
         if name in _HTTP_CLIENTS:
             return _HTTP_CLIENT, index, name
         if name == "git":
