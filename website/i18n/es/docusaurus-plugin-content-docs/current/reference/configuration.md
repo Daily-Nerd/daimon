@@ -268,7 +268,7 @@ conflicto, un byte malo, un error del sistema), daimon no escribe un checkpoint
 para él: la compuerta de olvidos tendría que adivinar, y un valor olvidado
 podría volver. La sesión se rechaza antes de llamar al modelo, lo que no cuesta
 nada. El rechazo es un serialize fallido común. `daimon status` lo cuenta desde
-todo el log y nombra el remedio, el próximo briefing del proyecto dice cuántas
+los últimos 4 MB del log y nombra el remedio, el próximo briefing del proyecto dice cuántas
 sesiones esperan, y `daimon heal` las reintenta de a una por inicio de sesión
 cuando el ledger vuelve a leerse, sin gastar el único reintento. Un rechazo solo
 se pierde cuando su transcript ya no está.
@@ -276,8 +276,8 @@ se pierde cuando su transcript ya no está.
 | Host | Captura rechazada |
 |---|---|
 | Claude Code, Codex, Gemini CLI, Kimi Code | Soportado: se cuenta, se avisa en el briefing y `daimon heal` lo reintenta mientras el host conserve el transcript. |
-| Windsurf | Soportado, con un límite: sigue aplicando la limpieza propia de daimon a los transcripts de Windsurf a los 7 días (`DAIMON_WINDSURF_STATE_DAYS`), así que una sesión rechazada por más tiempo se pierde y se cuenta como irrecuperable. |
-| Captura en proceso de Hermes | Soportado solo cuando el host pasa una ruta de transcript que existe. Sin ella se cuenta como irrecuperable y no se puede reintentar. |
+| Windsurf | Soportado, con un límite: sigue aplicando la limpieza propia de daimon a los transcripts de Windsurf a los 7 días (`DAIMON_WINDSURF_STATE_DAYS`), así que una sesión rechazada por más tiempo se pierde y se cuenta como perdida (`lost`). |
+| Captura en proceso de Hermes | Soportado solo cuando el host pasa una ruta de transcript que existe. Sin ella se cuenta como irrecuperable (no se registró la ruta del transcript) y no se puede reintentar. |
 
 ## Scene traces
 

@@ -42,6 +42,13 @@ SYNC_PAIRS = (
     ("plugin/daimon_briefing/session_transcript.py",
      "plugin/daimon_briefing/_hooks/session_transcript.py"),
     ("plugin/daimon_briefing/session_transcript.py", "hook/session_transcript.py"),
+    # The one definition of the part of serialize.log that is read: the hook
+    # library loads it for the failure fold, the package ledger imports it.
+    # Same direction as session_transcript: the PACKAGE file is canonical.
+    ("plugin/daimon_briefing/serialize_log_window.py",
+     "plugin/daimon_briefing/_hooks/serialize_log_window.py"),
+    ("plugin/daimon_briefing/serialize_log_window.py",
+     "hook/serialize_log_window.py"),
     ("hook/daimon-windsurf-hooks.py", "plugin/daimon_briefing/_hooks/daimon-windsurf-hooks.py"),
     ("hook/daimon-codex-session-start.py", "plugin/daimon_briefing/_hooks/daimon-codex-session-start.py"),
     ("hook/daimon-codex-stop.py", "plugin/daimon_briefing/_hooks/daimon-codex-stop.py"),

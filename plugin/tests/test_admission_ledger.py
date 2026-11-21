@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 
-from daimon_briefing import jsonl, ledger, store
+from daimon_briefing import jsonl, ledger, serialize_log_window, store
 
 NOW = time.time()
 STAMP = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - 120))
@@ -128,16 +128,10 @@ def _noise(n):
             for i in range(n)]
 
 
-def test_the_default_tail_is_the_last_200_lines():
+def test_the_fold_reaches_a_refusal_beyond_200_lines():
     text = "\n".join([_spawn("old", "/t/old.jsonl"),
                       _refusal("/t/old.jsonl"), *_noise(250)])
-    assert "old" not in ledger._session_ledger(text, NOW)
-
-
-def test_tail_none_reaches_a_refusal_beyond_200_lines():
-    text = "\n".join([_spawn("old", "/t/old.jsonl"),
-                      _refusal("/t/old.jsonl"), *_noise(250)])
-    assert ledger._session_ledger(text, NOW, tail=None)["old"][
+    assert ledger._session_ledger(text, NOW)["old"][
         "result_kind"] == "error"
 
 
@@ -188,9 +182,12 @@ def test_the_one_retry_gate_is_ignored_for_this_class_only():
     assert g["class"] == "retry-exhausted"
 
 
-def test_a_refusal_with_its_transcript_gone_is_unrecoverable():
+def test_a_refusal_with_its_transcript_gone_is_lost():
     [f] = _classify(_line_pair(), state=None, transcript_exists=False)
-    assert f["class"] == "unrecoverable"
+    assert f["class"] == "lost"
+    [held] = _classify(_line_pair(), state=("unreadable", HINT),
+                       transcript_exists=False)
+    assert held["class"] == "lost"
 
 
 def test_a_refusal_with_no_spawn_line_is_unrecoverable():
@@ -214,9 +211,11 @@ def _seam(monkeypatch, state):
     monkeypatch.setattr(ledger, "admission_state", lambda project: state)
 
 
-def test_heal_holds_back_an_unproven_refusal_and_names_the_hint(monkeypatch):
+def test_heal_holds_back_an_unproven_refusal_and_names_the_hint(
+        monkeypatch, tmp_path):
     _seam(monkeypatch, ("unreadable", HINT))
-    plan = ledger._heal_plan(_line_pair(), NOW)
+    plan = ledger._heal_plan(
+        _line_pair(transcript=_real_transcript(tmp_path)), NOW)
     assert plan["target"] is None
     [skipped] = plan["skipped"]
     assert skipped["sid"] == "s-1"
@@ -232,7 +231,7 @@ def test_heal_takes_a_refusal_once_the_ledger_is_proven(monkeypatch, tmp_path):
     assert plan["target"]["transcript"] == transcript
 
 
-def test_a_refusal_beyond_the_200_line_tail_is_still_healable(
+def test_a_refusal_followed_by_many_lines_is_still_healable(
         monkeypatch, tmp_path):
     _seam(monkeypatch, None)
     text = "\n".join([_line_pair(transcript=_real_transcript(tmp_path)),
@@ -242,19 +241,22 @@ def test_a_refusal_beyond_the_200_line_tail_is_still_healable(
     assert classes["s-1"] == "healable"
 
 
-def test_a_refusal_beyond_the_tail_is_counted_while_unproven(monkeypatch):
+def test_a_refusal_followed_by_many_lines_is_counted_while_unproven(
+        monkeypatch, tmp_path):
     _seam(monkeypatch, ("transient", "retry"))
-    text = "\n".join([_line_pair(), *_noise(300)])
+    text = "\n".join([_line_pair(transcript=_real_transcript(tmp_path)),
+                      *_noise(300)])
     classes = {f["sid"]: f["class"]
                for f in ledger._compute_outstanding(text, NOW)}
     assert classes["s-1"] == "admission-refused"
 
 
-def test_the_admission_pass_reads_only_the_last_four_megabytes(monkeypatch):
+def test_the_fold_reads_only_the_last_four_megabytes(monkeypatch, tmp_path):
     _seam(monkeypatch, None)
     big = "x" * 200 + "\n"
-    filler = big * (ledger._ADMISSION_WINDOW_BYTES // len(big) + 10)
-    text = "\n".join([_line_pair(), filler])
+    filler = big * (serialize_log_window.WINDOW_BYTES // len(big) + 10)
+    text = "\n".join([_line_pair(transcript=_real_transcript(tmp_path)),
+                      filler])
     sids = {f["sid"] for f in ledger._compute_outstanding(text, NOW)}
     assert "s-1" not in sids
 
@@ -291,6 +293,15 @@ def test_the_default_seam_judges_the_projects_own_events_ledger(
 
 # ---- the briefing note ------------------------------------------------------
 
+def _transcript_file(name):
+    """A transcript that exists: a refusal whose file is gone is `lost`."""
+    from daimon_briefing import config
+    path = config.log_dir() / f"{name}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n")
+    return str(path)
+
+
 def _store_log(text):
     from daimon_briefing import config
     log_dir = config.log_dir()
@@ -306,8 +317,8 @@ def test_admission_notes_name_the_count_and_the_hint_for_the_own_bucket(
     path.write_bytes(GARBAGE)
     lines = []
     for i in (1, 2):
-        lines += [_spawn(f"s-{i}", f"/t/s-{i}.jsonl", project=project),
-                  _refusal(f"/t/s-{i}.jsonl")]
+        t = _transcript_file(f"s-{i}")
+        lines += [_spawn(f"s-{i}", t, project=project), _refusal(t)]
     _store_log("\n".join(lines))
     slug = store.project_slug(project)
     [note] = ledger.admission_notes(slug)
@@ -329,9 +340,9 @@ def test_admission_notes_name_no_path_no_id_no_slug(tmp_checkpoint_dir):
     path = store._events_path(project)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(GARBAGE)
-    _store_log("\n".join([_spawn("sess-xyz", "/t/sess-xyz.jsonl",
-                                 project=project),
-                          _refusal("/t/sess-xyz.jsonl")]))
+    t = _transcript_file("sess-xyz")
+    _store_log("\n".join([_spawn("sess-xyz", t, project=project),
+                          _refusal(t)]))
     [note] = ledger.admission_notes(store.project_slug(project))
     assert not re.search(r"sess-xyz|/t/|note-proj", note)
 

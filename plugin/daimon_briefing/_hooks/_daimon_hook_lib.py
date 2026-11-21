@@ -500,14 +500,20 @@ def _failed_session_stems() -> set:
     which owns only the never-attempted case (#185/#188). A later success for
     the same stem clears the failure, matching the ledger's own fold.
 
-    Fails open to an empty set on any read/parse error, so a broken or missing
-    ledger never blocks the genuine #185/#188 recovery sweep — it just leaves
-    the sweep unable to tell 'failed' from 'never attempted', which is exactly
-    today's behavior without this check."""
+    The lines read are the window the ledger reads: `serialize_log_window`,
+    loaded from beside this file, bounds them in bytes from a line start, so
+    a failure stays known for as long as its line is in that window and not
+    for a count of lines that other sessions can push it out of.
+
+    Fails open to an empty set on any read/parse error, or when the install
+    lacks the window module, so a broken or missing ledger never blocks the
+    genuine #185/#188 recovery sweep — it just leaves the sweep unable to tell
+    'failed' from 'never attempted', which is exactly today's behavior without
+    this check."""
     try:
-        text = (log_dir() / "serialize.log").read_text(encoding="utf-8")
+        text, _cut = _serialize_log_window().read(log_dir() / "serialize.log")
         state = {}
-        for line in text.splitlines()[-200:]:  # tail is plenty; matches ledger.py
+        for line in text.splitlines():
             line = line.strip()
             m = _LOG_RESULT_OK_RE.match(line)
             if m:
@@ -525,27 +531,50 @@ def _failed_session_stems() -> set:
         return set()
 
 
+def _sibling_module(filename, alias):
+    """A shared stdlib module loaded from beside this file by location (a
+    standalone hook cannot import the package), or None when the install
+    lacks it or it fails to load."""
+    try:
+        import importlib.util
+        path = Path(__file__).resolve().parent / filename
+        spec = importlib.util.spec_from_file_location(alias, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # noqa: BLE001 - fail open, callers handle None
+        return None
+
+
 _SESSION_TRANSCRIPT: list = []
 
 
 def _session_transcript():
     """The shared `session_transcript` module (#1362), loaded from beside this
-    file by location (a standalone hook cannot import the package), or None
-    when the install lacks it. None means "host unverified": the sweep then
-    behaves exactly as it did before the module existed. Cached."""
+    file, or None when the install lacks it. None means "host unverified":
+    the sweep then behaves exactly as it did before the module existed.
+    Cached."""
     if not _SESSION_TRANSCRIPT:
-        module = None
-        try:
-            import importlib.util
-            path = Path(__file__).resolve().parent / "session_transcript.py"
-            spec = importlib.util.spec_from_file_location(
-                "_daimon_session_transcript", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception:  # noqa: BLE001 - fail open, see docstring
-            module = None
-        _SESSION_TRANSCRIPT.append(module)
+        _SESSION_TRANSCRIPT.append(_sibling_module(
+            "session_transcript.py", "_daimon_session_transcript"))
     return _SESSION_TRANSCRIPT[0]
+
+
+_SERIALIZE_LOG_WINDOW: list = []
+
+
+def _serialize_log_window():
+    """The shared `serialize_log_window` module, the one definition of the
+    part of serialize.log that is read. Cached. Without it there is no window
+    to read, so this raises and `_failed_session_stems` fails open; the hook
+    never defines a window of its own."""
+    if not _SERIALIZE_LOG_WINDOW:
+        _SERIALIZE_LOG_WINDOW.append(_sibling_module(
+            "serialize_log_window.py", "_daimon_serialize_log_window"))
+    module = _SERIALIZE_LOG_WINDOW[0]
+    if module is None:
+        raise ImportError("serialize_log_window.py is missing from this install")
+    return module
 
 
 def sweep_orphans(cli, cwd, session_id, transcript_path, host=None) -> None:

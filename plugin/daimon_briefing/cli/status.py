@@ -31,6 +31,7 @@ from .. import (
     render,
     requests,
     schema,
+    serialize_log_window,
     serializer,
     store,
     teamsync,
@@ -39,9 +40,9 @@ from .. import (
 )
 from ..effects import Effects
 from ..ledger import (
-    _compute_outstanding,
     _format_age,
     _parse_serialize_log,
+    _scan_failures,
     _session_ledger,
     _spawns_in_window_count,
     _stats_capture,
@@ -598,10 +599,11 @@ def _status_world(project_arg=None) -> dict:
     glob["same_session_as_project"] = same
     last = _parse_serialize_log(config.log_dir() / "serialize.log", now)
     try:
-        _ledger_text = (config.log_dir() / "serialize.log").read_text(encoding="utf-8")
+        _ledger_text, log_cut = serialize_log_window.read(
+            config.log_dir() / "serialize.log")
     except OSError:
-        _ledger_text = ""
-    outstanding = _compute_outstanding(_ledger_text, now)
+        _ledger_text, log_cut = "", False
+    outstanding, lost = _scan_failures(_ledger_text, now)
     crash = _crash_log_info(config.log_dir() / "serialize-crash.log", now)
     recall_error = _tail_log_info(config.log_dir() / "recall-error.log", now)
     # #233: dark-matter visibility — read-only peek at the existing index;
@@ -749,6 +751,7 @@ def _status_world(project_arg=None) -> dict:
         "rescue_posture": rescue_posture, "rescue_window_errors": rescue_window_errors,
         "forget_hits": forget_hits, "requests": request_counts,
         "handoff": handoff, "checks": checks_fact, "ledgers": ledgers,
+        "lost": len(lost), "serialize_log_cut": log_cut,
         "rc": rc,
     }
 
@@ -786,6 +789,10 @@ def status_payload(project_arg=None) -> tuple:
         # #1132 PR 2b: the ledger census, appended at the tail for the same
         # reason. Counts and states only; `null` when the census could not run.
         "ledgers": w["ledgers"],
+        # Appended at the tail for the same reason: sessions that failed and
+        # whose transcript is gone (never outstanding), and whether the log
+        # was longer than the window that is read.
+        "lost": w["lost"], "serialize_log_cut": w["serialize_log_cut"],
     }
     return payload, w["rc"]
 
@@ -817,6 +824,7 @@ def _cmd_status(args, fx) -> int:
         "handoff": w["handoff"],
         "checks": w["checks"],
         "ledgers": w["ledgers"],
+        "lost": w["lost"], "serialize_log_cut": w["serialize_log_cut"],
     })
     # SEALED git posture: one line per checkout hostgit refused (empty, and so
     # silent, in every other run).

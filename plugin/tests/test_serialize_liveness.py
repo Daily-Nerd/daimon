@@ -94,20 +94,23 @@ def test_non_codex_ids_pass_through_the_spawn_key():
     assert list(folded) == ["S-1"]
 
 
-def test_codex_rollout_stamp_keeps_a_bare_id_spawn_alive(log_dir, cp_dir):
+def test_codex_rollout_stamp_keeps_a_bare_id_spawn_alive(
+        log_dir, cp_dir, tmp_path):
     now = time.time()
-    text = _spawn("abc", CEILING + 600, now=now,
-                  transcript="/t/" + ROLLOUT + ".jsonl")
+    rollout = tmp_path / (ROLLOUT + ".jsonl")
+    rollout.write_text("{}\n")
+    text = _spawn("abc", CEILING + 600, now=now, transcript=str(rollout))
     # No stamp: the old-age spawn is hung (legacy rule, unchanged).
     assert len(ledger._compute_outstanding(text, now)) == 1
     _beat(log_dir, ROLLOUT, age=30)
     assert ledger._compute_outstanding(text, now) == []
 
 
-def test_stale_rollout_stamp_does_not_keep_it_alive(log_dir, cp_dir):
+def test_stale_rollout_stamp_does_not_keep_it_alive(log_dir, cp_dir, tmp_path):
     now = time.time()
-    text = _spawn("abc", CEILING + 600, now=now,
-                  transcript="/t/" + ROLLOUT + ".jsonl")
+    rollout = tmp_path / (ROLLOUT + ".jsonl")
+    rollout.write_text("{}\n")
+    text = _spawn("abc", CEILING + 600, now=now, transcript=str(rollout))
     _beat(log_dir, ROLLOUT, age=CEILING + 100)
     assert len(ledger._compute_outstanding(text, now)) == 1
 
@@ -320,7 +323,7 @@ def test_row5_a_refusal_whose_ledger_reads_again_is_an_ordinary_failure():
 @pytest.mark.parametrize("retry,exists,reason", [
     (False, True, "healable"),
     (True, True, "retry-exhausted"),
-    (False, False, "unrecoverable"),
+    (False, False, "lost"),
 ])
 def test_row6_an_error_result_is_failed_with_the_classifier_class(
         retry, exists, reason):
@@ -350,12 +353,26 @@ def test_row7_a_young_retry_with_no_stamp_is_repairing():
     assert (r.state, r.reason, r.retried) == ("repairing", "spawned", True)
 
 
-@pytest.mark.parametrize("exists,reason", [(True, "healable"), (False, "hung")])
-def test_row8_a_spawn_past_the_ceiling_with_no_result_is_hung(exists, reason):
+@pytest.mark.parametrize("exists,state,reason", [
+    (True, "hung", "healable"),
+    (False, "failed", "lost"),
+])
+def test_row8_a_spawn_past_the_ceiling_with_no_result_is_hung(
+        exists, state, reason):
     text = _sp("abc", CEILING + 60, transcript="/t/abc.jsonl")
     r = _row(_core(text, sessions=["abc"],
                    transcripts=("/t/abc.jsonl",) if exists else ()))
-    assert (r.state, r.reason) == ("hung", reason)
+    assert (r.state, r.reason) == (state, reason)
+
+
+def test_a_lost_session_is_answered_by_name_but_never_listed():
+    text = _sp("abc", 900, transcript="/t/abc.jsonl") + "\n" + _err()
+    named = _row(_core(text, sessions=["abc"]))
+    assert (named.state, named.reason) == ("failed", "lost")
+    stale = {"abc": _hb(CEILING + 100, "proj-a")}
+    assert _core(text, beats=stale, transcripts=("/t/abc.jsonl",)
+                 ).rows[0].reason == "healable"
+    assert _core(text, beats=stale).rows == ()
 
 
 def test_row8_a_stale_stamp_does_not_keep_it_alive():

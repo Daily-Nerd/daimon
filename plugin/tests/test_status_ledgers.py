@@ -30,7 +30,7 @@ def _line(**kw):
 
 def test_payload_gains_ledgers_at_the_tail_and_keeps_every_field(proj):
     payload, _rc = cli.status_payload(str(proj))
-    assert list(payload)[-1] == "ledgers"
+    assert list(payload)[-3:] == ["ledgers", "lost", "serialize_log_cut"]
     for key in ("project", "global", "last_serialize", "health", "checks",
                 "identity", "requests", "handoff"):
         assert key in payload

@@ -18,8 +18,6 @@ from . import config, display, heal, serialize_liveness
 from .heal import HealPlan, HealReport
 from .store import project_slug
 
-# How much of serialize.log a heal read covers: the admission pass's window (D5).
-_HEAL_WINDOW_BYTES = serialize_liveness._ADMISSION_WINDOW_BYTES
 
 
 def _heal_scope(project_dir, sessions, everywhere, presumed_dead_before):
@@ -51,7 +49,7 @@ def heal_plan(project_dir=None, *, sessions=None, force=False,
     if not everywhere and slug is None and sessions is None:
         return HealPlan((), (), (*notes, display.heal_no_project_note()))
     try:
-        text, cut = serialize_liveness.read_log_tail(_HEAL_WINDOW_BYTES)
+        text, cut = serialize_liveness.read_log_tail()
     except OSError:
         return HealPlan((), (), (*notes, display.serialize_log_unreadable_note()))
     if cut:

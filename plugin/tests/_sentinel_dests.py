@@ -500,6 +500,9 @@ DESTS = {
         "all": ("OUT", "R4"),
         "project": ("OUT", "R1"),
         "session": ("OUT", "R2"),
+        # A write act: the session id it ends. It prints a receipt of what was
+        # typed and refuses otherwise, and no record text of any bucket.
+        "dismiss": ("INE", "R6"),
         "presumed_dead_before": ("OUT", "R4"),
     },
     "team init": {

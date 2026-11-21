@@ -37,8 +37,10 @@ SETTINGS = CLAUDE_DIR / "settings.json"
 # script installed without them is a hook that finds nothing and allows in
 # silence, which is the shape this list exists to prevent.
 LIB = "_daimon_hook_lib.py"
-# #1362: the catch-up sweep loads session_transcript.py from beside the lib.
-MODULES = (LIB, "checks_runtime.py", "checks_host.py", "session_transcript.py")
+# #1362: the catch-up sweep loads session_transcript.py from beside the lib,
+# and its failure fold loads serialize_log_window.py the same way.
+MODULES = (LIB, "checks_runtime.py", "checks_host.py", "session_transcript.py",
+           "serialize_log_window.py")
 
 HOOKS = [
     {
