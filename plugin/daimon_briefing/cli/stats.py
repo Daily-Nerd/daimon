@@ -584,8 +584,8 @@ def _stats_resolutions(project_dir, usage: dict) -> dict:
       source="cli", kind="resolution" (the human `resolve` path's default —
       excludes `forget`'s "tombstone" kind and `log`'s freeform rows, which
       also default to source="cli" but are not resolve decisions; scar
-      0025's own lesson: kind never isolates a fold on its own, so this
-      filters kind explicitly rather than trusting it to), whose status
+      0025's lesson: a count of events is not the lifecycle fold, so this
+      filters kind explicitly), whose status
       is_resolved (a real resolution, not a reopen/candidate/corroboration
       row).
     - `agent_verified`: lifetime count of events with source="serializer"

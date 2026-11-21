@@ -206,12 +206,13 @@ def test_a_corroboration_row_is_not_itself_a_demotion(tmp_checkpoint_dir):
 # ---------------------------------------------------------------------------
 
 
-def test_is_resolved_never_resolves_a_corroboration_status():
-    # Belt to the namespace's braces (scar 0025): were a corroboration status
-    # ever to reach the lifecycle fold on a bare ref, it must still not hide
-    # the item.
-    assert store.is_resolved({"status": f"corroborated-by:{OBSERVER}"}) is False
-    assert store.is_resolved({"status": "CORROBORATED-BY:S-x"}) is False
+def test_a_corroboration_row_on_a_bare_ref_never_resolves_the_item():
+    # Belt to the namespace's braces: were a corroboration row ever to land on
+    # a bare item ref, the fold skips its kind, so it cannot hide the item.
+    for status in (f"corroborated-by:{OBSERVER}", "CORROBORATED-BY:S-x"):
+        rows = [{"ts": "2026-10-01T00:00:00Z", "kind": "corroboration",
+                 "item_ref": "o-bare", "status": status}]
+        assert store.fold_resolutions(rows) == {}
 
 
 # ---------------------------------------------------------------------------
