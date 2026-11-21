@@ -634,6 +634,26 @@ TENANT_SCOPE_REFUSAL = (
     "any host-declared DAIMON_EXTRA_READ_SLUGS")
 
 
+def layers_readable() -> bool:
+    """The one answer to "may the ruling layers above this project be read in
+    this process" (DAIMON_TENANT_LAYERS). True off tenant scope (layers are
+    always read there, the declaration has no effect). Under `tenant_scoped()`
+    true only when the HOST declared it: the folders above a project are the
+    host's, so their rulings apply. Off by default because on a host with one
+    folder per person the folder above a project may belong to someone else.
+    Read through the same accessor as every other flag, never from prompt
+    content. It opens ancestor rulings and nothing else: a slug, all projects,
+    a project elsewhere, foreign counts and the global pointer stay refused."""
+    return not tenant_scoped() or _flag("DAIMON_TENANT_LAYERS")
+
+
+# The refusal for a layer read on a tenant-scoped home: the shared tenant text
+# plus the one setting that lifts this particular refusal.
+TENANT_LAYERS_REFUSAL = (
+    TENANT_SCOPE_REFUSAL + ". A host that owns the folders above this project "
+    "can allow their rulings with DAIMON_TENANT_LAYERS=1")
+
+
 def model_cross_project() -> bool:
     """Whether the HOST lets the model surface (the MCP tools) read outside
     this project's own bucket (DAIMON_MODEL_CROSS_PROJECT, #1223). Off by
@@ -1097,7 +1117,8 @@ def layer_scopes(project_dir) -> list[str]:
     containment #2 exists to enforce. `store.project_slug` is a pure
     string transform with no git dependency, which is what this needs.
 
-    Empty for: `config.tenant_scoped()`; `project_dir` that is not an
+    Empty for: `not layers_readable()` (tenant scope without the host's
+    DAIMON_TENANT_LAYERS declaration); `project_dir` that is not an
     absolute, EXISTING directory (a bucket slug never looks like a path and
     never walks, since `os.path.isdir` on a slug-shaped string is always
     False); a resolved root that is not at or below home at all (a project
@@ -1147,7 +1168,7 @@ def home_relative(path) -> str:
 
 
 def _layer_scopes(project_dir) -> list[str]:
-    if tenant_scoped():
+    if not layers_readable():
         return []
     if not project_dir:
         return []

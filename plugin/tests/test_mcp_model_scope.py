@@ -59,10 +59,16 @@ def grant(request, monkeypatch):
     return request.param
 
 
-@pytest.fixture(params=[False, True], ids=["open", "tenant"])
+# "tenant-layers" is tenant scope WITH the host's layer declaration (#1370):
+# every refusal below must hold unchanged, the declaration opens ancestor
+# rulings and nothing else.
+@pytest.fixture(params=[False, True, "layers"],
+                ids=["open", "tenant", "tenant-layers"])
 def tenant(request, monkeypatch):
     if request.param:
         monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
+    if request.param == "layers":
+        monkeypatch.setenv("DAIMON_TENANT_LAYERS", "1")
     return request.param
 
 
