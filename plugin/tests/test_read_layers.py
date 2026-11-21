@@ -73,6 +73,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/mcp_tools.py": "read",  # MCP tool handlers: render briefings, recall and status
     "daimon_briefing/pending.py": "read",  # the proposals-awaiting-a-human queue
     "daimon_briefing/heal_host.py": "read",  # the host heal verbs: plans over heal.plan_all, launches through heal.launch, folds outcomes through serialize_liveness (api.heal_plan, api.heal_all)
+    "daimon_briefing/serialize_log_window.py": "write",  # the one definition of the part of serialize.log that is read; stdlib only, mirrored into the hooks
     "daimon_briefing/serialize_liveness.py": "read",  # read-only liveness rows over serialize.log, heartbeats and checkpoints (api.serializes)
     "daimon_briefing/receipts.py": "read",  # verifies and reports provenance receipts of checkpoints
     "daimon_briefing/refutation_guard.py": "read",  # `refute guard` and `refute search`: match a query over the refutation rows a reader may see

@@ -664,7 +664,8 @@ def test_render_status_outstanding_block_plain_exact(capsys):
     out = capsys.readouterr().out
     assert "⚠ 2 sessions failed to serialize (no checkpoint):\n" in out
     assert "  - S-A  error 3m ago — run `daimon heal`\n" in out
-    assert "  - S-C  spawned 40m ago, no result (hung/killed; transcript unavailable)\n" in out
+    assert ("  - S-C  spawned 40m ago, no result (hung/killed; transcript unavailable); "
+            "end it: `daimon heal --dismiss S-C`\n") in out
 
 
 def test_render_status_outstanding_retry_exhausted_hint(capsys):
@@ -678,7 +679,8 @@ def test_render_status_outstanding_retry_exhausted_hint(capsys):
     out = capsys.readouterr().out
     assert (
         "  - S-A  error 3m ago — retry attempted, still failing "
-        "(re-run with `daimon heal --force`)\n"
+        "(re-run with `daimon heal --force`, or end it: "
+        "`daimon heal --dismiss S-A`)\n"
     ) in out
 
 
@@ -689,7 +691,8 @@ def test_render_status_unrecoverable_hint(capsys):
                             "project": "/p/Z", "spawned": False, "line": "error: boom"}]
     render.render_status(data)
     out = capsys.readouterr().out
-    assert "  - S-Z  error 5m ago — transcript unavailable, cannot auto-heal\n" in out
+    assert ("  - S-Z  error 5m ago — no spawn record, cannot auto-heal; "
+            "end it: `daimon heal --dismiss S-Z`\n") in out
 
 
 def test_render_status_no_block_when_outstanding_empty(capsys):
@@ -758,7 +761,8 @@ def test_render_status_outstanding_without_line_degrades_to_prior_output(capsys)
     render.render_status(data)
     out = capsys.readouterr().out
     assert "  - S-A  error 3m ago — run `daimon heal`\n" in out
-    assert "  - S-C  spawned 40m ago, no result (hung/killed; transcript unavailable)\n" in out
+    assert ("  - S-C  spawned 40m ago, no result (hung/killed; transcript unavailable); "
+            "end it: `daimon heal --dismiss S-C`\n") in out
     assert "cause" not in out
 
 

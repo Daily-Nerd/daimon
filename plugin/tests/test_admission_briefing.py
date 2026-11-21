@@ -30,15 +30,19 @@ def _refuse(project, n=2):
     path = store._events_path(project)
     path.write_bytes(b"<<<<<<< conflict\n")
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
-    lines = []
-    for i in range(n):
-        lines.append(f"{stamp} session-end: spawned serialize for held-{i} "
-                     f"(reason: x, project: {project}) "
-                     f"(transcript: /t/held-{i}.jsonl)")
-        lines.append(f"error: admission refused: events.jsonl is unreadable; "
-                     f"{HINT} (transcript: /t/held-{i}.jsonl) after 0s")
     log_dir = config.log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i in range(n):
+        # The transcript must exist: a refusal whose file is gone is `lost`,
+        # not held.
+        transcript = log_dir / f"held-{i}.jsonl"
+        transcript.write_text("{}\n")
+        lines.append(f"{stamp} session-end: spawned serialize for held-{i} "
+                     f"(reason: x, project: {project}) "
+                     f"(transcript: {transcript})")
+        lines.append(f"error: admission refused: events.jsonl is unreadable; "
+                     f"{HINT} (transcript: {transcript}) after 0s")
     (log_dir / "serialize.log").write_text("\n".join(lines) + "\n")
 
 
@@ -92,7 +96,7 @@ def test_a_proven_ledger_says_nothing(tmp_checkpoint_dir, monkeypatch, capsys):
     assert "not serialized" not in capsys.readouterr().out
 
 
-def test_a_refusal_beyond_the_200_line_tail_is_still_briefed(refused, capsys):
+def test_a_refusal_followed_by_many_other_lines_is_still_briefed(refused, capsys):
     log = config.log_dir() / "serialize.log"
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
     noise = "".join(

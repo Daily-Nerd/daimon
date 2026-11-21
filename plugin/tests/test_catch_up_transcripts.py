@@ -103,10 +103,10 @@ def test_a_missing_shared_module_fails_open_to_todays_behaviour(
     assert calls == [log.name]
 
 
-# ---- the loop is closed without widening the failure fold --------------------
+# ---- a failure is known by its line, however many lines follow ----------------
 
 
-def test_a_tool_log_whose_error_left_the_200_line_window_is_still_not_spawned(
+def test_a_tool_log_whose_error_is_far_back_in_the_log_is_still_not_spawned(
         tmp_path, monkeypatch):
     folder, current, calls = _setup(tmp_path, monkeypatch)
     log = folder / "memory-index-reads.jsonl"
@@ -118,6 +118,6 @@ def test_a_tool_log_whose_error_left_the_200_line_window_is_still_not_spawned(
     (logs / "serialize.log").write_text(
         f"error: unreadable-transcript: 5 rows (transcript: {log}) after 0s\n"
         + "\n".join(filler) + "\n", encoding="utf-8")
-    assert log.stem not in lib._failed_session_stems()  # aged out, as before
+    assert log.stem in lib._failed_session_stems()  # still known
     _sweep(current)
-    assert calls == []  # not a candidate, so the fold is not what stops it
+    assert calls == []  # not a candidate either way

@@ -206,7 +206,7 @@ def on_session_end(session_id, completed=None, interrupted=None, model=None, pla
             # the way the CLI door records its own (#750): a bare return left
             # the session invisible to `daimon stats`.
             ledger._append_serialize_log(
-                f"skipped serialize for {session_id}: {exc}")
+                ledger.skip_line(session_id, str(exc)))
             log.info("daimon: no checkpoint produced for session %s (skip)", session_id)
             return
         if out is None:

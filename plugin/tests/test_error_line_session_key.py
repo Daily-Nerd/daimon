@@ -244,7 +244,7 @@ def test_a_missing_transcript_names_the_session_and_settles_it(
     assert entries[SID]["result_kind"] == "error"
     assert entries[SID]["transcript"] == str(wire)
     assert entries[SID]["project"] == PROJECT
-    assert out[SID]["class"] == "unrecoverable"
+    assert out[SID]["class"] == "lost"
     assert out[SID]["kind"] == "error"
 
 
@@ -261,4 +261,4 @@ def test_an_unnamed_missing_transcript_settles_under_its_stem(
         f"error: transcript not found: {wire} (transcript: {wire})")
     entries, out = _outstanding(log_dir)
     assert entries[stem]["result_kind"] == "error"
-    assert out[stem]["class"] == "unrecoverable"
+    assert out[stem]["class"] == "lost"

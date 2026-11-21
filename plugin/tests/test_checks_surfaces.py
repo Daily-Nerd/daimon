@@ -1056,8 +1056,10 @@ def test_status_json_carries_checks_at_the_tail(tmp_path, monkeypatch,
     payload = json.loads(capsys.readouterr().out)
     # #963 appended `identity` after it, on the same tail rule: the pin is
     # that a new key lands at the END, never in the middle of the contract.
-    # #1132 appended `ledgers` after that, on the same rule.
-    assert list(payload)[-3:] == ["checks", "identity", "ledgers"]
+    # #1132 appended `ledgers` after that, on the same rule, and the lost
+    # count and the log-window flag (#1369) after `ledgers`.
+    assert list(payload)[-5:] == ["checks", "identity", "ledgers", "lost",
+                                  "serialize_log_cut"]
     assert payload["checks"]["armed"] == 1
     assert payload["checks"]["last_ts"] == ""
 

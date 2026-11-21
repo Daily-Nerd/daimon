@@ -164,8 +164,10 @@ _PROMPT_SCRIPT = "daimon-codex-user-prompt-submit.py"
 # own directory and that loads checks_runtime.py the same way, so a script
 # installed without them is a hook that finds nothing and allows in silence.
 # They are imported and never executed, which is why the +x below skips them.
-# #1362: the catch-up sweep loads session_transcript.py from beside the lib.
-MODULES = (LIB, "checks_runtime.py", "checks_host.py", "session_transcript.py")
+# #1362: the catch-up sweep loads session_transcript.py from beside the lib,
+# and its failure fold loads serialize_log_window.py the same way.
+MODULES = (LIB, "checks_runtime.py", "checks_host.py", "session_transcript.py",
+           "serialize_log_window.py")
 
 # #1045: MCP_SCRIPT joins FILES too. It is not a hook (no event, never in
 # HOOKS) and is never a MODULE either (Codex execs it directly as the MCP

@@ -11,39 +11,18 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, display, store
-from .ledger import (_ADMISSION_WINDOW_BYTES, _memoized_admission_state,
+from . import config, display, serialize_log_window, store
+from .ledger import (_memoized_admission_state,
                      _outstanding_failures, _project_bound, _session_key, _session_ledger,
                      _slug_of, _checkpoint_stamp, heartbeat_index)
 
 
-def read_log_tail(window: int = _ADMISSION_WINDOW_BYTES) -> tuple[str, bool]:
-    """`(text, cut)`: the last `window` bytes of serialize.log from a line
-    start, and whether the log was longer than that (D5). Unlike the full
-    read the heal pass and `admission_notes` do before slicing in memory, this
-    opens the file, seeks and reads only the window, so the I/O is bounded on
-    a long-lived machine. A missing log is no activity (`("", False)`); any
-    other failure to read it raises OSError, for the caller to report. A cut
-    inside a multibyte character is dropped with the partial first line."""
-    try:
-        with (config.log_dir() / "serialize.log").open("rb") as f:
-            size = f.seek(0, 2)
-            start = max(0, size - window)
-            if start:
-                # One byte before the window tells whether it starts on a line.
-                f.seek(start - 1)
-            else:
-                f.seek(0)
-            data = f.read()
-    except FileNotFoundError:
-        return "", False
-    if start:
-        if data[:1] == b"\n":
-            data = data[1:]
-        else:
-            cut_at = data.find(b"\n")
-            data = data[cut_at + 1:] if cut_at >= 0 else b""
-    return data.decode("utf-8", errors="replace"), start > 0
+def read_log_tail(window: int | None = None) -> tuple[str, bool]:
+    """`(text, cut)`: the window of serialize.log every reader shares
+    (`serialize_log_window.read`) and whether the log was longer. A missing
+    log is no activity (`("", False)`); any other failure to read it raises
+    OSError, for the caller to report."""
+    return serialize_log_window.read(config.log_dir() / "serialize.log", window)
 
 
 SERIALIZE_STATES = ("starting", "running", "repairing",
@@ -94,9 +73,10 @@ def serialize_rows_core(text, now, *, slug=None, sessions=None, since=None,
       3. latest result success               succeeded  result
       4. latest result skip                  skipped    result
       5. refused admission still held        held       admission-refused
-      6. latest result error                 failed     healable | retry-exhausted | unrecoverable | import
+      6. latest result error                 failed     healable | retry-exhausted | unrecoverable | import | lost
       7. spawn, no result, within ceiling    starting (repairing if retried)  spawned
       8. spawn, no result, past ceiling      hung       healable | hung | import
+                                             (failed `lost` when its transcript is gone)
       9. no line, checkpoint created >= since  succeeded  checkpoint
      10. no line, a checkpoint but no proof    unknown    checkpoint-without-run
      11. nothing                               unknown    not-found | outside-window | log-unreadable
@@ -110,7 +90,7 @@ def serialize_rows_core(text, now, *, slug=None, sessions=None, since=None,
     admission_state = admission_state or _memoized_admission_state()
     checkpoint_of = checkpoint_of or _checkpoint_stamp
     heartbeats = heartbeats or {}
-    fold = _session_ledger(text, now, tail=None) if text else {}
+    fold = _session_ledger(text, now) if text else {}
     slugs: dict = {}
 
     def project_of(key, hb, entry):
@@ -162,6 +142,8 @@ def serialize_rows_core(text, now, *, slug=None, sessions=None, since=None,
                     return make("repairing" if retried else "starting",
                                 "spawned"), held
                 got = classify(key, entry, hb_age)
+                if got and got["class"] == "lost":
+                    return make("failed", "lost"), held
                 return make("hung", got["class"] if got else "hung"), held
         exists, created = checkpoint_of(key)
         if exists:
@@ -182,7 +164,8 @@ def serialize_rows_core(text, now, *, slug=None, sessions=None, since=None,
     for key in keys:
         row, held = row_for(key)
         if sessions is None and (not slug or row.project_slug != slug
-                                 or row.state not in _OUTSTANDING_STATES):
+                                 or row.state not in _OUTSTANDING_STATES
+                                 or row.reason == "lost"):
             continue
         rows.append(row)
         if held is not None and slug and row.project_slug == slug:

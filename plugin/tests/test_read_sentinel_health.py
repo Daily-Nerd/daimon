@@ -89,12 +89,15 @@ def _refuse_admissions(m, w):
           jsonl.Read(Health.UNREADABLE, [], detail="EIO"))
     log_dir = config.log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
+    # The transcript exists: a refusal whose file is gone is `lost`, not held.
+    transcript = log_dir / "S-refused.jsonl"
+    transcript.write_text("{}\n")
     (log_dir / "serialize.log").write_text(
         "2026-09-01T00:00:00Z session-end: spawned serialize for S-refused "
-        f"(reason: x, project: {w.project}) (transcript: /t/S-refused.jsonl)\n"
+        f"(reason: x, project: {w.project}) (transcript: {transcript})\n"
         "error: admission refused: events.jsonl is unreadable; check "
         "permissions (EIO); run: daimon status (transcript: "
-        "/t/S-refused.jsonl) after 0s\n")
+        f"{transcript}) after 0s\n")
 
 
 def _append_bytes(path, data):

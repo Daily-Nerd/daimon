@@ -29,12 +29,22 @@ daimon heal --force       # spend another attempt on a session that used its ret
 | reason | what it means |
 | --- | --- |
 | `retry-exhausted` | the retry already ran and the session still fails; re-run with `--force` |
-| `unrecoverable` | no spawn record, or the transcript is gone, so it cannot be healed |
-| `hung` | the serialize started and never reported a result, and the transcript is unavailable |
+| `unrecoverable` | no spawn record, so it cannot be healed |
+| `hung` | the serialize started and never reported a result, and no transcript path was recorded |
 | `admission-refused` | the project's events ledger cannot be read (see below) |
 | `repairing` | a repair of that ledger is already running |
 | `project-unknown` | a transcript filed under a project directory whose project cannot be recovered; run `daimon serialize <transcript> --project <dir>` |
 | `import` | an import attempt, which heal never retries; run `daimon import` again to resume |
+
+A failure stays outstanding until something resolves it: a later success, a final skip, a checkpoint that covers the session, or its transcript no longer existing. How many other sessions wrote to the log since never ends a failure. A session whose transcript file is gone has nothing left to capture, so `daimon status` counts it apart (`lost: N (never captured, transcript gone)`), `heal` never lists it and health ignores it. The count is read from the disk each time, so a transcript that comes back makes its session outstanding again. Status and heal read the last 4 MB of `serialize.log`; when the log is longer, `daimon status` says that older lines are not read.
+
+A session that spawned, never finished and has no transcript path recorded has no fact that can end it. End it by hand, from a terminal:
+
+```sh
+daimon heal --dismiss <session-id>
+```
+
+This writes the same final skip line a too-short session gets, with a reason that says a person dismissed it. Heal will not retry it, even if its transcript still exists; for one that does, the command prints `daimon serialize <transcript>` to capture it instead. It is human-only (an agent has no way to run it), it stands alone, and it refuses a session that is not outstanding: unknown, already ended, lost, or still being repaired.
 
 ## A ledger cannot be read
 

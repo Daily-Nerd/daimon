@@ -77,7 +77,11 @@ def test_the_gate_raises_not_a_transcript_only_when_told_so():
 def test_a_not_a_transcript_skip_is_never_outstanding_and_clears_an_old_error(
         tmp_path):
     stamp = "2026-11-20T00:00:00Z"
-    path = "/c/projects/slug/memory-index-reads.jsonl"
+    # The file exists: an old error whose transcript is gone is lost, and the
+    # test is about an error that is still outstanding.
+    transcript = tmp_path / "memory-index-reads.jsonl"
+    transcript.write_text("{}\n")
+    path = str(transcript)
     old = [
         f"{stamp} session-start: spawned serialize for memory-index-reads "
         f"(reason: catch-up-orphan, project: /p) (transcript: {path})",

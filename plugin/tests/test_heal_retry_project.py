@@ -18,7 +18,7 @@ from daimon_briefing.cli import serialize as cli_serialize
 
 SID = "044bfde5-4bba-4e63-924d-de621d07b5f1"
 PROJECT = "/work/BrandMeV2"
-FILLER = 230  # more than the 200-line tail the classifier folds
+FILLER = 230  # many unrelated lines between a spawn and its retry marker
 
 
 @pytest.fixture(autouse=True)
@@ -81,9 +81,9 @@ def test_project_survives_when_the_spawn_scrolls_out_of_the_tail(tmp_path):
     assert ledger._session_ledger(text, now)[SID]["project"] == PROJECT
 
 
-def test_the_tail_still_decides_the_terminal_state(tmp_path):
-    """A success inside the tail wins over an error the long window holds, and
-    a session that only the long window knows is not folded at all."""
+def test_a_later_success_decides_the_terminal_state(tmp_path):
+    """A success after the filler wins over the spawn before it, and a session
+    whose only line is far back is folded too: the window is one fold."""
     now = time.time()
     t = _transcript(tmp_path)
     other = "other-session"
@@ -96,7 +96,7 @@ def test_the_tail_still_decides_the_terminal_state(tmp_path):
     ])
     fold = ledger._session_ledger(text, now)
     assert fold[SID]["result_kind"] == "success"
-    assert other not in fold
+    assert fold[other]["result_kind"] is None and fold[other]["spawned"]
 
 
 def test_a_hung_entry_reads_its_transcript_from_the_long_window(tmp_path):

@@ -65,7 +65,7 @@ _HOOK_HOSTS: dict[str, _HookHostSpec] = {
                   "daimon-codex-user-prompt-submit.py",
                   "_daimon_hook_lib.py", "checks_runtime.py",
                   "checks_host.py", "session_transcript.py",
-                  "daimon-mcp-serve.py"),
+                  "serialize_log_window.py", "daimon-mcp-serve.py"),
         "events": ("SessionStart", "Stop", "SessionEnd", "PreToolUse",
                    "UserPromptSubmit"),
         "register": "codex",
