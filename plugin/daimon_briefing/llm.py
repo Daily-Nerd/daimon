@@ -5,6 +5,7 @@ pattern from research/experiments/lib/llm.py — clean copy inside the package."
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -846,14 +847,44 @@ def _claude_argv(argv):
     setting named it, so the rule applies to every argv whose program is
     `claude` (preset, DAIMON_LLM_COMMAND, the fallback). The flag is added only
     when the capability probe says "supported" and the argv lacks it; any other
-    program, and every other probe state, returns the argv as written. Callers
-    apply it BEFORE the prompt is wired in (_apply_input_spec appends the
-    prompt or the file flag last), so the flag can never land after it."""
+    program, and every other probe state, returns the argv as written.
+
+    The flag goes right after the program word. Its position then depends on
+    nothing after it: not an operator's `--` terminator (an option placed
+    after `--` would become the prompt), not the input mode's trailing prompt
+    or file flag, not any argument the operator adds later."""
     if not _is_claude(argv) or _NO_SESSION_FLAG in argv:
         return argv
     if claude_session_flag(_claude_exe(argv))[0] == "supported":
-        return [*argv, _NO_SESSION_FLAG]
+        return [argv[0], _NO_SESSION_FLAG, *argv[1:]]
     return argv
+
+
+# A `claude` used as a command inside a shell string (`sh -c "claude -p"`).
+_SHELL_CLAUDE = re.compile(r"(?:^|[\s;&|(])(?:\S*/)?claude(?=\s|$)")
+
+
+def claude_flag_unapplied(command_str) -> bool:
+    """#1360: True when claude is run by a program daimon cannot classify
+    (`env claude`, `npx claude`, `timeout 60 claude`, `sh -c "claude ..."`), so
+    the no-save flag was NOT applied. Detection feeds a notice only: daimon
+    never rewrites a command it did not recognise as claude, because a wrong
+    guess would hand an unknown option to someone else's program and fail every
+    model call. A command already carrying the flag, or whose program is
+    claude, is not reported."""
+    try:
+        argv = shlex.split(command_str)
+    except ValueError:
+        return False
+    if not argv or _is_claude(argv) or any(_NO_SESSION_FLAG in a for a in argv):
+        return False
+    for word in argv[1:]:
+        if any(c.isspace() for c in word):
+            if _SHELL_CLAUDE.search(word):
+                return True
+        elif os.path.basename(word) == "claude":
+            return True
+    return False
 
 
 def effective_command(command_str) -> str:

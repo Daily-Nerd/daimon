@@ -69,6 +69,10 @@ def status() -> dict:
         "fallback_session_persistence": (
             llm.claude_command_flag_state(fb[0]) if fb else None
         ),
+        # #1360: claude run through a wrapper (env, npx, sh -c ...) is not
+        # recognised, so the flag was not applied; the doctor says so.
+        "flag_unapplied": bool(cmd and llm.claude_flag_unapplied(cmd[0])),
+        "fallback_flag_unapplied": bool(fb and llm.claude_flag_unapplied(fb[0])),
         "fallback_input": fb[2] if fb else None,
         # #747: a binary that RESOLVES but does not exist read as working
         # everywhere (field case: DAIMON_LLM_COMMAND_FALLBACK=1). Name it here

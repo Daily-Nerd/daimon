@@ -870,6 +870,16 @@ def _session_persistence_warning(st: dict, key: str = "session_persistence",
             f"calls may be saved as Claude Code sessions")
 
 
+def _flag_unapplied_warning(st: dict, key: str, role: str) -> str | None:
+    """#1360: claude behind a wrapper is not recognised, so daimon did not add
+    --no-session-persistence; the operator has to."""
+    if not st.get(key):
+        return None
+    return (f"⚠ the {role} command runs claude through another program: "
+            f"--no-session-persistence was not applied, so its model calls may "
+            f"be saved as Claude Code sessions; add it to the command yourself")
+
+
 def _prompt_limit_warnings(st: dict) -> list:
     """#1220: a command backend that takes its prompt as an argument cannot
     serve a large one. One line per such backend, saying what that means for
@@ -898,7 +908,10 @@ def _configure_warnings(st: dict) -> list:
                         _fallback_binary_warning(st),
                         _session_persistence_warning(st),
                         _session_persistence_warning(
-                            st, "fallback_session_persistence", "rescue")) if w
+                            st, "fallback_session_persistence", "rescue"),
+                        _flag_unapplied_warning(st, "flag_unapplied", "primary"),
+                        _flag_unapplied_warning(
+                            st, "fallback_flag_unapplied", "rescue")) if w
             ] + _prompt_limit_warnings(st)
 
 

@@ -368,7 +368,8 @@ def test_resolve_command_claude_preset(monkeypatch):
     monkeypatch.delenv("DAIMON_LLM_COMMAND", raising=False)
     monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/claude")
     cmd, out, inp = llm._resolve_command()
-    assert cmd.startswith("claude -p") and out == "json:result"
+    assert shlex.split(cmd)[0] == "claude" and "-p" in shlex.split(cmd)
+    assert out == "json:result"
     assert inp == "stdin"  # #58: the claude-cli preset never changes off stdin
     # #1077: the child still loads the user's plugins under DAIMON_DISABLE=1,
     # and a launcher exiting 0 there gets recorded as CONNECTION_CLOSED in
@@ -484,8 +485,8 @@ def test_chat_command_runs_and_sets_disable_env(monkeypatch):
     assert out == "CKPT"
     # #1360: any claude command is run without saving a session (probe stubbed
     # "supported" by conftest), prompt still on stdin.
-    assert seen["argv"] == ["claude", "-p", "--output-format", "json",
-                            "--no-session-persistence"]
+    assert seen["argv"] == ["claude", "--no-session-persistence", "-p",
+                            "--output-format", "json"]
     assert seen["stdin"] == "USER:\nhi"
     assert seen["env"]["DAIMON_DISABLE"] == "1"
     assert os.path.isdir(seen["cwd"]) is False  # temp dir cleaned up after
@@ -2373,7 +2374,8 @@ def test_explicit_claude_command_gets_the_flag_once(monkeypatch):
                      "claude -p --model sonnet --output-format json",
                      which=lambda b: "/usr/bin/claude")
     assert argv.count(_FLAG) == 1
-    assert argv[:5] == ["claude", "-p", "--model", "sonnet", "--output-format"]
+    assert argv == ["claude", _FLAG, "-p", "--model", "sonnet",
+                    "--output-format", "json"]
 
 
 def test_explicit_absolute_path_claude_gets_the_flag(monkeypatch):
@@ -2437,9 +2439,40 @@ def test_fallback_claude_command_gets_the_flag_and_other_does_not(monkeypatch):
     assert _run_chat(monkeypatch, fb[0]) == ["kimi", "-p"]
 
 
+def test_flag_survives_a_double_dash_terminator_in_arg_mode(monkeypatch):
+    # `--` ends option parsing: a flag placed after it would become the prompt.
+    argv = _run_chat(monkeypatch, "claude -p --model sonnet --", input_spec="arg",
+                     which=lambda b: "/usr/bin/claude")
+    assert argv.index(_FLAG) < argv.index("--")
+    assert argv[-2:] == ["--", llm._flatten_messages(_MSG)]
+
+
+@pytest.mark.parametrize("command", [
+    "env FOO=1 claude -p",
+    "npx claude -p",
+    "timeout 60 claude -p",
+    'sh -c "claude -p --model haiku"',
+])
+def test_unclassified_claude_wrapper_is_flagged_not_rewritten(monkeypatch, command):
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/" + b)
+    monkeypatch.setattr(llm, "_claude_help_text",
+                        lambda exe: pytest.fail("must not probe a wrapper"))
+    assert llm.claude_flag_unapplied(command) is True
+    assert llm.effective_command(command) == command
+    argv = _run_chat(monkeypatch, command)
+    assert _FLAG not in argv
+
+
+@pytest.mark.parametrize("command", [
+    "claude -p", "kimi -p", f"env claude -p {_FLAG}", "kimi -p --foo 'a b'",
+])
+def test_plain_commands_are_not_flagged_as_unapplied(command):
+    assert llm.claude_flag_unapplied(command) is False
+
+
 def test_effective_command_names_what_will_run(monkeypatch):
     monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/" + b)
-    assert llm.effective_command("claude -p") == f"claude -p {_FLAG}"
+    assert llm.effective_command("claude -p") == f"claude {_FLAG} -p"
     assert llm.effective_command("kimi -p") == "kimi -p"
     assert llm.claude_command_flag_state("kimi -p") is None
     assert llm.claude_command_flag_state("claude -p") == ("supported", "")
