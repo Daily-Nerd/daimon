@@ -864,6 +864,16 @@ def _claude_argv(argv):
 _SHELL_CLAUDE = re.compile(r"(?:^|[\s;&|(])(?:\S*/)?claude(?=\s|$)")
 
 
+def _split_command(command_str):
+    """`command_str` as an argv, or None when shlex cannot split it (an
+    unbalanced quote). The one place the doctor's helpers read a command
+    string, so they agree on what an unreadable command is."""
+    try:
+        return shlex.split(command_str)
+    except ValueError:
+        return None
+
+
 def claude_flag_unapplied(command_str) -> bool:
     """#1360: True when claude is run by a program daimon cannot classify
     (`env claude`, `npx claude`, `timeout 60 claude`, `sh -c "claude ..."`), so
@@ -872,10 +882,7 @@ def claude_flag_unapplied(command_str) -> bool:
     guess would hand an unknown option to someone else's program and fail every
     model call. A command already carrying the flag, or whose program is
     claude, is not reported."""
-    try:
-        argv = shlex.split(command_str)
-    except ValueError:
-        return False
+    argv = _split_command(command_str)
     if not argv or _is_claude(argv) or any(_NO_SESSION_FLAG in a for a in argv):
         return False
     for word in argv[1:]:
@@ -891,9 +898,8 @@ def effective_command(command_str) -> str:
     """`command_str` as it will really run (the doctor's view): the same
     _claude_argv the exec path applies, so the two cannot disagree. A string
     shlex cannot split is returned unchanged."""
-    try:
-        argv = shlex.split(command_str)
-    except ValueError:
+    argv = _split_command(command_str)
+    if argv is None:
         return command_str
     out = _claude_argv(argv)
     return command_str if out is argv else shlex.join(out)
@@ -903,11 +909,8 @@ def claude_command_flag_state(command_str):
     """(state, detail) of the no-save flag for `command_str`, or None when its
     program is not claude. A command that already carries the flag is
     "supported" without a probe."""
-    try:
-        argv = shlex.split(command_str)
-    except ValueError:
-        return None
-    if not _is_claude(argv):
+    argv = _split_command(command_str)
+    if argv is None or not _is_claude(argv):
         return None
     if _NO_SESSION_FLAG in argv:
         return ("supported", "")

@@ -2476,3 +2476,12 @@ def test_effective_command_names_what_will_run(monkeypatch):
     assert llm.effective_command("kimi -p") == "kimi -p"
     assert llm.claude_command_flag_state("kimi -p") is None
     assert llm.claude_command_flag_state("claude -p") == ("supported", "")
+
+
+def test_a_command_shlex_cannot_split_is_left_alone_by_every_doctor_helper():
+    # An unbalanced quote: nothing to classify, so nothing is rewritten,
+    # reported, or probed.
+    broken = 'claude -p "unclosed'
+    assert llm.effective_command(broken) == broken
+    assert llm.claude_command_flag_state(broken) is None
+    assert llm.claude_flag_unapplied(broken) is False
