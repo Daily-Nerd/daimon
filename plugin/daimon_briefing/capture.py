@@ -33,10 +33,22 @@ import time
 from pathlib import Path
 
 from . import (amendments, authority, carry, config, normalize, provenance, requests,
-               schema, serializer, store, transcript)
+               schema, serializer, session_transcript, store, transcript)
 from .surfaces import Writer
 
 log = logging.getLogger(__name__)
+
+
+def is_foreign_source(messages, transcript_path) -> bool:
+    """Is the source file another tool's log, not a session (#1362)? Asked
+    only when nothing read as conversation, so a real read never pays for the
+    file probe. The rule is `session_transcript.not_a_transcript`, the one the
+    catch-up sweep applies to the same folder."""
+    if transcript_path is None or serializer.conversation_message_count(messages):
+        return False
+    host = provenance.infer_host(
+        transcript_path, claude_projects=config.claude_projects_dir())[0]
+    return session_transcript.not_a_transcript(transcript_path, host)
 
 
 DOOR_IMPORT = schema.CAPTURE_DOOR_IMPORT
@@ -79,7 +91,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # the admission HERE, before the model is called: the run would cost
     # tokens and then be refused at the write anyway, and a refusal must
     # cost nothing. `store.write_checkpoint` stays the enforcing point.
-    serializer.require_readable(messages, account)
+    serializer.require_readable(
+        messages, account, foreign=is_foreign_source(messages, transcript_path))
     serializer.require_enough_messages(messages)
     store.admission_preflight(project)
     source_ref = provenance.capture_source_ref(

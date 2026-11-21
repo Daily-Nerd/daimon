@@ -133,6 +133,13 @@ class NoConversation(TooShortError):
     `no-conversation`, never an error `heal` would retry for nothing."""
 
 
+class NotATranscript(TooShortError):
+    """A file that is not a session transcript at all (#1362): another tool's
+    log in the host's project folder, by `session_transcript`'s one rule. A
+    skip with its own code, `not-a-transcript`: the answer is final, so it is
+    never an error `heal` would retry and never a failure `status` counts."""
+
+
 class UnreadableTranscript(SerializeError):
     """A transcript with rows and no admitted conversation (#1292): the
     loader could not read the file, which is a failure to repair and not a
@@ -2800,7 +2807,7 @@ def conversation_message_count(messages) -> int:
                if not (isinstance(m, dict) and m.get("tool_result")))
 
 
-def require_readable(messages, account) -> None:
+def require_readable(messages, account, *, foreign: bool = False) -> None:
     """The one gate that tells an unreadable transcript from a short one
     (#1292), applied before `require_enough_messages` by every door through
     `capture.run` (and by the import plan, which spends nothing).
@@ -2809,7 +2816,10 @@ def require_readable(messages, account) -> None:
     `transcript.RowAccount`, None when the source kept none) decides:
     zero rows is `EmptyTranscript`; rows present, or no account at all, is
     `UnreadableTranscript`. Scar 0045: rows that parse to zero messages are a
-    parse failure, never a short session."""
+    parse failure, never a short session. `foreign` (#1362) is the caller's
+    proof, from `session_transcript.not_a_transcript`, that the file is
+    another tool's log: rows with no conversation are then `NotATranscript`,
+    a final skip, in place of the unreadable failure."""
     if conversation_message_count(messages) > 0:
         return
     if account is not None and account.rows == 0:
@@ -2824,6 +2834,13 @@ def require_readable(messages, account) -> None:
         # Every row was excluded by a named rule: nothing was unreadable.
         raise NoConversation(
             f"no-conversation: {account.rows} rows, all excluded ({excluded})")
+    if foreign:
+        # #1362: the caller proved the file is another tool's log (name and
+        # rows both), so the unreadable verdict below would be a failure no
+        # retry can cure.
+        raise NotATranscript(
+            f"not-a-transcript: {account.rows} rows, none carries a host "
+            "marker and the name is not a session's")
     detail = "; ".join(part for part in (
         f"dropped {dropped}" if dropped else "",
         f"excluded {excluded}" if excluded else "") if part)

@@ -428,7 +428,9 @@ def plan_import(
         try:
             # #1292: the capture's own gates, in its order, so the plan names
             # an unreadable file the way the run would fail it.
-            serializer.require_readable(messages, detailed["account"])
+            serializer.require_readable(
+                messages, detailed["account"],
+                foreign=capture.is_foreign_source(messages, path))
             serializer.require_enough_messages(messages)
         except (serializer.TooShortError, serializer.UnreadableTranscript) as exc:
             skipped.append(Skipped(sid, path, str(exc)))
