@@ -562,7 +562,7 @@ daimon ruling list [--state active|candidate|overturned] [--project PROJECT] [--
 | `--state` | `active\|candidate\|overturned` |  | filter by state; repeatable |
 | `--project` | `PROJECT` |  | project directory (default: DAIMON_PROJECT_DIR, then cwd) |
 | `--json` |  |  | machine-readable output |
-| `--inherited` |  |  | also list active rulings inherited from a ruling layer above this project (#1092); each row (each `--json` row too) carries `inherited_from`; refused on a tenant-scoped home, the same as every caller-chosen cross-project scope (#899) |
+| `--inherited` |  |  | also list active rulings inherited from a ruling layer above this project (#1092); each row (each `--json` row too) carries `inherited_from`; refused on a tenant-scoped home unless the host declares DAIMON_TENANT_LAYERS (#899) |
 
 ### `daimon ruling show`
 
