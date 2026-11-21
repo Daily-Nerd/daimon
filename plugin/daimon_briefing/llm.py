@@ -5,6 +5,7 @@ pattern from research/experiments/lib/llm.py — clean copy inside the package."
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -830,14 +831,90 @@ def claude_session_flag(exe):
     return _claude_flag_cache[exe]
 
 
-def _claude_preset_command(exe):
-    """The claude-cli preset's command string: the base preset plus the
-    no-persistence flag when this claude takes it. The single owner of the
-    argv the claude-cli backend runs."""
-    base = _CLAUDE_PRESET[0]
-    if claude_session_flag(exe)[0] == "supported":
-        return f"{base} {_NO_SESSION_FLAG}"
-    return base
+def _is_claude(argv) -> bool:
+    return bool(argv) and os.path.basename(argv[0]) == "claude"
+
+
+def _claude_exe(argv) -> str:
+    """The executable the argv will actually run: the same lookup exec does."""
+    return shutil.which(argv[0]) or argv[0]
+
+
+def _claude_argv(argv):
+    """#1360: THE owner of how daimon runs claude without saving a session.
+
+    Whether a model call is saved is a fact about the program, not about which
+    setting named it, so the rule applies to every argv whose program is
+    `claude` (preset, DAIMON_LLM_COMMAND, the fallback). The flag is added only
+    when the capability probe says "supported" and the argv lacks it; any other
+    program, and every other probe state, returns the argv as written.
+
+    The flag goes right after the program word. Its position then depends on
+    nothing after it: not an operator's `--` terminator (an option placed
+    after `--` would become the prompt), not the input mode's trailing prompt
+    or file flag, not any argument the operator adds later."""
+    if not _is_claude(argv) or _NO_SESSION_FLAG in argv:
+        return argv
+    if claude_session_flag(_claude_exe(argv))[0] == "supported":
+        return [argv[0], _NO_SESSION_FLAG, *argv[1:]]
+    return argv
+
+
+# A `claude` used as a command inside a shell string (`sh -c "claude -p"`).
+_SHELL_CLAUDE = re.compile(r"(?:^|[\s;&|(])(?:\S*/)?claude(?=\s|$)")
+
+
+def _split_command(command_str):
+    """`command_str` as an argv, or None when shlex cannot split it (an
+    unbalanced quote). The one place the doctor's helpers read a command
+    string, so they agree on what an unreadable command is."""
+    try:
+        return shlex.split(command_str)
+    except ValueError:
+        return None
+
+
+def claude_flag_unapplied(command_str) -> bool:
+    """#1360: True when claude is run by a program daimon cannot classify
+    (`env claude`, `npx claude`, `timeout 60 claude`, `sh -c "claude ..."`), so
+    the no-save flag was NOT applied. Detection feeds a notice only: daimon
+    never rewrites a command it did not recognise as claude, because a wrong
+    guess would hand an unknown option to someone else's program and fail every
+    model call. A command already carrying the flag, or whose program is
+    claude, is not reported."""
+    argv = _split_command(command_str)
+    if not argv or _is_claude(argv) or any(_NO_SESSION_FLAG in a for a in argv):
+        return False
+    for word in argv[1:]:
+        if any(c.isspace() for c in word):
+            if _SHELL_CLAUDE.search(word):
+                return True
+        elif os.path.basename(word) == "claude":
+            return True
+    return False
+
+
+def effective_command(command_str) -> str:
+    """`command_str` as it will really run (the doctor's view): the same
+    _claude_argv the exec path applies, so the two cannot disagree. A string
+    shlex cannot split is returned unchanged."""
+    argv = _split_command(command_str)
+    if argv is None:
+        return command_str
+    out = _claude_argv(argv)
+    return command_str if out is argv else shlex.join(out)
+
+
+def claude_command_flag_state(command_str):
+    """(state, detail) of the no-save flag for `command_str`, or None when its
+    program is not claude. A command that already carries the flag is
+    "supported" without a probe."""
+    argv = _split_command(command_str)
+    if argv is None or not _is_claude(argv):
+        return None
+    if _NO_SESSION_FLAG in argv:
+        return ("supported", "")
+    return claude_session_flag(_claude_exe(argv))
 
 
 def _flatten_messages(messages):
@@ -900,7 +977,7 @@ def _resolve_command():
                          "DAIMON_LLM_COMMAND_INPUT", "command")
     exe = shutil.which("claude") if config.llm_backend().strip() == "claude-cli" else None
     if exe:
-        return _Resolved((_claude_preset_command(exe), _CLAUDE_PRESET[1], "stdin"), "DAIMON_LLM_COMMAND_INPUT",
+        return _Resolved((effective_command(_CLAUDE_PRESET[0]), _CLAUDE_PRESET[1], "stdin"), "DAIMON_LLM_COMMAND_INPUT",
                          "claude-cli")
     return None
 
@@ -1181,7 +1258,7 @@ def _chat_command(messages, deadline, resolved=None):
             "the zero-config claude preset. Since #546 a claude on PATH is no "
             "longer adopted implicitly.")
     command, output_spec, input_spec = resolved
-    argv = shlex.split(command)
+    argv = _claude_argv(shlex.split(command))
     prompt_text = _flatten_messages(messages)
     timeout = config.timeout_seconds()
     if deadline is not None:

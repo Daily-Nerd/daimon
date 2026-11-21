@@ -852,18 +852,32 @@ def _fallback_binary_warning(st: dict) -> str | None:
             f"({st.get('fallback_command')}) cannot run; fix {knob}")
 
 
-def _session_persistence_warning(st: dict) -> str | None:
-    """#1261: the claude-cli preset keeps its calls out of Claude Code's
-    session store only when this claude takes --no-session-persistence. Say so
-    when it does not, or when the probe that decides it could not run."""
-    state = st.get("session_persistence")
+def _session_persistence_warning(st: dict, key: str = "session_persistence",
+                                 role: str = "") -> str | None:
+    """#1261/#1360: a claude command (preset, explicit or rescue) keeps its
+    calls out of Claude Code's session store only when this claude takes
+    --no-session-persistence. Say so when it does not, or when the probe that
+    decides it could not run. `role` names the rescue when it is the subject."""
+    state = st.get(key)
     if not state or state[0] == "supported":
         return None
+    which = f"{role} " if role else ""
     if state[0] == "unsupported":
-        return ("⚠ this claude has no --no-session-persistence: each daimon "
-                "model call is saved as a Claude Code session; update claude")
-    return (f"⚠ could not read `claude --help` ({state[1]}): daimon model "
+        return (f"⚠ this {which}claude has no --no-session-persistence: each "
+                f"daimon model call is saved as a Claude Code session; "
+                f"update claude")
+    return (f"⚠ could not read `claude --help` ({state[1]}): daimon {which}model "
             f"calls may be saved as Claude Code sessions")
+
+
+def _flag_unapplied_warning(st: dict, key: str, role: str) -> str | None:
+    """#1360: claude behind a wrapper is not recognised, so daimon did not add
+    --no-session-persistence; the operator has to."""
+    if not st.get(key):
+        return None
+    return (f"⚠ the {role} command runs claude through another program: "
+            f"--no-session-persistence was not applied, so its model calls may "
+            f"be saved as Claude Code sessions; add it to the command yourself")
 
 
 def _prompt_limit_warnings(st: dict) -> list:
@@ -892,7 +906,12 @@ def _prompt_limit_warnings(st: dict) -> list:
 def _configure_warnings(st: dict) -> list:
     return [w for w in (_command_binary_warning(st),
                         _fallback_binary_warning(st),
-                        _session_persistence_warning(st)) if w
+                        _session_persistence_warning(st),
+                        _session_persistence_warning(
+                            st, "fallback_session_persistence", "rescue"),
+                        _flag_unapplied_warning(st, "flag_unapplied", "primary"),
+                        _flag_unapplied_warning(
+                            st, "fallback_flag_unapplied", "rescue")) if w
             ] + _prompt_limit_warnings(st)
 
 
