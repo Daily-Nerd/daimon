@@ -5,6 +5,26 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.69.0](https://github.com/Daily-Nerd/daimon/compare/v0.68.1...v0.69.0) (2026-11-21)
+
+
+### Features
+
+* **config:** a tenant-scoped host can declare that ruling layers are readable ([39fb01e](https://github.com/Daily-Nerd/daimon/commit/39fb01e11594a5cf83bb10864e28744717a80e35))
+* **heal:** daimon heal --dismiss ends an outstanding failure by hand with the final skip line, from a terminal only ([f8e64c9](https://github.com/Daily-Nerd/daimon/commit/f8e64c96783dd257b10260c7cebc78539edae9fc)), closes [#1369](https://github.com/Daily-Nerd/daimon/issues/1369)
+
+
+### Bug Fixes
+
+* **ledger:** a capture failure stays outstanding until a fact ends it, read through one byte-bounded serialize.log window shared with the hook ([8bd2aa3](https://github.com/Daily-Nerd/daimon/commit/8bd2aa3b3e9a24f9c6bef06d32b0d8a5275cc31a))
+
+
+### Documentation
+
+* **config:** document DAIMON_TENANT_LAYERS and the regenerated ruling list help ([37f0952](https://github.com/Daily-Nerd/daimon/commit/37f09521695b23b686f6767e3ae5972e1e9289bf)), closes [#1370](https://github.com/Daily-Nerd/daimon/issues/1370)
+* **scars:** candidate on the lost class needing an absolute transcript path ([33859d4](https://github.com/Daily-Nerd/daimon/commit/33859d4f6cbac2c47a2e0860836987dff4900888)), closes [#1369](https://github.com/Daily-Nerd/daimon/issues/1369)
+* **troubleshooting:** a failure ends by a fact, lost sessions are counted apart, status names the 4 MB window ([d98dd4b](https://github.com/Daily-Nerd/daimon/commit/d98dd4be8ad8e7491ca75847e3c9d19945a0e1b9)), closes [#1369](https://github.com/Daily-Nerd/daimon/issues/1369)
+
 ## [0.68.1](https://github.com/Daily-Nerd/daimon/compare/v0.68.0...v0.68.1) (2026-11-21)
 
 
