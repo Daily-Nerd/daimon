@@ -5,6 +5,25 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.1](https://github.com/Daily-Nerd/daimon/compare/v0.68.0...v0.68.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **capture:** reading a file that is not a session transcript ends in a final not-a-transcript skip ([f5c24b5](https://github.com/Daily-Nerd/daimon/commit/f5c24b5ba411dcd41e79b7950e3e485bc2e06468)), closes [#1362](https://github.com/Daily-Nerd/daimon/issues/1362)
+* **checks:** find the program of a command by name so wrappers cannot hide it ([d3ab21b](https://github.com/Daily-Nerd/daimon/commit/d3ab21bfa99f9b0d6858a50052f4320281251b9d)), closes [#1358](https://github.com/Daily-Nerd/daimon/issues/1358)
+* **checks:** read a file flag only for the program that defines it ([53b5b5f](https://github.com/Daily-Nerd/daimon/commit/53b5b5f84c85803271a546b98813d54e08d510ea)), closes [#1358](https://github.com/Daily-Nerd/daimon/issues/1358)
+* **hooks:** the catch-up sweep skips files in a host folder that are not session transcripts ([4fca58f](https://github.com/Daily-Nerd/daimon/commit/4fca58f1e87d5c659a0879e573d3bec999d2ff53)), closes [#1362](https://github.com/Daily-Nerd/daimon/issues/1362)
+* **llm:** put the no-save flag right after claude and report wrapped claude commands ([12cc650](https://github.com/Daily-Nerd/daimon/commit/12cc6500dc3407e64c382a65d546e6ec0131bd5e)), closes [#1360](https://github.com/Daily-Nerd/daimon/issues/1360)
+* **llm:** run any claude command without saving a session, not only the preset ([7e426b2](https://github.com/Daily-Nerd/daimon/commit/7e426b22e313e1686a2a55edf10284cd26625289)), closes [#1360](https://github.com/Daily-Nerd/daimon/issues/1360)
+* **store:** the events fold reads lifecycle rows only, so a new event kind cannot hide an item ([7a3a790](https://github.com/Daily-Nerd/daimon/commit/7a3a79025f2f0a254deaaffc6204d7db69776515)), closes [#1363](https://github.com/Daily-Nerd/daimon/issues/1363)
+* **tests:** the vocabulary gate reads prose only, so code spans and fenced blocks are not matched ([3ae9caa](https://github.com/Daily-Nerd/daimon/commit/3ae9caa933f19af5cfb19ecf4b8b59c0cb55b068)), closes [#1364](https://github.com/Daily-Nerd/daimon/issues/1364)
+
+
+### Documentation
+
+* **scars:** scar 0025 says the current fold ignores other kinds and old readers still do not ([b6c4a49](https://github.com/Daily-Nerd/daimon/commit/b6c4a494151770b298211c2ef5589e8fc2e81d95)), closes [#1363](https://github.com/Daily-Nerd/daimon/issues/1363)
+
 ## [0.68.0](https://github.com/Daily-Nerd/daimon/compare/v0.67.2...v0.68.0) (2026-11-16)
 
 
