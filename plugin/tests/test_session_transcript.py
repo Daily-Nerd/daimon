@@ -122,3 +122,8 @@ def test_the_installers_of_both_sweeping_hosts_ship_the_module(rel):
     # An install without the module silently reverts to spawning every file.
     text = (REPO / rel).read_text(encoding="utf-8")
     assert '"session_transcript.py"' in text.split("MODULES = ")[1].split(")")[0]
+
+
+@pytest.mark.parametrize("not_a_row", [None, "type", 3, ["role"]])
+def test_a_value_that_is_not_a_row_carries_no_host_marker(not_a_row):
+    assert st.row_has_host_marker(not_a_row) is False
