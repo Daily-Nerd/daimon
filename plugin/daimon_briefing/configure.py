@@ -40,7 +40,8 @@ def status() -> dict:
         "claude_on_path": shutil.which("claude") is not None,
         "has_api_key": config.llm_api_key() is not None,
         "has_model": config.llm_model() is not None,
-        "command": cmd[0] if cmd else None,
+        # #1360: the command as it will really run (the no-save flag included).
+        "command": llm.effective_command(cmd[0]) if cmd else None,
         "input": cmd[2] if cmd else None,  # #58: DAIMON_LLM_COMMAND_INPUT
         "command_source": (
             "explicit" if config.llm_command()
@@ -57,12 +58,16 @@ def status() -> dict:
         # primary, so a misconfigured fallback was invisible on the one
         # surface built to catch misconfiguration before a detached hook
         # child fails minutes later.
-        "fallback_command": fb[0] if fb else None,
-        # #1261: whether the preset's calls stay out of the host's session
-        # store: "supported" | "unsupported" | "unverified" | None (no preset).
+        "fallback_command": llm.effective_command(fb[0]) if fb else None,
+        # #1261/#1360: whether a claude command's calls stay out of the host's
+        # session store: "supported" | "unsupported" | "unverified" | None
+        # (the command's program is not claude). Primary and rescue, preset or
+        # explicit: llm owns the rule, this only reports it.
         "session_persistence": (
-            llm.claude_session_flag(shutil.which("claude"))
-            if cmd and not config.llm_command() else None
+            llm.claude_command_flag_state(cmd[0]) if cmd else None
+        ),
+        "fallback_session_persistence": (
+            llm.claude_command_flag_state(fb[0]) if fb else None
         ),
         "fallback_input": fb[2] if fb else None,
         # #747: a binary that RESOLVES but does not exist read as working

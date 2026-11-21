@@ -204,6 +204,30 @@ def test_status_fallback_missing_binary_none_without_a_fallback(clean_llm_env):
     assert st["fallback_missing_binary"] is None
 
 
+# ---- #1360: the doctor shows the command as it will run, and the flag state,
+# for an explicit or fallback claude command too ----
+
+
+def test_status_reports_flag_for_explicit_and_fallback_claude(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "claude -p --model sonnet")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND_FALLBACK", "claude -p --model haiku")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["command"] == "claude -p --model sonnet --no-session-persistence"
+    assert st["session_persistence"] == ("supported", "")
+    assert st["fallback_command"] == "claude -p --model haiku --no-session-persistence"
+    assert st["fallback_session_persistence"] == ("supported", "")
+
+
+def test_status_flag_state_is_none_for_other_programs(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "kimi -p")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["command"] == "kimi -p"
+    assert st["session_persistence"] is None
+    assert st["fallback_session_persistence"] is None
+
+
 def test_status_names_a_missing_primary_command_binary(clean_llm_env):
     # #747 half two: the PRIMARY command backend gets the same existence
     # check — ready semantics unchanged (that ripples), the field is the

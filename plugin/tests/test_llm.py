@@ -482,7 +482,10 @@ def test_chat_command_runs_and_sets_disable_env(monkeypatch):
     monkeypatch.setattr(llm, "_run_command", fake_run)
     out = llm._chat_command([{"role": "user", "content": "hi"}], deadline=None)
     assert out == "CKPT"
-    assert seen["argv"] == ["claude", "-p", "--output-format", "json"]
+    # #1360: any claude command is run without saving a session (probe stubbed
+    # "supported" by conftest), prompt still on stdin.
+    assert seen["argv"] == ["claude", "-p", "--output-format", "json",
+                            "--no-session-persistence"]
     assert seen["stdin"] == "USER:\nhi"
     assert seen["env"]["DAIMON_DISABLE"] == "1"
     assert os.path.isdir(seen["cwd"]) is False  # temp dir cleaned up after
@@ -2342,3 +2345,101 @@ def test_explicit_command_is_never_rewritten(monkeypatch):
     monkeypatch.setattr(llm, "_claude_help_text",
                         lambda exe: pytest.fail("explicit command must not probe"))
     assert llm._resolve_command()[0] == "claude -p --model haiku"
+
+
+# ---- #1360: the no-save flag is a fact about the PROGRAM, so every command
+# whose argv[0] is claude gets it (preset, explicit, fallback), through one owner.
+
+_FLAG = "--no-session-persistence"
+_MSG = [{"role": "user", "content": "hi"}]
+
+
+def _run_chat(monkeypatch, command, input_spec="stdin", which=None):
+    """Run _chat_command on a faked _run_command; return the argv it received."""
+    seen = []
+
+    def fake_run(argv, stdin_text, timeout, env, cwd):
+        seen.append(argv)
+        return 0, "ok", ""
+    monkeypatch.setattr(llm, "_run_command", fake_run)
+    if which is not None:
+        monkeypatch.setattr(llm.shutil, "which", which)
+    llm._chat_command(_MSG, deadline=None, resolved=(command, "text", input_spec))
+    return seen[0]
+
+
+def test_explicit_claude_command_gets_the_flag_once(monkeypatch):
+    argv = _run_chat(monkeypatch,
+                     "claude -p --model sonnet --output-format json",
+                     which=lambda b: "/usr/bin/claude")
+    assert argv.count(_FLAG) == 1
+    assert argv[:5] == ["claude", "-p", "--model", "sonnet", "--output-format"]
+
+
+def test_explicit_absolute_path_claude_gets_the_flag(monkeypatch):
+    argv = _run_chat(monkeypatch, "/opt/bin/claude -p",
+                     which=lambda b: b)
+    assert argv.count(_FLAG) == 1
+
+
+def test_command_that_already_has_the_flag_is_unchanged(monkeypatch):
+    argv = _run_chat(monkeypatch, f"claude -p {_FLAG} --model x",
+                     which=lambda b: "/usr/bin/claude")
+    assert argv == ["claude", "-p", _FLAG, "--model", "x"]
+
+
+@pytest.mark.parametrize("help_text,state", [
+    ("Usage: claude\n", "unsupported"),
+    (None, "unverified"),
+])
+def test_flag_is_not_added_unless_probe_says_supported(monkeypatch, help_text, state):
+    def probe(exe):
+        if help_text is None:
+            raise FileNotFoundError("no claude")
+        return help_text
+    monkeypatch.setattr(llm, "_claude_help_text", probe)
+    argv = _run_chat(monkeypatch, "claude -p --model x",
+                     which=lambda b: "/usr/bin/claude")
+    assert argv == ["claude", "-p", "--model", "x"]
+    assert llm.claude_session_flag("/usr/bin/claude")[0] == state
+
+
+def test_non_claude_command_is_byte_identical_and_never_probed(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_help_text",
+                        lambda exe: pytest.fail("must not probe a non-claude program"))
+    argv = _run_chat(monkeypatch, "kimi -p --foo 'a b'",
+                     which=lambda b: "/usr/bin/" + b)
+    assert argv == ["kimi", "-p", "--foo", "a b"]
+
+
+def test_arg_mode_flag_precedes_prompt_and_prompt_stays_last(monkeypatch):
+    argv = _run_chat(monkeypatch, "claude -p", input_spec="arg",
+                     which=lambda b: "/usr/bin/claude")
+    assert argv.index(_FLAG) < len(argv) - 1
+    assert argv[-1] == llm._flatten_messages(_MSG)
+    assert argv.count(_FLAG) == 1
+
+
+def test_file_mode_flag_precedes_the_file_flag(monkeypatch):
+    argv = _run_chat(monkeypatch, "claude -p", input_spec="file:--input-file",
+                     which=lambda b: "/usr/bin/claude")
+    assert argv.index(_FLAG) < argv.index("--input-file")
+
+
+def test_fallback_claude_command_gets_the_flag_and_other_does_not(monkeypatch):
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/" + b)
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "claude -p --model haiku")
+    fb = llm._resolve_fallback_command()
+    argv = _run_chat(monkeypatch, fb[0])
+    assert argv.count(_FLAG) == 1
+    monkeypatch.setenv("DAIMON_LLM_COMMAND_FALLBACK", "kimi -p")
+    fb = llm._resolve_fallback_command()
+    assert _run_chat(monkeypatch, fb[0]) == ["kimi", "-p"]
+
+
+def test_effective_command_names_what_will_run(monkeypatch):
+    monkeypatch.setattr(llm.shutil, "which", lambda b: "/usr/bin/" + b)
+    assert llm.effective_command("claude -p") == f"claude -p {_FLAG}"
+    assert llm.effective_command("kimi -p") == "kimi -p"
+    assert llm.claude_command_flag_state("kimi -p") is None
+    assert llm.claude_command_flag_state("claude -p") == ("supported", "")
