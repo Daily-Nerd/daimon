@@ -232,3 +232,11 @@ def test_a_non_lifecycle_row_does_not_demote_a_corroboration():
     got = store.fold_corroborations(rows)[_ITEM]
     assert got["origins"] == {"S-2"}
     assert got["latest_demotion_ts"] is None
+
+
+@pytest.mark.parametrize("not_a_row", [None, "resolution", 7, ["resolution"]])
+def test_a_value_that_is_not_a_row_is_never_a_lifecycle_row(not_a_row):
+    # The owner answers for every caller, so no caller needs its own guard.
+    assert store.is_lifecycle_kind(not_a_row) is False
+    live = _row(_ITEM, "resolved", "2026-10-01T00:00:00Z")
+    assert store.fold_resolutions([not_a_row, live]) == {_ITEM: live}

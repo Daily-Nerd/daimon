@@ -3820,7 +3820,7 @@ def is_lifecycle_kind(evt) -> bool:
 def _fold(rows, *, keys: bool) -> dict:
     out: dict = {}
     for evt in rows:
-        if not isinstance(evt, dict) or not is_lifecycle_kind(evt):
+        if not is_lifecycle_kind(evt):
             continue
         ref = str(evt.get("item_ref") or "")
         if not ref or (is_key_ref(ref) and not keys):
