@@ -323,10 +323,10 @@ def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
     The row is a POINTER and a WITNESS, nothing else:
       kind      "corroboration"
       item_ref  `store.corroboration_ref(item_id)` — NAMESPACED. Never the
-                bare id: `resolutions` folds on item_ref alone and
-                `is_resolved` resolves nearly everything (scar 0025), so a
-                bare-ref row would hide the item it supports and would
-                displace a human's superseded-by verdict as latest (#376).
+                bare id: an older reader folds on item_ref alone and
+                resolves nearly everything (scar 0025), so a bare-ref row
+                would hide the item it supports there and would displace a
+                human's superseded-by verdict as latest (#376).
       status    "corroborated-by:<observing session>"
       source    "serializer" — machine-authored, same as a supersede candidate.
     No `item_text`, ever: this log is append-only and never rewritten, so a

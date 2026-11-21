@@ -20,9 +20,10 @@ _HANDOFF_MAX_CHARS = 2000
 
 def _cmd_handoff(args) -> int:
     """Leave (or retract) the project's baton (#523). Ref-less by contract —
-    scar 0025: an event kind carrying an item_ref silently resolves that
-    item, so a handoff must never name one. The resolutions fold ignores
-    ref-less lines (guarded by test_handoff_event_never_resolves_an_item)."""
+    scar 0025: an older daimon folds an event kind carrying an item_ref as
+    that item's resolution, so a handoff must never name one. The resolutions
+    fold ignores ref-less lines and the handoff kind (guarded by
+    test_handoff_event_never_resolves_an_item)."""
     _cli._note_usage("handoff")
     project = _cli._resolve_project(args.project)
     if args.clear:

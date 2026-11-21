@@ -2925,7 +2925,8 @@ def active_handoff(project_dir=None) -> dict | None:
     A handoff is an AUTHORED, ref-less `handoff` event — never a cognitive
     item, so it cannot enter ranking, dedup, carry or budget trimming, and
     (scar 0025) it must never name an `item_ref`: the resolutions fold
-    ignores ref-less lines, so a baton can never resolve an item. Latest
+    ignores ref-less lines (and the handoff kind), so a baton can never
+    resolve an item. Latest
     handoff-kind event wins; `status: cleared` (or an empty note) retracts.
 
     Consumption: the baton stays active until TWO distinct non-introspection
@@ -2971,11 +2972,12 @@ def append_verification(item_ref: str, check: str, reason: str,
     quote that missed the transcript, an outcome claim with no signal cited.
 
     Deliberately a SECOND stream, not an `events.jsonl` row with a new `kind`.
-    `resolutions()` folds events on `item_ref` alone and never inspects
-    `kind`, and `is_resolved()` resolves any status outside reopen/
-    supersede-candidate — so a rejection written there would HIDE the very
-    item it describes, from the briefing, from carry and from recall. A
-    downgraded item must stay visible and merely read as inferred.
+    The current fold reads lifecycle kinds only (`LIFECYCLE_KINDS`, #1363), but
+    an older daimon reading the same store still folds on `item_ref` alone and
+    resolves any status outside reopen/supersede-candidate (scar 0025) — so a
+    rejection written there would HIDE the very item it describes, from the
+    briefing, from carry and from recall, on that reader. A downgraded item
+    must stay visible and merely read as inferred.
 
     Stores a POINTER and a REASON CODE, never the rejected text: quote
     verification runs pre-redaction (#141), so the raw item text must not
@@ -3310,8 +3312,9 @@ def verification_counts(project_dir=None) -> dict:
 # ---- #404: forget-suppression hit accounting ----
 
 # A capture-time forget suppression is otherwise silent. Account it on a
-# SECOND telemetry stream (never events.jsonl: scar 0025 — any new event kind
-# there resolves-and-hides the item it names), exactly as append_verification
+# SECOND telemetry stream (never events.jsonl: scar 0025 — an older reader
+# folds any new event kind there as a resolution of the item it names),
+# exactly as append_verification
 # does for the rejection ledger.
 _FORGET_HITS = "forget-hits.jsonl"
 
@@ -3403,8 +3406,9 @@ def forget_hit_stats(project_dir=None) -> dict:
 # Which event-ledger `source` values are HUMAN is `authority.py`'s answer
 # (#1301): `authority.of_row("events", row)`. Widening what counts as human
 # widens WHO counts, never WHAT counts: callers must still filter on `kind`
-# themselves (scar 0025 - kind never isolates a fold on its own), or forget's
-# tombstones and log's freeform rows ride in as decisions.
+# themselves (a count of events is not the lifecycle fold, which reads
+# lifecycle kinds only), or forget's tombstones and log's freeform rows ride in
+# as decisions.
 
 
 def observed_event_source(attended: bool) -> str:
@@ -3761,8 +3765,9 @@ def resolutions(project_dir=None) -> dict:
     order (concurrent writers may interleave, and a rewritten/reordered log
     must fold identically). Equal-ts ties break on content via _tie_wins
     (#143): reopen > resolving > supersede-candidate, then canonical-JSON
-    order — never the line's position in the file. Unknown
-    kinds and extra fields ride along untouched; unparseable lines are
+    order — never the line's position in the file. Rows of a
+    non-lifecycle kind are skipped (#1363); extra fields on a lifecycle row
+    ride along untouched; unparseable lines are
     skipped best-effort: a reader must never drop the log over one bad
     line."""
     project_dir = _resolved(project_dir)
@@ -3780,16 +3785,42 @@ def fold_resolutions(rows) -> dict:
     `ts` never displaces a stamped one, and the first of two unstamped rows
     on one ref stays. No dedupe: every ref keeps its own latest event.
 
+    Only lifecycle rows are read (`is_lifecycle_kind`, #1363): a row of any
+    other kind, known or unknown, is skipped, so it can never hide or revive
+    an item.
+
     The ITEM fold: a forget's key ref (`is_key_ref`) is not an item, so it is
     skipped here and no reader of this map can count it, show it or mistake it
     for an id. `standing_tombstones` is the one reader of key refs."""
     return _fold(rows, keys=False)
 
 
+# The row kinds that say whether an item is live (#1363): a row with no `kind`
+# (the oldest rows), `resolution` (every resolve, reopen and candidate), and the
+# forget pair, `tombstone` and `lift` (forget.py writes exactly these two).
+# `events.jsonl` also carries `handoff`, `corroboration`, `note`, `decision`,
+# `measurement` and whatever a later release adds. Those are not lifecycle
+# facts, so the fold must not read them: an unknown kind stays inert until it
+# is listed here on purpose. An OLDER daimon reading the same store still folds
+# kind-blind (scar 0025), so a new kind must also keep a ref no item id can
+# equal (empty, or namespaced like `corroboration:`) until old readers are gone.
+LIFECYCLE_KINDS = frozenset({"resolution", "tombstone", "lift"})
+
+
+def is_lifecycle_kind(evt) -> bool:
+    """Whether an events row is a lifecycle row, the only kind `_fold` reads.
+    The one owner of that answer: a missing `kind` is lifecycle, a kind
+    outside `LIFECYCLE_KINDS` (or one that is not a string) is not."""
+    if not isinstance(evt, dict):
+        return False
+    kind = evt.get("kind")
+    return kind is None or (isinstance(kind, str) and kind in LIFECYCLE_KINDS)
+
+
 def _fold(rows, *, keys: bool) -> dict:
     out: dict = {}
     for evt in rows:
-        if not isinstance(evt, dict):
+        if not isinstance(evt, dict) or not is_lifecycle_kind(evt):
             continue
         ref = str(evt.get("item_ref") or "")
         if not ref or (is_key_ref(ref) and not keys):
@@ -3823,7 +3854,8 @@ def item_events(item_ref: str, project_dir=None) -> list[dict]:
     Exact ref equality is what keeps namespaced rows out. A corroboration row
     lands on `corroboration:<id>` (#268) precisely so it can never address the
     item, and this reader inherits that for free — never widen it to a prefix
-    match (scar 0025: any event kind on a bare ref hides its item).
+    match (an older reader still folds any event kind on a bare ref as that
+    item's resolution, scar 0025).
 
     Fails open to [] on a missing, unreadable or corrupt log; unparseable
     lines are skipped best-effort, the posture every reader here takes."""
@@ -3849,26 +3881,20 @@ def fold_item_events(rows, item_ref: str) -> list[dict]:
 
 
 def is_resolved(event) -> bool:
-    """Liveness rule (#102, #14): latest event wins; three states — a status
-    starting with 'reopen' returns the item to live; 'supersede-candidate',
-    'corroborat*', and 'resolving-candidate' (#480 slice 2) are non-resolving
-    by construction (see below); anything else means resolved. Status is
-    free-form text by design — never an enum, so unknown statuses resolve
+    """Liveness rule (#102, #14): latest LIFECYCLE event wins (the fold reads
+    lifecycle kinds only, #1363); three states — a status starting with
+    'reopen' returns the item to live; 'supersede-candidate' and
+    'resolving-candidate' (#480 slice 2) are non-resolving by construction
+    (see below); anything else means resolved. Status is free-form text by
+    design — never an enum, so an unknown status on a lifecycle row resolves
     (the writer bothered to record a lifecycle fact) rather than vanish."""
     if not isinstance(event, dict):
         return False
     status = str(event.get("status") or "").lower()
-    if status.startswith(("supersede-candidate", "corroborat", "resolving-candidate")):
+    if status.startswith(("supersede-candidate", "resolving-candidate")):
         return False  # a machine SUGGESTION is live by construction (#14):
                       # every consumer (carry, the view, future) inherits
                       # no-suppression without knowing candidates exist.
-                      # #268 corroboration is the same shape one step
-                      # further: a row that RAISES trust must never gain the
-                      # power to lower it. Corroboration rows already land on
-                      # a namespaced ref (corroboration_ref) that no item id
-                      # can equal, so this branch is the belt to that brace —
-                      # scar 0025 (any event kind on a bare ref hides its
-                      # item) is too expensive a failure to guard once.
                       # #480 slice 2: resolving-candidate is the SAME shape —
                       # an agent's unverified claim — one status further; it
                       # withholds only once slice 3's serialize-time
@@ -3878,12 +3904,12 @@ def is_resolved(event) -> bool:
 
 # ---- #268: corroboration events ----
 
-# A corroboration row NAMES an item without addressing it. `resolutions` folds
-# on `item_ref` alone and `is_resolved` resolves any status outside reopen/
-# supersede-candidate/corroborat* (scar 0025), so a row written on the BARE
-# item id would hide the very item it supports — and would displace a human's
-# superseded-by verdict as that item's latest event (the #376 trap). The
-# namespace is what makes both structurally impossible: no id this codebase
+# A corroboration row NAMES an item without addressing it. The current fold
+# skips the kind (#1363), but an older reader folds on `item_ref` alone and
+# resolves any status outside reopen/supersede-candidate (scar 0025), so a row
+# written on the BARE item id would hide the very item it supports there, and
+# would displace a human's superseded-by verdict as that item's latest event
+# (the #376 trap). The namespace is what makes both structurally impossible: no id this codebase
 # mints can contain a colon (see _stamp_item_ids), so no item ref can ever
 # collide with one of these.
 _CORROBORATION_PREFIX = "corroboration:"
@@ -3973,7 +3999,8 @@ def fold_corroborations(rows) -> dict:
             seen = witnesses.setdefault(item_id, {})
             if ts > seen.get(observer, ""):
                 seen[observer] = ts
-        elif _demotes(evt, lowered) and ts > demotions.get(ref, ""):
+        elif (is_lifecycle_kind(evt) and _demotes(evt, lowered)
+              and ts > demotions.get(ref, "")):
             demotions[ref] = ts
     for item_id, seen in witnesses.items():
         demoted = demotions.get(item_id)
