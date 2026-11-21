@@ -76,6 +76,8 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
         "starts the detached `daimon heal` child",
     ("daimon_briefing/host_detect.py", "detect", "shutil.which"):
         "detects which host CLIs are installed (a table of host binaries)",
+    ("daimon_briefing/llm.py", "_claude_exe", "shutil.which"):
+        "resolves the claude executable the no-session probe is keyed by",
     ("daimon_briefing/llm.py", "_missing_binary", "shutil.which"):
         "checks the configured LLM command exists",
     ("daimon_briefing/llm.py", "_resolve_command", "shutil.which"):

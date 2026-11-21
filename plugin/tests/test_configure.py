@@ -48,7 +48,7 @@ def test_named_claude_cli_backend_resolves_the_zero_config_preset(clean_llm_env)
     assert st["ready"] is True
     assert st["claude_on_path"] is True
     assert st["command_source"] == "claude-cli"
-    assert st["command"] == llm._CLAUDE_PRESET[0] + " --no-session-persistence"
+    assert st["command"] == "claude --no-session-persistence " + llm._CLAUDE_PRESET[0].removeprefix("claude ")
     assert st["session_persistence"] == ("supported", "")
 
 
@@ -202,6 +202,50 @@ def test_status_fallback_missing_binary_none_without_a_fallback(clean_llm_env):
     st = configure.status()
     assert st["fallback_command"] is None
     assert st["fallback_missing_binary"] is None
+
+
+# ---- #1360: the doctor shows the command as it will run, and the flag state,
+# for an explicit or fallback claude command too ----
+
+
+def test_status_reports_flag_for_explicit_and_fallback_claude(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "claude -p --model sonnet")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND_FALLBACK", "claude -p --model haiku")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["command"] == "claude --no-session-persistence -p --model sonnet"
+    assert st["session_persistence"] == ("supported", "")
+    assert st["fallback_command"] == "claude --no-session-persistence -p --model haiku"
+    assert st["fallback_session_persistence"] == ("supported", "")
+
+
+def test_status_and_warnings_name_a_wrapped_claude_for_primary_and_rescue(clean_llm_env):
+    from daimon_briefing import render
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "env FOO=1 claude -p")
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND_FALLBACK", 'sh -c "claude -p"')
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["flag_unapplied"] is True
+    assert st["fallback_flag_unapplied"] is True
+    ws = render._configure_warnings(st)
+    assert sum("--no-session-persistence" in w and "not applied" in w for w in ws) == 2
+
+
+def test_status_no_unapplied_notice_for_plain_commands(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "kimi -p")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["flag_unapplied"] is False
+    assert st["fallback_flag_unapplied"] is False
+
+
+def test_status_flag_state_is_none_for_other_programs(clean_llm_env):
+    clean_llm_env.setenv("DAIMON_LLM_COMMAND", "kimi -p")
+    _set_claude(clean_llm_env, True)
+    st = configure.status()
+    assert st["command"] == "kimi -p"
+    assert st["session_persistence"] is None
+    assert st["fallback_session_persistence"] is None
 
 
 def test_status_names_a_missing_primary_command_binary(clean_llm_env):
