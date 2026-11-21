@@ -38,6 +38,14 @@ daimon heal --force       # spend another attempt on a session that used its ret
 
 A failure stays outstanding until something resolves it: a later success, a final skip, a checkpoint that covers the session, or its transcript no longer existing. How many other sessions wrote to the log since never ends a failure. A session whose transcript file is gone has nothing left to capture, so `daimon status` counts it apart (`lost: N (never captured, transcript gone)`), `heal` never lists it and health ignores it. The count is read from the disk each time, so a transcript that comes back makes its session outstanding again. Status and heal read the last 4 MB of `serialize.log`; when the log is longer, `daimon status` says that older lines are not read.
 
+A session that spawned, never finished and has no transcript path recorded has no fact that can end it. End it by hand, from a terminal:
+
+```sh
+daimon heal --dismiss <session-id>
+```
+
+This writes the same final skip line a too-short session gets, with a reason that says a person dismissed it. Heal will not retry it, even if its transcript still exists; for one that does, the command prints `daimon serialize <transcript>` to capture it instead. It is human-only (an agent has no way to run it), it stands alone, and it refuses a session that is not outstanding: unknown, already ended, lost, or still being repaired.
+
 ## A ledger cannot be read
 
 When a project's `events.jsonl` cannot be read (a conflict marker, a bad byte, an OS error), daimon refuses to write a checkpoint for it, before it calls the model, so the refusal costs nothing. `daimon status` names the ledger and the cure, and the next briefing says how many sessions are waiting. Repair it, then let heal retry them:

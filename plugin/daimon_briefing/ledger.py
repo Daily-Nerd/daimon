@@ -151,6 +151,18 @@ def write_host_run_marker(host: str, session_id: str, project: str | None,
         pass
 
 
+# The reason of the final skip line a person writes with
+# `daimon heal --dismiss`: it ends an outstanding entry no fact can end.
+DISMISS_REASON = "dismissed by a person, heal will not retry it"
+
+
+def skip_line(session_id: str, reason: str) -> str:
+    """The final skip line: `skipped serialize for <id>: <reason>`. The fold
+    reads it as the result `skipped` (`_LEDGER_SKIP_RE`): never outstanding,
+    never retried. The one place the line is formatted, for every writer."""
+    return f"skipped serialize for {session_id}: {reason}"
+
+
 def write_host_skip_line(host: str, session_id: str) -> None:
     """The refusal twin of the spawn line: a host-run found a live serialize
     for this session and did not start. Host-prefixed and timestamped like the
@@ -884,9 +896,12 @@ def _scan_failures(text: str, now: float, force: bool = False,
 
 
 _HEAL_SKIP_REASON = {
-    "retry-exhausted": "retry already attempted, still failing (re-run with --force)",
-    "unrecoverable": "no spawn record or transcript gone — cannot auto-heal",
-    "hung": "spawned, no result (hung/killed) — transcript unavailable",
+    "retry-exhausted": ("retry already attempted, still failing (re-run with "
+                        "--force, or end it: heal --dismiss <id>)"),
+    "unrecoverable": ("no spawn record — cannot auto-heal (end it: heal "
+                      "--dismiss <id>)"),
+    "hung": ("spawned, no result (hung/killed) — transcript unavailable "
+             "(end it: heal --dismiss <id>)"),
     "project-unknown": ("project unknown for a transcript filed under a project "
                         "— would be checkpointed to the global dir; re-run "
                         "'daimon serialize <transcript> --project <dir>'"),

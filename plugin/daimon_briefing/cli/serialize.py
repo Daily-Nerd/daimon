@@ -36,6 +36,7 @@ from .. import (
     transcript,
 )
 from ..ledger import _append_serialize_log, _append_transcript_notes
+from . import _observe
 from ..surfaces import Writer
 
 
@@ -208,7 +209,8 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # gets captured. Checked BEFORE parsing/preflight/LLM so a hash match short-
     # circuits all of it, even with no LLM backend configured at all.
     if store.transcript_unchanged(session_id, transcript_sha):
-        msg = f"skipped serialize for {session_id}: transcript unchanged since checkpoint (hash match)"
+        msg = ledger.skip_line(
+            session_id, "transcript unchanged since checkpoint (hash match)")
         print(msg)
         _append_serialize_log(msg)
         return 0
@@ -272,7 +274,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
                               escalate=escalate, coverage=coverage,
                               door=door, account=account)
         except serializer.TooShortError as exc:
-            msg = f"skipped serialize for {session_id}: {exc}"
+            msg = ledger.skip_line(session_id, str(exc))
             print(msg)
             _append_serialize_log(msg)
             return 0
@@ -296,8 +298,9 @@ def _run_serialize(transcript_path: Path, project: str | None,
             # shape as the hash-match short-circuit above — matches neither
             # _RESULT_OK_RE nor _RESULT_ERR_RE, so the ledger never reads it
             # as a lying success.
-            msg = (f"skipped serialize for {session_id}: daimon disabled "
-                   "(DAIMON_DISABLE) — checkpoint not written")
+            msg = ledger.skip_line(
+                session_id, "daimon disabled (DAIMON_DISABLE) — "
+                "checkpoint not written")
             print(msg)
             _append_serialize_log(msg)
             return 0
@@ -554,6 +557,8 @@ def _cmd_heal(args) -> int:
     force = getattr(args, "force", False)
     project = getattr(args, "project", None)
     since = getattr(args, "presumed_dead_before", None)
+    if getattr(args, "dismiss", None):
+        return _heal_dismiss(args)
     if since is not None and not project:
         # D11: the assertion is scoped to one project, so it names one.
         parser = getattr(args, "heal_parser", None)
@@ -597,6 +602,43 @@ def _cmd_heal(args) -> int:
         t = plan["target"]
         rc = _heal_target(t["sid"], t["transcript"], t["project"], t["line"])
         return 0 if rc is None else rc
+
+
+def _heal_dismiss(args) -> int:
+    """`daimon heal --dismiss <session-id>`: a person ends an outstanding entry
+    that no fact can end, by writing the final skip line. Human only: the
+    channel is the observed one (`_observe.channel`, as for relation verdicts),
+    so an agent without a terminal is refused and there is no `--by agent`.
+    Refuses, writing nothing, unless the session is outstanding right now by
+    `_scan_failures`: unknown, already ended, lost and in-flight all refuse, so
+    a capture that is still running is never hidden."""
+    if (getattr(args, "all", False) or getattr(args, "session", None)
+            or getattr(args, "force", False) or getattr(args, "project", None)
+            or getattr(args, "dry_run", False)):
+        print("heal: error: --dismiss stands alone", file=sys.stderr)
+        return 2
+    if _observe.channel() is None:
+        print("heal: error: --dismiss is human-only and needs an interactive "
+              "terminal; an agent cannot hide a failure", file=sys.stderr)
+        return 2
+    sid = ledger._session_key(args.dismiss)
+    outstanding, lost = ledger._scan_failures(_read_serialize_window(),
+                                              time.time())
+    entry = next((f for f in outstanding if f["sid"] == sid), None)
+    if entry is None or entry["kind"] == "in-flight":
+        why = ("its transcript is gone, so it is already counted as lost"
+               if any(f["sid"] == sid for f in lost) else
+               "a repair of it is still running" if entry is not None else
+               "it is not an outstanding failure")
+        print(f"heal: error: {sid} was not dismissed: {why}", file=sys.stderr)
+        return 1
+    _append_serialize_log(ledger.skip_line(sid, ledger.DISMISS_REASON))
+    print(f"dismissed {sid}: heal will not retry it, even if its transcript "
+          "still exists")
+    transcript = entry["transcript"]
+    if transcript and Path(transcript).exists():
+        print(f"to capture it instead, run: daimon serialize {transcript}")
+    return 0
 
 
 def _read_serialize_log() -> str:
@@ -773,6 +815,11 @@ def register_heal(sub, fmt) -> None:
         "--session", action="append",
         help="heal only this session id (repeatable); a Codex rollout stem "
              "names its session",
+    )
+    p_heal.add_argument(
+        "--dismiss", metavar="SESSION_ID",
+        help="end an outstanding failure by hand (human only, stands alone): "
+             "heal will not retry it, even if its transcript still exists",
     )
     p_heal.add_argument(
         "--presumed-dead-before", type=float, metavar="EPOCH",

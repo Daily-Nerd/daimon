@@ -1109,7 +1109,8 @@ def _outstanding_lines(outstanding) -> list:
             else:
                 lines.append(
                     f"  - {f['sid']}  spawned {age} ago, no result "
-                    f"(hung/killed; transcript unavailable)"
+                    f"(hung/killed; transcript unavailable); "
+                    f"end it: `daimon heal --dismiss {f['sid']}`"
                 )
         elif f["class"] == "retry-exhausted":
             # #15: name the escape hatch here — this is the one place an
@@ -1117,10 +1118,13 @@ def _outstanding_lines(outstanding) -> list:
             # own skip reason.
             lines.append(
                 f"  - {f['sid']}  error {age} ago — retry attempted, still failing "
-                f"(re-run with `daimon heal --force`)"
+                f"(re-run with `daimon heal --force`, or end it: "
+                f"`daimon heal --dismiss {f['sid']}`)"
             )
         elif f["class"] == "unrecoverable":
-            lines.append(f"  - {f['sid']}  error {age} ago — transcript unavailable, cannot auto-heal")
+            lines.append(f"  - {f['sid']}  error {age} ago — no spawn record, "
+                         f"cannot auto-heal; end it: "
+                         f"`daimon heal --dismiss {f['sid']}`")
         elif f["class"] == "project-unknown":
             # #1213: heal would file the checkpoint in the global dir, so it
             # waits for a person to name the project.

@@ -38,6 +38,14 @@ daimon heal --force       # gasta otro intento en una sesión que usó su reinte
 
 Una falla sigue pendiente hasta que algo la resuelve: un éxito posterior, un skip final, un checkpoint que cubre la sesión, o que su transcript ya no exista. La cantidad de otras sesiones que escribieron en el log nunca termina una falla. Una sesión cuyo archivo de transcript ya no está no tiene nada más que capturar, así que `daimon status` la cuenta aparte (`lost: N (never captured, transcript gone)`), `heal` nunca la lista y la salud la ignora. El conteo se lee del disco cada vez, así que si el transcript vuelve, la sesión vuelve a estar pendiente. Status y heal leen los últimos 4 MB de `serialize.log`; cuando el log es más largo, `daimon status` avisa que las líneas más viejas no se leen.
 
+Una sesión que se lanzó, nunca terminó y no tiene ruta de transcript registrada no tiene ningún hecho que la cierre. Cerrala a mano, desde una terminal:
+
+```sh
+daimon heal --dismiss <session-id>
+```
+
+Esto escribe la misma línea final de skip que recibe una sesión demasiado corta, con un motivo que dice que una persona la descartó. Heal no la reintenta, aunque su transcript todavía exista; si existe, el comando imprime `daimon serialize <transcript>` para capturarla en su lugar. Es solo para personas (un agente no puede correrlo), va solo, y se niega con una sesión que no está pendiente: desconocida, ya terminada, perdida o en reparación.
+
 ## Un ledger no se puede leer
 
 Cuando el `events.jsonl` de un proyecto no se puede leer (un marcador de conflicto, un byte malo, un error del SO), daimon se niega a escribir un checkpoint para él, antes de llamar al modelo, así que el rechazo no cuesta nada. `daimon status` nombra el ledger y la cura, y el próximo briefing dice cuántas sesiones esperan. Repará el ledger y dejá que heal las reintente:

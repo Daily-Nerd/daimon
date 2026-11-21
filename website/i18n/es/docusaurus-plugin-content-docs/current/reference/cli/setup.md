@@ -204,7 +204,7 @@ daimon check sync [--check] [--json] [--project PROJECT]
 re-serialize the most recent FAILED session if it can be done safely
 
 ```text
-daimon heal [--dry-run] [--force] [--all] [--project PROJECT] [--session SESSION] [--presumed-dead-before EPOCH]
+daimon heal [--dry-run] [--force] [--all] [--project PROJECT] [--session SESSION] [--dismiss SESSION_ID] [--presumed-dead-before EPOCH]
 ```
 
 | argumento | valor | por defecto | descripción |
@@ -214,6 +214,7 @@ daimon heal [--dry-run] [--force] [--all] [--project PROJECT] [--session SESSION
 | `--all` |  |  | heal every healable session, one at a time, re-planning after each (default: only the most recent failure) |
 | `--project` | `PROJECT` |  | heal only the failures of this project directory (runs every one of them, like --all) |
 | `--session` | `SESSION` |  | heal only this session id (repeatable); a Codex rollout stem names its session |
+| `--dismiss` | `SESSION_ID` |  | end an outstanding failure by hand (human only, stands alone): heal will not retry it, even if its transcript still exists |
 | `--presumed-dead-before` | `EPOCH` |  | assert that no serialize of --project started before EPOCH is still alive, unless a stamp was touched after it (a host whose children die with it, such as a container; never on a laptop) |
 
 ## `daimon import`
