@@ -411,18 +411,16 @@ def test_strict_schema_violation_raises_named_error(fake_chat_factory):
         serializer.serialize_strict("S1", make_messages(20), chat=chat)
 
 
-def test_strict_chunked_bad_chunk_names_the_chunk(fake_chat_factory, monkeypatch):
+def test_strict_chunked_all_chunks_bad_names_the_first_chunk(fake_chat_factory, monkeypatch):
     monkeypatch.setenv("DAIMON_CHUNK_LINES", "6")
     monkeypatch.setenv("DAIMON_CHUNK_OVERLAP", "1")
-    # Sequential: with concurrency >1, workers past chunk 2 race ahead and
-    # exhaust FakeChat's scripted responses before the parse error lands (flaky).
     monkeypatch.setenv("DAIMON_CHUNK_CONCURRENCY", "1")
     messages = make_messages(20)
-    # Two garbage responses: a single bad parse is retried once (parse_retries=1),
-    # so the failure must persist through the retry to surface as OutputParseError.
-    responses = [_valid_checkpoint_json("c0"), "garbage not json", "garbage not json"]
-    chat = fake_chat_factory(responses)
-    with pytest.raises(serializer.OutputParseError, match="chunk 2"):
+    # One bad chunk no longer fails the run (q-741c17a4d3be): only when NO
+    # chunk yields a usable partial is the first failure raised, named. Each
+    # chunk gets two garbage responses (one parse retry each).
+    chat = fake_chat_factory(["garbage not json"] * 40)
+    with pytest.raises(serializer.OutputParseError, match="chunk 1"):
         serializer.serialize_strict("S1", messages, chat=chat)
 
 

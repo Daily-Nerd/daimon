@@ -2202,6 +2202,32 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
         f"LLM call on {what} ran no attempts (parse_retries={parse_retries})")
 
 
+def _settle_extraction(results: list, kind: str) -> list:
+    """Split a fan-out's results into the partials that survive.
+
+    Each extraction call (chunk or perspective pass) either returned a usable
+    partial or raised OutputParseError for ITS OWN output (prose, or the
+    wrong shape, #1218) after its retry and rescue. That is a fact about one
+    call, so it costs that call's contribution and nothing else: the other
+    calls' paid-for partials still reach the merge (q-741c17a4d3be). The
+    drop is named in the log, per call, and the failed output was never
+    cached, so the next heal re-asks it.
+
+    When NOTHING survives there is no checkpoint to build, so the first
+    failure is raised unchanged, in chronological order. Other failures
+    (transport, deadline, prompt size) are LLMCallError and never reach
+    here: they say the backend is unhealthy, not that one output was bad."""
+    kept = [r for r in results if not isinstance(r, OutputParseError)]
+    dropped = [r for r in results if isinstance(r, OutputParseError)]
+    if not kept:
+        raise dropped[0]
+    for exc in dropped:
+        log.warning("serialize: dropped %s, its output was unusable and the "
+                    "other %d of %d %s(s) are merged without it: %s",
+                    kind, len(kept), len(results), kind, exc)
+    return kept
+
+
 def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
     """How many sequential LLM 'waves' a chunked serialize needs (#314).
 
@@ -2997,11 +3023,14 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             else:
                 body = f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
             t0 = time.monotonic()
-            partial = _call_and_parse(
-                chat, system,
-                f"session_id: {session_id}\n\n{body}{_chunk_tail_contract(system)}",
-                deadline, f"perspective {name}, chunk {i + 1} of {len(chunks)}",
-            )
+            try:
+                partial = _call_and_parse(
+                    chat, system,
+                    f"session_id: {session_id}\n\n{body}{_chunk_tail_contract(system)}",
+                    deadline, f"perspective {name}, chunk {i + 1} of {len(chunks)}",
+                )
+            except OutputParseError as exc:
+                return exc  # settled by _settle_extraction: local, never cached
             log.info("perspective %s: chunk %d/%d done in %.0fs",
                      name, i + 1, len(chunks), time.monotonic() - t0)
             _save_chunk_cache(key, partial)
@@ -3010,7 +3039,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
         workers = min(config.chunk_concurrency(), len(jobs))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             # pool.map preserves input order — chunk-major stays chronological.
-            return list(_map_in_context(pool, _one_pass, jobs))
+            return _settle_extraction(
+                list(_map_in_context(pool, _one_pass, jobs)), "perspective pass")
 
     def _produce(note: str) -> dict:
         nonlocal partials
@@ -3052,13 +3082,16 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                              i + 1, len(chunks))
                     return cached
                 t0 = time.monotonic()
-                partial = _call_and_parse(
-                    chat, _serialize_sys(),
-                    f"session_id: {session_id}\n\n"
-                    f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
-                    f"{_chunk_tail_contract()}",
-                    deadline, f"chunk {i + 1} of {len(chunks)}",
-                )
+                try:
+                    partial = _call_and_parse(
+                        chat, _serialize_sys(),
+                        f"session_id: {session_id}\n\n"
+                        f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
+                        f"{_chunk_tail_contract()}",
+                        deadline, f"chunk {i + 1} of {len(chunks)}",
+                    )
+                except OutputParseError as exc:
+                    return exc  # settled by _settle_extraction: local, never cached
                 log.info("chunk %d/%d done in %.0fs",
                          i + 1, len(chunks), time.monotonic() - t0)
                 _save_chunk_cache(key, partial)
@@ -3067,8 +3100,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             workers = min(config.chunk_concurrency(), len(chunks))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 # executor.map preserves input order, so partials stay chronological.
-                partials = list(_map_in_context(
-                    pool, _one_chunk, enumerate(chunks)))
+                partials = _settle_extraction(list(_map_in_context(
+                    pool, _one_chunk, enumerate(chunks))), "chunk")
         # Retry re-runs ONLY the merge (the final sampling that failed) — the
         # chunk partials are kept; they are the expensive calls.
         return _merge_partials(chat, session_id, list(partials), deadline,
