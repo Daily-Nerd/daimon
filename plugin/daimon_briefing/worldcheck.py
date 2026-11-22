@@ -447,6 +447,7 @@ def _receipt_eligible(carried, project, deadline) -> list:
     if not slug:
         return []
     eligible, seen = [], set()
+    stamps = store.stamp_slugs(slug)
     for item in carried:
         origin = item.get("origin_session")
         if not isinstance(origin, str) or not origin or origin in seen:
@@ -455,7 +456,7 @@ def _receipt_eligible(carried, project, deadline) -> list:
         if time.monotonic() >= deadline:
             break
         cp = store.read_checkpoint(origin)  # total — swallows torn/bad paths
-        if isinstance(cp, dict) and cp.get("project_slug") == slug:
+        if isinstance(cp, dict) and cp.get("project_slug") in stamps:
             eligible.append(origin)
     return eligible
 

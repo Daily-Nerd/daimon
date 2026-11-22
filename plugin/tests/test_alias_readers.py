@@ -15,8 +15,11 @@ unrelated pair changes nothing.
 """
 
 import json
+import time
 
-from daimon_briefing import buckets, capture, config, privacy, scope, store
+from daimon_briefing import (buckets, capture, config, privacy, scope, store,
+                             view, worldcheck)
+from daimon_briefing.cli import stats
 from daimon_briefing.store import Admit
 
 G = "-Users-old-machine-proj"      # the merged-away bucket (stamp on old files)
@@ -182,6 +185,61 @@ def test_team_scan_membership_follows_a_merged_away_stamp_only_through_an_alias(
     _plant_alias(G, slug)
     privacy._scan_team_dir(slug, set(), proj, [])
     assert seen == [path]
+
+
+# ---- the sibling readers: view, worldcheck, stats ----------------------------------------------
+
+
+def test_bucket_files_follow_a_merged_away_stamp_only_through_an_alias(tmp_path):
+    proj = _project(tmp_path)
+    slug = _bucket(proj)
+    old = _flat_session("old", G)
+    assert [p for p, _ in view._bucket_files(slug)] == []
+    _plant_alias(G, slug)
+    assert [p for p, _ in view._bucket_files(slug)] == [old]
+
+
+def test_open_sessions_opens_a_merged_away_stamp_only_through_an_alias(tmp_path):
+    proj = _project(tmp_path)
+    _flat_session("old", G)
+    assert view.open_sessions(proj, ["old"], live=False) == {}
+    _plant_alias(G, _bucket(proj))
+    assert list(view.open_sessions(proj, ["old"], live=False)) == ["old"]
+
+
+def test_session_state_calls_a_merged_away_stamp_foreign_only_without_an_alias(
+        tmp_path):
+    proj = _project(tmp_path)
+    slug = _bucket(proj)
+    _flat_session("old", G)
+    _flat_session("other", OTHER)
+    assert view._session_state("old", slug) == "foreign"
+    _plant_alias(G, slug)
+    assert view._session_state("old", slug) == "missing"
+    assert view._session_state("other", slug) == "foreign"
+
+
+def test_receipt_eligible_origins_follow_a_merged_away_stamp_only_through_an_alias(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("DAIMON_RECEIPTS", "1")
+    proj = _project(tmp_path)
+    _flat_session("o1", G)
+    carried = [{"origin_session": "o1"}]
+    deadline = time.monotonic() + 60
+    assert worldcheck._receipt_eligible(carried, proj, deadline) == []
+    _plant_alias(G, _bucket(proj))
+    assert worldcheck._receipt_eligible(carried, proj, deadline) == ["o1"]
+
+
+def test_verified_receipts_follow_a_merged_away_stamp_only_through_an_alias(
+        tmp_path):
+    proj = _project(tmp_path)
+    item = {"id": "i-1", "text": "t",
+            "quote_provenance": {"outcome": "verified"}}
+    _flat_session("old", G, working_context={"open_questions": [item]})
+    assert list(stats._verified_receipts(proj)) == []
+    _plant_alias(G, _bucket(proj))
+    assert [i["id"] for i, _r in stats._verified_receipts(proj)] == ["i-1"]
 
 
 # ---- the unchanged baseline ------------------------------------------------------------------

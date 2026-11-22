@@ -121,6 +121,15 @@ def stamp_slugs(slug) -> frozenset:
     return frozenset({slug}) | buckets.aliases_for(slug)
 
 
+def stamp_matches(stamp, slug) -> bool:
+    """Whether one `project_slug` stamp names the project `slug`. The single
+    comparison for a reader that checks a stamp or two; a reader walking many
+    files asks `stamp_slugs(slug)` once and tests membership. `==` is tried
+    first so the common case (the stamp IS the slug) never reads the alias
+    rows."""
+    return stamp == slug or (bool(slug) and stamp in stamp_slugs(slug))
+
+
 def _own_author_dir() -> str:
     """The author's own directory name in a team mirror: the same identity
     `_dual_write_team` writes and `scrub_team_copies` walks."""
@@ -2561,8 +2570,7 @@ def _admit_payload(checkpoint: dict, slug, admit: "Admit", fell_back: bool) -> "
         # unequal — an identity-less reader (falsy slug) refuses nothing,
         # because nothing is foreign to a session with no project identity.
         stamped = str(checkpoint.get("project_slug") or "").strip()
-        if slug and stamped and stamped != slug \
-                and stamped not in stamp_slugs(slug):
+        if slug and stamped and not stamp_matches(stamped, slug):
             created = str(checkpoint.get("created") or "").strip() or None
             return ReadResult(None, fell_back, Marker(slug=stamped, created=created))
     return ReadResult(checkpoint, fell_back, None)

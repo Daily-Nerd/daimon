@@ -1222,13 +1222,14 @@ def _bucket_files(slug: str) -> Iterator[tuple[Path, dict | None]]:
         files = store._session_files(config.checkpoint_dir())
     except OSError:
         files = []
+    stamps = store.stamp_slugs(slug)
     for path in files:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             yield path, None
             continue
-        if isinstance(raw, dict) and raw.get("project_slug") == slug:
+        if isinstance(raw, dict) and raw.get("project_slug") in stamps:
             yield path, raw
 
 
@@ -1385,10 +1386,11 @@ def open_sessions(project, session_ids, *, live: bool,
     slug = scope.own
     snap = snap if snap is not None else snapshot(project)
     out = {}
+    stamps = store.stamp_slugs(slug)
     for sid in session_ids:
         raw = (store.read_checkpoint(sid)
                if sid and sid == store._safe_name(sid) else None)
-        if isinstance(raw, dict) and raw.get("project_slug") == slug:
+        if isinstance(raw, dict) and raw.get("project_slug") in stamps:
             out[sid] = _opened(raw, snap, live)
     return out
 
@@ -1655,7 +1657,7 @@ def _session_state(session_id, slug) -> str:
     stamp = raw.get("project_slug")
     if not stamp:
         return "stampless"
-    return "foreign" if stamp != slug else "missing"
+    return "missing" if store.stamp_matches(stamp, slug) else "foreign"
 
 
 _INDEX_ONLY = {"missing": "team-mirror", "stampless": "pointer-attributed-legacy"}

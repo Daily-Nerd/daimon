@@ -368,6 +368,7 @@ def _verified_receipts(project_dir, *, fresh_only: bool = False):
     except OSError:
         return
     seen: set = set()
+    stamps = store.stamp_slugs(want_slug)
     for f in sorted(files):
         try:
             cp = json.loads(f.read_text(encoding="utf-8"))
@@ -375,7 +376,7 @@ def _verified_receipts(project_dir, *, fresh_only: bool = False):
             continue
         if not isinstance(cp, dict):
             continue
-        if want_slug is not None and cp.get("project_slug") != want_slug:
+        if want_slug is not None and cp.get("project_slug") not in stamps:
             continue
         for item in serializer.iter_items(cp):
             receipt = item.get("quote_provenance")
