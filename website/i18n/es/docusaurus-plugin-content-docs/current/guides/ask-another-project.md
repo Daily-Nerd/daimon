@@ -19,6 +19,15 @@ proyectos que daimon ya conoce, con una sugerencia si hay un typo parecido.
 dicen de qué trata el pedido. Lo encabeza donde se lista, y el ask conserva
 el texto completo. Sin título, lo reemplaza la primera oración del ask.
 
+El ask es también el texto que una persona firma cuando acepta, rechaza o da
+por terminado el pedido, así que tiene que entrar en la pantalla de firma: como
+máximo 2048 bytes de UTF-8 y 32 líneas tal como las muestra el firmador. Una
+línea que la pantalla no puede contener sigue en la siguiente, y cada byte
+fuera del ASCII simple (una letra con tilde son dos) se muestra como cuatro
+caracteres, así que el texto en otros idiomas llega antes al límite. Un ask más
+largo se rechaza al abrirlo o revisarlo, con su tamaño y el límite que pasó.
+Los demás campos conservan su límite de 2000 caracteres.
+
 `--severity` dice cuánto importa el resultado para quien pide, en una escala
 fija: `critical`, `high`, `normal` y `low`. `normal` es el default y no muestra
 nada. Cualquier otro nivel necesita `--severity-reason`, una línea de 80

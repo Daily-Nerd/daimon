@@ -19,6 +19,14 @@ projects daimon already knows about, with a suggestion on a likely typo.
 request is about. It leads the request wherever it is listed, and the ask
 keeps the full text. Without one, the first sentence of the ask stands in.
 
+The ask is also the text a person signs when they accept, reject or finish the
+request, so it has to fit on the signing screen: at most 2048 bytes of UTF-8
+and at most 32 lines as the signer shows them. A line the screen cannot hold
+continues on the next, and every byte outside plain ASCII (an accented letter
+is two) is shown as four characters, so text in other languages reaches the
+limit sooner. A longer ask is refused when it is opened or revised, with its
+size and the limit it passed. The other fields keep their 2000 character limit.
+
 `--severity` says how much the outcome matters to you, on a fixed scale:
 `critical`, `high`, `normal` and `low`. `normal` is the default and shows
 nothing. Any other level needs `--severity-reason`, one line of 80 characters
