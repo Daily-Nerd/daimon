@@ -445,6 +445,15 @@ SURFACES: tuple[Surface, ...] = (
     #    exists for it. `config.layer_scopes` is the one reader. --
     Surface("checkpoints/{slug}/root", "store.record_bucket_root",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
+    # -- the identity record (slice 3b): evidence anchors for the bucket, written
+    #    by `bucket stamp`: the origin URL (credentials stripped), the root
+    #    commit, the folder name and the roots the bucket has had. Locations
+    #    and hashes, never item text, so there is nothing for forget to reach
+    #    and no rewrite path. Read only by `bucket doctor`; no automatic
+    #    decision reads it. Named WITHOUT `.json` (see store._IDENTITY_NAME):
+    #    every `*.json` in a bucket is walked as a plaintext checkpoint. --
+    Surface("checkpoints/{slug}/identity", "bucket_tools.write_identity",
+            False, "exempt-no-plaintext", "none", audit_exempt=True),
     # -- the ledger census marker (#1132 PR 2b): written once per bucket, on
     #    its first checkpoint write, by ledger_census.record_marker. A version,
     #    a UTC stamp, and per bucket-ledger FILE NAME -> {state, torn, split,

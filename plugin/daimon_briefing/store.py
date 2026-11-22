@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import stat
 import time
 from datetime import datetime, timezone
@@ -180,6 +181,45 @@ def project_bucket(project_dir) -> str | None:
 
 _BUCKET_ROOT_NAME = "root"
 _LEDGER_CENSUS_NAME = ".ledger-census"  # #1132: see ledger_census.record_marker
+# Evidence anchors for a bucket (origin, root commit, folder, old roots). Named
+# WITHOUT a `.json` suffix on purpose: `_plaintext_surfaces`, `project_surfaces`,
+# the recall fingerprint and index scan, and the privacy audit each read every
+# `*.json` in a bucket directory as a plaintext checkpoint, so a JSON document
+# of another kind under that suffix is walked by all of them. Like `root` and
+# `.ledger-census`, this one is invisible to those walks by construction.
+_IDENTITY_NAME = "identity"
+
+
+def stamp_root(bucket: Path, location: str) -> bool:
+    """Record `location` as the root of `bucket` unless the bucket already
+    has a non-empty one. True when THIS call wrote it, False when another
+    writer's record stands (first writer wins, #1092).
+
+    The create is exclusive (`O_EXCL`), so two writers racing on a fresh
+    bucket cannot both believe they stamped it. An EMPTY `root` counts as
+    unstamped: it is what a reader sees between the exclusive create and the
+    write, and what a crash between them leaves, and a bucket must not stay
+    unstamped forever because a zero-byte file exists. That one case replaces
+    the empty file atomically. Raises OSError; `record_bucket_root` owns the
+    never-fatal contract."""
+    path = Path(bucket) / _BUCKET_ROOT_NAME
+    data = f"{location}\n".encode("utf-8")
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        try:
+            if path.read_text(encoding="utf-8").strip():
+                return False
+        except OSError:
+            return False
+        _atomic_write(path, data.decode("utf-8"))
+        return True
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return True
 
 
 def record_bucket_root(project_dir) -> None:
@@ -208,11 +248,9 @@ def record_bucket_root(project_dir) -> None:
         slug = project_slug(resolved)
         if not slug or not os.path.isabs(str(resolved)):
             return
-        root_path = config.checkpoint_dir() / slug / _BUCKET_ROOT_NAME
-        if root_path.exists():
-            return
-        root_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(root_path, f"{resolved}\n")
+        bucket = config.checkpoint_dir() / slug
+        bucket.mkdir(parents=True, exist_ok=True)
+        stamp_root(bucket, str(resolved))
     except OSError:
         pass
 
@@ -1802,7 +1840,8 @@ def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
     if all_projects:
         try:
             targets = [d.name for d in config.checkpoint_dir().iterdir()
-                       if d.is_dir() and d.name != scope.CHUNK_CACHE]
+                       if d.is_dir()
+                       and d.name not in scope.CURRENT_INTERNAL_DIRS]
         except OSError:
             targets = []
     else:
@@ -1904,6 +1943,27 @@ def _reap_stale_tmps(d: Path) -> None:
                 pass
 
 
+def _reap_stale_births(d: Path) -> None:
+    """Remove orphaned `.birth/<pid>-<rand>/` stage directories (a birth killed
+    between building its stage and renaming it). `_reap_stale_tmps` cannot do
+    it: it unlinks FILES named `*.tmp`, and a stage is a directory. Same age
+    gate, so a birth in flight right now is never touched. Only directories
+    directly under the registered `.birth` go; the parent stays, and nothing is
+    removed anywhere else. Best-effort: never raises."""
+    cutoff = time.time() - _TMP_REAP_SECONDS
+    try:
+        stages = [p for p in (d / scope.BIRTH).iterdir()
+                  if p.is_dir() and not p.is_symlink()]
+    except OSError:
+        return
+    for stage in stages:
+        try:
+            if stage.stat().st_mtime < cutoff:
+                shutil.rmtree(stage)
+        except OSError:
+            pass
+
+
 def _max_importance(path: Path) -> int:
     """Max item importance in a checkpoint file, 0 when unreadable/unstamped.
     Torn or legacy files pin nothing — recency retention handles them as
@@ -1933,6 +1993,7 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
     Harmless in practice — that pointer references a just-written file, which the
     newest-`keep` window already retains (default 100 is generous for this too)."""
     _reap_stale_tmps(d)  # independent of `keep`: orphaned tmps are never data
+    _reap_stale_births(d)
     if keep <= 0:
         return
     try:

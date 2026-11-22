@@ -122,7 +122,7 @@ def _checkpoint_candidates() -> tuple[list[Path], list[tuple[Path, str | None]]]
                     known.append(entry)
                 elif not _is_plaintext_free(entry):
                     unknown.append((entry, None))
-            elif entry.is_dir() and entry.name != scope.CHUNK_CACHE:
+            elif entry.is_dir() and entry.name not in scope.CURRENT_INTERNAL_DIRS:
                 for p in entry.iterdir():
                     if not p.is_file():
                         unknown.append((p, entry.name))
@@ -736,7 +736,8 @@ def audit_all() -> list[dict]:
     # included, so it does not go through `store.bucket_dirs`.
     try:
         buckets = sorted(e.name for e in config.checkpoint_dir().iterdir()
-                         if e.is_dir() and e.name != scope.CHUNK_CACHE)
+                         if e.is_dir()
+                         and e.name not in scope.CURRENT_INTERNAL_DIRS)
     except OSError:
         buckets = []
     for slug in buckets:
