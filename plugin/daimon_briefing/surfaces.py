@@ -542,7 +542,8 @@ SURFACES: tuple[Surface, ...] = (
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,
-    #    target_unreadable, target_slots, complete, observed, by}.
+    #    target_unreadable, target_slots, promoted, pointers_evicted,
+    #    pointers_dropped, complete, observed, by}.
     #    Global rather than per-bucket on purpose — it names a bucket that no
     #    longer exists, so it cannot live inside one.
     #
@@ -556,6 +557,12 @@ SURFACES: tuple[Surface, ...] = (
     #    `target_slots` is how many pointer slots the target holds after the
     #    run, recorded so the remedy for a stranded pointer is arithmetic on
     #    what is there rather than on the current knob.
+    #    `promoted`, `pointers_evicted` and `pointers_dropped` are written by
+    #    `bucket merge` only (a fold into a live main): the session id whose
+    #    pointer became the target's latest, the target sessions that
+    #    rotation displaced, and the folded sessions that fit no slot. Session
+    #    ids, never content; a dropped pointer's flat signed file still holds
+    #    its bytes.
     #    `observed` is free text for a state the fields cannot carry, and
     #    today holds one value: a legacy bucket a person cleared themselves.
     #

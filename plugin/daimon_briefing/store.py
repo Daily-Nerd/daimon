@@ -324,6 +324,30 @@ def bucket_root(project_dir_or_slug) -> str | None:
     return text or None
 
 
+def root_eq(a, b) -> bool:
+    """Whether two recorded or resolved locations name the same directory.
+
+    Equality of `normcase` strings, nothing more: a stored root was realpath'd
+    when it was written, so only a live location needs resolving, once, by its
+    caller, and no recorded root is ever stat'd here (a dead mount must not
+    hang a comparison)."""
+    return bool(a) and bool(b) and os.path.normcase(str(a)) == \
+        os.path.normcase(str(b))
+
+
+def bucket_roots() -> dict[str, str]:
+    """{bucket name: recorded root} for every bucket that has a non-empty
+    `root`, in one pass over the bucket directories. Pure file-ops, never
+    raises. A bucket with an empty or unreadable record is unstamped and
+    absent here."""
+    out: dict[str, str] = {}
+    for child in bucket_dirs().buckets:
+        root = bucket_root(child.name)
+        if root:
+            out[child.name] = root
+    return out
+
+
 def buckets_under(layer_dir) -> list:
     """Every bucket under `config.checkpoint_dir()` whose stamped root
     (`bucket_root`) is strictly below `layer_dir`, realpath'd, separator-
