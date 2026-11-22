@@ -442,6 +442,22 @@ ENVELOPE_RULES: tuple[FieldRule, ...] = (
         "line. Absent on a checkpoint older than the stamp and on the "
         "introspection path: unknown, read as none."),
     FieldRule(
+        "envelope", schema.CAPTURE_DROPPED_PARTIALS, "array", True, False,
+        "code", "strip",
+        _c(stripped_at_serialize=True,
+           element=("kind: chunk | perspective", "label: string")),
+        "q-741c17a4d3be the extraction calls this serialize dropped because "
+        "their output stayed unusable after the retry and the rescue: one "
+        "{kind, label} entry per call, in session order, the label naming "
+        "the call as the log does (\"chunk 7 of 20\", \"perspective "
+        "<name>, chunk 7 of 20\"). A dropped chunk is a stretch of the "
+        "session the checkpoint does not cover; a dropped perspective pass "
+        "only thins one angle. Stamped by serialize_strict on the checkpoint "
+        "it returns and read by the briefing, which says so in one note. "
+        "Never model-authored: a model copy is stripped. Absent when nothing "
+        "was dropped, and on a checkpoint older than the stamp: read as "
+        "nothing dropped."),
+    FieldRule(
         "envelope", schema.CAPTURE_DOOR, "string", True, False, "code", "strip",
         _c(stripped_at_serialize=True, values=(schema.CAPTURE_DOOR_IMPORT,)),
         "#1236 which door the capture came through when it was not a live "

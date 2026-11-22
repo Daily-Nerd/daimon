@@ -49,6 +49,10 @@ CAPTURE_DOOR_IMPORT = "import"
 # (unknown), so every reader treats absence as "nothing to report".
 CAPTURE_FALLBACK = "capture_fallback"
 CAPTURE_QUOTES_DOWNGRADED = "capture_quotes_downgraded"
+# q-741c17a4d3be: the extraction calls (chunk or perspective pass) a run
+# dropped because their output stayed unusable. Stamped only when non-empty;
+# absent reads as nothing dropped, like an older checkpoint.
+CAPTURE_DROPPED_PARTIALS = "capture_dropped_partials"
 
 
 class ItemField(NamedTuple):

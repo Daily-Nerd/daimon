@@ -26,7 +26,7 @@ Flat output is not specific to perspective prompts; plain chunks fail the same
 way and the prompt schema is correctly nested.
 
 The fan-out (_one_chunk, _one_pass) now turns that error into a dropped call,
-and _settle_extraction raises only when nothing survives. Do not move the
+and _settle_extraction raises only when nothing survives. Each drop is stamped on the checkpoint (capture_dropped_partials, code-owned) and the briefing says so. Heal does NOT re-ask a checkpoint with drops: it reads serialize.log result lines, and a written checkpoint is a success line. Do not move the
 tolerance into partial_reason (no wrapping, no defaults, #1218 is deliberate)
 and do not swallow it silently: the drop is logged per call and not cached.
 Merge-group failures are still fatal; a merged group has no sibling to stand in.
