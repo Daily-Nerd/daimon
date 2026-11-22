@@ -34,7 +34,7 @@ from typing import NamedTuple
 from . import (channels, clock, config, jsonl, normalize, policy, redact, scope,
                store, surfaces)
 from .authority import channels as known_channels
-from .authority import of_channel, of_row
+from .authority import of_channel, of_row, signable_problem
 from .authority import table as authority_table
 from .surfaces import WritePosture, Writer
 
@@ -1828,6 +1828,15 @@ def _guard_ruling_text(subject, verdict) -> None:
             raise RefutationError(
                 f"ruling {name} exceeds {_MAX_RULING_TEXT} chars — a "
                 "standing rule that long is a document, not a ruling")
+    # The verdict is the text a person signs when they ratify the ruling, so
+    # it must also be showable whole at signing (`authority`). The subject is
+    # a label and is not signed.
+    if verdict is not None:
+        problem = signable_problem(
+            redact.redact_text(_SPACE_RE.sub(" ", str(verdict)).strip())[0],
+            what="verdict")
+        if problem is not None:
+            raise RefutationError(f"ruling cannot be recorded: {problem}")
 
 
 def assert_ruling(*, subject: str, verdict: str, scope: str,

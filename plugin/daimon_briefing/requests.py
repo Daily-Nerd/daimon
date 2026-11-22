@@ -54,7 +54,7 @@ from . import (buckets, clock, config, display, jsonl, normalize, policy,
 # channel carries, so a future channel tier ("ui", "signed") stays consistent
 # across ledgers instead of forking per module.
 from .authority import channels as known_channels
-from .authority import of_channel, of_row
+from .authority import of_channel, of_row, signable_problem
 from .refutations import CHANNEL_LABEL
 from .surfaces import Writer
 
@@ -680,6 +680,19 @@ def _scrub(name: str, value, *, required: bool = True,
     out = _text(name, value, required=required, limit=limit)
     out, _ = redact.redact_text(out)
     return _text(name, out, required=required, limit=limit)
+
+
+def _ask(value) -> str:
+    """The ask as it is stored, for `open_request` and `revise`, the two
+    places an ask enters. An ask is also the text a person signs when they
+    accept, reject or finish the request, so on top of the character cap of
+    every field it must be showable whole at signing (`authority`). The
+    check measures the string that will be stored, after redaction."""
+    ask = _scrub("ask", value)
+    problem = signable_problem(ask, what="ask")
+    if problem is not None:
+        raise RequestError(f"ask cannot be recorded: {problem}")
+    return ask
 
 
 def _sender_label(project_dir) -> str:
@@ -2360,7 +2373,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
                            "sender's own bucket")
     if not recipient_in_scope(to, slug):
         raise RequestError(config.TENANT_SCOPE_REFUSAL)
-    ask = _scrub("ask", ask)
+    ask = _ask(ask)
     why = _scrub("why", why)
     evidence = _scrub("evidence", evidence, required=False)
     title = _scrub("title", title, required=False, limit=TITLE_CHARS)
@@ -2475,7 +2488,7 @@ def revise(request_id: str, *, channel: str, ask: str | None = None,
     # the fold reads key presence as intent — forging a key here would clear
     # the field the caller never mentioned.
     if ask is not None:
-        row["ask"] = _scrub("ask", ask)
+        row["ask"] = _ask(ask)
     if why is not None:
         row["why"] = _scrub("why", why)
     if evidence is not None:
