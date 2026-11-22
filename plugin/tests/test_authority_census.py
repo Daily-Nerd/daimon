@@ -14,6 +14,20 @@ is satisfied by a comment that names the thing):
 4. Nothing reads a row's stored `authority` field. The tier is derived from
    the channel (`authority.of_row`); the stored field is the row's claim about
    itself.
+
+Four more cover the handsal checker pieces (#1374):
+
+5. No module outside `authority.py` reads the vendored reason class table.
+6. No module outside `authority.py` derives an outcome: `Proven`, `Refuted`
+   and `Undetermined` are built there and nowhere else, so a `Proven` always
+   comes from a checker answer.
+7. Nothing stores a signer: the result of `performer_of` or
+   `claimed_signing_time` is never a value in a dict literal, a keyword
+   argument, or the right side of an assignment to a subscript or attribute.
+8. Nothing orders, expires or compares by the signer's claimed time: no
+   comparison and no `sorted`/`min`/`max`/`sort` call has a call to
+   `claimed_signing_time` inside it. Anything that moves the claimed time
+   into a variable first is outside what this can see; review catches it.
 """
 import ast
 from pathlib import Path
@@ -96,6 +110,68 @@ def _stored_authority_reads(tree):
             yield node
 
 
+TABLE_NAMES = {"_load_table", "_class_of", "_reason_of", "reason_classes_bytes",
+               "_CLASS_OUTCOME"}
+TABLE_FILE_MARKERS = ("reason-classes", "_handsal")
+OUTCOME_TYPES = {"Proven", "Refuted", "Undetermined"}
+SIGNER_READS = {"performer_of", "claimed_signing_time"}
+CLAIMED_TIME = "claimed_signing_time"
+ORDERING_CALLS = {"sorted", "min", "max", "sort"}
+
+
+def _called_name(node):
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+    return None
+
+
+def _table_reads(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and any(m in node.value for m in TABLE_FILE_MARKERS):
+            yield node
+    yield from _tier_name_reads(tree, TABLE_NAMES)
+
+
+def _outcome_constructions(tree):
+    for node in ast.walk(tree):
+        if _called_name(node) in OUTCOME_TYPES:
+            yield node
+
+
+def _signer_stores(tree):
+    def is_signer(node):
+        return _called_name(node) in SIGNER_READS
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for value in node.values:
+                if is_signer(value):
+                    yield value
+        elif isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if is_signer(kw.value):
+                    yield kw.value
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) \
+                else [node.target]
+            if node.value is not None and is_signer(node.value) and any(
+                    isinstance(t, (ast.Subscript, ast.Attribute))
+                    for t in targets):
+                yield node.value
+
+
+def _claimed_time_ordered(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) \
+                or _called_name(node) in ORDERING_CALLS:
+            if any(_called_name(n) == CLAIMED_TIME for n in ast.walk(node)):
+                yield node
+
+
 def _where(rel, nodes):
     return [f"{rel}:{n.lineno}" for n in nodes]
 
@@ -136,6 +212,36 @@ def test_nothing_reads_the_stored_authority_field():
     assert found == []
 
 
+def test_only_authority_py_reads_the_handsal_table():
+    found = []
+    for rel, tree in _modules():
+        if rel != "authority.py":
+            found += _where(rel, _table_reads(tree))
+    assert found == []
+
+
+def test_only_authority_py_derives_an_outcome():
+    found = []
+    for rel, tree in _modules():
+        if rel != "authority.py":
+            found += _where(rel, _outcome_constructions(tree))
+    assert found == []
+
+
+def test_nothing_stores_a_signer():
+    found = []
+    for rel, tree in _modules():
+        found += _where(rel, _signer_stores(tree))
+    assert found == []
+
+
+def test_nothing_orders_or_compares_by_the_claimed_signing_time():
+    found = []
+    for rel, tree in _modules():
+        found += _where(rel, _claimed_time_ordered(tree))
+    assert found == []
+
+
 # ---- the scanners are not vacuous: a planted copy is caught ----------------
 
 @pytest.mark.parametrize("source,scanner,args", [
@@ -149,6 +255,25 @@ def test_nothing_reads_the_stored_authority_field():
     ("if sys.stdin.isatty(): pass", _isatty_calls, ()),
     ("x = row.get('authority')", _stored_authority_reads, ()),
     ("x = row['authority']", _stored_authority_reads, ()),
+    ("t = authority._load_table()", _table_reads, ()),
+    ("from .authority import _class_of", _table_reads, ()),
+    ("p = open('daimon_briefing/_handsal/reason-classes.json')", _table_reads,
+     ()),
+    ("o = authority.Proven(jws)", _outcome_constructions, ()),
+    ("o = Undetermined('x', None)", _outcome_constructions, ()),
+    ("row['who'] = performer_of(p)", _signer_stores, ()),
+    ("row.who = authority.performer_of(p)", _signer_stores, ()),
+    ("row = {'who': performer_of(p)}", _signer_stores, ()),
+    ("write(who=performer_of(p))", _signer_stores, ()),
+    ("row['at'] = claimed_signing_time(p)", _signer_stores, ()),
+    ("if claimed_signing_time(p) < other: pass", _claimed_time_ordered, ()),
+    ("if claimed_signing_time(p) == other: pass", _claimed_time_ordered, ()),
+    ("rows.sort(key=lambda r: claimed_signing_time(r.p))",
+     _claimed_time_ordered, ()),
+    ("x = sorted(rows, key=lambda r: authority.claimed_signing_time(r))",
+     _claimed_time_ordered, ()),
+    ("x = max(claimed_signing_time(a), claimed_signing_time(b))",
+     _claimed_time_ordered, ()),
 ])
 def test_a_planted_copy_of_the_rule_is_caught(source, scanner, args):
     assert list(scanner(ast.parse(source), *args))
@@ -161,6 +286,13 @@ def test_a_planted_copy_of_the_rule_is_caught(source, scanner, args):
     ("row = {'authority': a}", _stored_authority_reads, ()),
     ("# row.get('authority') and CHANNEL_AUTHORITY", _stored_authority_reads,
      ()),
+    ("o = authority.recheck_outcome(r, jws)", _outcome_constructions, ()),
+    ("if isinstance(o, authority.Proven): pass", _outcome_constructions, ()),
+    ("# _load_table and reason-classes", _table_reads, ()),
+    ("who = performer_of(p)", _signer_stores, ()),
+    ("print(performer_of(p), claimed_signing_time(p))", _signer_stores, ()),
+    ("if performer_of(p) == 'alice': pass", _claimed_time_ordered, ()),
+    ("shown = claimed_signing_time(p)", _claimed_time_ordered, ()),
 ])
 def test_binding_a_name_or_naming_it_in_a_comment_is_not_a_read(
         source, scanner, args):
