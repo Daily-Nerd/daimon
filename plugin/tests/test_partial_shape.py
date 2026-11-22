@@ -94,14 +94,56 @@ def test_1b_flat_chunk_is_retried_and_never_cached(monkeypatch):
     assert cached and all("working_context" in p for p in cached)
 
 
-def test_1b_flat_chunk_that_stays_flat_names_the_chunk(monkeypatch):
+def test_1b_flat_chunk_that_stays_flat_is_dropped_not_fatal(monkeypatch, caplog):
+    # q-741c17a4d3be: one chunk that never produces a usable shape must not
+    # discard the other chunks' paid-for extractions. It contributes nothing,
+    # is never cached, and the run names it.
     _chunked(monkeypatch)
-    chat = Script(lambda n, content: flat() if "chunk 1 of" in content else good())
+    ms = make_messages(24)
+    n_chunks = len(serializer.chunk_transcript(serializer._render_transcript(ms), 4, 0))
+    chat = Script(lambda n, content: flat() if "TRANSCRIPT (chunk 2 of" in content
+                  else good())
+    with caplog.at_level("WARNING", logger="daimon_briefing.serializer"):
+        ckpt = serializer.serialize_strict("S1", ms, chat=chat)
+    assert serializer.validation_reason(ckpt) is None
+    merge_requests =[c for c in chat.calls if "partial checkpoints" in c[0]["content"].lower()
+                      or "merge" in c[0]["content"].lower()[:300]]
+    assert merge_requests, "the surviving partials still reach the merge"
+    named = [r.getMessage() for r in caplog.records if "dropped" in r.getMessage()]
+    assert named and f"chunk 2 of {n_chunks}" in named[0]
+    assert "open_questions is outside working_context" in named[0]
+    assert not [p for p in _cached_partials() if "working_context" not in p]
+
+
+def test_1b_every_chunk_flat_still_raises_naming_a_chunk(monkeypatch):
+    _chunked(monkeypatch)
+    chat = Script(lambda n, content: flat())
     with pytest.raises(serializer.OutputParseError) as ei:
         serializer.serialize_strict("S1", make_messages(24), chat=chat)
     assert "chunk 1 of" in str(ei.value)
     assert "open_questions is outside working_context" in str(ei.value)
-    assert not [p for p in _cached_partials() if "working_context" not in p]
+
+
+def test_one_flat_perspective_pass_is_dropped_the_rest_merge(monkeypatch, caplog):
+    # The logged failure: a perspective pass (here artifacts-and-identifiers)
+    # answers flat after both attempts. Heal's escalation must still merge the
+    # other perspectives.
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = Script(lambda n, content: flat()
+                  if "ARTIFACTS AND IDENTIFIERS" in content else good())
+    with caplog.at_level("WARNING", logger="daimon_briefing.serializer"):
+        ckpt = serializer.serialize_strict("S1", make_messages(20), chat=chat,
+                                           escalate=True)
+    assert serializer.validation_reason(ckpt) is None
+    assert any("perspective artifacts-and-identifiers" in r.getMessage()
+               and "dropped" in r.getMessage() for r in caplog.records)
+
+
+def test_every_perspective_flat_still_raises(monkeypatch):
+    monkeypatch.setenv("DAIMON_MIN_MESSAGES", "3")
+    chat = Script(lambda n, content: flat())
+    with pytest.raises(serializer.OutputParseError):
+        serializer.serialize_strict("S1", make_messages(20), chat=chat, escalate=True)
 
 
 def test_1c_rescue_output_is_never_cached_scar_0040():

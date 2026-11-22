@@ -884,6 +884,39 @@ def pending_serialize_note(project, now=None) -> str | None:
     return None
 
 
+def coverage_note(checkpoint) -> str | None:
+    """The one head line for a checkpoint whose serialize dropped extraction
+    calls (CAPTURE_DROPPED_PARTIALS, q-741c17a4d3be), or None. A dropped chunk
+    is a stretch of the session the briefing cannot speak for, so the line
+    says so instead of letting a gap read as "nothing happened there"; a
+    dropped perspective pass only thins one angle. The field sits on disk and
+    is code-owned, but a reader never trusts its shape: anything that is not
+    a {kind, label} row is ignored. One line, like every head note."""
+    rows = checkpoint.get(schema.CAPTURE_DROPPED_PARTIALS)
+    if not isinstance(rows, list):
+        return None
+    chunks = [r["label"] for r in rows
+              if isinstance(r, dict) and r.get("kind") == "chunk"
+              and isinstance(r.get("label"), str)]
+    passes = [r for r in rows
+              if isinstance(r, dict) and r.get("kind") == "perspective"]
+    sentences = []
+    if chunks:
+        n = len(chunks)
+        shown = ", ".join(chunks[:3]) + (f", and {n - 3} more" if n > 3 else "")
+        sentences.append(
+            f"{n} transcript chunk{'s' if n != 1 else ''} could not be read "
+            f"({shown}); " + ("that stretch" if n == 1 else "those stretches")
+            + f" of the session {'is' if n == 1 else 'are'} missing.")
+    if passes:
+        m = len(passes)
+        sentences.append(f"{m} extra reading pass{'es' if m != 1 else ''} "
+                         "failed; coverage is thinner.")
+    if not sentences:
+        return None
+    return marks.warning(" ".join(sentences))
+
+
 def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             route=None, stamps: bool = True, opened=None) -> Annotated:
     """#1132 PR 7a: the one preparation every briefing host shares (the CLI
@@ -979,6 +1012,12 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             pending = None
         if pending:
             notes = display.merge_notes(notes, (pending,))
+    if stamps and isinstance(checkpoint, dict):
+        # The gap a dropped extraction call left is a fact about the body the
+        # reader is shown, so it rides the same notes as the other head lines.
+        gap = coverage_note(checkpoint)
+        if gap:
+            notes = display.merge_notes(notes, (gap,))
     if worldcheck_project and not opened.fell_back:
         # The request panels of this brief read the same joins; their notes
         # (a sender left out, or read around) join the snapshot's here, so

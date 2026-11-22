@@ -157,7 +157,13 @@ class PromptTooLargeError(LLMCallError):
 
 
 class OutputParseError(SerializeError):
-    pass
+    """One model output no call could use. `what` is the call's label (the
+    same text the message carries), so a caller that drops the call can
+    record which one without parsing the message."""
+
+    def __init__(self, message: str, what: str | None = None):
+        super().__init__(message)
+        self.what = what
 
 
 class SchemaValidationError(SerializeError):
@@ -2153,7 +2159,8 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                             "(#663)", what)
                 return rescued
             raise OutputParseError(
-                f"unparseable model output on {what} after {attempt} attempts: {exc}"
+                f"unparseable model output on {what} after {attempt} attempts: {exc}",
+                what,
             ) from exc
         if not isinstance(parsed, dict):
             if _can_retry():
@@ -2167,7 +2174,8 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                             "(#663)", what)
                 return rescued
             raise OutputParseError(
-                f"model output on {what} is not a JSON object after {attempt} attempts"
+                f"model output on {what} is not a JSON object after {attempt} attempts",
+                what,
             )
         # #1218: a dict of the wrong SHAPE is unusable output exactly like
         # prose is. Same retry, same rescue (whose result went through the same
@@ -2187,7 +2195,8 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
                 return rescued
             raise OutputParseError(
                 f"model output on {what} has the wrong shape after "
-                f"{attempt} attempts: {shape}"
+                f"{attempt} attempts: {shape}",
+                what,
             )
         return parsed
     # Unreachable while attempts >= 1, which holds for every caller: all four
@@ -2200,6 +2209,36 @@ def _call_and_parse(chat, system, user_content, deadline, what: str,
     # so it fails loudly rather than returning None into a dict-shaped hole.
     raise LLMCallError(
         f"LLM call on {what} ran no attempts (parse_retries={parse_retries})")
+
+
+def _settle_extraction(results: list, kind: str, dropped: list) -> list:
+    """Split a fan-out's results into the partials that survive.
+
+    Each extraction call (chunk or perspective pass) either returned a usable
+    partial or raised OutputParseError for ITS OWN output (prose, or the
+    wrong shape, #1218) after its retry and rescue. That is a fact about one
+    call, so it costs that call's contribution and nothing else: the other
+    calls' paid-for partials still reach the merge (q-741c17a4d3be). The
+    drop is named in the log, per call, and the failed output was never
+    cached, so the next heal re-asks it.
+
+    When NOTHING survives there is no checkpoint to build, so the first
+    failure is raised unchanged, in chronological order. Other failures
+    (transport, deadline, prompt size) are LLMCallError and never reach
+    here: they say the backend is unhealthy, not that one output was bad.
+
+    Every drop is appended to `dropped` as `{"kind", "label"}`, the record
+    serialize_strict stamps on the checkpoint (CAPTURE_DROPPED_PARTIALS)."""
+    kept = [r for r in results if not isinstance(r, OutputParseError)]
+    lost = [r for r in results if isinstance(r, OutputParseError)]
+    if not kept:
+        raise lost[0]
+    for exc in lost:
+        dropped.append({"kind": kind, "label": exc.what or str(exc)})
+        log.warning("serialize: dropped %s, its output was unusable and the "
+                    "other %d of %d %s(s) are merged without it: %s",
+                    kind, len(kept), len(results), kind, exc)
+    return kept
 
 
 def _plan_waves(n_chunks: int, workers: int, k: int) -> int:
@@ -2572,6 +2611,9 @@ _CODE_OWNED_KEYS = (
     # stamped by _stamp_run_facts. A model naming either could hide a rescue
     # or fake a clean verification.
     schema.CAPTURE_FALLBACK, schema.CAPTURE_QUOTES_DOWNGRADED,
+    # q-741c17a4d3be: which extraction calls the run dropped. A model naming
+    # it could hide a gap or fake one.
+    schema.CAPTURE_DROPPED_PARTIALS,
     # #268: origin binding is asserted by policy.bind_origin at the write
     # boundary. No code path reads a top-level copy, but a model naming the
     # key must not leave one lying beside the real per-item stamps.
@@ -2785,7 +2827,8 @@ def _stamp_llm_provenance(checkpoint: dict) -> None:
             pass
 
 
-def _stamp_run_facts(checkpoint: dict, quotes_downgraded: int) -> None:
+def _stamp_run_facts(checkpoint: dict, quotes_downgraded: int,
+                     dropped: list) -> None:
     """#1255: what this run knows about itself, on the checkpoint it returns.
 
     Read here, inside the run's scope, and stamped as plain values so a caller
@@ -2793,6 +2836,10 @@ def _stamp_run_facts(checkpoint: dict, quotes_downgraded: int) -> None:
     measured False or 0 differs from an old checkpoint's absence (unknown)."""
     checkpoint[schema.CAPTURE_FALLBACK] = llm.fallback_used()
     checkpoint[schema.CAPTURE_QUOTES_DOWNGRADED] = quotes_downgraded
+    if dropped:
+        # Only when something was lost: the key's absence is "nothing
+        # dropped", the same reading an older checkpoint has.
+        checkpoint[schema.CAPTURE_DROPPED_PARTIALS] = list(dropped)
 
 
 def conversation_message_count(messages) -> int:
@@ -2966,6 +3013,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
         "Re-emit the full corrected JSON."
     )
     partials: list | None = None
+    dropped: list = []   # extraction calls this run lost (_settle_extraction)
 
     def _produce_escalated_partials() -> list:
         # #360 stage 1: one extraction pass per (chunk, perspective). Jobs are
@@ -2997,11 +3045,14 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             else:
                 body = f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
             t0 = time.monotonic()
-            partial = _call_and_parse(
-                chat, system,
-                f"session_id: {session_id}\n\n{body}{_chunk_tail_contract(system)}",
-                deadline, f"perspective {name}, chunk {i + 1} of {len(chunks)}",
-            )
+            try:
+                partial = _call_and_parse(
+                    chat, system,
+                    f"session_id: {session_id}\n\n{body}{_chunk_tail_contract(system)}",
+                    deadline, f"perspective {name}, chunk {i + 1} of {len(chunks)}",
+                )
+            except OutputParseError as exc:
+                return exc  # settled by _settle_extraction: local, never cached
             log.info("perspective %s: chunk %d/%d done in %.0fs",
                      name, i + 1, len(chunks), time.monotonic() - t0)
             _save_chunk_cache(key, partial)
@@ -3010,7 +3061,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
         workers = min(config.chunk_concurrency(), len(jobs))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             # pool.map preserves input order — chunk-major stays chronological.
-            return list(_map_in_context(pool, _one_pass, jobs))
+            return _settle_extraction(
+                list(_map_in_context(pool, _one_pass, jobs)), "perspective", dropped)
 
     def _produce(note: str) -> dict:
         nonlocal partials
@@ -3052,13 +3104,16 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
                              i + 1, len(chunks))
                     return cached
                 t0 = time.monotonic()
-                partial = _call_and_parse(
-                    chat, _serialize_sys(),
-                    f"session_id: {session_id}\n\n"
-                    f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
-                    f"{_chunk_tail_contract()}",
-                    deadline, f"chunk {i + 1} of {len(chunks)}",
-                )
+                try:
+                    partial = _call_and_parse(
+                        chat, _serialize_sys(),
+                        f"session_id: {session_id}\n\n"
+                        f"TRANSCRIPT (chunk {i + 1} of {len(chunks)}):\n{chunk_text}"
+                        f"{_chunk_tail_contract()}",
+                        deadline, f"chunk {i + 1} of {len(chunks)}",
+                    )
+                except OutputParseError as exc:
+                    return exc  # settled by _settle_extraction: local, never cached
                 log.info("chunk %d/%d done in %.0fs",
                          i + 1, len(chunks), time.monotonic() - t0)
                 _save_chunk_cache(key, partial)
@@ -3067,8 +3122,8 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
             workers = min(config.chunk_concurrency(), len(chunks))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 # executor.map preserves input order, so partials stay chronological.
-                partials = list(_map_in_context(
-                    pool, _one_chunk, enumerate(chunks)))
+                partials = _settle_extraction(list(_map_in_context(
+                    pool, _one_chunk, enumerate(chunks))), "chunk", dropped)
         # Retry re-runs ONLY the merge (the final sampling that failed) — the
         # chunk partials are kept; they are the expensive calls.
         return _merge_partials(chat, session_id, list(partials), deadline,
@@ -3150,7 +3205,7 @@ def serialize_strict(session_id: str, messages, chat=None, deadline=None,
     # #230: stamp provenance last, immediately before hand-off to store/write —
     # after validation/verification so it can never influence either, and
     # last so nothing downstream re-derives or clobbers it.
-    _stamp_run_facts(checkpoint, quotes_downgraded)
+    _stamp_run_facts(checkpoint, quotes_downgraded, dropped)
     _stamp_llm_provenance(checkpoint)
     # #514: date the extraction. PROMPT_VERSION and EXTRACTION_VERSION are two
     # independent levers; without this stamp a lone EXTRACTION_VERSION bump
