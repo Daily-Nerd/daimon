@@ -97,3 +97,11 @@ def test_a_clean_checkpoint_adds_no_coverage_note():
     _written(None)
     got = briefing.prepare("/p/drops", time.time())
     assert not [n for n in got.notes if "could not be read" in n]
+
+
+def test_rows_that_are_not_kind_and_label_add_no_coverage_note():
+    # The field is code-owned, but the reader never trusts its shape on disk:
+    # a chunk row without a label, a non-dict row and an unknown kind are all
+    # ignored, and a list holding only those says nothing.
+    rows = [{"kind": "chunk"}, "chunk 7 of 20", {"kind": "other", "label": "x"}]
+    assert briefing.coverage_note({schema.CAPTURE_DROPPED_PARTIALS: rows}) is None
