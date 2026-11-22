@@ -383,6 +383,27 @@ def _rotate_pointers(d: Path, history: int) -> None:
         _atomic_write(d / "prev-1.json", latest.read_text(encoding="utf-8"))
 
 
+def _advance_pointers(d: Path, blob: str, new_epoch: float | None,
+                      rotate: bool, history: int) -> bool:
+    """Move dir `d`'s latest pointer to `blob`, a checkpoint created at
+    `new_epoch`: the one owner of the chain semantics (regress guard, rotation
+    into prev-1..prev-(history-1), latest write). Returns True when latest
+    advanced, False when the regress guard blocked it (#123), in which case
+    nothing is rotated or written.
+
+    The check, rotation and write are one critical section per dir (#31 item
+    2), under `_pointer_lock`; on lock failure the sequence proceeds unguarded
+    (fail-open, as before). `rotate=False` overwrites latest without retaining
+    the old one. Touches pointer copies only, never a flat `<session>.json`."""
+    with _pointer_lock(d):
+        if _pointer_regresses(d, new_epoch):
+            return False
+        if rotate:
+            _rotate_pointers(d, history)
+        _atomic_write(d / _LATEST, blob)
+        return True
+
+
 def _created_epoch(created) -> float | None:
     """Epoch seconds for a checkpoint's ISO-8601 `created` stamp, or None when it
     is absent or malformed (legacy checkpoints, torn files). cli reuses this copy.
@@ -2225,20 +2246,12 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     # interleave the steps — clobbering the prev-N chain or letting an older
     # write win latest. _pointer_lock serializes it; on lock failure the
     # sequence proceeds unguarded (pre-lock behavior, fail-open).
-    with _pointer_lock(d):
-        if not _pointer_regresses(d, new_epoch):
-            if rotate:
-                _rotate_pointers(d, history)
-            _atomic_write(d / _LATEST, blob)
+    _advance_pointers(d, blob, new_epoch, rotate, history)
     if slug:
         pdir = d / slug
         ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
         _record_ledger_census(slug)  # #1132: one census per bucket, ever
-        with _pointer_lock(pdir):
-            if not _pointer_regresses(pdir, new_epoch):
-                if rotate:
-                    _rotate_pointers(pdir, history)
-                _atomic_write(pdir / _LATEST, blob)
+        _advance_pointers(pdir, blob, new_epoch, rotate, history)
     # Mint the receipt now that the checkpoint file is durably on disk (#204):
     # outputs_hash covers those exact bytes. Best-effort and self-contained —
     # receipts.mint swallows every failure — so it can never affect the write /
