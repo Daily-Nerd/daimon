@@ -5,6 +5,23 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.0](https://github.com/Daily-Nerd/daimon/compare/v0.70.0...v0.71.0) (2026-11-22)
+
+
+### Features
+
+* **serialize:** record dropped extraction calls on the checkpoint and say so in the briefing ([911eab1](https://github.com/Daily-Nerd/daimon/commit/911eab1b4b40968c78c7e5d249e599ca42aeef8d))
+
+
+### Bug Fixes
+
+* **serialize:** a chunk or perspective pass with unusable output drops out alone ([a10f1f3](https://github.com/Daily-Nerd/daimon/commit/a10f1f360a785b22d89ba9700acdd568e4f942ab))
+
+
+### Documentation
+
+* **scars:** record that one unusable partial must not fail the extraction fan-out ([eb12f16](https://github.com/Daily-Nerd/daimon/commit/eb12f16a451b23f2326503cd03c63fb4ffc7e047))
+
 ## [0.70.0](https://github.com/Daily-Nerd/daimon/compare/v0.69.0...v0.70.0) (2026-11-22)
 
 
