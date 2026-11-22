@@ -28,6 +28,17 @@ Four more cover the handsal checker pieces (#1374):
    comparison and no `sorted`/`min`/`max`/`sort` call has a call to
    `claimed_signing_time` inside it. Anything that moves the claimed time
    into a variable first is outside what this can see; review catches it.
+
+Two more cover what a person signs (#1377):
+
+9. No module outside `authority.py` builds a decision: nothing outside it
+   writes the `decision_b64` key, as a dict key, a keyword argument or a
+   subscript. `build_decision` is the one builder.
+10. No module outside `authority.py` decides whether text fits: the limit
+   and count names (`MAX_CONTENT_BYTES`, `MAX_RENDERED_LINES`,
+   `RENDER_LINE_WIDTH`, `rendered_lines`, `content_bytes`) are read nowhere
+   else, and nothing compares against the number 2048. Callers ask
+   `signable_problem`.
 """
 import ast
 from pathlib import Path
@@ -172,6 +183,37 @@ def _claimed_time_ordered(tree):
                 yield node
 
 
+DECISION_KEY = "decision_b64"
+SIZE_NAMES = {"MAX_CONTENT_BYTES", "MAX_RENDERED_LINES", "RENDER_LINE_WIDTH",
+              "rendered_lines", "content_bytes"}
+SIZE_LIMIT_NUMBER = 2048
+
+
+def _decision_builds(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            for key in node.keys:
+                if isinstance(key, ast.Constant) and key.value == DECISION_KEY:
+                    yield key
+        elif isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg == DECISION_KEY:
+                    yield kw
+        elif isinstance(node, ast.Subscript) \
+                and isinstance(node.slice, ast.Constant) \
+                and node.slice.value == DECISION_KEY:
+            yield node
+
+
+def _size_decisions(tree):
+    yield from _tier_name_reads(tree, SIZE_NAMES)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) and any(
+                isinstance(n, ast.Constant) and n.value == SIZE_LIMIT_NUMBER
+                for n in [node.left, *node.comparators]):
+            yield node
+
+
 def _where(rel, nodes):
     return [f"{rel}:{n.lineno}" for n in nodes]
 
@@ -242,6 +284,22 @@ def test_nothing_orders_or_compares_by_the_claimed_signing_time():
     assert found == []
 
 
+def test_only_authority_py_builds_a_decision():
+    found = []
+    for rel, tree in _modules():
+        if rel != "authority.py":
+            found += _where(rel, _decision_builds(tree))
+    assert found == []
+
+
+def test_only_authority_py_decides_whether_text_fits():
+    found = []
+    for rel, tree in _modules():
+        if rel != "authority.py":
+            found += _where(rel, _size_decisions(tree))
+    assert found == []
+
+
 # ---- the scanners are not vacuous: a planted copy is caught ----------------
 
 @pytest.mark.parametrize("source,scanner,args", [
@@ -274,6 +332,15 @@ def test_nothing_orders_or_compares_by_the_claimed_signing_time():
      _claimed_time_ordered, ()),
     ("x = max(claimed_signing_time(a), claimed_signing_time(b))",
      _claimed_time_ordered, ()),
+    ("d = {'decision_b64': b}", _decision_builds, ()),
+    ("send(decision_b64=b)", _decision_builds, ()),
+    ("d['decision_b64'] = b", _decision_builds, ()),
+    ("if len(text.encode('utf-8')) > 2048: pass", _size_decisions, ()),
+    ("if 2048 < n: pass", _size_decisions, ()),
+    ("n = authority.rendered_lines(b)", _size_decisions, ()),
+    ("from .authority import MAX_RENDERED_LINES", _size_decisions, ()),
+    ("limit = authority.MAX_CONTENT_BYTES", _size_decisions, ()),
+    ("b = authority.content_bytes(t)", _size_decisions, ()),
 ])
 def test_a_planted_copy_of_the_rule_is_caught(source, scanner, args):
     assert list(scanner(ast.parse(source), *args))
@@ -293,6 +360,11 @@ def test_a_planted_copy_of_the_rule_is_caught(source, scanner, args):
     ("print(performer_of(p), claimed_signing_time(p))", _signer_stores, ()),
     ("if performer_of(p) == 'alice': pass", _claimed_time_ordered, ()),
     ("shown = claimed_signing_time(p)", _claimed_time_ordered, ()),
+    ("d = authority.build_decision('accept', row)", _decision_builds, ()),
+    ("x = row.get('decision_b64')", _decision_builds, ()),
+    ("p = authority.signable_problem(text, what='ask')", _size_decisions, ()),
+    ("if n > 4096: pass", _size_decisions, ()),
+    ("# rendered_lines and 2048", _size_decisions, ()),
 ])
 def test_binding_a_name_or_naming_it_in_a_comment_is_not_a_read(
         source, scanner, args):
