@@ -1,4 +1,4 @@
-"""`daimon projects`, `slug` and `bucket migrate` (moved out of cli/__init__.py, #1132 PR 5).
+"""`daimon projects`, `slug` and the `bucket` verbs (moved out of cli/__init__.py, #1132 PR 5).
 
 The project listing rows (also read by the MCP `projects` tool), the slug
 printer and the bucket migration verb. Every name is re-exported from `cli`.
@@ -12,7 +12,7 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import buckets, config, effects_commit, render, store, view
+from .. import bucket_tools, buckets, config, effects_commit, render, store, view
 from ..effects import Effects
 from ..display import one_line
 from ..ledger import _format_age
@@ -240,6 +240,202 @@ def _bucket_migrate_lines(record: dict, raw: str, *, dry_run: bool) -> list:
     return lines
 
 
+def _stdout_is_tty() -> bool:
+    """Whether names may be printed. A bucket name is the project's whole
+    location, so another project's name goes to a person at a terminal, never
+    into a pipe or a transcript an agent will read."""
+    return sys.stdout.isatty()
+
+
+def _refuse_on_tenant_scope(args, verb: str) -> int | None:
+    """rc 2 (and the refusal printed) when the home is tenant-scoped, else None.
+
+    `bucket merge` names buckets, `bucket stamp` and `bucket doctor` enumerate
+    every one of them. Each is a way to reach a bucket that is not the
+    caller's own, which a tenant-scoped home forbids (#899, scar 0071), so the
+    refusal is unconditional and nothing is read first."""
+    if not config.tenant_scoped():
+        return None
+    message = (f"this daimon home is tenant-scoped (DAIMON_TENANT_SCOPED): "
+               f"`bucket {verb}` reaches buckets by name or enumerates them "
+               f"all, and a tenant may not choose or list its scope.")
+    if getattr(args, "json", False):
+        print(json.dumps({"refused": message}, indent=2, ensure_ascii=False))
+    else:
+        print(f"error: {message}", file=sys.stderr)
+    return 2
+
+
+def _refused(args, exc) -> int:
+    if getattr(args, "json", False):
+        print(json.dumps({"refused": str(exc)}, indent=2, ensure_ascii=False))
+    else:
+        print(f"error: {exc}", file=sys.stderr)
+    return 2
+
+
+def _bucket_merge_lines(record: dict, *, dry_run: bool) -> list:
+    """The human render of one `bucket merge` record. Pure."""
+    if record["mode"] == "absent":
+        return [f"nothing to merge: {record['from_slug']} is not there "
+                f"(already folded, or never existed)"]
+    verb = "would fold" if dry_run else "folded"
+    lines = [f"{verb} {record['from_slug']} into {record['to_slug']}"]
+    for name, count in sorted(record["ledgers"].items()):
+        appended = "would append" if dry_run else "appended"
+        lines.append(f"  {name}: {appended} {count} line(s)")
+    if record.get("promoted"):
+        lines.append(f"  promoted {record['promoted']} to latest in "
+                     f"{record['to_slug']}")
+    if record.get("pointers_evicted"):
+        lines.append(f"  rotated out of the {record['to_slug']} chain: "
+                     f"{', '.join(record['pointers_evicted'])}")
+    if record.get("pointers_dropped"):
+        lines.append(f"  {len(record['pointers_dropped'])} pointer(s) fit no "
+                     f"slot and are dropped (their flat session files still "
+                     f"hold the bytes): {', '.join(record['pointers_dropped'])}")
+    for name in record.get("target_unreadable") or []:
+        lines.append(f"  {name} in {record['to_slug']} could not be read, so "
+                     f"no pointer was moved: fix or move that file, then run "
+                     f"again")
+    unreadable = record.get("unreadable") or []
+    for name in unreadable:
+        lines.append(f"  {name} could not be read, so it was not moved: fix "
+                     f"or move that file, then run again")
+    for name in record["leftovers"]:
+        if name in unreadable or store._POINTER_RE.match(name):
+            continue
+        lines.append(f"  {name} could not be read as anything this verb "
+                     f"moves: move it out of {record['from_slug']} to finish")
+    if dry_run:
+        lines.append("plan only, nothing was written: run again with --apply")
+    return lines
+
+
+def _cmd_bucket_merge(args) -> int:
+    """Fold one bucket into another, once, on purpose (slice 3b).
+
+    Dry run unless `--apply`. rc 0 finished, 1 something is left behind (the
+    remedy is printed), 2 refused. See `buckets.merge` for what is refused."""
+    refused = _refuse_on_tenant_scope(args, "merge")
+    if refused is not None:
+        return refused
+    try:
+        record = buckets.merge(args.from_bucket, args.into_bucket,
+                               apply=args.apply, force=args.force)
+    except buckets.MigrationError as exc:
+        return _refused(args, exc)
+    rc = 0 if record.get("complete", True) else 1
+    if args.json:
+        print(json.dumps(record, indent=2, ensure_ascii=False))
+        return rc
+    render.render_ledger_lines(
+        _bucket_merge_lines(record, dry_run=not args.apply))
+    return rc
+
+
+def _counted(items: dict, listing: bool) -> list:
+    """`name: count`, with the names after it only when `listing` is allowed."""
+    lines = []
+    for key, value in items.items():
+        if not value:
+            continue
+        count = len(value) if isinstance(value, list) else value
+        line = f"{key}: {count}"
+        if listing and isinstance(value, list):
+            line += " (" + ", ".join(
+                " + ".join(v) if isinstance(v, list) else str(v)
+                for v in value) + ")"
+        lines.append(line)
+    return lines
+
+
+def _cmd_bucket_doctor(args) -> int:
+    """Survey every bucket, read-only (slice 3b). Counts always; names, the
+    candidates for `--path` and the merge suggestions only at a terminal."""
+    refused = _refuse_on_tenant_scope(args, "doctor")
+    if refused is not None:
+        return refused
+    survey = bucket_tools.doctor(path=args.path)
+    listing = _stdout_is_tty()
+    if args.json:
+        shown = dict(survey)
+        if not listing:
+            shown["findings"] = {k: len(v)
+                                 for k, v in survey["findings"].items()}
+            shown["candidates"] = len(survey["candidates"])
+            shown["suggestions"] = len(survey["suggestions"])
+        print(json.dumps(shown, indent=2, ensure_ascii=False))
+        return 0
+    lines = [f"buckets: {survey['buckets']}"]
+    found = _counted(survey["findings"], listing)
+    lines += found or ["no findings"]
+    if args.path is not None:
+        if listing:
+            for match in survey["candidates"]:
+                lines.append(f"  candidate {match['bucket']}: same "
+                             f"{' and '.join(match['matched'])} as {args.path}")
+        lines.append(f"candidates: {len(survey['candidates'])} "
+                     f"({survey['candidates_note']})")
+    if survey["suggestions_withheld"]:
+        lines.append("merge suggestions withheld for worktree-looking roots: "
+                     "their live folder would create the folded bucket again")
+    if survey["suggestions"]:
+        if listing:
+            lines.append("check which bucket is the main one before running:")
+            for s in survey["suggestions"]:
+                lines.append(f"  daimon bucket merge --from={s['from']} "
+                             f"--into={s['into']}")
+        else:
+            lines.append(f"suggestions: {len(survey['suggestions'])} (shown "
+                         f"on a terminal)")
+    render.render_ledger_lines(lines)
+    return 0
+
+
+def _cmd_bucket_stamp(args) -> int:
+    """Give buckets the evidence to survive a move (slice 3b). Dry run unless
+    `--apply`; rc 1 when a bucket needed a person (two matches, a lost race)."""
+    refused = _refuse_on_tenant_scope(args, "stamp")
+    if refused is not None:
+        return refused
+    try:
+        result = bucket_tools.stamp(scan=args.scan or (), apply=args.apply)
+    except bucket_tools.StampRefused as exc:
+        return _refused(args, exc)
+    actions = result["actions"]
+    tally: dict[str, int] = {}
+    for a in actions:
+        tally[a["action"]] = tally.get(a["action"], 0) + 1
+    needs_a_person = tally.get("ambiguous", 0) + tally.get("raced", 0)
+    listing = _stdout_is_tty()
+    if args.json:
+        print(json.dumps({"applied": result["applied"], "counts": tally,
+                          **({"actions": actions} if listing else {})},
+                         indent=2, ensure_ascii=False))
+        return 1 if needs_a_person else 0
+    verb = {"identity": "write identity for", "root": "stamp root of"}
+    lines = []
+    if not actions:
+        lines.append("no buckets")
+    for action, count in sorted(tally.items()):
+        label = action if result["applied"] else (
+            f"would {verb[action]}" if action in verb else action)
+        lines.append(f"{label}: {count}")
+    if listing:
+        for a in actions:
+            if a["action"] in ("kept", "unmatched"):
+                continue
+            tail = (f" {a['root']}" if a.get("root")
+                    else f" ({len(a['candidates'])} repositories match)"
+                    if a.get("candidates") else "")
+            lines.append(f"  {a['action']} {a['bucket']}{tail}")
+    if not result["applied"]:
+        lines.append("plan only, nothing was written: run again with --apply")
+    render.render_ledger_lines(lines)
+    return 1 if needs_a_person else 0
+
+
 @effects_commit.committing
 def _cmd_projects(args, fx) -> int:
     """Read-only orientation for context switching — the crossing itself
@@ -329,6 +525,88 @@ def register(sub, fmt) -> None:
     p_bucket_migrate.add_argument(
         "--json", action="store_true", help="machine-readable output")
     p_bucket_migrate.set_defaults(func=_cmd_bucket_migrate)
+
+    p_bucket_merge = bucket_sub.add_parser(
+        "merge",
+        help="fold one bucket into another, once (a worktree or ghost bucket)",
+        description="Fold the bucket named by --from into the bucket named "
+                    "by --into: ledger lines the target lacks are appended, "
+                    "the newest session of --from becomes the target's "
+                    "latest when it is newer, and --from is removed with an "
+                    "alias recorded so readers follow it. Pointers that fit "
+                    "no slot are dropped and listed (the flat session files "
+                    "still hold them). Refused while --from's recorded root "
+                    "still exists on disk, unless --force. Dry run by "
+                    "default. Human-only, and refused on a tenant-scoped "
+                    "home.",
+        epilog="Examples:\n"
+               "  daimon bucket merge --from=-Users-me-repo-wt "
+               "--into=-Users-me-repo\n"
+               "  daimon bucket merge --from=OLD --into=MAIN --apply\n"
+               "Bucket names usually start with '-', so write --from=NAME.",
+    )
+    p_bucket_merge.add_argument(
+        "--from", dest="from_bucket", required=True, metavar="BUCKET",
+        help="the bucket to fold away (its directory name under checkpoints/)")
+    p_bucket_merge.add_argument(
+        "--into", dest="into_bucket", required=True, metavar="BUCKET",
+        help="the bucket that keeps the history (must exist)")
+    p_bucket_merge.add_argument(
+        "--apply", action="store_true",
+        help="write the merge (default: print the plan only)")
+    p_bucket_merge.add_argument(
+        "--force", action="store_true",
+        help="merge even though --from's recorded root still exists")
+    p_bucket_merge.add_argument(
+        "--json", action="store_true", help="machine-readable output")
+    p_bucket_merge.set_defaults(func=_cmd_bucket_merge)
+
+    p_bucket_doctor = bucket_sub.add_parser(
+        "doctor",
+        help="survey the buckets: dangling, unstamped, shared, empty, worktree",
+        description="Read-only survey of every bucket: recorded roots that no "
+                    "longer exist, buckets with no root, two buckets with one "
+                    "root, empty and ghost buckets, worktree-looking roots, "
+                    "buckets left by an unfinished merge, identity records "
+                    "that disagree. With --path, also lists dangling buckets "
+                    "whose recorded origin URL or root commit match that "
+                    "folder (evidence, not proof). Bucket names are printed "
+                    "only to a terminal, counts otherwise. Human-only, and "
+                    "refused on a tenant-scoped home.",
+        epilog="Examples:\n"
+               "  daimon bucket doctor\n"
+               "  daimon bucket doctor --path .\n",
+    )
+    p_bucket_doctor.add_argument(
+        "--path", help="a project folder to look for old buckets of")
+    p_bucket_doctor.add_argument(
+        "--json", action="store_true", help="machine-readable output")
+    p_bucket_doctor.set_defaults(func=_cmd_bucket_doctor)
+
+    p_bucket_stamp = bucket_sub.add_parser(
+        "stamp",
+        help="record where each bucket's project lives, before a move",
+        description="Give every stamped bucket an identity record (origin "
+                    "URL without credentials, root commit, folder name) and "
+                    "stamp an unstamped bucket with its folder when exactly "
+                    "one repository under a --scan directory has that "
+                    "bucket's name; two matches refuse. Run it on the OLD "
+                    "machine, before copying the store. Dry run by default. "
+                    "Signed checkpoints are never touched. Human-only, and "
+                    "refused on a tenant-scoped home.",
+        epilog="Examples:\n"
+               "  daimon bucket stamp --scan ~/code\n"
+               "  daimon bucket stamp --scan ~/code --scan ~/work --apply\n",
+    )
+    p_bucket_stamp.add_argument(
+        "--scan", action="append", metavar="DIR",
+        help="a folder to look for repositories in (repeatable)")
+    p_bucket_stamp.add_argument(
+        "--apply", action="store_true",
+        help="write the stamps (default: print the plan only)")
+    p_bucket_stamp.add_argument(
+        "--json", action="store_true", help="machine-readable output")
+    p_bucket_stamp.set_defaults(func=_cmd_bucket_stamp)
 
     p_slug = sub.add_parser(
         "slug",
