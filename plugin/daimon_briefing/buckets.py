@@ -199,6 +199,13 @@ def _edges() -> dict[str, str]:
             if _is_complete(row)}
 
 
+def unfinished_sources() -> set[str]:
+    """Every bucket named as the SOURCE of a move that did not finish: a
+    directory somebody still has to deal with."""
+    return {pair[0] for pair, row in latest_rows().items()
+            if not _is_complete(row)}
+
+
 def incomplete_for(slug) -> tuple[dict, ...]:
     """Receipt rows for `slug` that did NOT finish, newest last. `status`
     renders a `partial:` line off this: a migration that stopped half way is
@@ -956,9 +963,9 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
                 pass
     merged = _merge_pointers(legacy_dir, target_dir, legacy, target,
                              apply=not dry_run, fold=fold)
-    extra = {"promoted": merged.promoted,
-             "pointers_evicted": list(merged.evicted),
-             "pointers_dropped": list(merged.dropped)}
+    promoted = merged.promoted
+    evicted = list(merged.evicted)
+    dropped = list(merged.dropped)
     if dry_run:
         # Predict what will REMAIN, not what is there now. Listing the files
         # the real run is about to consume makes the plan say a bucket will
@@ -976,7 +983,9 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
                        unreadable=unreadable,
                        stranded_pointers=merged.stranded_labels,
                        target_unreadable=merged.target_unreadable,
-                       target_slots=merged.target_slots, by=by, **extra)
+                       target_slots=merged.target_slots, promoted=promoted,
+                     pointers_evicted=evicted, pointers_dropped=dropped,
+                     by=by)
     for name in _REMOVABLE - {store._BUCKET_ROOT_NAME}:
         try:
             (legacy_dir / name).unlink()
@@ -997,7 +1006,9 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
                      unreadable=unreadable,
                      stranded_pointers=merged.stranded_labels,
                      target_unreadable=merged.target_unreadable,
-                     target_slots=merged.target_slots, by=by, **extra)
+                     target_slots=merged.target_slots, promoted=promoted,
+                     pointers_evicted=evicted, pointers_dropped=dropped,
+                     by=by)
     # A run that MOVED nothing has nothing to record. Measured as what this
     # run ABSORBED, never as the size of the chain it rebuilt: a re-run
     # rebuilds the same chain over the same union, so a pointer COUNT is
