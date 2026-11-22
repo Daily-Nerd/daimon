@@ -47,7 +47,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import config, hostgit, store, teamproject
+from . import config, hostgit, scope, store, teamproject
 
 GIT_TIMEOUT = 15        # seconds — local plumbing calls
 NET_TIMEOUT = 60        # seconds — ls-remote / fetch / push / clone touch the network
@@ -153,7 +153,7 @@ def remote_slug(url: str) -> str:
     s = s.rstrip("/")
     if s.endswith(".git"):
         s = s[: -len(".git")]
-    slug = store.project_slug(s)
+    slug = scope.segment(s)
     if not slug:
         raise TeamError(f"bad remote url: {url!r}")
     return slug
@@ -200,7 +200,7 @@ def _identity_extra(sidecar) -> list[str]:
         return []
     author = config.author()
     return ["-c", f"user.name={author}",
-            "-c", f"user.email={store.project_slug(author)}@daimon.invalid"]
+            "-c", f"user.email={scope.segment(author)}@daimon.invalid"]
 
 
 def _commit(sidecar, message, pathspecs) -> subprocess.CompletedProcess:
@@ -382,7 +382,7 @@ def _commit_own(sidecar, report) -> None:
     path-scoped to those dirs, so other authors' paths (and any stray junk in
     the sidecar) are never touched — disjoint append-only paths are what make
     the whole scheme conflict-free."""
-    own = store.project_slug(config.author()) or "unknown"
+    own = scope.segment(config.author()) or "unknown"
     own_dirs = _own_pathspecs(sidecar, own)
     if not own_dirs:
         return  # no own dir in either era: nothing of ours to stage
@@ -441,7 +441,7 @@ def _check_ledger_authorship(sidecar, old, new, report) -> None:
             continue
         for name in sorted({ln.strip() for ln in log.stdout.splitlines()
                             if ln.strip()}):
-            if store.project_slug(name) != store.project_slug(owner):
+            if scope.segment(name) != scope.segment(owner):
                 report["warnings"].append(
                     f"author mismatch: {path} belongs to '{owner}' but was "
                     f"changed in a commit by '{name}'; identity is "
@@ -478,7 +478,7 @@ def _check_author_mismatch(sidecar, old, new, report) -> None:
         committer = _last_line(log.stdout)
         if not stamped or not committer:
             continue
-        if store.project_slug(str(stamped)) != store.project_slug(committer):
+        if scope.segment(str(stamped)) != scope.segment(committer):
             report["warnings"].append(
                 f"author mismatch: {path} claims author '{stamped}' but was "
                 f"committed by '{committer}' — identity is declared, not "
@@ -663,7 +663,7 @@ def _pending_count(sidecar) -> int:
     team line stop reporting "fresh" while a checkpoint sits uncommitted.
     Same own-dir resolution `_commit_own` uses; fails open (0) on git error,
     matching the rest of this module."""
-    own = store.project_slug(config.author()) or "unknown"
+    own = scope.segment(config.author()) or "unknown"
     own_dirs = _own_pathspecs(sidecar, own)
     if not own_dirs:
         return 0

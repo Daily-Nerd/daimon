@@ -22,6 +22,7 @@ from .. import (
     effects_commit,
     recall,
     render,
+    scope,
     store,
     view,
 )
@@ -128,7 +129,7 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     from .. import view
     # project_slug munging, matching _dual_write_team's dir identity — _safe_name
     # would re-introduce the "a/b" == "a_b" collision on the self-match.
-    self_slug = store.project_slug(config.author())
+    self_slug = scope.segment(config.author())
     now = time.time()
     out = []
     if counts is not None:
@@ -136,7 +137,7 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
         # shown; the trailer says so instead of a shorter list.
         counts.notes = view.team_notes(project)
     for author, opened in view.team(project, live=True):
-        if store.project_slug(author) == self_slug:
+        if scope.segment(author) == self_slug:
             continue  # never surface your own state as a teammate
         prepared = briefing.prepare(project, now, opened=opened, stamps=False)
         if counts is not None:

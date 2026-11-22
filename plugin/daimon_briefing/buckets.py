@@ -128,7 +128,7 @@ def legacy_slug(project_dir) -> str | None:
     text = str(project_dir).strip()
     if not text:
         return None
-    return store.project_slug(os.path.abspath(os.path.expanduser(text)))
+    return store.location_slug(os.path.abspath(os.path.expanduser(text)))
 
 
 def target_slug(project_dir) -> str | None:

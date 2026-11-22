@@ -16,8 +16,8 @@ states a project's root, bucket slug and optional origin URL once per process
 write: the declared root still passes the sealed shape check and the config
 allowlist gate.
 
-`project_slug` is `store.project_slug`: the character transform that names a
-bucket. Resolving WHICH directory a value means is `config.resolve_project_dir`
+`project_slug` is `store.location_slug`: the pure character transform that
+seeds a bucket name from a location. Resolving WHICH directory a value means is `config.resolve_project_dir`
 (#948), which the view's functions apply themselves.
 
 Serialize liveness (`serializes`, #1179). One row per session, keyed by ONE
@@ -124,7 +124,8 @@ from .marks import FORMAT_VERSION as BRIEFING_FORMAT
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
 from .requests import inbox, inbox_listing, join, listing
-from .store import project_slug, read_meta
+from .store import location_slug as project_slug
+from .store import read_meta
 from .surfaces import Writer
 from .transcript import EXCLUDED_ROWS, Admitted, admitted_messages
 from .view import ledger_health, lookup, masked, match, receipt_state

@@ -19,6 +19,29 @@ import enum
 import re
 from dataclasses import dataclass
 
+# The one definition of the char rule behind every slug-shaped name: every char
+# that is not a word char or '-' becomes '-'. Unicode-aware, so '_' and accented
+# letters survive. The output can never hold a path separator or a '.'.
+_SEGMENT_RE = re.compile(r"[^\w-]")
+
+
+def segment(text) -> str | None:
+    """Fold arbitrary text (an author name, a remote URL, a logical path
+    segment, a stamp) into one safe name, or None when there is nothing to fold.
+
+    The SANITIZER role. It is the same char rule `store.location_slug` applies
+    to a location, and deliberately nothing more: no filesystem, no git, no
+    SEALED declaration lookup, because the input is not a project location.
+    Changing the rule renames every author directory in a team mirror and every
+    bucket, so it moves only together with `store.project_slug`'s rule."""
+    if not text:
+        return None
+    s = str(text).strip()
+    if not s:
+        return None
+    return _SEGMENT_RE.sub("-", s) or None
+
+
 # A directory name is at most 255 bytes, so a longer name can never be a
 # bucket that exists on disk.
 _BUCKET_RE = re.compile(r"[\w-]{1,255}")

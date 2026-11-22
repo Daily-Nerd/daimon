@@ -18,7 +18,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import clock, config, render, requests, store, view
+from .. import clock, config, render, requests, scope, store, view
 from . import _observe
 from ._ledger import _snap
 
@@ -559,7 +559,7 @@ def _resolve_to(raw) -> str:
     idempotent, so a slug passed here comes back unchanged and a path comes
     back as its slug.
     """
-    return store.project_slug(str(raw or "").strip()) or ""
+    return scope.segment(str(raw or "").strip()) or ""
 
 
 def _is_bare_word(raw) -> bool:

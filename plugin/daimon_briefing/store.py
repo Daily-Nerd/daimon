@@ -86,20 +86,31 @@ def project_slug(project_dir) -> str | None:
     therefore a documentation defect rather than a live one, which is why #884
     changed only this text.
     """
-    if not project_dir:
+    return location_slug(project_dir)
+
+
+def location_slug(path) -> str | None:
+    """The pure LOCATION seed: the slug of a path string, or None if unknown.
+
+    No filesystem, no git (#913). Under SEALED a root the host declared maps to
+    the slug the host stated. Callers that need a seed and nothing else
+    (`daimon slug`, the pre-0.42.0 rule, the importer's host-directory guess)
+    call this by name. Text that is not a project location (author names,
+    remote URLs, stamps) goes through `scope.segment` instead."""
+    if not path:
         return None
-    s = str(project_dir).strip()
+    s = str(path).strip()
     if not s:
         return None
     # A host that declared this root (SEALED) named its bucket itself; the
     # slug is already a fixed point of the rule below, so it stays idempotent.
-    return hostgit.declared_slug(s) or re.sub(r"[^\w-]", "-", s) or None
+    return hostgit.declared_slug(s) or scope.segment(s)
 
 
 def _own_author_dir() -> str:
     """The author's own directory name in a team mirror: the same identity
     `_dual_write_team` writes and `scrub_team_copies` walks."""
-    return project_slug(config.author()) or "unknown"
+    return scope.segment(config.author()) or "unknown"
 
 
 surfaces.register_own_author(_own_author_dir)
@@ -638,7 +649,7 @@ def scrub_team_copies(content_hash: str, project_dir=None) -> jsonl.Reached:
     holding plaintext, not its role, is what counts.
 
     Scope discipline is the whole design:
-    - OWN author dirs only — `authors/<project_slug(config.author())>`,
+    - OWN author dirs only — `authors/<scope.segment(config.author())>`,
       the same identity _dual_write_team writes and teamsync._own_pathspecs
       commits, so a later `team sync` stages the rewrite as an ordinary
       own-file modification. The spike verdict forbids mutable POINTERS and
@@ -717,7 +728,7 @@ def _own_team_files(project_dir) -> list:
     `project_slug` stamp and unparseable is left out: nothing says whose it
     is (the audit's own blindness, shared so scrub and audit agree)."""
     team = config.team_dir()
-    own = project_slug(config.author()) or "unknown"
+    own = scope.segment(config.author()) or "unknown"
     slug = project_slug(project_dir)
     try:
         segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
@@ -1046,7 +1057,7 @@ def _own_team_dirs(project_dir=None, *, clones_only: bool = False) -> list:
     so a published tombstone lands where the sync already looks.
     `clones_only` drops the machine-local `local` mirror: nothing reads it as
     another author's, so a published quarantine there reaches no reader."""
-    own = project_slug(config.author()) or "unknown"
+    own = scope.segment(config.author()) or "unknown"
     segs = teamproject.resolve(project_dir)
     out = []
     for slug in _team_write_slugs(project_dir):
@@ -1195,7 +1206,7 @@ def _own_author_dirs_everywhere() -> list:
     earlier claim of yours, a hash-only row in a place you already published
     to, so it needs no current membership. The `local` mirror is not a clone
     and is skipped. Never raises."""
-    own = project_slug(config.author()) or "unknown"
+    own = scope.segment(config.author()) or "unknown"
     out: list = []
     try:
         clones = sorted(p for p in config.team_dir().iterdir()
@@ -1223,7 +1234,7 @@ def _publishable(row) -> dict | None:
     if clean.get("state") not in ("active", "released"):
         return None
     clean.setdefault("version", 1)
-    clean["author"] = project_slug(str(clean.get("author")
+    clean["author"] = scope.segment(str(clean.get("author")
                                        or config.author())) or "unknown"
     return clean if policy.strict_published_row(clean) else None
 
@@ -1618,7 +1629,7 @@ def _stat_entry(path) -> tuple:
 def foreign_tombstones() -> ForeignTombstones:
     """The foreign tombstone view of `foreign_team()`: keys plus the authors
     whose published ledgers are unproven. Author directory names are
-    `project_slug(author)`. Never raises."""
+    `scope.segment(author)`. Never raises."""
     team = foreign_team()
     return ForeignTombstones(set(team.keys), team.unproven)
 
@@ -1682,7 +1693,7 @@ def _team_ledger_paths(names, *, include_own: bool = False,
         return out
     # After the cheap exits: `config.author()` may fork `git config`, and a
     # machine with no sidecar must not pay that on every briefing.
-    own = None if include_own else (project_slug(config.author()) or "unknown")
+    own = None if include_own else (scope.segment(config.author()) or "unknown")
     for remote in remotes:
         try:
             for adir in _team_author_dirs(remote):
@@ -2676,7 +2687,7 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
         # Windows-hostile chars (:*?<>|) through. project_slug munges every
         # non-word char to '-'. Post-munge collisions ("a b" vs "a-b") remain a
         # documented edge — distinct humans colliding there is unrealistic.
-        author_slug = project_slug(config.author()) or "unknown"
+        author_slug = scope.segment(config.author()) or "unknown"
         # #279 default-closed membership + #387 scope routing live together in
         # _team_write_slugs: every sidecar whose daimon-team.toml grants this
         # project receives the checkpoint; none willing -> the local mirror
@@ -2791,7 +2802,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     # own scrubbed file may not have reached this clone yet.
     foreign_tombs = foreign_tombstones()
     forgotten = forgotten_content_keys(project_dir) | foreign_tombs.keys
-    self_author = project_slug(config.author())
+    self_author = scope.segment(config.author())
     # author-slug (dir identity, one per author) -> (recency, author, checkpoint)
     best: dict[str, tuple[float, str, dict]] = {}
 
@@ -2818,7 +2829,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
             if cutoff is not None and rec < cutoff:
                 continue  # aged out of the read window; file stays on disk
             if member is not None \
-                    and project_slug(str(cp.get("author") or adir.name)) \
+                    and scope.segment(str(cp.get("author") or adir.name)) \
                     != self_author:
                 cp = policy.admit_foreign(
                     cp, member=member, forgotten_keys=forgotten,

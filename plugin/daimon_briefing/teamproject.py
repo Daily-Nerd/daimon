@@ -40,7 +40,7 @@ try:
 except ModuleNotFoundError:  # py3.10: tomli is the conditional runtime dep
     import tomli as tomllib  # type: ignore[no-redef]
 
-from . import config, hostgit
+from . import config, hostgit, scope
 
 CONFIG_NAME = "daimon-team.toml"
 GIT_TIMEOUT = 5  # seconds — bounded; resolution must never block a write
@@ -52,20 +52,15 @@ GIT_TIMEOUT = 5  # seconds — bounded; resolution must never block a write
 _cache: dict[tuple, list[tuple[str, ...]]] = {}
 
 
-def _munge_segment(seg: str) -> str:
-    # Same char rules as store.project_slug (kept local — store imports this
-    # module, so importing store back would cycle): every char that is not a
-    # word char or '-' becomes '-'. The result can never contain a path
-    # separator or a '.', so `..` and friends cannot escape the sidecar.
-    return re.sub(r"[^\w-]", "-", seg)
-
-
 def logical_segments(path_str) -> tuple[str, ...]:
     """Munged segments of a "/"-separated logical path; empties dropped."""
     if not path_str:
         return ()
+    # scope.segment strips, folds every non-word char to '-' (so neither a
+    # separator nor a '.' survives, and `..` cannot escape the sidecar) and
+    # yields None for an empty segment, which is dropped.
     return tuple(
-        s for s in (_munge_segment(p.strip()) for p in str(path_str).split("/")) if s
+        s for s in (scope.segment(p) for p in str(path_str).split("/")) if s
     )
 
 

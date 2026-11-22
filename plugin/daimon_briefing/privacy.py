@@ -281,7 +281,7 @@ def _scan_recall_db(db_path: Path, slug: str, keys: set[str],
     current = (claim is not None
                or meta.get("fingerprint") == recall._fingerprint())
     union = store.all_forgotten_content_keys()
-    self_author = store.project_slug(config.author())
+    self_author = scope.segment(config.author())
     residue: list[dict] = []
     informational: list[dict] = []
     for item_id, text, quote, scene, row_slug, author in rows:
@@ -290,7 +290,7 @@ def _scan_recall_db(db_path: Path, slug: str, keys: set[str],
             hit, surface = hashes & keys, "recall-index-residue"
         elif row_slug is None:
             hit, surface = hashes & union, "unattributed"
-        elif author and store.project_slug(str(author)) != self_author:
+        elif author and scope.segment(str(author)) != self_author:
             # Foreign-author rows answer to the machine-global union — the
             # shipped inbound gate's semantics (recall.py:244), mirrored.
             hit, surface = hashes & union, "recall-index-residue"

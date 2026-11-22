@@ -336,7 +336,7 @@ def check_project(
                 f"refused: transcript belongs to {owner}, not {project} ({path})"
             )
         return None
-    root = claude_projects / (store.project_slug(project) or "")
+    root = claude_projects / (store.location_slug(project) or "")
     if _under(path, root):
         return None
     if host in provenance.HOSTS_RECORDING_NO_PROJECT:

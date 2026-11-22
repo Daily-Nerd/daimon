@@ -115,18 +115,6 @@ def checkpoint_dir() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".daimon" / "checkpoints"
 
 
-def slug(project_dir: str) -> str | None:
-    """cwd -> filesystem-safe slug, same scheme as daimon_briefing.store.project_slug.
-
-    Duplicated here because the hooks are standalone stdlib-only scripts that
-    cannot import the package (isolated uv-tool venv). Keep in sync with
-    daimon_briefing.store.project_slug."""
-    s = (project_dir or "").strip()
-    if not s:
-        return None
-    return re.sub(r"[^\w-]", "-", s) or None
-
-
 def created_epoch(created) -> float | None:
     """Epoch for a checkpoint's ISO-8601 `created` stamp, or None if absent/bad.
 
