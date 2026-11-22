@@ -122,17 +122,15 @@ def _repositories(scan: list[str]) -> list[str]:
         if depth >= SCAN_DEPTH:
             return
         try:
-            children = sorted(os.scandir(directory), key=lambda e: e.name)
+            children = sorted(
+                entry.path for entry in os.scandir(directory)
+                if entry.name not in _SCAN_SKIP
+                and not entry.name.startswith(".")
+                and entry.is_dir(follow_symlinks=False))
         except OSError:
-            return
-        for entry in children:
-            if entry.name in _SCAN_SKIP or entry.name.startswith("."):
-                continue
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    visit(entry.path, depth + 1)
-            except OSError:
-                continue
+            return  # an unreadable directory holds no repository we can name
+        for child in children:
+            visit(child, depth + 1)
 
     for directory in scan:
         visit(directory, 0)
