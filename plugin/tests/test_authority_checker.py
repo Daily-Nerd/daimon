@@ -17,7 +17,7 @@ from daimon_briefing.authority import (
     Undetermined,
 )
 
-from tests._handsal_acts import ACCEPTED_ACTS
+from tests._handsal_acts import ACCEPTED_ACTS, GENESIS_SIGNATURES
 
 ACT = ACCEPTED_ACTS["ok.approve"]
 
@@ -318,6 +318,29 @@ def test_performer_of_reads_the_performer_from_an_accepted_act(name):
     assert expected == "alice"
     proven = authority.recheck_outcome(_answer("ok", rechecked=True), jws)
     assert authority.performer_of(proven) == expected
+
+
+@pytest.mark.parametrize("name,person", [
+    ("genesis.sign.alice", "alice"),
+    ("genesis.sign.bob", "bob"),
+    ("genesis.sign.carol", "carol"),
+])
+def test_each_act_gives_its_own_performer_and_time(name, person):
+    """Distinct people and times, so a constant or a cross-wired value fails.
+    The genesis signatures stand in for the payload reader's input only."""
+    jws = GENESIS_SIGNATURES[name]
+    proven = authority.recheck_outcome(_answer("ok", rechecked=True), jws)
+    assert authority.performer_of(proven) == person
+    assert authority.claimed_signing_time(proven) == "2026-11-08T10:00:00Z"
+    other = authority.recheck_outcome(_answer("ok", rechecked=True), ACT)
+    assert authority.claimed_signing_time(other) == "2026-11-08T11:59:00Z"
+
+
+def test_the_three_people_are_three_different_answers():
+    seen = {
+        authority.performer_of(Proven(act=jws))
+        for jws in GENESIS_SIGNATURES.values()}
+    assert seen == {"alice", "bob", "carol"}
 
 
 def test_the_claimed_signing_time_is_read_from_the_payload():
