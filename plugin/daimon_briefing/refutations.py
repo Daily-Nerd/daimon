@@ -1819,22 +1819,22 @@ def _guard_open_proposals(refutation_id: str, event: str,
 def _guard_ruling_text(subject, verdict) -> None:
     # Measured on what would actually be STORED: whitespace collapsed and
     # redaction applied (a short secret can lengthen into its placeholder).
+    # Derived once per field; both checks below measure that one string.
+    stored = {}
     for name, value in (("subject", subject), ("verdict", verdict)):
         if value is None:
             continue
-        stored, _ = redact.redact_text(
+        stored[name], _ = redact.redact_text(
             _SPACE_RE.sub(" ", str(value)).strip())
-        if len(stored) > _MAX_RULING_TEXT:
+        if len(stored[name]) > _MAX_RULING_TEXT:
             raise RefutationError(
                 f"ruling {name} exceeds {_MAX_RULING_TEXT} chars — a "
                 "standing rule that long is a document, not a ruling")
     # The verdict is the text a person signs when they ratify the ruling, so
     # it must also be showable whole at signing (`authority`). The subject is
     # a label and is not signed.
-    if verdict is not None:
-        problem = signable_problem(
-            redact.redact_text(_SPACE_RE.sub(" ", str(verdict)).strip())[0],
-            what="verdict")
+    if "verdict" in stored:
+        problem = signable_problem(stored["verdict"], what="verdict")
         if problem is not None:
             raise RefutationError(f"ruling cannot be recorded: {problem}")
 

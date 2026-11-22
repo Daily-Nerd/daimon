@@ -426,3 +426,20 @@ def test_the_four_id_generators_are_still_the_only_subjects():
                   and node.name == "make_id"}
     assert found == {"refutations.py", "requests.py", "amendments.py",
                      "trust.py", "relations.py"}
+
+
+@pytest.mark.parametrize("verdict", [
+    "  collapse   the\n\tspaces  ",
+    "never paste ghp_" + "a" * 36 + " anywhere",
+], ids=["whitespace", "redaction"])
+def test_the_measured_verdict_is_the_stored_verdict(
+        project, monkeypatch, verdict):
+    measured = []
+    real = refutations.signable_problem
+    monkeypatch.setattr(
+        refutations, "signable_problem",
+        lambda text, **kw: measured.append(text) or real(text, **kw))
+    ruling_id = _ruling(project, verdict)
+    stored = refutations.get(ruling_id, project_dir=project)["verdict"]
+    assert measured == [stored]
+    assert stored != verdict
