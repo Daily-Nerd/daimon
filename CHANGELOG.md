@@ -5,6 +5,22 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.70.0](https://github.com/Daily-Nerd/daimon/compare/v0.69.0...v0.70.0) (2026-11-22)
+
+
+### Features
+
+* **authority:** build the decision a person signs and count what the signing screen will show ([e5b7d68](https://github.com/Daily-Nerd/daimon/commit/e5b7d68b6f4b91780d27c1a313d8d9270b837004)), closes [#1377](https://github.com/Daily-Nerd/daimon/issues/1377)
+* **authority:** map a handsal checker answer to an outcome and read who signed a proven act ([dab7cdb](https://github.com/Daily-Nerd/daimon/commit/dab7cdb34c87bf59f7a66d69ee7c46e46eec282d)), closes [#1374](https://github.com/Daily-Nerd/daimon/issues/1374)
+* **requests:** refuse an ask or a ruling that cannot be shown whole when a person signs it ([d3feccc](https://github.com/Daily-Nerd/daimon/commit/d3feccc09f3609aa0e58cbeec5504eb15420ebc5)), closes [#1377](https://github.com/Daily-Nerd/daimon/issues/1377)
+
+
+### Documentation
+
+* describe the signing size limit for asks and rulings in English and Spanish ([29005b4](https://github.com/Daily-Nerd/daimon/commit/29005b468b85be88a65b7804a10f33115def58d6)), closes [#1377](https://github.com/Daily-Nerd/daimon/issues/1377)
+* **scars:** record that a handsal answer's class key is the device class ([2f86a20](https://github.com/Daily-Nerd/daimon/commit/2f86a2025a1f4cdbe4688361b06651445b700c38)), closes [#1374](https://github.com/Daily-Nerd/daimon/issues/1374)
+* **scars:** record that daimon counts the signed text's rendered lines and never wraps it ([ee45df0](https://github.com/Daily-Nerd/daimon/commit/ee45df0cec60aee56d83f229b9083c0bef09fbaa)), closes [#1377](https://github.com/Daily-Nerd/daimon/issues/1377)
+
 ## [0.69.0](https://github.com/Daily-Nerd/daimon/compare/v0.68.1...v0.69.0) (2026-11-21)
 
 
