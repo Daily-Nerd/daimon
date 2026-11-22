@@ -811,7 +811,9 @@ def register(sub, fmt) -> None:
     rl_propose.add_argument("--subject", required=True,
                             help="what the ruling governs")
     rl_propose.add_argument("--verdict", required=True,
-                            help="the ruling text itself (max 280 chars)")
+                            help="the ruling text itself (max 280 chars; "
+                                 "refused when it is too long to be shown "
+                                 "whole to a person signing it)")
     rl_propose.add_argument("--scope", required=True,
                             help="where it applies")
     rl_propose.add_argument(
@@ -873,7 +875,7 @@ def register(sub, fmt) -> None:
                        "records a proposal and the text stands")
     rl_revise.add_argument("ruling_id", help="exact r-… id")
     rl_revise.add_argument("--subject", help="replacement subject")
-    rl_revise.add_argument("--verdict", help="replacement ruling text")
+    rl_revise.add_argument("--verdict", help="replacement ruling text (same size rule as propose)")
     rl_revise.add_argument("--scope", help="replacement scope")
     rl_revise.add_argument(
         "--anchor", action="append", default=None, metavar="ANCHOR",

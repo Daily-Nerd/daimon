@@ -24,6 +24,14 @@ daimon ruling retire r-5b19c3
 la regla; mirá la [referencia de CLI](../reference/cli/index.md) para la sintaxis
 exacta.)
 
+El texto de la regla es también lo que una persona firma al ratificar, así que
+tiene que entrar en la pantalla de firma: como máximo 2048 bytes de UTF-8 y 32
+líneas tal como las muestra el firmador, además del límite de 280 caracteres.
+Cada byte fuera del ASCII simple se muestra como cuatro caracteres, así que un
+texto ancho, como chino o japonés, llega primero al límite de líneas. Una
+regla que no entra se rechaza al proponerla o revisarla, con su tamaño y el
+límite que pasó.
+
 - **`propose`** funda una candidata. Una propuesta de agente queda como
   candidata: no se renderiza nada, no se hace cumplir nada, hasta que un
   humano actúe sobre ella.

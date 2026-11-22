@@ -23,6 +23,13 @@ daimon ruling retire r-5b19c3
 (`propose` and `revise` also take the flag that carries the rule text
 itself; see the [CLI reference](../reference/cli/index.md) for the exact syntax.)
 
+The rule text is also what a person signs when they ratify, so it has to fit on
+the signing screen: at most 2048 bytes of UTF-8 and at most 32 lines as the
+signer shows them, on top of the 280 character limit. Every byte outside plain
+ASCII is shown as four characters, so wide text such as Chinese or Japanese
+reaches the line limit first. A rule that does not fit is refused when it is
+proposed or revised, with its size and the limit it passed.
+
 - **`propose`** founds a candidate. An agent proposal stays a candidate:
   nothing renders, nothing enforces, until a human acts on it.
 - **`ratify`** activates it. This is the only verb that turns a candidate

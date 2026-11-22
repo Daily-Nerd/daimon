@@ -431,7 +431,7 @@ daimon ruling propose --subject SUBJECT --verdict VERDICT --scope SCOPE --eviden
 | argument | value | default | description |
 | --- | --- | --- | --- |
 | `--subject` | `SUBJECT` |  | what the ruling governs (required) |
-| `--verdict` | `VERDICT` |  | the ruling text itself (max 280 chars) (required) |
+| `--verdict` | `VERDICT` |  | the ruling text itself (max 280 chars; refused when it is too long to be shown whole to a person signing it) (required) |
 | `--scope` | `SCOPE` |  | where it applies (required) |
 | `--evidence` | `SOURCE` |  | cited source behind the ruling; recorded verbatim, not resolved or verified; repeatable (required) |
 | `--anchor` | `ANCHOR` |  | stable exact-match key such as issue:693; repeatable |
@@ -474,7 +474,7 @@ daimon ruling revise ruling_id [--subject SUBJECT] [--verdict VERDICT] [--scope 
 | --- | --- | --- | --- |
 | `ruling_id` |  |  | exact r-… id |
 | `--subject` | `SUBJECT` |  | replacement subject |
-| `--verdict` | `VERDICT` |  | replacement ruling text |
+| `--verdict` | `VERDICT` |  | replacement ruling text (same size rule as propose) |
 | `--scope` | `SCOPE` |  | replacement scope |
 | `--anchor` | `ANCHOR` |  | replacement anchor set; repeatable |
 | `--revisit-when` | `REVISIT_WHEN` |  | replacement revisit condition |

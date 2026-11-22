@@ -444,20 +444,20 @@ usage: daimon ruling propose [-h] --subject SUBJECT --verdict VERDICT --scope SC
 SOURCE [--anchor ANCHOR] [--revisit-when REVISIT_WHEN] [--by {agent}] [--ratify] [--check-body-file
 PATH] [--check-match REGEX] [--check-intent {enforce,record-only,warn}] [--request-policy KEY=VALUE]
 [--project PROJECT] [--json] options: -h, --help show this help message and exit --subject SUBJECT
-what the ruling governs --verdict VERDICT the ruling text itself (max 280 chars) --scope SCOPE where
-it applies --evidence SOURCE cited source behind the ruling; recorded verbatim, not resolved or
-verified; repeatable --anchor ANCHOR stable exact-match key such as issue:693; repeatable
---revisit-when REVISIT_WHEN condition that makes reconsideration legitimate --by {agent} declare
-yourself an agent; omit it only from an interactive terminal --ratify activate immediately; valid
-only on the human path --check-body-file PATH file whose contents become the ruling's check script;
-the bytes are stored, the path is not (#943) --check-match REGEX regex on the command string that
-selects the actions the check runs before --check-intent {enforce,record-only,warn} what the check
-asks each host for; the host delivers the strongest it supports (default warn) --request-policy
-KEY=VALUE grant this ruling authorizes, one of two shapes: sender=<slug> kind=work|info verb=accept
-by=agent (a sender this project trusts to record its own accept), or to=<slug> kind=info verb=open
-by=agent (this project's own agent may open an info ask there); repeatable, all four required per
-shape (#961) --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json
-machine-readable output
+what the ruling governs --verdict VERDICT the ruling text itself (max 280 chars; refused when it is
+too long to be shown whole to a person signing it) --scope SCOPE where it applies --evidence SOURCE
+cited source behind the ruling; recorded verbatim, not resolved or verified; repeatable --anchor
+ANCHOR stable exact-match key such as issue:693; repeatable --revisit-when REVISIT_WHEN condition
+that makes reconsideration legitimate --by {agent} declare yourself an agent; omit it only from an
+interactive terminal --ratify activate immediately; valid only on the human path --check-body-file
+PATH file whose contents become the ruling's check script; the bytes are stored, the path is not
+(#943) --check-match REGEX regex on the command string that selects the actions the check runs
+before --check-intent {enforce,record-only,warn} what the check asks each host for; the host
+delivers the strongest it supports (default warn) --request-policy KEY=VALUE grant this ruling
+authorizes, one of two shapes: sender=<slug> kind=work|info verb=accept by=agent (a sender this
+project trusts to record its own accept), or to=<slug> kind=info verb=open by=agent (this project's
+own agent may open an info ask there); repeatable, all four required per shape (#961) --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable output
 
 === ruling ratify ===
 usage: daimon ruling ratify [-h] [--by {agent}] [--note NOTE] [--project PROJECT] [--slug SLUG]
@@ -473,21 +473,21 @@ ANCHOR] [--revisit-when REVISIT_WHEN] --evidence SOURCE [--by {agent}] [--ratify
 PATH] [--check-match REGEX] [--check-intent {enforce,record-only,warn}] [--request-policy KEY=VALUE]
 [--no-request-policy] [--project PROJECT] [--json] ruling_id positional arguments: ruling_id exact
 r-… id options: -h, --help show this help message and exit --subject SUBJECT replacement subject
---verdict VERDICT replacement ruling text --scope SCOPE replacement scope --anchor ANCHOR
-replacement anchor set; repeatable --revisit-when REVISIT_WHEN replacement revisit condition
---evidence SOURCE source cited for the revision; recorded, not verified; repeatable --by {agent}
-declare yourself an agent; on an active ruling the call then records a proposal and the text stands
---ratify refused: activation goes through `daimon ruling ratify`, which shows the text before the
-write --check-body-file PATH file whose contents become the ruling's check script; the bytes are
-stored, the path is not (#943) --check-match REGEX regex on the command string that selects the
-actions the check runs before --check-intent {enforce,record-only,warn} what the check asks each
-host for; the host delivers the strongest it supports (default warn) --request-policy KEY=VALUE
-replacement grant, one of two shapes: sender=<slug> kind=work|info verb=accept by=agent (a sender
-this project trusts to record its own accept), or to=<slug> kind=info verb=open by=agent (this
-project's own agent may open an info ask there); repeatable, all four required per shape (#961)
---no-request-policy clear this ruling's request_policy; mutually exclusive with --request-policy
---project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd) --json machine-readable
-output
+--verdict VERDICT replacement ruling text (same size rule as propose) --scope SCOPE replacement
+scope --anchor ANCHOR replacement anchor set; repeatable --revisit-when REVISIT_WHEN replacement
+revisit condition --evidence SOURCE source cited for the revision; recorded, not verified;
+repeatable --by {agent} declare yourself an agent; on an active ruling the call then records a
+proposal and the text stands --ratify refused: activation goes through `daimon ruling ratify`, which
+shows the text before the write --check-body-file PATH file whose contents become the ruling's check
+script; the bytes are stored, the path is not (#943) --check-match REGEX regex on the command string
+that selects the actions the check runs before --check-intent {enforce,record-only,warn} what the
+check asks each host for; the host delivers the strongest it supports (default warn)
+--request-policy KEY=VALUE replacement grant, one of two shapes: sender=<slug> kind=work|info
+verb=accept by=agent (a sender this project trusts to record its own accept), or to=<slug> kind=info
+verb=open by=agent (this project's own agent may open an info ask there); repeatable, all four
+required per shape (#961) --no-request-policy clear this ruling's request_policy; mutually exclusive
+with --request-policy --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+--json machine-readable output
 
 === ruling retire ===
 usage: daimon ruling retire [-h] [--evidence SOURCE] [--note NOTE] [--by {agent}] [--project
@@ -679,30 +679,31 @@ usage: daimon request open [-h] --to PROJECT --ask ASK --why WHY [--title TITLE]
 [--evidence EVIDENCE] [--supersedes REQUEST_ID] [--anyway] [--by {agent}] [--project PROJECT]
 options: -h, --help show this help message and exit --to PROJECT recipient project directory, or its
 slug written as --to=<slug> (a slug starts with '-', which a bare --to would read as an option);
-`daimon projects` lists both --ask ASK what you are asking that project to do --why WHY why it
-matters; the recipient reads this first --title TITLE optional headline of a few words (80
-characters at most) that leads wherever the request is listed; the ask stays the full text
---to-human the ask is for that project's human, not its agent --kind {info,work} approval
-requirement: work (default) waits on a person, info is answerable from the recipient's own
-artifacts; only a human channel may open one as info --blocking mark the sender as blocked on it; a
-flag on the record, never a claim on the recipient's time --severity {critical,high,normal,low} how
-much the outcome matters to you, which is not --blocking (whether you are stalled): the recipient's
-lists sort by it. Any level but the default needs --severity-reason --severity-reason REASON one
-line, 80 characters at most (refused past that, never cut), shown with the level; required with
-every level but the default --evidence EVIDENCE optional source backing the ask; recorded, never
-resolved --supersedes REQUEST_ID the earlier q-… this ask replaces; the lineage renders always
---anyway record the ask even when the recipient slug has no bucket yet; it is never surfaced there
-until that project serializes --by {agent} declare yourself an agent; omit it only from an
-interactive terminal, which is the human path --project PROJECT project directory (default:
-DAIMON_PROJECT_DIR, then cwd)
+`daimon projects` lists both --ask ASK what you are asking that project to do (refused when it is
+too long to be shown whole to a person signing it) --why WHY why it matters; the recipient reads
+this first --title TITLE optional headline of a few words (80 characters at most) that leads
+wherever the request is listed; the ask stays the full text --to-human the ask is for that project's
+human, not its agent --kind {info,work} approval requirement: work (default) waits on a person, info
+is answerable from the recipient's own artifacts; only a human channel may open one as info
+--blocking mark the sender as blocked on it; a flag on the record, never a claim on the recipient's
+time --severity {critical,high,normal,low} how much the outcome matters to you, which is not
+--blocking (whether you are stalled): the recipient's lists sort by it. Any level but the default
+needs --severity-reason --severity-reason REASON one line, 80 characters at most (refused past that,
+never cut), shown with the level; required with every level but the default --evidence EVIDENCE
+optional source backing the ask; recorded, never resolved --supersedes REQUEST_ID the earlier q-…
+this ask replaces; the lineage renders always --anyway record the ask even when the recipient slug
+has no bucket yet; it is never surfaced there until that project serializes --by {agent} declare
+yourself an agent; omit it only from an interactive terminal, which is the human path --project
+PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === request revise ===
 usage: daimon request revise [-h] [--ask ASK] [--why WHY] [--evidence EVIDENCE] [--title TITLE]
 [--by {agent}] [--project PROJECT] request_id positional arguments: request_id exact q-… id options:
--h, --help show this help message and exit --ask ASK replacement ask --why WHY replacement rationale
---evidence EVIDENCE replacement source --title TITLE replacement title; --title '' removes it, and
-leaving it out keeps the current one --by {agent} declare yourself an agent; omit it only from an
-interactive terminal --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then cwd)
+-h, --help show this help message and exit --ask ASK replacement ask (same size rule as --ask) --why
+WHY replacement rationale --evidence EVIDENCE replacement source --title TITLE replacement title;
+--title '' removes it, and leaving it out keeps the current one --by {agent} declare yourself an
+agent; omit it only from an interactive terminal --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === request withdraw ===
 usage: daimon request withdraw [-h] --reason REASON [--by {agent}] [--project PROJECT] request_id

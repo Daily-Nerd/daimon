@@ -26,6 +26,13 @@ checker proved (`performer_of`). Both are pure: nothing here runs the checker
 or stores anything. The file stays one module because the table, the outcome
 and the signer are read by the same future caller and change with the same
 pin.
+
+It also owns what a person signs (#1377): the one builder of the decision
+handed to the signing side (`build_decision`) and the one answer to "can this
+text be shown whole at signing?" (`signable_problem`, a count of what
+handsal's renderer will show). The write boundary of each ledger asks that
+same answer when text enters, so a ruling or an ask that cannot be signed is
+refused when it is written and never reaches the builder.
 """
 
 from __future__ import annotations
@@ -357,3 +364,132 @@ def claimed_signing_time(proven: Proven) -> str:
     """The act's `ts`: the signer's own clock, which the checker does not
     vouch for. For display only: nothing orders, expires or compares by it."""
     return _text_field(proven, "ts")
+
+
+# ---- what a person signs, and whether it can be shown whole (#1377) ----------
+
+# The consumer id of every decision daimon asks a person to sign. A stored
+# decision is checked against it for as long as its row lives, so it is the
+# literal word, never derived from the package or the product name.
+CONSUMER = "daimon"
+
+# Verb -> (the field of the row that is the subject, the field of the row
+# that is the text the person decides on). The keys are the closed list of
+# daimon verbs a decision may carry; each fits handsal's `action` grammar
+# (lowercase words separated by one space, 1 to 24 characters). A verb joins
+# this table together with its content rule, never before. Every request
+# verdict signs the ask and nothing else: what is typed with a verdict (a
+# reject reason, a note) is not on the signing screen.
+_VERB_SOURCES: dict[str, tuple[str, str]] = {
+    "ratify": ("refutation_id", "verdict"),
+    "accept": ("request_id", "ask"),
+    "reject": ("request_id", "ask"),
+    "done": ("request_id", "ask"),
+}
+VERBS = tuple(_VERB_SOURCES)
+
+# handsal's request-block bound at the pinned commit (profile-interfaces.md
+# RN-05, RN-12): at most this many source bytes and at most this many block
+# lines, continuation lines included. Each source line is escaped (0x20 to
+# 0x7E as is, every other byte as four characters) and an escaped line over
+# RENDER_LINE_WIDTH continues on further lines, never splitting an escape.
+MAX_CONTENT_BYTES = 2048
+MAX_RENDERED_LINES = 32
+RENDER_LINE_WIDTH = 96
+
+
+class NotSignable(ValueError):
+    """A decision cannot be built: the verb is not one of `VERBS`, the row
+    lacks its id or text, or the text cannot be shown whole at signing."""
+
+
+def content_bytes(text: str) -> bytes:
+    """The bytes a person decides on: the stored string in UTF-8, exactly,
+    with no trimming and no normalising. The one place text becomes content.
+    daimon counts what the signer will render, it never wraps or alters it."""
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise NotSignable("the text is not valid UTF-8") from exc
+
+
+def rendered_lines(content: bytes) -> int:
+    """How many block lines handsal's renderer shows for `content`.
+
+    A copy of the rule, pinned by `tests/test_authority_decision.py` against
+    handsal's own render vectors. Source lines are split on LF; a final LF
+    ends the last line and starts none, so empty content has no line; an
+    empty source line takes one. An escaped line is packed greedily into
+    lines of at most RENDER_LINE_WIDTH, an escape moving whole to the next
+    line when it would pass the width."""
+    if not content:
+        return 0
+    source = content.split(b"\n")
+    if content.endswith(b"\n"):
+        source.pop()
+    total = 0
+    for line in source:
+        total += 1
+        used = 0
+        for byte in line:
+            cost = 1 if 0x20 <= byte <= 0x7E else 4
+            if used + cost > RENDER_LINE_WIDTH:
+                total += 1
+                used = 0
+            used += cost
+    return total
+
+
+def signable_problem(text: str, *, what: str = "text") -> str | None:
+    """None when `text` can be shown whole at signing, else one sentence that
+    names the size, the limit and which limit was passed (bytes, lines, or
+    both). The single owner of "does it fit": the write boundaries and the
+    builder both ask here, so fitting at creation and fitting at signing
+    cannot disagree."""
+    try:
+        content = content_bytes(text)
+    except NotSignable as exc:
+        return f"{what} cannot be signed: {exc}"
+    problems = []
+    if len(content) > MAX_CONTENT_BYTES:
+        problems.append(
+            f"{what} is {len(content)} bytes, over the limit of "
+            f"{MAX_CONTENT_BYTES} bytes a person can be shown whole at "
+            "signing")
+    lines = rendered_lines(content)
+    if lines > MAX_RENDERED_LINES:
+        problems.append(
+            f"{what} takes {lines} lines on the signing screen, over the "
+            f"limit of {MAX_RENDERED_LINES} lines")
+    return "; ".join(problems) or None
+
+
+def build_decision(verb: str, row: Mapping) -> dict:
+    """The decision handed to the signing side for `verb` on `row`:
+    `{consumer, action, subject, decision_b64}`. `row` is the stored ruling
+    (for `ratify`) or request (for `accept`, `reject`, `done`) as the ledger
+    folds it. Pure: it runs nothing and signs nothing.
+
+    A stored row over the size bound is refused with NotSignable rather than
+    cut or summarised: a person never signs bytes they could not read."""
+    sources = _VERB_SOURCES.get(verb)
+    if sources is None:
+        raise NotSignable(
+            f"{verb!r} is not a signing verb; the verbs are "
+            f"{', '.join(VERBS)}")
+    id_field, text_field = sources
+    subject = row.get(id_field)
+    if not isinstance(subject, str) or not subject:
+        raise NotSignable(f"the row has no id ({id_field})")
+    text = row.get(text_field)
+    if not isinstance(text, str):
+        raise NotSignable(f"the row has no {text_field} to sign")
+    problem = signable_problem(text, what=text_field)
+    if problem is not None:
+        raise NotSignable(problem)
+    return {
+        "consumer": CONSUMER,
+        "action": verb,
+        "subject": subject,
+        "decision_b64": base64.b64encode(content_bytes(text)).decode("ascii"),
+    }

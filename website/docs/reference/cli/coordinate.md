@@ -55,7 +55,7 @@ daimon request open --to PROJECT --ask ASK --why WHY [--title TITLE] [--to-human
 | argument | value | default | description |
 | --- | --- | --- | --- |
 | `--to` | `PROJECT` |  | recipient project directory, or its slug written as --to=&lt;slug&gt; (a slug starts with '-', which a bare --to would read as an option); `daimon projects` lists both (required) |
-| `--ask` | `ASK` |  | what you are asking that project to do (required) |
+| `--ask` | `ASK` |  | what you are asking that project to do (refused when it is too long to be shown whole to a person signing it) (required) |
 | `--why` | `WHY` |  | why it matters; the recipient reads this first (required) |
 | `--title` | `TITLE` |  | optional headline of a few words (80 characters at most) that leads wherever the request is listed; the ask stays the full text |
 | `--to-human` |  |  | the ask is for that project's human, not its agent |
@@ -80,7 +80,7 @@ daimon request revise request_id [--ask ASK] [--why WHY] [--evidence EVIDENCE] [
 | argument | value | default | description |
 | --- | --- | --- | --- |
 | `request_id` |  |  | exact q-… id |
-| `--ask` | `ASK` |  | replacement ask |
+| `--ask` | `ASK` |  | replacement ask (same size rule as --ask) |
 | `--why` | `WHY` |  | replacement rationale |
 | `--evidence` | `EVIDENCE` |  | replacement source |
 | `--title` | `TITLE` |  | replacement title; --title '' removes it, and leaving it out keeps the current one |

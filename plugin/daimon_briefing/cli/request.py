@@ -887,7 +887,9 @@ def register(sub, fmt) -> None:
              "--to=<slug> (a slug starts with '-', which a bare --to would "
              "read as an option); `daimon projects` lists both")
     rq_open.add_argument("--ask", required=True,
-                         help="what you are asking that project to do")
+                         help="what you are asking that project to do "
+                              "(refused when it is too long to be shown "
+                              "whole to a person signing it)")
     rq_open.add_argument("--why", required=True,
                          help="why it matters; the recipient reads this first")
     rq_open.add_argument(
@@ -938,7 +940,7 @@ def register(sub, fmt) -> None:
         "revise", help="answer a needs-info or sharpen an open ask; capped "
                        f"at {requests.MAX_REVISIONS} revisions per record")
     rq_revise.add_argument("request_id", help="exact q-… id")
-    rq_revise.add_argument("--ask", help="replacement ask")
+    rq_revise.add_argument("--ask", help="replacement ask (same size rule as --ask)")
     rq_revise.add_argument("--why", help="replacement rationale")
     rq_revise.add_argument("--evidence", help="replacement source")
     rq_revise.add_argument(
