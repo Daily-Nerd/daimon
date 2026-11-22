@@ -107,6 +107,20 @@ def location_slug(path) -> str | None:
     return hostgit.declared_slug(s) or scope.segment(s)
 
 
+def stamp_slugs(slug) -> frozenset:
+    """Every `project_slug` stamp that still names the project `slug`: the slug
+    itself plus the buckets merged into it (`buckets.aliases_for`).
+
+    Signed session files are never rewritten, so a file written under a bucket
+    that was later merged away keeps the old stamp for good. A reader that
+    decides membership by comparing the stamp to the project's slug asks this,
+    not `==`. With no alias rows it is `{slug}`, so such a reader answers
+    exactly as `==` did. A falsy slug has no aliases and keeps its own value,
+    which preserves the "unknown project" comparisons readers already make."""
+    from . import buckets  # local: buckets imports this module
+    return frozenset({slug}) | buckets.aliases_for(slug)
+
+
 def _own_author_dir() -> str:
     """The author's own directory name in a team mirror: the same identity
     `_dual_write_team` writes and `scrub_team_copies` walks."""
@@ -536,6 +550,7 @@ def project_surfaces(project_dir=None) -> list[Path]:
     if not slug:
         return []
     out: list[Path] = []
+    stamps = stamp_slugs(slug)
     for path in _plaintext_surfaces(config.checkpoint_dir()):
         if path.parent.name == slug:
             out.append(path)
@@ -544,7 +559,7 @@ def project_surfaces(project_dir=None) -> list[Path]:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(payload, dict) and payload.get("project_slug") == slug:
+        if isinstance(payload, dict) and payload.get("project_slug") in stamps:
             out.append(path)
     return out
 
@@ -730,6 +745,7 @@ def _own_team_files(project_dir) -> list:
     team = config.team_dir()
     own = scope.segment(config.author()) or "unknown"
     slug = project_slug(project_dir)
+    stamps = stamp_slugs(slug)
     try:
         segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
     except Exception:
@@ -761,7 +777,7 @@ def _own_team_files(project_dir) -> list:
                 continue
             if not isinstance(payload, dict):
                 continue
-            if not nested_ok and payload.get("project_slug") != slug:
+            if not nested_ok and payload.get("project_slug") not in stamps:
                 continue
             out.append((path, payload))
     return out
@@ -2545,7 +2561,8 @@ def _admit_payload(checkpoint: dict, slug, admit: "Admit", fell_back: bool) -> "
         # unequal — an identity-less reader (falsy slug) refuses nothing,
         # because nothing is foreign to a session with no project identity.
         stamped = str(checkpoint.get("project_slug") or "").strip()
-        if slug and stamped and stamped != slug:
+        if slug and stamped and stamped != slug \
+                and stamped not in stamp_slugs(slug):
             created = str(checkpoint.get("created") or "").strip() or None
             return ReadResult(None, fell_back, Marker(slug=stamped, created=created))
     return ReadResult(checkpoint, fell_back, None)
@@ -2793,6 +2810,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
     want_slug = project_slug(project_dir)
     if want_slug is None:
         return []
+    want_stamps = stamp_slugs(want_slug)
     root = config.team_dir()
     cutoff = team_retention_cutoff()
     candidates = teamproject.read_candidates(project_dir)
@@ -2823,7 +2841,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
                 continue  # torn/foreign file — skip, never crash the fan-in
             if not isinstance(cp, dict):
                 continue
-            if check_stamp and cp.get("project_slug") != want_slug:
+            if check_stamp and cp.get("project_slug") not in want_stamps:
                 continue
             rec = _file_recency(p)
             if cutoff is not None and rec < cutoff:
