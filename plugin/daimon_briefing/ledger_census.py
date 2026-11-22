@@ -60,9 +60,10 @@ def _checkpoint_residue(slug: str, keys: set) -> tuple[int, int]:
         return 0, 0
     known, _unknown = privacy._checkpoint_candidates()
     found = unscannable = 0
+    stamps = store.stamp_slugs(slug)
     for path in known:
         findings, _suppressed, member = privacy._scan_json_surface(
-            path, slug, keys, "checkpoint")
+            path, slug, keys, "checkpoint", stamps=stamps)
         if member is None:
             unscannable += 1
         found += len(findings)

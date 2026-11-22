@@ -324,7 +324,8 @@ def _origin_on_disk(origin_session: str, project) -> bool:
         return False
     if cp.get("source") == "introspection":
         return False
-    return cp.get("project_slug") == store.project_slug(project)
+    return store.stamp_matches(cp.get("project_slug"),
+                               store.project_slug(project))
 
 
 def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,

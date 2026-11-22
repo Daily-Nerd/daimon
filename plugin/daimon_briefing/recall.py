@@ -62,7 +62,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import (buckets, config, index_locate, jsonl, policy, redact, schema,
-               scoring, store, surfaces, teamproject, view)
+               scoring, scope, store, surfaces, teamproject, view)
 # The term functions moved to `terms` so `view` can sit under both `carry` and
 # `recall`. The three public names stay importable from here for one release.
 from .terms import (  # noqa: F401
@@ -238,7 +238,7 @@ def _scan_sources():
     seen: set[tuple[str, str]] = set()
     root = config.team_dir()
     cutoff = store.team_retention_cutoff()
-    self_author = store.project_slug(config.author())
+    self_author = scope.segment(config.author())
     # #600 slice B: teammates' published tombstones gate the index too — an
     # inbound row is suppressed by ANY tombstone this machine can see, local
     # or foreign (over-suppression is this path's documented posture).
@@ -281,7 +281,7 @@ def _scan_sources():
                     continue
                 sid = str(cp.get("session_id") or p.stem)
                 author = str(cp.get("author") or adir.name)
-                if foreign and store.project_slug(author) != self_author:
+                if foreign and scope.segment(author) != self_author:
                     stamp = cp.get("team_project")
                     segs = (teamproject.logical_segments(stamp)
                             if isinstance(stamp, str) else ())

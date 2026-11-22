@@ -9,10 +9,12 @@ authors: ["claude-code", "Kibukx"]
 anchors:
   - path: plugin/daimon_briefing/store.py
   - pattern: "def project_slug\("
+  - pattern: "def location_slug\("
 evidence:
   - note: 2026-07-15: two agents independently lost time to this while manually exercising `daimon resolve` (#303/#304 verification). Both saw 'no checkpoint for this project yet — nothing to resolve' and assumed a code fault; the checkpoint existed, under a different slug.
   - note: "firing-review 2026-09-08: 63 fires since the last revision, concentrated on store.py, recall.py and cli/ plus other files that reference project_slug; anchors reviewed and confirmed on-target, hazard still live"
   - note: "firing-review 2026-09-24: narrowed the bare content pattern `project_slug` (354/948 tracked files, 37%, any caller or mention) to `def project_slug\\(` (2/948 files: the definition in store.py, plus a second, separate `def project_slug(` in plugin/daimon_ui/reader.py worth checking for the same symlink hazard) — the hazard is in the FUNCTION'S symlink-unaware behavior, not in every file that calls or reads about it. Pattern anchors are matched repo-wide independent of path anchors (match.py:159-178, OR not AND), so the old pattern alone was enough to fire on any of 354 files regardless of the store.py path anchor."
+  - note: "slice 1 of project identity: the `daimon_ui/reader.py` mention in the 2026-09-24 note is stale, no second `def project_slug(` exists in the repo (only store.py). The symlink-unaware transform now lives in `store.location_slug` (project_slug delegates to it), so the pattern anchor covers it too."
 expires:
   condition: "project_slug resolves symlinks (or the CLI reports a slug mismatch instead of 'no checkpoint')"
   review_after: 2027-01-15

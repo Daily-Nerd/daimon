@@ -85,7 +85,7 @@ def _cmd_slug(args) -> int:
     wants this name before the first write (to lay out a fresh volume, or
     start a watcher on a directory daimon has not touched yet) has no bucket
     to list, so this must answer without one, unlike `projects` below."""
-    slug = store.project_slug(args.path)
+    slug = store.location_slug(args.path)
     if not slug:
         print("error: path must not be empty or whitespace-only", file=sys.stderr)
         return 2

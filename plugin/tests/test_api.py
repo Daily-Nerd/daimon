@@ -41,7 +41,7 @@ def test_every_name_is_the_source_object():
     assert api.inbox is requests.inbox
     assert api.join is requests.join
     assert api.ledger_health is view.ledger_health
-    assert api.project_slug is store.project_slug
+    assert api.project_slug is store.location_slug
     assert api.receipt_state is view.receipt_state
     assert api.masked is view.masked
     assert api.Writer is surfaces.Writer

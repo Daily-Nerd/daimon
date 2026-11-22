@@ -202,18 +202,24 @@ def _payload_findings(payload: dict, path: Path, keys: set[str],
 
 
 def _scan_json_surface(path: Path, slug: str, keys: set[str], surface: str,
-                       suppressed_keys: frozenset = frozenset()
+                       suppressed_keys: frozenset = frozenset(),
+                       stamps: frozenset | None = None
                        ) -> tuple[list[dict], list[dict], bool | None]:
     """Findings + suppressed-but-present + membership. None membership =
     unreadable (unscannable).
 
     Membership mirrors store.project_surfaces: bucket location OR payload
     project_slug — but unreadable files are SURFACED here, not silently
-    excluded, because "could not check" must never fold into "clean"."""
+    excluded, because "could not check" must never fold into "clean".
+
+    `stamps` is `store.stamp_slugs(slug)`; a caller walking many files passes
+    it once so the alias rows are read once per walk, not once per file."""
     payload = _load_payload(path)
     if payload is None:
         return [], [], None
-    if path.parent.name != slug and payload.get("project_slug") != slug:
+    if stamps is None:
+        stamps = store.stamp_slugs(slug)
+    if path.parent.name != slug and payload.get("project_slug") not in stamps:
         return [], [], False
     findings, suppressed = _payload_findings(
         payload, path, keys, surface, suppressed_keys)
@@ -281,7 +287,7 @@ def _scan_recall_db(db_path: Path, slug: str, keys: set[str],
     current = (claim is not None
                or meta.get("fingerprint") == recall._fingerprint())
     union = store.all_forgotten_content_keys()
-    self_author = store.project_slug(config.author())
+    self_author = scope.segment(config.author())
     residue: list[dict] = []
     informational: list[dict] = []
     for item_id, text, quote, scene, row_slug, author in rows:
@@ -290,7 +296,7 @@ def _scan_recall_db(db_path: Path, slug: str, keys: set[str],
             hit, surface = hashes & keys, "recall-index-residue"
         elif row_slug is None:
             hit, surface = hashes & union, "unattributed"
-        elif author and store.project_slug(str(author)) != self_author:
+        elif author and scope.segment(str(author)) != self_author:
             # Foreign-author rows answer to the machine-global union — the
             # shipped inbound gate's semantics (recall.py:244), mirrored.
             hit, surface = hashes & union, "recall-index-residue"
@@ -339,13 +345,14 @@ def _scan_team_dir(slug: str, keys: set[str], project_dir,
             unscannable.append(str(path))
             continue
         loaded.append((path, payload, _team_segments(root, path)))
+    stamps = store.stamp_slugs(slug)
     owned = set(teamproject.read_candidates(project_dir))
     owned |= {segs for _p, payload, segs in loaded
-              if segs and payload.get("project_slug") == slug}
+              if segs and payload.get("project_slug") in stamps}
     findings: list[dict] = []
     for path, payload, segs in loaded:
         if (segs in owned if segs else False) \
-                or payload.get("project_slug") == slug:
+                or payload.get("project_slug") in stamps:
             f, _s = _payload_findings(payload, path, keys, "team-copy")
             findings.extend(f)
     return findings
@@ -401,9 +408,10 @@ def audit_project(project_dir=None) -> dict:
     result["unscannable"].extend(
         str(p) for p, bucket in unknown if bucket in (None, slug))
     members = 0
+    stamps = store.stamp_slugs(slug)
     for path in known:
         findings, suppressed, member = _scan_json_surface(
-            path, slug, keys, "checkpoint", foreign_keys)
+            path, slug, keys, "checkpoint", foreign_keys, stamps)
         if member is None:
             result["unscannable"].append(str(path))
         elif member:

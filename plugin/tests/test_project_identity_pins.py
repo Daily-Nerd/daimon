@@ -240,13 +240,11 @@ def test_a_gitfile_pointing_at_another_repos_admin_dir_does_not_adopt_its_bucket
 # ---- census: modules that carry a copy of the slug regex ------------------------------------
 
 _SLUG_REGEX = r"[^\w-]"
-# (file relative to the repo root, enclosing function). The hook lib appears
-# twice: `hook/` is the source and `daimon_briefing/_hooks/` its synced copy.
+# (file relative to the repo root, enclosing function). Slice 1 deleted the
+# teamproject and hook-lib copies and moved the store copy into `scope`: the
+# char rule now has exactly one definition, `scope._SEGMENT_RE` (module level).
 EXPECTED_SLUG_REGEX_SITES = {
-    ("plugin/daimon_briefing/store.py", "project_slug"),
-    ("plugin/daimon_briefing/teamproject.py", "_munge_segment"),
-    ("hook/_daimon_hook_lib.py", "slug"),
-    ("plugin/daimon_briefing/_hooks/_daimon_hook_lib.py", "slug"),
+    ("plugin/daimon_briefing/scope.py", "<module>"),
 }
 
 
