@@ -315,6 +315,17 @@ def record_bucket_root(project_dir) -> None:
         pass
 
 
+def make_bucket(slug: str, location: str) -> Path:
+    """Create the bucket NAMED `slug` and record `location` as its root unless it
+    already has one. For the verbs that name the bucket themselves (`migrate`
+    folding a legacy bucket into the rule's name): they must not ask the
+    resolver, which may answer another bucket for `location`. Raises OSError."""
+    bucket = config.checkpoint_dir() / slug
+    bucket.mkdir(parents=True, exist_ok=True)
+    stamp_root(bucket, location)
+    return bucket
+
+
 def ensure_bucket(project_dir) -> Path | None:
     """The ONE owner of "create a bucket" (#1337): make the bucket directory
     for `project_dir` and stamp its root record, together, so a bucket never
@@ -2503,23 +2514,36 @@ def project_latest_path(project_dir) -> Path | None:
 
 
 def sibling_buckets(project_dir) -> list[dict]:
-    """Phantom CHILD buckets of project_dir: checkpoint-dir entries whose slug is
-    this project's slug + '-<suffix>' (a subdir of the git-root that forked its own
-    bucket — the #74 shape). Pure file-ops, never raises. Returns [] when the slug
-    is unknown or the checkpoint dir is absent."""
+    """Phantom CHILD buckets of project_dir: buckets that hold history a
+    subdirectory of this project split off (the #74 shape, and a linked
+    worktree's own bucket). Pure file-ops, never raises. Returns [] when the
+    project is unknown or the checkpoint dir is absent.
+
+    A bucket that records a root is a child exactly when that root lies
+    strictly BELOW this project, separator-bounded (`buckets_under`): its name
+    says nothing, since a rebound bucket keeps its permanent name and a lossy
+    twin is born under `<S>-6hex` while living somewhere else entirely. A
+    bucket that records no root keeps the old rule: `<bucket>-<suffix>`."""
     project_dir = _resolved(project_dir)
     slug = bucket_of(project_dir)
     if not slug:
         return []
     prefix = slug + "-"
     d = config.checkpoint_dir()
+    below = ({name for name, _root in buckets_under(str(project_dir))}
+             if os.path.isabs(str(project_dir)) else set())
     try:
         entries = sorted(d.iterdir())
     except OSError:
         return []
     out: list[dict] = []
     for child in entries:
-        if not child.name.startswith(prefix):
+        if child.name == slug:
+            continue
+        if bucket_root(child.name):
+            if child.name not in below:
+                continue
+        elif not child.name.startswith(prefix):
             continue
         latest = child / _LATEST
         try:

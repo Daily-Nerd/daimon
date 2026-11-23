@@ -27,7 +27,7 @@ from typing import Any, NamedTuple
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
 from . import (capture, checks_host, checks_runtime, clock, config, display, hostgit,
-               ledger,
+               identity, ledger,
                llm, marks, pending, receipts, refutations, requests, schema,
                scoring, store)
 # Imported as constants, not as the module.
@@ -2216,9 +2216,10 @@ def render_briefing(project_dir=None, *, now=None,
     try:
         target = config.resolve_read_project(
             None if project_dir is None else str(project_dir))
-        got = machine_brief(target, time.time() if now is None else now,
-                            loops_pointer=loops_pointer,
-                            worldcheck_project=target)
+        with identity.operation():  # one scan of the recorded roots per read
+            got = machine_brief(target, time.time() if now is None else now,
+                                loops_pointer=loops_pointer,
+                                worldcheck_project=target)
     except Exception as exc:  # noqa: BLE001 — host reads never raise: the failure is the `unavailable` state
         return _unavailable(exc)
     try:

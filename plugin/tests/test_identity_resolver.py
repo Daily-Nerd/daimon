@@ -294,3 +294,26 @@ def test_a_bad_posture_value_never_raises_and_is_treated_as_sealed(
     monkeypatch.setenv("DAIMON_GIT_POSTURE", "nonsense")
     config.resolve_project_root.cache_clear()
     assert identity.resolve(where).slug == store.location_slug(where)
+
+
+# ---- the entry points open the operation --------------------------------------------
+
+
+def test_a_cli_verb_is_one_operation_one_scan(
+        where, tmp_checkpoint_dir, scans, capsys):
+    """A brief resolves its project many times; at an unmoved legacy or a
+    record-bound location each used to cost a scan."""
+    from daimon_briefing import cli
+
+    _bucket(tmp_checkpoint_dir, "-permanent-name", where)
+    cli.main(["brief", "--project", where])
+    assert len(scans) == 1
+
+
+def test_a_host_read_is_one_operation_one_scan(
+        where, tmp_checkpoint_dir, scans):
+    from daimon_briefing import briefing
+
+    _bucket(tmp_checkpoint_dir, "-permanent-name", where)
+    briefing.render_briefing(where)
+    assert len(scans) == 1

@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from . import config, jsonl, scope, store, surfaces
+from . import config, identity, jsonl, scope, store, surfaces
 from .surfaces import WritePosture
 
 
@@ -772,7 +772,7 @@ def _restamp_root(target_dir: Path, resolved: str) -> None:
         (target_dir / store._BUCKET_ROOT_NAME).unlink()
     except OSError:
         pass
-    store.ensure_bucket(resolved)
+    store.make_bucket(target_dir.name, resolved)
 
 
 def _absent(legacy: str, target: str, *, dry_run: bool, by: str) -> dict:
@@ -789,16 +789,6 @@ def _absent(legacy: str, target: str, *, dry_run: bool, by: str) -> dict:
         record["observed"] = "legacy bucket no longer exists"
         _append_record(record)
     return record
-
-
-def _bound_elsewhere(resolved: str, *, besides: set[str]) -> str | None:
-    """A bucket other than `besides` whose recorded root IS `resolved`, or
-    None. The scan is one pass over the `root` files, the same answer a
-    resolver that honors recorded roots would give for this directory."""
-    for slug, root in store.bucket_roots().items():
-        if slug not in besides and store.root_eq(root, resolved):
-            return slug
-    return None
 
 
 def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
@@ -843,14 +833,26 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
     target_dir = root / target
     if not legacy_dir.is_dir():
         return _absent(legacy, target, dry_run=dry_run, by=by)
-    bound = _bound_elsewhere(resolved, besides={legacy, target})
-    if bound:
+    # The two slug rules cannot see a rebind or a twin. Ask the resolver which
+    # bucket this directory really is: anything but the legacy bucket or the
+    # rule's own name means moving the legacy bucket there would split the
+    # project, or hand its history to another location.
+    answer = identity.resolve(resolved)
+    if answer.bound and answer.slug not in (legacy, target):
         raise MigrationError(
-            f"{resolved} is already bound to the bucket {bound}, which is "
-            f"neither {legacy} nor {target}. Moving {legacy} into {target} "
+            f"{resolved} is already bound to the bucket {answer.slug}, which "
+            f"is neither {legacy} nor {target}. Moving {legacy} into {target} "
             f"would split the project across two buckets. Fold them "
             f"deliberately with `daimon bucket merge --from <bucket> --into "
-            f"{bound}`.")
+            f"{answer.slug}`.")
+    if not answer.bound and answer.slug != target:
+        raise MigrationError(
+            f"the bucket {target} belongs to another location, so {resolved} "
+            f"is not bound to it. Moving {legacy} into {target} would hand "
+            f"this project's history to that one. Find which bucket is this "
+            f"directory's with `daimon bucket doctor --path .`, then fold "
+            f"deliberately with `daimon bucket merge --from {legacy} --into "
+            f"<bucket>`.")
 
     if not target_dir.exists():
         pointers = len(_pointer_files(legacy_dir))
@@ -1009,7 +1011,7 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
         # are made together (#1337): the target holds the rows this merge
         # moves, so it must say which directory it belongs to even though the
         # legacy record is dropped.
-        store.ensure_bucket(resolved)
+        store.make_bucket(target, resolved)
     with contextlib.ExitStack() as stack:
         if not dry_run:
             # BOTH buckets, in one global order (by name), so two merges that

@@ -758,7 +758,9 @@ def main(argv=None) -> int:
     # here (one handler for every verb) instead of being swallowed into the
     # appender's "not written". A library caller never goes through here.
     try:
-        with jsonl.surface_refusals():
+        # One operation: every resolution this verb makes shares ONE scan of
+        # the recorded roots, and nothing outlives the verb.
+        with identity.operation(), jsonl.surface_refusals():
             return args.func(args)
     except (jsonl.Refused, view.ScopeRefused) as exc:
         print(f"error: {exc}", file=sys.stderr)
