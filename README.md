@@ -25,20 +25,18 @@
 This is what your agent reads at the start of the next session:
 
 ```
-While you were away — here's where we left off.
+While you were away, here's where we left off.
 
 Decisions made:
-- [✓ verbatim] Postgres advisory locks over Redis locks for the scheduler  — "let's not add a Redis dependency for this"
+- [✓ verbatim] Postgres advisory locks over Redis locks for the scheduler: "let's not add a Redis dependency for this"
 - [~ inferred] Feature-flag the new invoice path; default off until QA signs off
 
 VERIFY BEFORE TRUSTING (state may have changed outside this session):
-- [✓ verbatim] PR #212 state — you said you'd merge it yourself from the UI  — "I'll merge it after the demo"
+- [✓ verbatim] PR #212 state (you said you'd merge it yourself from the UI): "I'll merge it after the demo" [o-5a1c03]
 
 Open loops:
-- [✓ verbatim] Retry policy for the payments webhook — exponential or fixed?  — "don't ship the retry loop until we pick a policy"
-- [~ inferred] The staging config drift needs an owner [carried] [≈ corroborated ×2]
-
-Active topic: Migrating the scheduler off cron to the new worker pool
+- [✓ verbatim] Retry policy for the payments webhook (exponential or fixed?): "don't ship the retry loop until we pick a policy" [o-5a1c04]
+- [~ inferred] The staging config drift needs an owner [carried] [≈ corroborated ×2] [o-5a1c05]
 ```
 
 Every item carries its **trust class**. `✓ verbatim` items are pinned to an exact quote from the transcript and are never reworded: not by carry-over between sessions, not by rendering, not by budget truncation. `~ inferred` items are the agent's own conclusions and are allowed to evolve. Items carried from older sessions say so. That distinction, knowing which memories are quotes and which are guesses, is the point.

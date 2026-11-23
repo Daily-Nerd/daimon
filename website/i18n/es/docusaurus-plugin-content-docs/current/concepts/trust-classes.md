@@ -19,7 +19,8 @@ arrastrarse entre sesiones, ni al renderizarse, ni al truncarse por
 presupuesto. Cuando un briefing muestra
 
 ```
-- [✓ verbatim] PR #60 awaiting review  — "review requested 2026-07-01"
+- [✓ verbatim] PR #60 awaiting review: "review requested 2026-07-01"
+- [~ inferred] The retry storm was caused by a shared deadline across three calls
 ```
 
 la cita final es el texto real del transcript, y se mantiene idéntica byte a

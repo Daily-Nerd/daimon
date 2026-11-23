@@ -1,0 +1,20 @@
+{
+  "session_id": "sample-session",
+  "working_context": {
+    "recent_decisions": [
+      {
+        "id": "d-5a1c11",
+        "text": "PR #60 awaiting review",
+        "trust": "verbatim",
+        "quote": "review requested 2026-07-01"
+      },
+      {
+        "id": "d-5a1c12",
+        "text": "The retry storm was caused by a shared deadline across three calls",
+        "trust": "inferred"
+      }
+    ],
+    "open_questions": []
+  },
+  "epistemic_snapshot": {}
+}

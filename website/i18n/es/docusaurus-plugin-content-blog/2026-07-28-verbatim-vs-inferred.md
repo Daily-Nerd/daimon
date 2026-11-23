@@ -22,8 +22,8 @@ Daimon etiqueta cada ítem que arrastra con una clase de confianza, visible en
 la línea misma:
 
 ```
-- [✓ verbatim] PR #60 esperando review  — "review requested 2026-07-01"
-- [~ inferred] La tormenta de reintentos vino de un deadline compartido entre tres llamadas
+- [✓ verbatim] PR #60 awaiting review: "review requested 2026-07-01"
+- [~ inferred] The retry storm was caused by a shared deadline across three calls
 ```
 
 La etiqueta no es decoración. Las dos clases fallan de maneras distintas:

@@ -21,7 +21,7 @@ Daimon tags every item it carries with a trust class, visible on the line
 itself:
 
 ```
-- [✓ verbatim] PR #60 awaiting review  — "review requested 2026-07-01"
+- [✓ verbatim] PR #60 awaiting review: "review requested 2026-07-01"
 - [~ inferred] The retry storm was caused by a shared deadline across three calls
 ```
 

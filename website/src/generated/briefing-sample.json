@@ -1,0 +1,25 @@
+{
+  "landing": {
+    "text": "While you were away, here's where we left off.\n\nDecisions made:\n- [✓ verbatim] Retry policy: \"retry uses exponential backoff, cap 30s\"\n- [~ inferred] The cache layer is the bottleneck\n- [? unverified] The config flag was renamed [carried]: \"renamed to enable_fast_path\" (was verbatim, carried 12d)",
+    "items": [
+      {
+        "kind": "verbatim",
+        "line": "Retry policy: \"retry uses exponential backoff, cap 30s\"",
+        "text": "Retry policy",
+        "quote": "retry uses exponential backoff, cap 30s"
+      },
+      {
+        "kind": "inferred",
+        "line": "The cache layer is the bottleneck",
+        "text": "The cache layer is the bottleneck",
+        "quote": ""
+      },
+      {
+        "kind": "stale",
+        "line": "The config flag was renamed [carried]: \"renamed to enable_fast_path\" (was verbatim, carried 12d)",
+        "text": "The config flag was renamed",
+        "quote": "renamed to enable_fast_path"
+      }
+    ]
+  }
+}
