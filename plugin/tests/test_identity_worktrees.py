@@ -631,3 +631,21 @@ def test_session_root_of_a_worktree_is_its_main(pair):
     main, wt = pair
     assert identity.session_root(wt) == main
     assert identity.session_root(main) == main
+
+
+def test_the_memo_is_bounded(pair, monkeypatch):
+    main, wt = pair
+    monkeypatch.setattr(hostgit, "_LINKED_MEMO",
+                        {f"/x{n}": ((), "/m") for n in range(256)})
+    assert hostgit.linked_main(wt) == main
+    assert list(hostgit._LINKED_MEMO) == [wt]
+
+
+def test_a_dot_git_file_that_is_not_a_pointer_is_not_remembered(
+        tmp_path, monkeypatch):
+    odd = tmp_path / "odd"
+    odd.mkdir()
+    (odd / ".git").write_text("not a pointer\n")
+    monkeypatch.setattr(hostgit, "_read", lambda *a, **k: None)
+    assert hostgit.linked_main(str(odd.resolve())) is None
+    assert hostgit._admin_stamp(str(odd.resolve())) is None
