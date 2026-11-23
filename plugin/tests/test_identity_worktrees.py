@@ -537,3 +537,13 @@ def test_home_of_leaves_anything_but_an_absolute_folder_alone(
     assert identity.home_of("some-slug") == "some-slug"
     assert identity.home_of(wt) == main
     assert identity.home_of(main) == main
+
+
+def test_an_undecidable_tenant_setting_is_the_narrow_answer(pair, monkeypatch):
+    _, wt = pair
+
+    def boom():
+        raise ValueError("unreadable env file")
+
+    monkeypatch.setattr(config, "tenant_scoped", boom)
+    assert config.worktree_main(wt) is None
