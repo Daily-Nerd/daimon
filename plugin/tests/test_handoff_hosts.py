@@ -202,3 +202,23 @@ def test_prepare_carries_the_baton_and_the_hosts_only_render_it(
     assert got.handoff["note"] == BATON and got.handoff["tier"] == "agent"
     teammate = briefing.prepare(PROJECT, 1_800_000_000.0, stamps=False)
     assert teammate.handoff is None
+
+
+def test_a_text_that_ends_inside_the_baton_still_parses_it(tmp_checkpoint_dir):
+    _seed(checkpoint=False)
+    api.write_handoff(PROJECT, BATON)
+    hermes_only = briefing.handoff_block(store.active_handoff(PROJECT))
+    parsed = api.parse_briefing(hermes_only.rstrip("\n"))
+    assert parsed.handoff is not None and parsed.handoff.text == BATON
+    assert parsed.header == ""
+
+
+def test_an_unbounded_budget_leaves_the_body_unbounded(tmp_checkpoint_dir,
+                                                       monkeypatch):
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
+    monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
+    _seed()
+    api.write_handoff(PROJECT, BATON)
+    assert briefing._room_after(briefing.handoff_block(
+        store.active_handoff(PROJECT))) is None
+    assert AGENT_TITLE in api.render_briefing(PROJECT).text
