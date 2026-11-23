@@ -475,10 +475,20 @@ def _holder_of(real: str, besides: str) -> str | None:
                  if n != besides and store.root_eq(r, real)), None)
 
 
+def collision_merge_command(name: str, bucket: str) -> str:
+    """The `merge` that folds the bucket `name`, which already records the
+    folder `bucket` is about to be bound to, into `bucket`. A collision needs
+    that folder to exist, and `merge` refuses a source whose recorded folder is
+    live (it would birth the bucket again), so the command carries `--force`:
+    here the very next step is the rebind that binds the folder to `bucket`.
+    One owner for the text `remap` and `adopt` both print."""
+    return f"daimon bucket merge --from={name} --into={bucket} --force"
+
+
 def _collision_message(name: str, bucket: str, real: str) -> str:
     return (f"the bucket {name} already records {real}. Fold it into "
-            f"{bucket} first with `daimon bucket merge --from={name} "
-            f"--into={bucket}`, or the folder would answer for two buckets.")
+            f"{bucket} first with `{collision_merge_command(name, bucket)}`, "
+            f"then run this again, or the folder would answer for two buckets.")
 
 
 def _bucket_dir_named(name: str) -> Path:

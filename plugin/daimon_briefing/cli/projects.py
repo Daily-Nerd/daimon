@@ -551,8 +551,8 @@ def _remap_lines(result: dict, old: str, *, listing: bool) -> list:
             if a["action"] == "collision":
                 lines.append(
                     f"    that folder already belongs to {a['other']}: "
-                    f"daimon bucket merge --from={a['other']} "
-                    f"--into={a['bucket']}")
+                    + bucket_tools.collision_merge_command(
+                        a["other"], a["bucket"]))
     if not applied:
         lines.append("plan only, nothing was written: run again with --apply")
     return lines
