@@ -190,25 +190,23 @@ _LEDGER_CENSUS_NAME = ".ledger-census"  # #1132: see ledger_census.record_marker
 _IDENTITY_NAME = "identity"
 
 
-def stamp_root(bucket: Path, location: str) -> bool:
-    """Record `location` as the root of `bucket` unless the bucket already
-    has a non-empty one. True when THIS call wrote it, False when another
-    writer's record stands (first writer wins, #1092).
+def create_exclusive(path: Path, text: str) -> bool:
+    """Create `path` holding `text` unless anything is already there. True
+    when THIS call created it, False when something was. Raises OSError.
 
-    The record is written whole to a private staging file and then LINKED into
-    place, which fails when `root` exists, so two writers racing on a fresh
-    bucket cannot both believe they stamped it and `root` is never visible
-    empty. An EMPTY `root` (a crash, or an older daimon) counts as unstamped
-    and is claimed under the bucket's directory lock: the first claimant
-    replaces it, the next finds it non-empty. Raises OSError;
-    `record_bucket_root` owns the never-fatal contract."""
-    path = Path(bucket) / _BUCKET_ROOT_NAME
-    text = f"{location}\n"
-    staging = path.with_name(f"{_BUCKET_ROOT_NAME}.{secrets.token_hex(6)}.tmp")
+    The text is written whole to a private staging file and then LINKED into
+    place, which fails when `path` exists, so two creators cannot both win and
+    the file is never visible half-written. A filesystem without hard links
+    (exFAT, some network and FUSE mounts) answers the link with an OSError
+    other than "exists"; there the final path is created with `O_EXCL`
+    instead, which is still exclusive and is at worst visible empty for an
+    instant (an empty `root` counts as unstamped)."""
+    staging = path.with_name(f"{path.name}.{secrets.token_hex(6)}.tmp")
+    data = text.encode("utf-8")
     fd = os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     try:
         try:
-            os.write(fd, text.encode("utf-8"))
+            os.write(fd, data)
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -216,20 +214,49 @@ def stamp_root(bucket: Path, location: str) -> bool:
             os.link(staging, path)
             return True
         except FileExistsError:
-            pass
-        with jsonl.dir_lock(Path(bucket)):
-            try:
-                if path.read_text(encoding="utf-8").strip():
-                    return False
-            except OSError:
-                return False
-            _atomic_write(path, text)
-            return True
+            return False
+        except OSError:
+            pass  # no hard links here: fall back to the exclusive create
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            return False
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return True
     finally:
         try:
             os.unlink(staging)
         except OSError:
             pass
+
+
+def stamp_root(bucket: Path, location: str) -> bool:
+    """Record `location` as the root of `bucket` unless the bucket already
+    has a non-empty one. True when THIS call wrote it, False when another
+    writer's record stands (first writer wins, #1092).
+
+    The create is `create_exclusive`, so two writers racing on a fresh bucket
+    cannot both believe they stamped it. An EMPTY `root` (a crash, or an
+    older daimon) counts as unstamped and is claimed under the bucket's
+    directory lock: the first claimant replaces it, the next finds it
+    non-empty. Raises OSError; `record_bucket_root` owns the never-fatal
+    contract."""
+    path = Path(bucket) / _BUCKET_ROOT_NAME
+    text = f"{location}\n"
+    if create_exclusive(path, text):
+        return True
+    with jsonl.dir_lock(Path(bucket)):
+        try:
+            if path.read_text(encoding="utf-8").strip():
+                return False
+        except OSError:
+            return False
+        _atomic_write(path, text)
+        return True
 
 
 def record_bucket_root(project_dir) -> None:

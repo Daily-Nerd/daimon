@@ -15,7 +15,6 @@ stripped, root commit, folder name) and the roots it has had (`history`, which
 
 import json
 import os
-import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -111,19 +110,7 @@ def write_identity(bucket: Path, root: str, anchors: dict, *,
     if replace:
         store._atomic_write(path, text)
         return True
-    staging = path.with_name(f"{path.name}.{secrets.token_hex(6)}.tmp")
-    # The builtin `open`, like `root` and the lock sidecar: this record holds
-    # locations and a commit hash, is declared audit-exempt in surfaces.py, and
-    # the write audit watches belief-bearing writes, not this one.
-    with open(staging, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    try:
-        os.link(staging, path)
-        return True
-    except FileExistsError:
-        return False
-    finally:
-        staging.unlink(missing_ok=True)
+    return store.create_exclusive(path, text)
 
 
 # ---------------------------------------------------------------------------

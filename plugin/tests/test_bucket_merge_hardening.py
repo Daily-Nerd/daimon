@@ -206,13 +206,13 @@ def test_a_writer_to_the_folded_bucket_is_held_off_during_the_merge(
 
     real = buckets._append_lines
 
-    def hook(path, lines):
+    def hook(path, lines, **kw):
         if "thread" not in state:  # the first append only
             t = threading.Thread(target=writer)
             t.start()
             state["blocked"] = not done.wait(0.3)
             state["thread"] = t
-        return real(path, lines)
+        return real(path, lines, **kw)
 
     monkeypatch.setattr(buckets, "_append_lines", hook)
     (g / "requests.jsonl").write_text(_row("x"), encoding="utf-8")

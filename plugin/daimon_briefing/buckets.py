@@ -26,6 +26,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -76,6 +77,26 @@ RECORD_VERSION = 1
 # target keeps its own.
 _REMOVABLE = frozenset({store._LOCK_NAME, store._BUCKET_ROOT_NAME,
                         store._LEDGER_CENSUS_NAME, store._IDENTITY_NAME})
+
+
+# Staging files a crash can leave beside a bucket's record files: the
+# stage-then-link of `store.create_exclusive` (`root.<12 hex>.tmp`,
+# `identity.<12 hex>.tmp`) and the atomic write's `<name>.<pid>.tmp`. They hold
+# no history, `store._reap_stale_tmps` reaps them by age, and until then they
+# must not keep a merged-away bucket alive.
+_STAGING_RE = re.compile(
+    rf"^(?:{re.escape(store._BUCKET_ROOT_NAME)}"
+    rf"|{re.escape(store._IDENTITY_NAME)})\.[0-9a-f]+\.tmp$")
+
+
+# Removed by `_retire`, last and in this order, never by the sweep before it.
+_RETIRED_LAST = frozenset({store._BUCKET_ROOT_NAME, store._LOCK_NAME})
+
+
+def _is_removable(name: str) -> bool:
+    """Whether a merge may delete `name` from the bucket it retires without
+    calling it an unexplained leftover."""
+    return name in _REMOVABLE or bool(_STAGING_RE.match(name))
 
 
 def climbs_out(project_dir) -> bool:
@@ -308,11 +329,13 @@ def _lines(path: Path) -> list[str]:
     return _read_lines(path)[0]
 
 
-def _append_lines(path: Path, lines: list[str]) -> None:
+def _append_lines(path: Path, lines: list[str], *, lock: bool = True) -> None:
     """Append `lines`, healing a torn tail first, through the one append every
-    ledger shares (`jsonl.append_lines`)."""
+    ledger shares (`jsonl.append_lines`). `lock=False` is for a caller that
+    already holds the bucket's directory lock: taking it again from the same
+    process would wait on itself."""
     # A migration is a cure: it writes whatever the target ledger's health.
-    jsonl.append_lines(path, lines, posture=WritePosture.PROCEED)
+    jsonl.append_lines(path, lines, posture=WritePosture.PROCEED, lock=lock)
 
 
 def legacy_leftovers(project_dir) -> tuple[str, ...]:
@@ -340,7 +363,7 @@ def legacy_leftovers(project_dir) -> tuple[str, ...]:
     mergeable = surfaces.mergeable_files()
     out = []
     for name in _leftovers(d):
-        if name in _REMOVABLE:
+        if _is_removable(name):
             continue  # the verb deletes this one
         if store._POINTER_RE.match(name) and not attempted:
             continue  # pending, not stranded
@@ -562,14 +585,12 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     scratch: Path | None = None
     # ONE critical section on B's chain: the plan below (which slots are
     # free, which are held, what is newest) and every write that follows it
-    # are made under the same `_pointer_lock`, promotion included. A live
+    # run under the `_pointer_lock` of B that `merge_buckets` already holds
+    # (taking it again would wait on itself), promotion included. A live
     # session that rotates B between a plan and its apply would otherwise have
     # a planned slot overwrite a DIFFERENT session's pointer, and a stale free
     # count would grow the chain past its history. A dry run reads a scratch
     # copy and takes nothing.
-    chain_lock = contextlib.ExitStack()
-    if apply:
-        chain_lock.enter_context(store._pointer_lock(target_dir))
     try:
         readable = all(_pointer_payload(p) is not None
                        for p in _pointer_files(target_dir))
@@ -662,7 +683,6 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
             target_unreadable, occupied + len(admissions), promoted, evicted,
             tuple(dropped))
     finally:
-        chain_lock.close()
         if scratch is not None:
             shutil.rmtree(scratch, ignore_errors=True)
 
@@ -675,7 +695,7 @@ def _leftovers(d: Path, *, prune: bool = True) -> list[str]:
         names = sorted(p.name for p in d.iterdir())
     except OSError:
         return []
-    return [n for n in names if prune or n not in _REMOVABLE]
+    return [n for n in names if prune or not _is_removable(n)]
 
 
 def _record(mode: str, legacy: str | None, target: str | None, *,
@@ -916,10 +936,15 @@ def _retire(legacy_dir: Path) -> bool:
         held = root.read_text(encoding="utf-8").strip()
     except OSError:
         held = ""
-    try:
-        root.unlink()
-    except OSError:
-        pass
+    # The lock sidecar first, then the record, then the directory, all while
+    # `merge_buckets` still holds the lock on the (now unlinked) sidecar and
+    # releases it only on return, after the `rmdir`. A writer that was waiting
+    # on that inode wakes to a directory that is gone.
+    for name in (store._LOCK_NAME, store._BUCKET_ROOT_NAME):
+        try:
+            (legacy_dir / name).unlink()
+        except OSError:
+            pass
     try:
         legacy_dir.rmdir()
     except OSError:
@@ -975,30 +1000,40 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
     legacy_dir = root / legacy
     target_dir = root / target
     _refuse_aliased(legacy_dir, target_dir)
+    if not dry_run and resolved is not None:
+        # ONCE, before any merge work and before any lock: a legacy bucket
+        # holding only a pointer chain skips the ledger loop, so a directory
+        # created there left `_merge_pointers` writing into a path that was
+        # never made (#963 review), and the cross-device fall-through reaches
+        # here with no target directory at all. The bucket and its root record
+        # are made together (#1337): the target holds the rows this merge
+        # moves, so it must say which directory it belongs to even though the
+        # legacy record is dropped.
+        store.ensure_bucket(resolved)
     with contextlib.ExitStack() as stack:
         if not dry_run:
-            stack.enter_context(jsonl.dir_lock(legacy_dir))
+            # BOTH buckets, in one global order (by name), so two merges that
+            # name the same pair in opposite directions cannot each hold one
+            # lock and wait on the other. `dir_lock` fails OPEN after about a
+            # second, which is right for a hook that must never block and
+            # wrong for a verb that deletes: here a lock that was not acquired
+            # is a refusal, raised before anything is written.
+            for d in sorted({legacy_dir, target_dir}, key=lambda p: p.name):
+                held = stack.enter_context(jsonl.dir_lock(d))
+                if not held:
+                    raise MigrationError(
+                        f"could not lock the bucket {d.name} (another daimon "
+                        f"process is writing to it, or it cannot be locked); "
+                        f"nothing was changed. Try again in a moment.")
         return _merge_locked(legacy, target, legacy_dir, target_dir,
-                             resolved=resolved, dry_run=dry_run, by=by,
-                             fold=fold)
+                             dry_run=dry_run, by=by, fold=fold)
 
 
 def _merge_locked(legacy: str, target: str, legacy_dir: Path,
-                  target_dir: Path, *, resolved: str | None, dry_run: bool,
-                  by: str, fold: bool) -> dict:
-
-    # ONCE, before any merge work, and not inside the ledger loop below. A
-    # legacy bucket holding only a pointer chain skips that loop entirely, so
-    # a directory created there left `_merge_pointers` writing into a path
-    # that was never made: FileNotFoundError out of a verb documented never to
-    # raise for a filesystem it cannot move, and no receipt (#963 review). The
-    # cross-device fall-through reaches here with no target directory at
-    # all, which is exactly that case.
-    if not dry_run and resolved is not None:
-        # The bucket and its root record are made together (#1337): the
-        # target holds the rows this merge moves, so it must say which
-        # directory it belongs to even though the legacy record is dropped.
-        store.ensure_bucket(resolved)
+                  target_dir: Path, *, dry_run: bool, by: str,
+                  fold: bool) -> dict:
+    """The body of `merge_buckets`, run with both buckets locked (a dry run
+    holds nothing and writes nothing)."""
 
     ledgers: dict[str, int] = {}
     unreadable: list[str] = []
@@ -1018,12 +1053,25 @@ def _merge_locked(legacy: str, target: str, legacy_dir: Path,
         if dry_run:
             continue
         if new:
-            _append_lines(target_dir / name, new)
+            _append_lines(target_dir / name, new, lock=False)
+        # Re-read the legacy file NOW, immediately before it is removed. A
+        # writer that gave up waiting for the lock (a hook never blocks for
+        # long) may have appended since `pending` was read, and that line is
+        # in no list above. Anything the target lacks is carried first.
+        final, still_readable = _read_lines(source)
+        if not still_readable:
+            unreadable.append(name)
+            continue
+        have = set(_lines(target_dir / name))
+        late = [line for line in final if line not in have]
+        if late:
+            _append_lines(target_dir / name, late, lock=False)
+            ledgers[name] += len(late)
         # Only drop the legacy copy once every one of its lines is provably
         # in the target: the append above is the one step that can half-fail
         # (a full disk, a killed process), and a delete that trusts it would
         # be the data loss this verb exists to prevent.
-        if not (set(pending) - set(_lines(target_dir / name))):
+        if not (set(final) - set(_lines(target_dir / name))):
             try:
                 source.unlink()
             except OSError:
@@ -1053,15 +1101,20 @@ def _merge_locked(legacy: str, target: str, legacy_dir: Path,
                        target_slots=merged.target_slots, promoted=promoted,
                      pointers_evicted=evicted, pointers_dropped=dropped,
                      by=by)
-    for name in _REMOVABLE - {store._BUCKET_ROOT_NAME}:
-        try:
-            (legacy_dir / name).unlink()
-        except OSError:
-            pass
+    # Everything removable goes EXCEPT the two files `_retire` takes last: the
+    # `root` record (a bucket kept alive is never unstamped) and the lock
+    # sidecar. Unlinking the sidecar while holding it hands the next writer a
+    # fresh inode to lock, and the exclusion this run depends on is gone.
+    for entry in list(legacy_dir.iterdir()):
+        if entry.name not in _RETIRED_LAST and _is_removable(entry.name):
+            try:
+                entry.unlink()
+            except OSError:
+                pass
     # The target now holds rows it did not hold when its marker was stamped.
     store._record_ledger_census(target, force=True)
     leftovers = [n for n in _leftovers(legacy_dir)
-                 if n != store._BUCKET_ROOT_NAME]
+                 if n not in _RETIRED_LAST]
 
     def receipt(leftovers: list, observed: str = "") -> dict:
         return _record("merge", legacy, target, ledgers=ledgers,
@@ -1089,30 +1142,37 @@ def _merge_locked(legacy: str, target: str, legacy_dir: Path,
     # the bucket, which always mints the alias even when nothing but a
     # `root` was in it.
     moved = any(ledgers.values()) or merged.consumed
-    completes_a_partial = (
-        record["complete"]
-        and any(not _is_complete(row) for pair, row in latest_rows().items()
-                if pair == (legacy, target)))
+    last = latest_rows().get((legacy, target))
+    open_partial = last is not None and not _is_complete(last)
+    completes_a_partial = record["complete"] and open_partial
     retiring = not leftovers
     wanted = moved or completes_a_partial or (fold and retiring)
     # The durable record comes BEFORE the irreversible removal. The alias row
     # is the only way readers follow the old name, so a crash, a full disk or
     # a failed append between the two must find the bucket still standing (a
     # rerun then finishes), never a bucket gone with no row to say where its
-    # history went.
-    if wanted:
+    # history went. The one case that waits for the removal is a rerun that
+    # only finishes an already-recorded partial move: its incomplete row is
+    # already on file, and a bucket that stays un-removable must not grow the
+    # file (or flip the alias) on every attempt.
+    recorded = wanted and (moved or not open_partial)
+    if recorded:
         _append_record(record)
-    if retiring and not _retire(legacy_dir):
-        # Not gone after all: a writer got there first, or the directory could
-        # not be removed. The row above claimed completion, and the last row
-        # for a pair wins, so correct it. Complete means REALLY gone.
-        record = receipt(
-            [n for n in _leftovers(legacy_dir)
-             if n != store._BUCKET_ROOT_NAME],
-            observed="the bucket directory could not be removed")
-        record["complete"] = False
-        if wanted:
+    if not retiring:
+        return record
+    if _retire(legacy_dir):
+        if wanted and not recorded:
             _append_record(record)
+        return record
+    # Not gone after all: a writer got there first, or the directory could not
+    # be removed. A row above claimed completion, and the last row for a pair
+    # wins, so correct it, once. Complete means REALLY gone.
+    record = receipt(
+        [n for n in _leftovers(legacy_dir) if n not in _RETIRED_LAST],
+        observed="the bucket directory could not be removed")
+    record["complete"] = False
+    if recorded:
+        _append_record(record)
     return record
 
 
