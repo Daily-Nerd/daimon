@@ -170,3 +170,10 @@ def test_an_ask_addressed_to_a_legacy_slug_of_this_project_is_answerable(
     assert event_id
     assert requests.recipient_join(project_dir=RECIPIENT)[legacy][
         "done_pending"] is True
+
+
+def test_the_existence_scan_ignores_a_ledger_the_join_refuses_to_trust(
+        offered):
+    assert requests._was_ever_sent(offered, STRANGER) is True
+    _damage_ledger(SENDER)
+    assert requests._was_ever_sent(offered, STRANGER) is False

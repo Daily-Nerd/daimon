@@ -2592,20 +2592,21 @@ def set_severity(request_id: str, level: str, *, reason: str = "",
 
 
 def _was_ever_sent(request_id: str, project_dir) -> bool:
-    """Whether any bucket this host can read holds the `opened` row of
+    """Whether another bucket this host can PROVE holds the `opened` row of
     `request_id`, addressed to anyone: the existence test a person's verdict
-    needs (#895), which does not care who the ask was addressed to."""
+    needs (#895), which does not care who the ask was addressed to. This
+    project's own bucket was already read by the caller (`get`), and a ledger
+    the join skips decides nothing here either."""
     own = store.project_bucket(project_dir)
     for slug in _bucket_slugs():
         if slug == own:
-            read = events(project_dir=slug)
-        else:
-            foreign, skip, _torn = _foreign_requests(slug)
-            if skip:
-                continue  # a ledger the join refuses to trust decides nothing
-            read = events(project_dir=slug, rows=foreign.rows)
+            continue
+        foreign, skip, _torn = _foreign_requests(slug)
+        if skip:
+            continue
         if any(r.get("event") == "opened"
-               and r.get("request_id") == request_id for r in read):
+               and r.get("request_id") == request_id
+               for r in events(project_dir=slug, rows=foreign.rows)):
             return True
     return False
 
