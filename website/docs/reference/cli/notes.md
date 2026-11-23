@@ -59,7 +59,7 @@ Leave an authored baton for the next session, it renders above every briefing se
 
 ### `daimon why <item-id>`
 
-The trust inspector: show every evidence axis behind one item: independent capture, provenance, source, byte-integrity, current support, quote-check outcome, lifecycle, corroboration. `--source` adds one bounded, redacted source window, refused whenever anything is forgotten on the machine, this project holds a quarantine or the trust ledger cannot be read; `--json` for machines; `lifecycle_event` carries the `event_id` of the row the lifecycle fold judged, the same id `resolve` prints, so a host can tell its own write from an earlier one on the same item (a row written before ids existed reads `null`). An id the reader may not see prints `[withheld: quarantine …]`, `[withheld: forgotten]` or `[withheld: trust ledger unreadable]` instead of its value. Item ids come from `daimon recall` or `daimon loops`.
+The trust inspector: show every evidence axis behind one item: independent capture, provenance, source, byte-integrity, current support, quote-check outcome, lifecycle, corroboration. `--source` adds one bounded, redacted source window, refused whenever anything is forgotten on the machine, this project holds a quarantine or the trust ledger cannot be read; `--json` for machines; `lifecycle_event` carries the `event_id` of the row the lifecycle fold settled on, the same id `resolve` prints, so a host can tell its own write from an earlier one on the same item (a row written before ids existed reads `null`). An id the reader may not see prints `[withheld: quarantine …]`, `[withheld: forgotten]` or `[withheld: trust ledger unreadable]` instead of its value. Item ids come from `daimon recall` or `daimon loops`.
 
 ### `daimon diff`
 
