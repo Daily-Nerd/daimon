@@ -1,0 +1,42 @@
+{
+  "session_id": "sample-session",
+  "working_context": {
+    "active_topic": "Migrating the scheduler off cron to the new worker pool",
+    "recent_decisions": [
+      {
+        "id": "d-5a1c01",
+        "text": "Postgres advisory locks over Redis locks for the scheduler",
+        "trust": "verbatim",
+        "quote": "let's not add a Redis dependency for this"
+      },
+      {
+        "id": "d-5a1c02",
+        "text": "Feature-flag the new invoice path; default off until QA signs off",
+        "trust": "inferred"
+      }
+    ],
+    "open_questions": [
+      {
+        "id": "o-5a1c03",
+        "text": "PR #212 state (you said you'd merge it yourself from the UI)",
+        "trust": "verbatim",
+        "quote": "I'll merge it after the demo",
+        "external_state": true
+      },
+      {
+        "id": "o-5a1c04",
+        "text": "Retry policy for the payments webhook (exponential or fixed?)",
+        "trust": "verbatim",
+        "quote": "don't ship the retry loop until we pick a policy"
+      },
+      {
+        "id": "o-5a1c05",
+        "text": "The staging config drift needs an owner",
+        "trust": "inferred",
+        "carried_from": "sample-session-0",
+        "_corroborated": 2
+      }
+    ]
+  },
+  "epistemic_snapshot": {}
+}

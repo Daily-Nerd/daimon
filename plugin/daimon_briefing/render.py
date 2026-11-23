@@ -478,7 +478,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
     from rich.text import Text
 
     console = Console()
-    console.print(Text("While you were away — here's where we left off.", style="bold"))
+    console.print(Text(briefing.GREETING, style="bold"))
     if degraded:
         # One header note (#204), parity with the plain path's embedded note.
         console.print(Text(briefing.DEGRADE_NOTE, style="bold red"))

@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import type {ReactNode} from 'react';
+import {sampleItem as item} from '../briefingSample';
 
 export default function HomeReceipt(): ReactNode {
   const [checked, setChecked] = useState(true);
@@ -37,7 +38,7 @@ export default function HomeReceipt(): ReactNode {
         <span className="tv">
           <span aria-hidden="true">✔ </span>verbatim
         </span>{' '}
-        "retry uses exponential backoff, cap 30s"
+        "{item('verbatim').quote}"
       </div>
       <div className="receiptSub">
         <span aria-hidden="true">└ </span>transcript line 214{' '}
@@ -55,13 +56,13 @@ export default function HomeReceipt(): ReactNode {
         <span className="ti">
           <span aria-hidden="true">~ </span>inferred
         </span>{' '}
-        cache layer is the bottleneck
+        {item('inferred').text}
       </div>
       <div className="receiptRow">
         <span className="ts">
           <span aria-hidden="true">⚠ </span>stale
         </span>{' '}
-        config flag renamed — re-verify before use
+        {item('stale').line}
       </div>
       <div className="receiptFoot">
         signed ed25519 · sig 9f3c…a41b · daimon verify

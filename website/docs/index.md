@@ -13,19 +13,18 @@ next one starts — so the agent resumes from a faithful prior state instead of
 a confident guess:
 
 ```
-While you were away — here's where we left off.
+While you were away, here's where we left off.
 
 Decisions made:
-- [✓ verbatim] Postgres advisory locks over Redis locks for the scheduler  — "let's not add a Redis dependency for this"
+- [✓ verbatim] Postgres advisory locks over Redis locks for the scheduler: "let's not add a Redis dependency for this"
+- [~ inferred] Feature-flag the new invoice path; default off until QA signs off
 
 VERIFY BEFORE TRUSTING (state may have changed outside this session):
-- [✓ verbatim] PR #212 state — you said you'd merge it yourself from the UI  — "I'll merge it after the demo"
+- [✓ verbatim] PR #212 state (you said you'd merge it yourself from the UI): "I'll merge it after the demo" [o-5a1c03]
 
 Open loops:
-- [✓ verbatim] Retry policy for the payments webhook — exponential or fixed?  — "don't ship the retry loop until we pick a policy"
-- [~ inferred] The staging config drift needs an owner [carried]
-
-Active topic: Migrating the scheduler off cron to the new worker pool
+- [✓ verbatim] Retry policy for the payments webhook (exponential or fixed?): "don't ship the retry loop until we pick a policy" [o-5a1c04]
+- [~ inferred] The staging config drift needs an owner [carried] [≈ corroborated ×2] [o-5a1c05]
 ```
 
 Three nouns cover the whole system. A **session** is one conversation with

@@ -18,7 +18,8 @@ Verbatim items are never reworded — not by carry-over between sessions, not by
 rendering, not by budget truncation. When a briefing shows
 
 ```
-- [✓ verbatim] PR #60 awaiting review  — "review requested 2026-07-01"
+- [✓ verbatim] PR #60 awaiting review: "review requested 2026-07-01"
+- [~ inferred] The retry storm was caused by a shared deadline across three calls
 ```
 
 the trailing quote is the actual text from the transcript, and it stays

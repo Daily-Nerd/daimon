@@ -6,8 +6,8 @@ import logging
 
 import pytest
 
-from daimon_briefing import (cli, normalize, provenance, serializer, store,
-                             transcript)
+from daimon_briefing import (cli, marks, normalize, provenance, serializer,
+                             store, transcript)
 from tests.conftest import FIXTURES, make_messages
 from daimon_briefing.surfaces import Writer
 
@@ -1506,6 +1506,23 @@ def test_strip_injected_truncates_from_the_bare_briefing_header():
         f"ok\nWhile you were away — here's where we left off.\n- {_ECHOED}")
     assert _ECHOED not in out
     assert "ok" in out
+
+
+# The greeting was reworded (the em-dash became a comma), but a transcript
+# written before that still holds the old one on disk, so BOTH must strip.
+_LEGACY_GREETING = "While you were away \u2014 here's where we left off."
+
+
+@pytest.mark.parametrize("greeting", [marks.GREETING, _LEGACY_GREETING])
+def test_strip_injected_truncates_from_either_greeting(greeting):
+    out = serializer.strip_injected(f"ok\n{greeting}\n- {_ECHOED}")
+    assert _ECHOED not in out
+    assert "ok" in out
+
+
+def test_the_legacy_greeting_is_not_the_current_one():
+    # Guards the test above: if the two were equal it would prove nothing.
+    assert marks.GREETING != _LEGACY_GREETING
 
 
 def test_strip_injected_leaves_ordinary_text_byte_identical():

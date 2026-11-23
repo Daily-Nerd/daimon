@@ -225,7 +225,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
         # other axis suppresses it — quicksand outranks ground.
         base += " [✓ world-checked]"
     if quote:
-        base += f'  — "{quote}"'
+        base += f': "{quote}"'
     base += _handle_suffix(item, briefable)
     if was_label is not None:
         base += f" (was {was_label}, carried {stale_days:.0f}d)"

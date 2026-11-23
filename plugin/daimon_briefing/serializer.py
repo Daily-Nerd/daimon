@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Callable, Iterable, Iterator, ParamSpec, TypeVar
 
-from . import (config, configure, field_table, ledger, llm, normalize,
+from . import (config, configure, field_table, ledger, llm, marks, normalize,
                provenance, schema, scope, tool_context)
 
 # No handlers/basicConfig here — the library stays silent unless the caller
@@ -1248,9 +1248,17 @@ _RECALL_LINE_RE = re.compile(r"daimon recall: prior work —[^\n]*")
 # over-approximation: over-stripping costs a downgrade to inferred,
 # under-stripping mints a false `verbatim`, and only one of those is a
 # security bug.
+def _greeting_pattern(greeting: str) -> str:
+    # The greeting text is defined once, in marks; a host that re-typesets the
+    # apostrophe still has to match.
+    return re.escape(greeting).replace("'", "['’]")
+
+
 _BRIEF_HEAD_RE = re.compile(
-    r"(?:DAIMON BRIEFING |While you were away — here['’]s where we left off\.).*",
-    re.DOTALL)
+    "(?:DAIMON BRIEFING |"
+    + "|".join(_greeting_pattern(g)
+               for g in (marks.GREETING, *marks.LEGACY_GREETINGS))
+    + ").*", re.DOTALL)
 
 # Code-owned, absent-never-False (#292 discipline, same as `grounded`): set
 # only where verify_quotes proves the quote lives in injected output and

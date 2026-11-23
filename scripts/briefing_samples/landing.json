@@ -1,0 +1,28 @@
+{
+  "session_id": "sample-session",
+  "working_context": {
+    "recent_decisions": [
+      {
+        "id": "d-5a1c21",
+        "text": "Retry policy",
+        "trust": "verbatim",
+        "quote": "retry uses exponential backoff, cap 30s"
+      },
+      {
+        "id": "d-5a1c22",
+        "text": "The cache layer is the bottleneck",
+        "trust": "inferred"
+      },
+      {
+        "id": "d-5a1c23",
+        "text": "The config flag was renamed",
+        "trust": "verbatim",
+        "quote": "renamed to enable_fast_path",
+        "carried_from": "sample-session-0",
+        "_stale_carried_days": 12
+      }
+    ],
+    "open_questions": []
+  },
+  "epistemic_snapshot": {}
+}

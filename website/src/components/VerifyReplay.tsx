@@ -1,26 +1,27 @@
 import {translate} from '@docusaurus/Translate';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import type {ReactNode} from 'react';
+import {sampleItem as item} from '../briefingSample';
 
 const LINES: ReactNode[] = [
   <span key="0" className="replayHead">
     $ daimon checkpoint · verifying 23 claims…
   </span>,
   <span key="1">
-    "retry cap is 30s" <span aria-hidden="true">→</span> L214{' '}
+    "{item('verbatim').quote}" <span aria-hidden="true">→</span> L214{' '}
     <span className="tv">
       <span aria-hidden="true">✔ </span>verbatim
     </span>
   </span>,
   <span key="2">
-    "port is 8080" <span aria-hidden="true">→</span> no match{' '}
+    "{item('inferred').text}" <span aria-hidden="true">→</span> no match{' '}
     <span aria-hidden="true">→</span>{' '}
     <span className="ti">
       <span aria-hidden="true">~ </span>inferred
     </span>
   </span>,
   <span key="3">
-    "flag renamed" <span aria-hidden="true">→</span> code changed{' '}
+    "{item('stale').text}" <span aria-hidden="true">→</span> code changed{' '}
     <span className="ts">
       <span aria-hidden="true">⚠ </span>stale
     </span>

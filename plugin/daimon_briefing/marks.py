@@ -12,11 +12,17 @@ it, and neither may drift from the other.
 # as `api.BRIEFING_FORMAT` and never printed into one. Bump it with ANY change
 # to the constants below or to the parser's rules; `test_render_briefing`
 # hashes the constants and fails on a change that did not bump it.
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 # The first line of every briefing, and what a parser takes as its header
 # once the warnings above it are set aside.
-GREETING = "While you were away — here's where we left off."
+GREETING = "While you were away, here's where we left off."
+
+# Greetings an earlier daimon wrote. A briefing is injected into a session and
+# so lands in the transcript on disk, where it outlives the format: the
+# serializer must still recognize these to strip them (the echo guard), though
+# nothing renders them any more.
+LEGACY_GREETINGS = ("While you were away \u2014 here's where we left off.",)
 
 # A standing ruling line starts with this.
 RULING_MARK = "§"

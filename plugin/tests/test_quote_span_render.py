@@ -33,7 +33,7 @@ def _checkpoint(decisions):
 def test_line_caps_a_long_quote():
     line = briefing._line(_item(quote=LONG))
     span = display.quote_span(LONG, "we chose uv")
-    assert f'  — "{span}"' in line
+    assert f': "{span}"' in line
     assert span.endswith("…") and LONG not in line
 
 
@@ -45,7 +45,7 @@ def test_line_hides_a_quote_the_text_already_contains():
 
 def test_line_short_unseen_quote_unchanged():
     assert briefing._line(_item(quote="uv, always")).endswith(
-        '  — "uv, always"')
+        ': "uv, always"')
 
 
 def test_line_is_null_safe():
@@ -67,13 +67,13 @@ def test_truncating_text_never_brings_a_quote_back():
          "trust": "inferred", "quote": quote,
          "first_seen": "2026-01-01T00:00:00Z", "importance": 5}]))
     full_text = briefing.render_selection(briefing.select(b, None, NOW))
-    assert f'— "{quote}"' not in full_text
+    assert f': "{quote}"' not in full_text
     # tight budget: stage 1 shortens the text, which no longer holds the quote
     sel = briefing.select(b, len(full_text.encode()) - 800, NOW)
     kept = sel.kept["decisions"][0]
     assert len(kept["text"]) < len(b["decisions"][0]["text"])
     assert quote not in kept["text"]
-    assert f'— "{quote}"' not in briefing.render_selection(sel)
+    assert f': "{quote}"' not in briefing.render_selection(sel)
 
 
 def test_plain_and_rich_show_the_same_span(monkeypatch, capsys):
@@ -82,7 +82,7 @@ def test_plain_and_rich_show_the_same_span(monkeypatch, capsys):
     monkeypatch.setenv("COLUMNS", "400")
     b = {"decisions": [_item(quote=LONG)]}
     span = display.quote_span(LONG, "we chose uv")
-    assert f'  — "{span}"' in briefing.render_plain(b)
+    assert f': "{span}"' in briefing.render_plain(b)
     render._rich_brief(b)
     assert f'"{span}"' in capsys.readouterr().out
 
