@@ -21,6 +21,7 @@ from .. import (
     display,
     effects_commit,
     hostgit,
+    identity as bucket_identity,  # `identity` is the status payload's own name
     ledger,
     ledger_census,
     llm,
@@ -137,7 +138,8 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
                    disabled: bool = False,
                    global_fallback: bool = False,
                    legacy: tuple | None = None,
-                   incomplete: list | None = None) -> dict:
+                   incomplete: list | None = None,
+                   unbound: bool = False) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
     project checkpoint, outstanding serialize failures, or the kill switch being
@@ -262,6 +264,14 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
         warnings.append(
             f"{len(refused)} session(s) not serialized: events.jsonl is "
             f"{refused[0]['state']}; {refused[0]['hint']}, then daimon heal")
+
+    # Last, so a failure still leads the verdict. This location is bound to no
+    # bucket: a project that moved looks, from here, exactly like one that is
+    # new, so the fixed line says so (the same text the briefing carries;
+    # nothing in it comes from the store). Injected, like `legacy`: a verdict
+    # that reads the store cannot be tested alone.
+    if unbound:
+        warnings.append(bucket_identity.UNBOUND_NOTICE)
 
     if not warnings:
         verdict = "✓ fresh"
@@ -692,7 +702,8 @@ def _status_world(project_arg=None) -> dict:
                             global_fallback=config.brief_global_fallback(),
                             legacy=((legacy_slug, raw_project, legacy_holds)
                                     if legacy_slug else None),
-                            incomplete=identity["incomplete"])
+                            incomplete=identity["incomplete"],
+                            unbound=bucket_identity.is_unbound(project))
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()

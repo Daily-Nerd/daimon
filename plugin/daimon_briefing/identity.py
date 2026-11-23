@@ -273,6 +273,31 @@ def resolve(location) -> Resolution:
     return Resolution(_free_name(root, text, seed), False)
 
 
+# The one line shown when a location is unbound. Fixed text: no bucket name, no
+# project name, nothing derived from the repository or the store, so what an
+# agent reads cannot carry another project's facts. It sends the question to
+# the USER: the survey it names prints other projects' names, which belongs on
+# a person's terminal, never in a transcript.
+UNBOUND_NOTICE = (
+    "No memory is bound to this folder yet. If this project moved from "
+    "another folder or machine, ask the user to run "
+    "`daimon bucket doctor --path .` themselves.")
+
+
+def is_unbound(project) -> bool:
+    """Whether `project` is an absolute location no bucket is bound to: exactly
+    the resolver's step 5, the one trigger of the notice. False for anything
+    that is not a location (a slug, nothing), and always False under tenant
+    scope and SEALED, where resolution never looks past the location's own
+    bucket and so cannot tell a moved project from a new one. A read: nothing
+    is created."""
+    text = str(project) if project else ""
+    if not text or not os.path.isabs(text) or _pure():
+        return False
+    answer = resolve(text)
+    return answer.slug is not None and not answer.bound
+
+
 def bucket_for(location) -> str | None:
     """The bucket name `store.bucket_of` answers for an absolute location."""
     return resolve(location).slug

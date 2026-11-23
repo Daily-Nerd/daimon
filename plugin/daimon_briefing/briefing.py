@@ -1012,6 +1012,17 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             pending = None
         if pending:
             notes = display.merge_notes(notes, (pending,))
+    if stamps:
+        # A location no bucket is bound to: a moved project and a new one look
+        # the same from here, so the one fixed line says so and sends the
+        # question to the user. Fail-open like the other advisory lines.
+        try:
+            unbound = identity.is_unbound(project)
+        except Exception:  # noqa: BLE001 - an advisory line never costs the briefing
+            unbound = False
+        if unbound:
+            notes = display.merge_notes(
+                notes, (marks.warning(identity.UNBOUND_NOTICE),))
     if stamps and isinstance(checkpoint, dict):
         # The gap a dropped extraction call left is a fact about the body the
         # reader is shown, so it rides the same notes as the other head lines.
