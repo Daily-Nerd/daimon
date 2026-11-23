@@ -2582,16 +2582,43 @@ def set_severity(request_id: str, level: str, *, reason: str = "",
     return row["event_id"]
 
 
-def _answering(request_id: str, project_dir, event: str) -> dict | None:
-    """The local record a recipient-side row answers, or None when this
-    bucket cannot see it.
+def _was_ever_sent(request_id: str, project_dir) -> bool:
+    """Whether any bucket this host can read holds the `opened` row of
+    `request_id`, addressed to anyone: the existence test a person's verdict
+    needs (#895), which does not care who the ask was addressed to."""
+    own = store.project_bucket(project_dir)
+    for slug in _bucket_slugs():
+        read = (events(project_dir=slug) if slug == own
+                else events(project_dir=slug,
+                            rows=_foreign_requests(slug)[0].rows))
+        if any(r.get("event") == "opened"
+               and r.get("request_id") == request_id for r in read):
+            return True
+    return False
 
-    Shape-checked, never resolved. A request lives in the SENDER's bucket, so
-    the recipient answering one has nothing local to resolve against: an
-    answer to a foreign id is written here and stays an orphan — inert in
-    this bucket's fold, visible in the raw audit — until the read-time join
-    (PR 2) pairs it with its origin. Refusing what cannot be resolved would
-    make the recipient side unimplementable.
+
+def _answering(request_id: str, project_dir, event: str,
+               channel: str) -> dict | None:
+    """The record a recipient-side row answers (None for a person deciding an
+    ask this bucket cannot read), or a refusal when there is nothing to
+    answer.
+
+    The write boundary of every recipient verb (`accept`, `reject`,
+    `needs-info`, `suppress`, `done`): a row is written only for a request
+    that exists. An id nobody sent used to be accepted on its shape alone and
+    land as an orphan row no reader surfaced, so a host could take a typo or
+    a request meant for another project for a recorded answer. A request
+    lives in the SENDER's bucket, so the bucket-local fold cannot be the
+    judge (scar 0056): the answer comes from the recipient join, the read
+    `reply` and `request inbox` use, which also carries the record's state,
+    so the state refusals see a foreign ask too.
+
+    Who may answer depends on the channel. An agent speaks for its own
+    project, so the ask must be addressed to THIS project. A person decides
+    from wherever they stand (#895), so an ask addressed to another project
+    passes when it exists anywhere. A request this project was offered but
+    has not accepted IS addressed to it and passes: a `done` on it is a held
+    claim (#1333).
     """
     if not is_request_id(request_id):
         raise RequestError(f"invalid request id: {request_id!r}")
@@ -2600,15 +2627,25 @@ def _answering(request_id: str, project_dir, event: str) -> dict | None:
     # table the fold reads says whether `event` may be written from the
     # sender's side, and refusing here, with the verb that does fit, beats
     # writing a row the fold would only mark inert.
-    if current is not None and not row_holds_role(
-            EVENT_ROLE[event], origin="", from_slug=current["from_slug"],
-            to=current["to"], home_slugs=_home_slugs(project_dir)):
-        raise RequestError(
-            f"{request_id} is a request this project sent, and "
-            f"{_EVENT_VERB.get(event, event)} is the recipient's call; to "
-            "take your own ask back run `daimon request withdraw "
-            f"{request_id} --reason \"...\"`")
-    return current
+    if current is not None:
+        if not row_holds_role(
+                EVENT_ROLE[event], origin="", from_slug=current["from_slug"],
+                to=current["to"], home_slugs=_home_slugs(project_dir)):
+            raise RequestError(
+                f"{request_id} is a request this project sent, and "
+                f"{_EVENT_VERB.get(event, event)} is the recipient's call; "
+                "to take your own ask back run `daimon request withdraw "
+                f"{request_id} --reason \"...\"`")
+        return current
+    addressed = recipient_join(project_dir=project_dir).get(request_id)
+    if addressed is not None:
+        return addressed
+    if (of_channel("requests", channel) == "human"
+            and _was_ever_sent(request_id, project_dir)):
+        return None
+    raise RequestError(
+        f"unknown request: {request_id} is not a request addressed to this "
+        "project; check the id with `daimon request inbox`")
 
 
 # What the sender-side refusal calls each recipient act.
@@ -2671,7 +2708,7 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
         raise RequestError(
             f"{article} {state} verdict requires a human channel; this call "
             f"arrived through {channel!r}")
-    current = _answering(request_id, project_dir, event)
+    current = _answering(request_id, project_dir, event, channel)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected, and a rejection is final for that "
@@ -2770,10 +2807,7 @@ def accept(request_id: str, *, channel: str, note: str = "",
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
                 f"arrived through {channel!r}")
-        current = _answering(request_id, project_dir, "accepted")
-        if current is None:
-            current = recipient_join(project_dir=project_dir).get(
-                request_id)
+        current = _answering(request_id, project_dir, "accepted", channel)
         covered = False
         stamp = {}
         synthetic = None
@@ -2883,7 +2917,7 @@ def suppress(request_id: str, *, channel: str, note: str = "",
         raise RequestError(
             "suppressing an addressed request requires a human channel; this "
             f"call arrived through {channel!r}")
-    _answering(request_id, project_dir, "suppressed")
+    _answering(request_id, project_dir, "suppressed", channel)
     row = _stamp("suppressed", request_id, channel, author=author)
     note = _text("note", note, required=False)
     if note:
@@ -2904,7 +2938,7 @@ def done(request_id: str, *, channel: str, evidence: str,
     with a per-act identity may carry one — an agent's claim is signed by
     the process that made it, as it always was. Refused by `_stamp` below,
     which is the one chokepoint every row on this path passes through."""
-    current = _answering(request_id, project_dir, "done")
+    current = _answering(request_id, project_dir, "done", channel)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected; a rejected request cannot be "

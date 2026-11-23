@@ -2568,7 +2568,7 @@ def test_session_end_verifies_a_foreign_asks_done_row_in_this_bucket(project):
     pass reads raw events, not `records()`, so it still finds and verifies
     it. The sender's join is what makes the flag meaningful."""
     from daimon_briefing import capture
-    foreign = "q-0123456789ab"
+    foreign = _foreign_ask(project, "verify")
     requests.done(foreign, channel="cli-agent", evidence="the fix shipped",
                  project_dir=project)
     confirmed = capture._verify_agent_request_done(
@@ -3843,20 +3843,21 @@ def test_the_fold_reaches_every_render_state_but_never_stale(project):
 # ---- the PR-1 interim window (design r2-G) --------------------------------
 
 
-def test_a_verdict_on_an_id_this_bucket_cannot_see_is_written_and_inert(
+def test_a_verdict_on_a_foreign_ask_is_written_here_and_inert_in_this_fold(
         project):
     """A request lives in the SENDER's bucket, so a recipient answering one
-    has nothing local to resolve against. The answer is written here and
-    stays an orphan until PR 2's read-time join pairs it with its origin —
-    refusing it would make the recipient side unimplementable."""
-    foreign = "q-0123456789ab"
+    has nothing local to resolve against. The answer is written here and is
+    inert in this bucket's own per-bucket fold; the read-time join pairs it
+    with its origin. The write boundary resolves the id through that join, so
+    an id nobody sent is refused (test_request_recipient_guard)."""
+    foreign = _foreign_ask(project, "inert")
     requests.accept(foreign, channel="cli-tty", note="on it",
                     project_dir=project)
     requests.done(foreign, channel="cli-tty", evidence="shipped it",
                   project_dir=project)
     requests.suppress(foreign, channel="cli-tty", project_dir=project)
-    assert requests.records(project_dir=project) == {}   # inert…
-    assert len(_rows(project)) == 3                      # …but on disk
+    assert requests.records(project_dir=project) == {}   # inert...
+    assert len(_rows(project)) == 3                      # ...but on disk
 
 
 @pytest.mark.parametrize("verb", ["accept", "done", "suppress"])
@@ -3877,9 +3878,12 @@ def test_revise_still_requires_a_record_it_can_read(project):
 
 def test_cli_says_so_when_the_answered_request_is_not_in_this_bucket(
         project, monkeypatch, capsys):
+    """A person decides an ask addressed to another project from wherever
+    they stand (#895): it is written here, and no card can render it."""
     from daimon_briefing import cli
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
-    rc = cli.main(["request", "accept", "q-0123456789ab",
+    elsewhere_ask = _foreign_ask(project, "cli", to="-p-someone-else")
+    rc = cli.main(["request", "accept", elsewhere_ask,
                    "--project", project])
     assert rc == 0
     out = capsys.readouterr().out
@@ -4195,6 +4199,23 @@ def _seed_bucket(project_dir, session="S-bucket"):
     return store.project_slug(project_dir)
 
 
+def _foreign_ask(project, tag="x", to=None):
+    """A real ask from another project's bucket, addressed to `project` (or
+    to `to`): the id a recipient verb may answer."""
+    sender_slug = _seed_bucket(f"/p/req-foreign-{tag}")
+    return requests.open_request(
+        to=store.project_slug(project) if to is None else to, ask=ASK,
+        why=WHY, channel="cli-agent", project_dir=sender_slug)
+
+
+def _orphan_verdict(project, request_id, event="accepted", channel="cli-tty"):
+    """A verdict row for an id with no ask behind it, written below the
+    recipient verbs (they refuse it); the fold's orphan rule is what the
+    caller tests."""
+    assert requests.append(requests._stamp(event, request_id, channel),
+                           project_dir=project, writer=Writer.HUMAN)
+
+
 def test_sender_join_pulls_in_the_recipients_verdict(project):
     recipient_slug = _seed_bucket("/p/req-recipient-a")
     q_id = _open(project, to=recipient_slug)
@@ -4297,7 +4318,7 @@ def test_sender_join_ignores_verdict_rows_this_project_wrote_as_a_recipient(
     id) must stay inert in `sender_join` too — the fold's orphan rule
     already guarantees this (no `opened` row, no record), pinned here so a
     future refactor of the row-gathering loop cannot regress it silently."""
-    foreign = "q-0123456789ab"
+    foreign = _foreign_ask(project, "sj")
     requests.accept(foreign, channel="cli-tty", project_dir=project)
     requests.done(foreign, channel="cli-tty", evidence="shipped it",
                  project_dir=project)
@@ -4323,7 +4344,7 @@ def test_recipient_join_orphan_rule_when_sender_bucket_is_gone(project):
     """D0: a verdict/attention row whose origin bucket is unreadable or gone
     is inert in the join but stays visible in the raw audit."""
     foreign = "q-0123456789ab"
-    requests.accept(foreign, channel="cli-tty", project_dir=project)
+    _orphan_verdict(project, foreign)
     joined = requests.recipient_join(project_dir=project)
     assert foreign not in joined
     assert any(r.get("request_id") == foreign
@@ -5838,8 +5859,7 @@ def test_third_bucket_rows_for_ids_this_project_is_not_party_to_stay_out(
                                      channel="cli-agent",
                                      project_dir=sender_slug)
     requests.accept(other_id, channel="cli-tty", project_dir=elsewhere)
-    requests.accept("q-0123456789ab", channel="cli-tty",
-                    project_dir=elsewhere)
+    _orphan_verdict(elsewhere, "q-0123456789ab")
     assert requests.recipient_join(project_dir=project) == {}
     assert requests.sender_join(project_dir=project) == {}
 
@@ -5864,7 +5884,7 @@ def test_sender_join_reads_no_other_bucket_when_nothing_was_sent_abroad(
     ask: a bucket with only its own answers to foreign asks stays at one
     read, the same budget the self-addressed test above pins."""
     _seed_bucket("/p/req-elsewhere-f")
-    requests.accept("q-0123456789ab", channel="cli-tty", project_dir=project)
+    _orphan_verdict(project, "q-0123456789ab")
     real_events = requests.events
     calls = []
 
@@ -5878,10 +5898,10 @@ def test_sender_join_reads_no_other_bucket_when_nothing_was_sent_abroad(
 
 
 def test_an_agent_channel_verdict_refusal_reads_as_english(project):
+    offered = _foreign_ask(project, "english")
     with pytest.raises(requests.RequestError,
                        match="an accepted verdict requires a human channel"):
-        requests.accept("q-0123456789ab", channel="cli-agent",
-                        project_dir=project)
+        requests.accept(offered, channel="cli-agent", project_dir=project)
 
 
 @pytest.mark.parametrize("verb", ["accept", "reject", "needs-info",
