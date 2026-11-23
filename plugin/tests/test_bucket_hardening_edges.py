@@ -62,3 +62,24 @@ def test_stamp_root_survives_a_staging_file_it_cannot_unlink(
     monkeypatch.setattr(store.os, "unlink", refuse)
     assert store.stamp_root(d, "/a/one") is True
     assert (d / "root").read_text(encoding="utf-8").strip() == "/a/one"
+
+
+def test_a_removable_file_that_cannot_be_unlinked_keeps_the_bucket(
+        tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import buckets
+    g = _dir("-g")
+    g.mkdir(parents=True)
+    (g / "root").write_text("/gone\n", encoding="utf-8")
+    (g / ".ledger-census").write_text("{}", encoding="utf-8")
+    _dir("-b").mkdir()
+    real = type(g).unlink
+
+    def refuse(self, *a, **k):
+        if self.name == ".ledger-census":
+            raise PermissionError(self)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(g), "unlink", refuse)
+    record = buckets.merge("-g", "-b", apply=True, force=True)
+    assert record["leftovers"] == [".ledger-census"]
+    assert record["complete"] is False and (g / "root").is_file()
