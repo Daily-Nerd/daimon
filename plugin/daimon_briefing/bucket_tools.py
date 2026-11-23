@@ -475,10 +475,20 @@ def _holder_of(real: str, besides: str) -> str | None:
                  if n != besides and store.root_eq(r, real)), None)
 
 
+def collision_merge_command(name: str, bucket: str) -> str:
+    """The `merge` that folds the bucket `name`, which already records the
+    folder `bucket` is about to be bound to, into `bucket`. A collision needs
+    that folder to exist, and `merge` refuses a source whose recorded folder is
+    live (it would birth the bucket again), so the command carries `--force`:
+    here the very next step is the rebind that binds the folder to `bucket`.
+    One owner for the text `remap` and `adopt` both print."""
+    return f"daimon bucket merge --from={name} --into={bucket} --force"
+
+
 def _collision_message(name: str, bucket: str, real: str) -> str:
     return (f"the bucket {name} already records {real}. Fold it into "
-            f"{bucket} first with `daimon bucket merge --from={name} "
-            f"--into={bucket}`, or the folder would answer for two buckets.")
+            f"{bucket} first with `{collision_merge_command(name, bucket)}`, "
+            f"then run this again, or the folder would answer for two buckets.")
 
 
 def _bucket_dir_named(name: str) -> Path:
@@ -627,6 +637,26 @@ def _below(root: str, base: str) -> str | None:
     if nroot.startswith(nbase + sep):
         return root[len(base):]
     return None
+
+
+def former_roots(project) -> tuple[str, ...]:
+    """Every root the bucket `project` resolves to has recorded before its
+    current one (`adopt` and `remap` append to the identity record's
+    `history`). Empty for a project that never moved, an unknown bucket or an
+    unreadable record. Never raises; reads one small file."""
+    folder = store.bucket_dir(project)
+    record = read_identity(folder) if folder is not None else None
+    return tuple(str(r) for r in (record or {}).get("history") or [] if r)
+
+
+def was_located_under_former_root(project, location) -> bool:
+    """Whether `location` is one of `project`'s former roots or lies below one
+    (separator-bounded, `normcase`-compared like every root comparison). The
+    importer's question: a transcript recorded on the old machine names a
+    folder that no longer exists here, so only the bucket's own history can
+    say it was this project's."""
+    return any(_below(str(location), root) is not None
+               for root in former_roots(project))
 
 
 def _mapped(root: str, old: str, new: str) -> tuple[str | None, str | None]:

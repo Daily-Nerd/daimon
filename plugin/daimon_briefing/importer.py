@@ -18,7 +18,8 @@ Every transcript is untrusted input and is judged once, here, at the edge:
   stem, or Kimi's directory segment), and one session must not be named by
   two different files (a refusal);
 - it must belong to the project (`check_project`: a recorded cwd resolves
-  to `--project`; with none recorded, the path lies under the project's
+  to `--project`, or is a root the project's bucket recorded before it
+  moved (`bucket_tools.former_roots`, #1384); with none recorded, the path lies under the project's
   Claude Code root, or the host records no project and `--project` was
   typed; anything else refuses the whole run);
 - it must not be done already (`ledger.has_checkpoint`, or any success line
@@ -48,7 +49,16 @@ import os
 from pathlib import Path
 from typing import NamedTuple
 
-from . import capture, config, ledger, provenance, serializer, store, transcript
+from . import (
+    bucket_tools,
+    capture,
+    config,
+    ledger,
+    provenance,
+    serializer,
+    store,
+    transcript,
+)
 
 # A transcript written this recently may belong to a session still running:
 # its host has not fired SessionEnd yet, and importing it now would race the
@@ -176,6 +186,19 @@ class Discovery(NamedTuple):
     hosts: tuple
 
 
+def _is_project(cwd: str, project: str) -> bool:
+    """Whether a transcript's recorded working directory is `project`'s: it
+    resolves to `project` through the one resolver, or it is a root the
+    project's bucket recorded before it moved (or lies below one), which is
+    what a transcript written on the old machine or under the old username
+    carries (#1384). The history is the bucket's own record, written by the
+    explicit `adopt` and `remap` verbs, so nothing else is accepted."""
+    owner = config.resolve_project_dir(cwd, allow_slug=False)
+    return owner == project or bucket_tools.was_located_under_former_root(
+        project, owner
+    )
+
+
 def discover(project: str, resolver: provenance.SourceResolver) -> Discovery:
     """Every transcript of `project` under the automatic hosts' roots,
     newest first by session end (`capture.session_end_stamp`: the last row
@@ -203,7 +226,7 @@ def discover(project: str, resolver: provenance.SourceResolver) -> Discovery:
             if cwd is None:
                 no_directory += 1
                 continue
-            if config.resolve_project_dir(cwd, allow_slug=False) != project:
+            if not _is_project(cwd, project):
                 other_project += 1
                 continue
             matched += 1
@@ -331,7 +354,7 @@ def check_project(
     cwd = transcript.recorded_cwd(path)
     if cwd is not None:
         owner = config.resolve_project_dir(cwd, allow_slug=False)
-        if owner != project:
+        if not _is_project(cwd, project):
             raise ProjectMismatch(
                 f"refused: transcript belongs to {owner}, not {project} ({path})"
             )
