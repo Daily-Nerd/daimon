@@ -31,8 +31,8 @@ import re
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import (channels, clock, config, jsonl, normalize, policy, redact, scope,
-               store, surfaces)
+from . import (channels, clock, config, identity, jsonl, normalize, policy,
+               redact, scope, store, surfaces)
 from .authority import channels as known_channels
 from .authority import of_channel, of_row, signable_problem
 from .authority import table as authority_table
@@ -235,10 +235,7 @@ def _path(project_dir=None):
     # Without this a host calling in with "<repo>/plugin" wrote a bucket the
     # CLI's read of the same path never looked at. A bucket slug handed in by
     # `--slug` routing or a bucket-iterating reader passes through untouched.
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "refutations.jsonl"
+    return store.ledger_file(project_dir, "refutations.jsonl")
 
 
 def _tombstone_path(project_dir=None):
@@ -251,10 +248,7 @@ def _tombstone_path(project_dir=None):
     can build, and this file exists precisely BECAUSE forget stops that
     ruling id from being a live record at all; growing the main ledger's own
     event vocabulary for one dead record's interval is not worth it."""
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "request_policy_tombstones.jsonl"
+    return store.ledger_file(project_dir, "request_policy_tombstones.jsonl")
 
 
 def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
@@ -281,6 +275,7 @@ def _write_policy_tombstones(doomed, *, project_dir=None) -> None:
     already holds for its own post-forget bookkeeping."""
     if not doomed:
         return
+    project_dir = identity.claim(project_dir) or project_dir
     path = _tombstone_path(project_dir)
     if path is None:
         return
@@ -695,6 +690,7 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row.  Never mutates another ledger."""
     if config.is_disabled():
         return False
+    project_dir = identity.claim(project_dir) or project_dir
     path = _path(project_dir)
     if path is None:
         return False

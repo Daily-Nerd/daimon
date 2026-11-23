@@ -27,7 +27,8 @@ import json
 import re
 from datetime import datetime, timezone
 
-from . import clock, config, jsonl, policy, provenance, schema, store
+from . import (clock, config, identity, jsonl, policy, provenance, schema,
+               store)
 from .authority import channels as known_channels
 from .authority import of_channel, of_row
 from .authority import table as authority_table
@@ -100,10 +101,7 @@ def _path(project_dir=None):
     # Without this a host calling in with "<repo>/plugin" wrote a bucket the
     # CLI's read of the same path never looked at. A bucket slug handed in by
     # `--slug` routing or a bucket-iterating reader passes through untouched.
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "relations.jsonl"
+    return store.ledger_file(project_dir, "relations.jsonl")
 
 
 def _validate_endpoint(name: str, endpoint) -> dict:
@@ -166,6 +164,7 @@ def _append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted row.  Never raises; never mutates another ledger."""
     if config.is_disabled():
         return False
+    project_dir = identity.claim(project_dir) or project_dir
     path = _path(project_dir)
     if path is None:
         return False
