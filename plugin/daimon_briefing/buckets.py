@@ -889,7 +889,9 @@ def merge(from_slug: str, into_slug: str, *, apply: bool = False,
     REFUSES, naming why, when a name is not a bucket name, when G is B, when B
     does not exist (merge never creates a bucket), and, unless `force`, when
     G's recorded root is still a directory on disk: that location would birth
-    G again, and alias rows are keyed by name.
+    G again, and alias rows are keyed by name. The exception is a live linked
+    worktree that now resolves to B (`identity.worktree_binds_to`): its
+    sessions use B, so nothing can birth G.
 
     The names are bucket NAMES taken as given, never paths: this is a repair
     verb for a person who has read `bucket doctor`, and its CLI refuses them
@@ -916,7 +918,8 @@ def merge(from_slug: str, into_slug: str, *, apply: bool = False,
             f"{from_slug} has no recorded root, so daimon cannot tell whether "
             f"its project still exists and a session there could still be "
             f"writing to it. Check, then pass --force to fold it.")
-    if recorded and not force and os.path.isdir(recorded):
+    if (recorded and not force and os.path.isdir(recorded)
+            and not identity.worktree_binds_to(recorded, into_slug)):
         raise MigrationError(
             f"the root recorded for {from_slug} still exists on disk "
             f"({recorded}). A session there would create {from_slug} again "

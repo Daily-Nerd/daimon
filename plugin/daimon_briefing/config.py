@@ -882,6 +882,21 @@ def resolve_project_root(raw: str | None) -> str | None:
     return _git_toplevel(raw)
 
 
+def worktree_main(path) -> str | None:
+    """The main repository `path` is a linked worktree of, or None. The one
+    place ambient-only is decided for callers in this layer: tenant scope never
+    asks (a tenant home reads nothing outside its own project), SEALED is
+    refused inside `hostgit.linked_main`, and an undecidable scope is the
+    narrow answer. Never raises."""
+    try:
+        if tenant_scoped():
+            return None
+        return hostgit.linked_main(path)
+    except Exception:  # noqa: BLE001 - an undecidable scope (a bad posture
+        # setting) or a path that names no folder is the narrow answer
+        return None
+
+
 @lru_cache(maxsize=256)
 def _git_toplevel(raw: str) -> str:
     """The forking half of `resolve_project_root`, memoized. Never raises, and
@@ -895,7 +910,14 @@ def _git_toplevel(raw: str) -> str:
 # `resolve_project_root` must be able to clear it without knowing the private
 # worker exists. Assigned rather than declared because the public function is
 # an overloaded def, which cannot carry them in its signature.
-resolve_project_root.cache_clear = _git_toplevel.cache_clear  # type: ignore[attr-defined]
+def _clear_root_memos() -> None:
+    """Both memos of "which repository is this directory": the git toplevel
+    and the main repository a linked worktree belongs to (#1384)."""
+    _git_toplevel.cache_clear()
+    hostgit.linked_main.cache_clear()  # type: ignore[attr-defined]
+
+
+resolve_project_root.cache_clear = _clear_root_memos  # type: ignore[attr-defined]
 resolve_project_root.cache_info = _git_toplevel.cache_info  # type: ignore[attr-defined]
 
 
@@ -1180,6 +1202,9 @@ def _layer_scopes(project_dir) -> list[str]:
     # only ever returns falsy for a falsy input, so its result here is
     # always a non-empty string: no falsy-root branch to guard.
     root_path = Path(resolve_project_dir(text, allow_slug=False))
+    # A linked worktree is its main repository's project: its layers are the
+    # main's, wherever on disk the worktree sits (#1384).
+    root_path = Path(worktree_main(str(root_path)) or root_path)
     home_str = str(home)
     # Deferred import: config is the dependency base (store and refutations
     # both import config, never the reverse), so this must be resolved at

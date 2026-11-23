@@ -1023,6 +1023,13 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         if unbound:
             notes = display.merge_notes(
                 notes, (marks.warning(identity.UNBOUND_NOTICE),))
+        try:
+            split = identity.has_split_bucket(project)
+        except Exception:  # noqa: BLE001 - advisory, like the line above
+            split = False
+        if split:
+            notes = display.merge_notes(
+                notes, (marks.warning(identity.SPLIT_NOTICE),))
     if stamps and isinstance(checkpoint, dict):
         # The gap a dropped extraction call left is a fact about the body the
         # reader is shown, so it rides the same notes as the other head lines.

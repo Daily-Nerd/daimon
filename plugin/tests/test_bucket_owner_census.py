@@ -96,6 +96,9 @@ SEED_SITES = {
     ("bucket_tools.py", "adopt"): (
         "adopt looks for the folder's OWN seed bucket (an unstamped legacy "
         "bucket the rebind would orphan): a seed is exactly what it needs"),
+    ("identity.py", "has_split_bucket"): (
+        "asks whether a worktree's OWN folder still has a bucket at its seed "
+        "name, which is exactly the seed and not what the owner answers"),
     ("identity.py", "resolve"): (
         "the resolver IS the owner's answer: the seed is its step 2 probe, "
         "its step 4 legacy directory and the first birth name"),
