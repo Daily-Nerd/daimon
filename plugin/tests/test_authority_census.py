@@ -63,6 +63,9 @@ ISATTY_NOT_A_TIER = {
     "host_detect.py",
     # the configure wizard's "may I prompt" gate: it writes settings, not rows
     "cli/configure_cmd.py",
+    # the bucket verbs' "is stdout a terminal" gate: other projects' names are
+    # printed to a person at a terminal and counted anywhere else
+    "cli/projects.py",
 }
 ISATTY_OWNER = "cli/_observe.py"
 

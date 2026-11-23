@@ -365,6 +365,15 @@ def _pointer_payload(path: Path) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _restamped(payload: dict, legacy: str, target: str) -> dict | None:
+    """`payload` with `project_slug` pointed at `target`, or None when it is
+    not stamped with the `legacy` slug. The ONE place a stamp is compared to
+    the bucket being folded away: only a copy stamped with it is rewritten."""
+    if payload.get("project_slug") != legacy:
+        return None
+    return {**payload, "project_slug": target}
+
+
 def _restamp(path: Path, legacy: str, target: str) -> None:
     """Point a MOVED pointer copy's `project_slug` at the bucket it now lives
     in. Only a copy still stamped with the legacy slug is touched, and only
@@ -373,10 +382,10 @@ def _restamp(path: Path, legacy: str, target: str) -> None:
     would break `daimon verify-receipt` for a session that did nothing
     wrong. Recall reaches those through the alias instead."""
     payload = _pointer_payload(path)
-    if payload is None or payload.get("project_slug") != legacy:
+    restamped = _restamped(payload, legacy, target) if payload else None
+    if restamped is None:
         return
-    payload["project_slug"] = target
-    store._atomic_write(path, json.dumps(payload, ensure_ascii=False))
+    store._atomic_write(path, json.dumps(restamped, ensure_ascii=False))
 
 
 def _pointer_identity(payload: dict) -> str:
@@ -494,9 +503,8 @@ def _promote_newest(source_files: list[Path], target_dir: Path, legacy: str,
                 or recency <= store._file_recency(latest)):
             return None, ()
         before = _pointer_labels(target_dir)
-        if payload.get("project_slug") == legacy:
-            payload["project_slug"] = target
-        blob = json.dumps(payload, ensure_ascii=False)
+        blob = json.dumps(_restamped(payload, legacy, target) or payload,
+                          ensure_ascii=False)
         advanced = store._advance_pointers(
             target_dir, blob, store._created_epoch(payload.get("created")),
             True, config.checkpoint_history())

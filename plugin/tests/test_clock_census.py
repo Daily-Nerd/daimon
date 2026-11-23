@@ -109,6 +109,9 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     ("daimon_briefing/store.py", "_reap_stale_tmps", "time.time"):
         "real-machine age or mtime arithmetic (cooldown, reap, retention, "
         "heartbeat), not a row stamp",
+    ("daimon_briefing/store.py", "_reap_stale_births", "time.time"):
+        "real-machine age or mtime arithmetic (the reap age gate), not a row "
+        "stamp",
     ("daimon_briefing/store.py", "_event_row", "datetime.now"):
         "checkpoint or store-event ts, second resolution, no order or "
         "event_id; the next candidate to move onto the clock if a host "

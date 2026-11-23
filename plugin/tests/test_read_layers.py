@@ -51,6 +51,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/authority.py": "ledger",  # the one owner of the tier a row carries (#1301); imports only channels
     "daimon_briefing/amendments.py": "ledger",  # owns amendments.jsonl and its fold
     "daimon_briefing/buckets.py": "ledger",  # bucket migration and its receipt ledger (migrations.jsonl)
+    "daimon_briefing/bucket_tools.py": "ledger",  # bucket doctor and stamp: surveys roots, writes the identity record
     "daimon_briefing/checks.py": "ledger",  # folds logs/checks.jsonl, the firing log of armed checks
     "daimon_briefing/heal.py": "ledger",  # plans serialize repairs from the capture ledger and holds the heal lock
     "daimon_briefing/jsonl.py": "ledger",  # the JSONL substrate: append, read health, rewrite

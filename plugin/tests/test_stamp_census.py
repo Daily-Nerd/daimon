@@ -25,7 +25,7 @@ HELPERS = {"stamp_slugs", "stamp_matches"}
 
 # (file relative to the package, enclosing function) -> why exact comparison is right.
 ALLOWED = {
-    ("buckets.py", "_restamp"): (
+    ("buckets.py", "_restamped"): (
         "migration internals: rewrites exactly the files stamped with the "
         "LEGACY slug it is migrating, an alias would defeat the check"),
     ("recall.py", "_judge_rows"): (
