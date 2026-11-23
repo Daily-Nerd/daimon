@@ -132,6 +132,16 @@ def _print_version_note(checkpoint) -> None:
     print(_format_version_note(checkpoint), end="")
 
 
+def _handoff_title(handoff) -> str:
+    """The baton's header, shared by both render paths. A row the human tier
+    wrote keeps the original wording. Anything else (an agent, or a source no
+    table knows) reads as agent text, the way an agent's claim is shown
+    elsewhere: named and unverified."""
+    if handoff.get("tier") == "human":
+        return f"HANDOFF (left deliberately by previous session, {handoff['ts']})"
+    return f"HANDOFF (written by an agent, unverified, {handoff['ts']})"
+
+
 def _format_handoff(handoff) -> str:
     """Plain-path text for the baton block (#523, #1044): identical bytes to
     what `_print_handoff`'s non-rich branch used to print directly, extracted
@@ -141,7 +151,7 @@ def _format_handoff(handoff) -> str:
     if not handoff:
         return ""
     lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
-    parts = [f"HANDOFF (left deliberately by previous session, {handoff['ts']}):"]
+    parts = [f"{_handoff_title(handoff)}:"]
     parts.extend(f"→ {line}" for line in lines)
     return "\n".join(parts) + "\n\n"
 
@@ -153,7 +163,8 @@ def _print_handoff(handoff) -> None:
 
     #566: on the rich path the baton gets a bordered panel like every ambient
     section below it — bare stdout above the panels inverted the visual
-    hierarchy for the one block a human wrote deliberately. Magenta border:
+    hierarchy for the one block a person may have written deliberately (the
+    title says who wrote it: `_handoff_title`). Magenta border:
     distinct from red (drift/external warnings) so "read this first" never
     reads as "something is wrong". The plain path stays byte-identical — it is
     a compatibility surface for non-TTY hosts and hook briefings."""
@@ -168,7 +179,7 @@ def _print_handoff(handoff) -> None:
         body = Text("\n".join(f"→ {ln}" for ln in lines), style="bold")
         Console().print(Panel(
             body,
-            title=f"HANDOFF (left deliberately by previous session, {handoff['ts']})",
+            title=_handoff_title(handoff),
             border_style="magenta", title_align="left",
         ))
         return

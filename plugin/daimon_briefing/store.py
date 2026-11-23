@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (config, hostgit, identity, jsonl, normalize, policy, receipts,
+from . import (authority, config, hostgit, identity, jsonl, normalize, policy, receipts,
                redact, schema, scope, serializer, surfaces, teamproject)
 from .surfaces import Writer
 
@@ -3196,7 +3196,11 @@ def active_handoff(project_dir=None) -> dict | None:
     ts = str(latest.get("ts") or "")
     if sessions_since_count(ts, project_dir) >= 2:
         return None
-    return {"ts": ts, "note": str(latest["note"])}
+    # `tier` is the stored row's own, from `authority.of_row`, never a flag a
+    # caller passes. None is a source nobody defined; the renderers read it as
+    # NOT a person's (doubt resolves away from the human tier).
+    return {"ts": ts, "note": str(latest["note"]),
+            "tier": authority.of_row("events", latest)}
 
 
 def _ledger_path(project_dir=None):

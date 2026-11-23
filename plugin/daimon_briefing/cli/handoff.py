@@ -26,13 +26,16 @@ def _cmd_handoff(args) -> int:
     test_handoff_event_never_resolves_an_item)."""
     _cli._note_usage("handoff")
     project = _cli._resolve_project(args.project)
+    # The tier is the observed write path (a terminal is `cli-tty`, none is
+    # `agent`); `--by agent` narrows a terminal session to the agent tier.
+    source = _observe.event_source(agent=getattr(args, "by", None) == "agent")
     if args.clear:
         if args.text:
             print("error: --clear takes no text", file=sys.stderr)
             return 1
         if not store.append_event("", "cleared", note="", kind="handoff",
                                   project_dir=project, writer=Writer.HUMAN,
-                                  source=_observe.event_source()):
+                                  source=source):
             print("error: handoff not recorded (daimon disabled or project "
                   "unknown)", file=sys.stderr)
             return 1
@@ -69,7 +72,7 @@ def _cmd_handoff(args) -> int:
               f"new baton:\n  {prior['note']}", file=sys.stderr)
     if not store.append_event("", "active", note=text, kind="handoff",
                               project_dir=project, writer=Writer.HUMAN,
-                              source=_observe.event_source()):
+                              source=source):
         print("error: handoff not recorded (daimon disabled or project "
               "unknown)", file=sys.stderr)
         return 1
@@ -111,6 +114,10 @@ def register(sub, fmt) -> None:
                                 "first and what to beware")
     p_handoff.add_argument("--clear", action="store_true",
                            help="retract the active baton")
+    p_handoff.add_argument("--by", choices=["agent"], default=None,
+                           help="write the baton as agent text even at a "
+                                "terminal: it renders as written by an "
+                                "agent, unverified")
     p_handoff.add_argument("--project", help="project directory (default: "
                            "DAIMON_PROJECT_DIR, then cwd)")
     p_handoff.set_defaults(func=_cmd_handoff)
