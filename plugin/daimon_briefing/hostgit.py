@@ -115,6 +115,7 @@ import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
@@ -693,6 +694,70 @@ def has_gitfile(path) -> bool:
     follows it."""
     st = _lstat(os.path.join(os.fspath(path), ".git"))
     return st is not None and stat.S_ISREG(st.st_mode)
+
+
+def linked_main(path) -> str | None:
+    """The real path of the main repository that LISTS `path` as one of its
+    linked worktrees, or None. AMBIENT only: SEALED never asks (its project
+    directories are writable by a less trusted party and `project` refuses a
+    gitfile there), and a directory whose `.git` is not a regular file (an
+    ordinary repo, a symlink, nothing) never forks git: one `lstat` decides.
+
+    The `.git` file only chooses WHICH repository git is asked about; it is
+    never believed. The authority is that repository's own admin directory,
+    reached through one `git worktree list --porcelain -z`, and the answer is
+    accepted only when ALL of these hold:
+
+    * the first entry is a main working tree (not bare) that is a directory;
+    * `realpath(path)` equals one of the LINKED entries (a directory that
+      merely points at a victim's admin dir is not in the victim's list);
+    * the main differs from `path` (a submodule lists itself first).
+
+    `-z` is required: git older than 2.36 fails the call and the answer is
+    None, with no newline-separated fallback, because a newline in a path or a
+    lock reason could forge an entry there. A failure of any kind is None, so
+    a worktree keeps its own bucket rather than a wrong one. Memoized per
+    process like `config._git_toplevel`, and cleared by
+    `config.resolve_project_root.cache_clear()`."""
+    try:
+        if _sealed() or not has_gitfile(path):
+            return None
+        real = os.path.realpath(os.fspath(path))
+    except ValueError:  # a NUL in the path names no folder; a bad posture
+        return None     # setting is not a reason to look
+    return _linked_main(real)
+
+
+@lru_cache(maxsize=256)
+def _linked_main(real: str) -> str | None:
+    out = _read(_argv("worktree", "list", "--porcelain", "-z", path=real),
+                timeout=PROJECT_TIMEOUT)
+    if not out:
+        return None
+    # Records are NUL-terminated attribute fields, a record ends at an empty
+    # one. Only a field that STARTS "worktree " opens a record, so nothing a
+    # path or a lock reason carries can open one (NUL cannot be in either).
+    entries: list[list] = []  # [path, is_bare]
+    current = None
+    for field in out.split("\0"):
+        if not field:
+            current = None
+        elif field.startswith("worktree "):
+            current = [field[len("worktree "):], False]
+            entries.append(current)
+        elif field == "bare" and current is not None:
+            current[1] = True
+    if len(entries) < 2 or entries[0][1]:
+        return None
+    main = os.path.realpath(entries[0][0])
+    linked = {os.path.realpath(path) for path, bare in entries[1:]
+              if not bare}
+    if main == real or real not in linked or not os.path.isdir(main):
+        return None
+    return main
+
+
+linked_main.cache_clear = _linked_main.cache_clear  # type: ignore[attr-defined]
 
 
 def root_commit(path) -> str | None:
