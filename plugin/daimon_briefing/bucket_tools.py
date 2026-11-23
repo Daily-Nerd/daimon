@@ -285,8 +285,9 @@ def doctor(path=None) -> dict:
     proof. `suggestions` offers a merge for each shared root, into the bucket
     with the newest session; it is withheld ("worktree") for worktree-looking
     roots, because their live location would birth the folded bucket again
-    until the resolver learns worktrees. No rebinding verb exists yet, so a
-    candidate carries no command."""
+    until the resolver learns worktrees. A candidate is where `bucket adopt`
+    starts: the CLI names that command for a person at a terminal, and nothing
+    here rebinds anything."""
     found: dict[str, list] = {key: [] for key in FINDINGS}
     roots: dict[str, str] = {}
     dirs = store.bucket_dirs().buckets

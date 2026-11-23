@@ -378,6 +378,9 @@ def _cmd_bucket_doctor(args) -> int:
             for match in survey["candidates"]:
                 lines.append(f"  candidate {match['bucket']}: same "
                              f"{' and '.join(match['matched'])} as {args.path}")
+                lines.append(f"    if it is the same project: daimon bucket "
+                             f"adopt --bucket={match['bucket']} "
+                             f"--path {args.path}")
         lines.append(f"candidates: {len(survey['candidates'])} "
                      f"({survey['candidates_note']})")
     if survey["suggestions_withheld"]:

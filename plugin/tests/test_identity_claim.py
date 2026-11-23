@@ -356,3 +356,25 @@ def test_the_claim_is_loud_through_the_best_effort_handlers(
     with pytest.raises(identity.BucketClaimFailed):
         requests.append(_row(), project_dir=where, writer=Writer.HUMAN)
 
+
+
+def test_twins_share_an_unstamped_bucket_until_the_first_write_stamps_it(
+        tmp_path, tmp_checkpoint_dir):
+    """D5, the other half: strictness covers STAMPED buckets only. A legacy
+    bucket with no root keeps answering for both lossy twins, exactly as
+    before, until a write from one of them records its root; then the other
+    is a stranger to it and is born its own."""
+    one = tmp_path / "my" / "app"
+    two = tmp_path / "my-app"
+    one.mkdir(parents=True)
+    two.mkdir()
+    seed = store.location_slug(str(one.resolve()))
+    _bucket(tmp_checkpoint_dir, seed)  # a pre-#1092 bucket, no root
+    assert store.bucket_of(str(one.resolve())) == seed
+    assert store.bucket_of(str(two.resolve())) == seed
+    first = identity.claim(str(two))
+    assert first.slug == seed
+    assert _root(tmp_checkpoint_dir / seed) == str(two.resolve())
+    assert store.bucket_of(str(one.resolve())) != seed
+    second = identity.claim(str(one))
+    assert second.slug == f"{seed}-{_digest(str(one.resolve()))[:6]}"

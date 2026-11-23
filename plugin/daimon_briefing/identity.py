@@ -1,17 +1,20 @@
-"""Project identity: which bucket a project is, claimed once per operation.
+"""Project identity: which bucket a project is, decided by what the buckets
+record and claimed once per operation (#1384).
 
-Slice 4a of "project identity survives moves" (#1384). This module is the
-plumbing that lets ONE owner decide every bucket name; it changes no answer.
+A bucket's directory name is its permanent id; its `root` file is the one
+binding between that bucket and a location. `resolve` answers which bucket an
+absolute location belongs to from those records, `store.bucket_of` asks it for
+every site that names a bucket, and `claim` is the one place an operation binds
+a location to its bucket: it resolves, and when nothing is bound it BIRTHS the
+bucket (built whole in `.birth` with its root inside, renamed into place), then
+returns a `BucketRef` that every function below receives instead of re-deriving
+the name. Slice 4a built the plumbing with the answer unchanged; 4b makes the
+answer the recorded root, with its repair verbs (`adopt`, `remap`) and the
+notice that a location is unbound.
 
-`store.bucket_of` names a bucket. `claim` is the one place an operation binds a
-location to that name: it resolves the project, asks the owner, creates the
-bucket, and returns a `BucketRef` that every function below receives instead of
-re-deriving the name. A later slice changes what the owner answers (a recorded
-root instead of the path's slug) and nothing that holds a ref changes with it.
-
-In 4a the owner answers exactly what `store.project_slug` always did, so a claim
-is today's `ensure_bucket` done at the top of the operation instead of in the
-middle of it.
+Strict for STAMPED buckets only: a stamped bucket is never returned for a
+location its root does not name. An unstamped bucket keeps today's behavior
+until its first write stamps it.
 """
 
 from __future__ import annotations
@@ -31,22 +34,22 @@ from . import config, hostgit, scope
 
 
 class BucketMismatch(Exception):
-    """The directory in use is not the one a `BucketRef` was claimed for.
+    """The bucket a `BucketRef` was claimed for now records ANOTHER location.
 
     Deliberately NOT an `OSError`: every writer treats `OSError` as "best
     effort, return False", and a disagreement about which bucket a write
     belongs to must not be absorbed there. It is logged and fails the
-    operation. In 4a it means only that the owner now names another bucket for
-    the ref's location than the one the ref carries; the recorded-root check
-    that lets a lossy twin be refused arrives with resolution in 4b, so
-    existing twins keep sharing a bucket exactly as before."""
+    operation. It means `adopt` or `remap` rebound the bucket while the
+    operation held its ref (or a stamped bucket was handed to a location its
+    root does not name); an unstamped bucket never raises it."""
 
 
 class BucketClaimFailed(Exception):
-    """A bucket could not be claimed for a location. Raised by the claim in 4b
-    when every candidate name is taken; defined here so the surfacing wiring
-    (the verb decorator, capture, the hooks) is complete before the claim can
-    raise it."""
+    """A bucket could not be claimed for a location: every name it could be
+    born under is held by another location, or the birth rename keeps failing
+    for a reason other than "that name is taken". Never an `OSError` either,
+    for the reason `BucketMismatch` is not; the verb decorator, capture and
+    the hooks let it through."""
 
 
 # What a best-effort handler must let through. A handler that logs and carries

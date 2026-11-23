@@ -334,8 +334,8 @@ def ensure_bucket(project_dir) -> Path | None:
     test fails when a module outside this one makes a directory unlisted.
 
     A writer hands in the `BucketRef` it claimed at its entry
-    (`identity.claim`) and this only VERIFIES it: the owner must still name the
-    ref's bucket (`identity.BucketMismatch` otherwise, never an `OSError`),
+    (`identity.claim`) and this only VERIFIES it: the bucket must not record
+    another location (`identity.BucketMismatch` otherwise, never an `OSError`),
     and the directory exists. Anything else (a raw directory or slug from an
     in-process caller that never claimed) is claimed here first, so the
     result is the same either way.
@@ -343,7 +343,8 @@ def ensure_bucket(project_dir) -> Path | None:
     Returns the bucket directory, or None when the project is unknown. A
     filesystem failure creating the directory raises OSError, which each
     writer already handles as its own best-effort contract; the stamp itself
-    is never fatal (`record_bucket_root`).
+    is never fatal (`record_bucket_root`; the claim does not raise `OSError`
+    either, a store it cannot write is this function's own `mkdir` failing).
 
     The slug-routed case is decided here, once: a `--slug` verb hands in a
     bucket name, not a directory. The bucket is created and written normally,
