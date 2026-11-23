@@ -317,3 +317,32 @@ def test_a_host_read_is_one_operation_one_scan(
     _bucket(tmp_checkpoint_dir, "-permanent-name", where)
     briefing.render_briefing(where)
     assert len(scans) == 1
+
+
+def test_a_blocking_server_verb_is_not_one_operation(monkeypatch):
+    """`serve` and `mcp serve` live as long as the process: one index for all
+    of it would be a cache that outlives `adopt` in another process. The verb
+    runs with no operation open, so each request opens its own."""
+    from daimon_briefing import cli
+    from daimon_briefing.cli import search as cli_search
+    from daimon_briefing.cli import status as cli_status
+
+    seen = []
+    monkeypatch.setattr(cli_search, "_cmd_serve",
+                        lambda args: seen.append(identity._HOLDER.get()) or 0)
+    monkeypatch.setattr(cli_status, "_cmd_mcp_serve",
+                        lambda args: seen.append(identity._HOLDER.get()) or 0)
+    assert cli.main(["serve"]) == 0
+    assert cli.main(["mcp", "serve"]) == 0
+    assert seen == [None, None]
+
+
+def test_an_ordinary_verb_runs_inside_one_operation(monkeypatch):
+    from daimon_briefing import cli
+    from daimon_briefing.cli import projects as cli_projects
+
+    seen = []
+    monkeypatch.setattr(cli_projects, "_cmd_slug",
+                        lambda args: seen.append(identity._HOLDER.get()) or 0)
+    assert cli.main(["slug", "/x"]) == 0
+    assert seen and seen[0] is not None

@@ -262,4 +262,5 @@ def register_serve(sub, fmt) -> None:
         "--port", type=int, default=None, help="port to bind (default: 7717)")
     p_serve.add_argument(
         "--no-browser", action="store_true", help="don't open a browser tab")
-    p_serve.set_defaults(func=_cmd_serve)
+    # Lives as long as the process: not one identity operation (see `main`).
+    p_serve.set_defaults(func=_cmd_serve, long_running=True)

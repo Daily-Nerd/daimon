@@ -22,6 +22,7 @@
 """
 
 import argparse
+import contextlib
 import functools
 import getpass  # noqa: F401 — tests patch cli.getpass.getpass
 import os
@@ -759,8 +760,13 @@ def main(argv=None) -> int:
     # appender's "not written". A library caller never goes through here.
     try:
         # One operation: every resolution this verb makes shares ONE scan of
-        # the recorded roots, and nothing outlives the verb.
-        with identity.operation(), jsonl.surface_refusals():
+        # the recorded roots, and nothing outlives the verb. A blocking server
+        # verb is not one: its requests open their own, or the index would
+        # outlive an `adopt` run in another process.
+        scope = (contextlib.nullcontext()
+                 if getattr(args, "long_running", False)
+                 else identity.operation())
+        with scope, jsonl.surface_refusals():
             return args.func(args)
     except (jsonl.Refused, view.ScopeRefused) as exc:
         print(f"error: {exc}", file=sys.stderr)
