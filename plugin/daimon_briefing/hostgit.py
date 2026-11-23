@@ -702,7 +702,7 @@ def root_commit(path) -> str | None:
     families are a closed set, so the answer is None."""
     if _sealed():
         return None
-    out = _read(_argv("rev-list", "--max-parents=0", "HEAD", path=path),
+    out = _read(_argv("rev-list", "--max-parents=0", "HEAD", "--", path=path),
                 timeout=PROJECT_TIMEOUT)
     roots = sorted(line.strip() for line in (out or "").splitlines()
                    if line.strip())

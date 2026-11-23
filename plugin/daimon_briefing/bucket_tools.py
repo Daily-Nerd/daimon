@@ -15,6 +15,7 @@ stripped, root commit, folder name) and the roots it has had (`history`, which
 
 import json
 import os
+import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -88,10 +89,16 @@ def read_identity(bucket: Path) -> dict | None:
 
 
 def write_identity(bucket: Path, root: str, anchors: dict, *,
-                   history=()) -> None:
-    """Write the identity record atomically. Raises OSError. Written AFTER the
-    bucket's `root`, so it is not atomic with it; nothing decides on it, and
-    `doctor` reports a transient disagreement."""
+                   history=(), replace: bool = True) -> bool:
+    """Write the identity record. Raises OSError. Written AFTER the bucket's
+    `root`, so it is not atomic with it; nothing decides on it, and `doctor`
+    reports a transient disagreement.
+
+    `replace=True` swaps an existing record atomically. `replace=False` NEVER
+    touches one: the record is staged whole and linked into place, which fails
+    when anything is there, and the call returns False. `bucket stamp` uses it
+    because a record it could not read (torn, or a newer version carrying roots
+    it does not know) is evidence it must not destroy."""
     record = {
         "version": IDENTITY_VERSION,
         "recorded": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -99,8 +106,24 @@ def write_identity(bucket: Path, root: str, anchors: dict, *,
         "anchors": dict(anchors),
         "history": list(history),
     }
-    store._atomic_write(Path(bucket) / store._IDENTITY_NAME,
-                        json.dumps(record, ensure_ascii=False, indent=2))
+    text = json.dumps(record, ensure_ascii=False, indent=2)
+    path = Path(bucket) / store._IDENTITY_NAME
+    if replace:
+        store._atomic_write(path, text)
+        return True
+    staging = path.with_name(f"{path.name}.{secrets.token_hex(6)}.tmp")
+    # The builtin `open`, like `root` and the lock sidecar: this record holds
+    # locations and a commit hash, is declared audit-exempt in surfaces.py, and
+    # the write audit watches belief-bearing writes, not this one.
+    with open(staging, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    try:
+        os.link(staging, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +166,8 @@ def stamp(scan=(), *, apply: bool = False) -> dict:
     without writing anything.
 
     * A STAMPED bucket without an identity record gains one, built from its
-      root (anchors only for a root that exists).
+      root (anchors only for a root that exists). An existing record that
+      cannot be read is never replaced: it is reported as `unreadable`.
     * An UNSTAMPED bucket (no root, or an empty one) gains its root only from
       an exact match: a repository under a `--scan` directory whose seed slug
       (`store.location_slug` of its realpath) IS the bucket name. Two matches
@@ -154,7 +178,8 @@ def stamp(scan=(), *, apply: bool = False) -> dict:
     receipts are byte for byte what they were.
 
     Returns {"applied": bool, "actions": [{"bucket", "action", ...}]} with
-    action one of: identity, root, kept, unmatched, ambiguous, raced."""
+    action one of: identity, root, kept, unreadable, unmatched, ambiguous,
+    raced."""
     scan = [os.fspath(p) for p in scan]
     for directory in scan:
         if not os.path.isdir(directory):
@@ -172,11 +197,19 @@ def stamp(scan=(), *, apply: bool = False) -> dict:
         if root:
             if read_identity(bucket) is not None:
                 actions.append({"bucket": name, "action": "kept"})
-                continue
-            actions.append({"bucket": name, "action": "identity",
-                            "root": root})
-            if apply:
-                write_identity(bucket, root, anchors_for(root))
+            elif os.path.lexists(bucket / store._IDENTITY_NAME):
+                # Present but unreadable: torn, or a version this code does
+                # not know. Left exactly as it is and reported.
+                actions.append({"bucket": name, "action": "unreadable"})
+            elif not apply:
+                actions.append({"bucket": name, "action": "identity",
+                                "root": root})
+            elif write_identity(bucket, root, anchors_for(root),
+                                replace=False):
+                actions.append({"bucket": name, "action": "identity",
+                                "root": root})
+            else:
+                actions.append({"bucket": name, "action": "raced"})
             continue
         matches = sorted(by_slug.get(name, []))
         if not matches:
@@ -190,7 +223,8 @@ def stamp(scan=(), *, apply: bool = False) -> dict:
         elif store.stamp_root(bucket, matches[0]):
             actions.append({"bucket": name, "action": "root",
                             "root": matches[0]})
-            write_identity(bucket, matches[0], anchors_for(matches[0]))
+            write_identity(bucket, matches[0], anchors_for(matches[0]),
+                           replace=False)
         else:
             actions.append({"bucket": name, "action": "raced"})
     return {"applied": apply, "actions": actions}

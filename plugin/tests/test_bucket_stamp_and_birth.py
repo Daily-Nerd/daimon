@@ -69,7 +69,8 @@ def test_stamp_root_leaves_no_staging_file_behind(tmp_checkpoint_dir):
     d = _bucket(tmp_checkpoint_dir)
     (d / "root").write_text("", encoding="utf-8")
     assert store.stamp_root(d, "/a/one") is True
-    assert sorted(p.name for p in d.iterdir()) == ["root"]
+    assert [p.name for p in d.iterdir() if p.name.endswith(".tmp")] == []
+    assert (d / "root").read_text(encoding="utf-8").strip() == "/a/one"
 
 
 # ---------------------------------------------------------------------------

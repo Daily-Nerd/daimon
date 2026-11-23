@@ -165,7 +165,7 @@ daimon bucket migrate --project /tmp/my-repo --dry-run
 
 fold one bucket into another, once (a worktree or ghost bucket)
 
-Fold the bucket named by --from into the bucket named by --into: ledger lines the target lacks are appended, the newest session of --from becomes the target's latest when it is newer, and --from is removed with an alias recorded so readers follow it. Pointers that fit no slot are dropped and listed (the flat session files still hold them). Refused while --from's recorded root still exists on disk, unless --force. Dry run by default. Human-only, and refused on a tenant-scoped home.
+Fold the bucket named by --from into the bucket named by --into: ledger lines the target lacks are appended, the newest session of --from becomes the target's latest when it is newer, and --from is removed with an alias recorded so readers follow it. Pointers that fit no slot are dropped and listed (the flat session files still hold them). Refused while --from's recorded root still exists on disk or is not recorded, unless --force. Dry run by default. Human-only, and refused on a tenant-scoped home.
 
 ```text
 daimon bucket merge --from BUCKET --into BUCKET [--apply] [--force] [--json]
@@ -176,7 +176,7 @@ daimon bucket merge --from BUCKET --into BUCKET [--apply] [--force] [--json]
 | `--from` | `BUCKET` |  | the bucket to fold away (its directory name under checkpoints/) (obligatorio) |
 | `--into` | `BUCKET` |  | the bucket that keeps the history (must exist) (obligatorio) |
 | `--apply` |  |  | write the merge (default: print the plan only) |
-| `--force` |  |  | merge even though --from's recorded root still exists |
+| `--force` |  |  | merge even though --from's recorded root still exists, or it has none (nothing then proves its project is gone) |
 | `--json` |  |  | machine-readable output |
 
 **Ejemplos**

@@ -296,14 +296,14 @@ usage: daimon bucket merge [-h] --from BUCKET --into BUCKET [--apply] [--force] 
 bucket named by --from into the bucket named by --into: ledger lines the target lacks are appended,
 the newest session of --from becomes the target's latest when it is newer, and --from is removed
 with an alias recorded so readers follow it. Pointers that fit no slot are dropped and listed (the
-flat session files still hold them). Refused while --from's recorded root still exists on disk,
-unless --force. Dry run by default. Human-only, and refused on a tenant-scoped home. options: -h,
---help show this help message and exit --from BUCKET the bucket to fold away (its directory name
-under checkpoints/) --into BUCKET the bucket that keeps the history (must exist) --apply write the
-merge (default: print the plan only) --force merge even though --from's recorded root still exists
---json machine-readable output Examples: daimon bucket merge --from=-Users-me-repo-wt
---into=-Users-me-repo daimon bucket merge --from=OLD --into=MAIN --apply Bucket names usually start
-with '-', so write --from=NAME.
+flat session files still hold them). Refused while --from's recorded root still exists on disk or is
+not recorded, unless --force. Dry run by default. Human-only, and refused on a tenant-scoped home.
+options: -h, --help show this help message and exit --from BUCKET the bucket to fold away (its
+directory name under checkpoints/) --into BUCKET the bucket that keeps the history (must exist)
+--apply write the merge (default: print the plan only) --force merge even though --from's recorded
+root still exists, or it has none (nothing then proves its project is gone) --json machine-readable
+output Examples: daimon bucket merge --from=-Users-me-repo-wt --into=-Users-me-repo daimon bucket
+merge --from=OLD --into=MAIN --apply Bucket names usually start with '-', so write --from=NAME.
 
 === bucket doctor ===
 usage: daimon bucket doctor [-h] [--path PATH] [--json] Read-only survey of every bucket: recorded

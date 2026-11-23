@@ -195,31 +195,41 @@ def stamp_root(bucket: Path, location: str) -> bool:
     has a non-empty one. True when THIS call wrote it, False when another
     writer's record stands (first writer wins, #1092).
 
-    The create is exclusive (`O_EXCL`), so two writers racing on a fresh
-    bucket cannot both believe they stamped it. An EMPTY `root` counts as
-    unstamped: it is what a reader sees between the exclusive create and the
-    write, and what a crash between them leaves, and a bucket must not stay
-    unstamped forever because a zero-byte file exists. That one case replaces
-    the empty file atomically. Raises OSError; `record_bucket_root` owns the
-    never-fatal contract."""
+    The record is written whole to a private staging file and then LINKED into
+    place, which fails when `root` exists, so two writers racing on a fresh
+    bucket cannot both believe they stamped it and `root` is never visible
+    empty. An EMPTY `root` (a crash, or an older daimon) counts as unstamped
+    and is claimed under the bucket's directory lock: the first claimant
+    replaces it, the next finds it non-empty. Raises OSError;
+    `record_bucket_root` owns the never-fatal contract."""
     path = Path(bucket) / _BUCKET_ROOT_NAME
-    data = f"{location}\n".encode("utf-8")
+    text = f"{location}\n"
+    staging = path.with_name(f"{_BUCKET_ROOT_NAME}.{secrets.token_hex(6)}.tmp")
+    fd = os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except FileExistsError:
         try:
-            if path.read_text(encoding="utf-8").strip():
+            os.write(fd, text.encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(staging, path)
+            return True
+        except FileExistsError:
+            pass
+        with jsonl.dir_lock(Path(bucket)):
+            try:
+                if path.read_text(encoding="utf-8").strip():
+                    return False
+            except OSError:
                 return False
-        except OSError:
-            return False
-        _atomic_write(path, data.decode("utf-8"))
-        return True
-    try:
-        os.write(fd, data)
-        os.fsync(fd)
+            _atomic_write(path, text)
+            return True
     finally:
-        os.close(fd)
-    return True
+        try:
+            os.unlink(staging)
+        except OSError:
+            pass
 
 
 def record_bucket_root(project_dir) -> None:
@@ -458,12 +468,21 @@ def _advance_pointers(d: Path, blob: str, new_epoch: float | None,
     (fail-open, as before). `rotate=False` overwrites latest without retaining
     the old one. Touches pointer copies only, never a flat `<session>.json`."""
     with _pointer_lock(d):
-        if _pointer_regresses(d, new_epoch):
-            return False
-        if rotate:
-            _rotate_pointers(d, history)
-        _atomic_write(d / _LATEST, blob)
-        return True
+        return _advance_pointers_held(d, blob, new_epoch, rotate, history)
+
+
+def _advance_pointers_held(d: Path, blob: str, new_epoch: float | None,
+                           rotate: bool, history: int) -> bool:
+    """`_advance_pointers` for a caller that ALREADY holds `_pointer_lock(d)`
+    (the lock is a flock on a sidecar, so taking it again from the same
+    process would wait on itself). `bucket merge` plans and changes a live
+    bucket's chain in one critical section and promotes through this."""
+    if _pointer_regresses(d, new_epoch):
+        return False
+    if rotate:
+        _rotate_pointers(d, history)
+    _atomic_write(d / _LATEST, blob)
+    return True
 
 
 def _created_epoch(created) -> float | None:
@@ -1982,7 +2001,9 @@ def _reap_stale_births(d: Path) -> None:
         return
     for stage in stages:
         try:
-            if stage.stat().st_mtime < cutoff:
+            newest = max([stage.stat().st_mtime]
+                         + [p.stat().st_mtime for p in stage.iterdir()])
+            if newest < cutoff:
                 shutil.rmtree(stage)
         except OSError:
             pass

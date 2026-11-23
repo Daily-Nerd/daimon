@@ -146,11 +146,6 @@ KNOWN_BYPASSES = frozenset({
     ("bucket merge", "checkpoints/{slug}/latest.json"),
     ("bucket merge", "checkpoints/{slug}/prev-1.json"),
     ("bucket merge", "checkpoints/{slug}/.ledger-census"),
-    # bucket stamp (slice 3b): one `identity` record per stamped bucket, a
-    # fixed-shape document of locations, an origin URL with credentials
-    # stripped, a commit hash and a folder name. Never item text, so there is
-    # nothing to admit; it is declared audit-exempt in surfaces.py.
-    ("bucket stamp", "checkpoints/{slug}/identity"),
     # ledger repair (#1132 2c-2): like a bucket migration it MOVES bytes that
     # already passed the seam. The ledger is rewritten with the very rows it
     # held (split rows rejoined), the lines it could not parse go verbatim to
@@ -581,11 +576,13 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
 
     def r_bucket_stamp():
         # Slice 3b: every stamped bucket in the drive's store gains an identity
-        # record. The names are bucket directory names the drive itself made,
-        # so each maps to the one placeholder.
-        for d in store.bucket_dirs().buckets:
-            audit.placeholders[d.name] = "{slug}"
+        # record: locations, an origin URL without credentials, a commit hash
+        # and a folder name, declared audit-exempt in surfaces.py and written
+        # through the builtin open and a link, like `root`, so the audit
+        # observes nothing here (a new bypass would still fail the ratchet).
         run(["bucket", "stamp", "--apply"], 0)
+        assert any((d / "identity").is_file()
+                   for d in store.bucket_dirs().buckets)
 
     def r_bucket_doctor():
         run(["bucket", "doctor"], 0)

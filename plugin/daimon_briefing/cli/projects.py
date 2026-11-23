@@ -307,6 +307,9 @@ def _bucket_merge_lines(record: dict, *, dry_run: bool) -> list:
             continue
         lines.append(f"  {name} could not be read as anything this verb "
                      f"moves: move it out of {record['from_slug']} to finish")
+    if record.get("observed"):
+        lines.append(f"  {record['observed']}: it stays, complete is false, "
+                     f"run again to finish")
     if dry_run:
         lines.append("plan only, nothing was written: run again with --apply")
     return lines
@@ -407,7 +410,8 @@ def _cmd_bucket_stamp(args) -> int:
     tally: dict[str, int] = {}
     for a in actions:
         tally[a["action"]] = tally.get(a["action"], 0) + 1
-    needs_a_person = tally.get("ambiguous", 0) + tally.get("raced", 0)
+    needs_a_person = sum(tally.get(k, 0) for k in
+                        ("ambiguous", "raced", "unreadable"))
     listing = _stdout_is_tty()
     if args.json:
         print(json.dumps({"applied": result["applied"], "counts": tally,
@@ -536,7 +540,7 @@ def register(sub, fmt) -> None:
                     "alias recorded so readers follow it. Pointers that fit "
                     "no slot are dropped and listed (the flat session files "
                     "still hold them). Refused while --from's recorded root "
-                    "still exists on disk, unless --force. Dry run by "
+                    "still exists on disk or is not recorded, unless --force. Dry run by "
                     "default. Human-only, and refused on a tenant-scoped "
                     "home.",
         epilog="Examples:\n"
@@ -556,7 +560,8 @@ def register(sub, fmt) -> None:
         help="write the merge (default: print the plan only)")
     p_bucket_merge.add_argument(
         "--force", action="store_true",
-        help="merge even though --from's recorded root still exists")
+        help="merge even though --from's recorded root still exists, or it "
+             "has none (nothing then proves its project is gone)")
     p_bucket_merge.add_argument(
         "--json", action="store_true", help="machine-readable output")
     p_bucket_merge.set_defaults(func=_cmd_bucket_merge)

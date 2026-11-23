@@ -22,6 +22,7 @@ readers join on afterwards.
 answers for a path daimon has never seen, with no filesystem and no git.
 """
 
+import contextlib
 import hashlib
 import json
 import os
@@ -505,7 +506,7 @@ def _promote_newest(source_files: list[Path], target_dir: Path, legacy: str,
         before = _pointer_labels(target_dir)
         blob = json.dumps(_restamped(payload, legacy, target) or payload,
                           ensure_ascii=False)
-        advanced = store._advance_pointers(
+        advanced = store._advance_pointers_held(
             target_dir, blob, store._created_epoch(payload.get("created")),
             True, config.checkpoint_history())
         if not advanced:
@@ -559,6 +560,16 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
     evicted: tuple = ()
     view = target_dir  # where this call reads B's chain from
     scratch: Path | None = None
+    # ONE critical section on B's chain: the plan below (which slots are
+    # free, which are held, what is newest) and every write that follows it
+    # are made under the same `_pointer_lock`, promotion included. A live
+    # session that rotates B between a plan and its apply would otherwise have
+    # a planned slot overwrite a DIFFERENT session's pointer, and a stale free
+    # count would grow the chain past its history. A dry run reads a scratch
+    # copy and takes nothing.
+    chain_lock = contextlib.ExitStack()
+    if apply:
+        chain_lock.enter_context(store._pointer_lock(target_dir))
     try:
         readable = all(_pointer_payload(p) is not None
                        for p in _pointer_files(target_dir))
@@ -632,15 +643,13 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
                 len(consumed) + len(admissions), target_unreadable,
                 occupied + len(admissions), promoted, evicted, tuple(dropped))
 
-        with store._pointer_lock(target_dir):
-            for slot, source in replacements:
-                store._atomic_write(slot, source.read_text(encoding="utf-8"))
-                _restamp(slot, legacy, target)
-            for source in admissions:
-                written = target_dir / _free_slot(target_dir)
-                store._atomic_write(written,
-                                    source.read_text(encoding="utf-8"))
-                _restamp(written, legacy, target)
+        for slot, source in replacements:
+            store._atomic_write(slot, source.read_text(encoding="utf-8"))
+            _restamp(slot, legacy, target)
+        for source in admissions:
+            written = target_dir / _free_slot(target_dir)
+            store._atomic_write(written, source.read_text(encoding="utf-8"))
+            _restamp(written, legacy, target)
         removed = 0
         for source in consumed + admissions:
             try:
@@ -653,6 +662,7 @@ def _merge_pointers(legacy_dir: Path, target_dir: Path, legacy: str,
             target_unreadable, occupied + len(admissions), promoted, evicted,
             tuple(dropped))
     finally:
+        chain_lock.close()
         if scratch is not None:
             shutil.rmtree(scratch, ignore_errors=True)
 
@@ -875,6 +885,15 @@ def merge(from_slug: str, into_slug: str, *, apply: bool = False,
             f"there is no bucket {into_slug} to merge into; merge never "
             f"creates one")
     recorded = store.bucket_root(from_slug)
+    if not recorded and not force:
+        # Without a root there is no location to ask "is that project still
+        # there", so liveness cannot be proven either way (every bucket from
+        # before roots were recorded is in this state). A person who has
+        # looked says so with --force.
+        raise MigrationError(
+            f"{from_slug} has no recorded root, so daimon cannot tell whether "
+            f"its project still exists and a session there could still be "
+            f"writing to it. Check, then pass --force to fold it.")
     if recorded and not force and os.path.isdir(recorded):
         raise MigrationError(
             f"the root recorded for {from_slug} still exists on disk "
@@ -910,6 +929,29 @@ def _retire(legacy_dir: Path) -> bool:
     return True
 
 
+def _refuse_aliased(legacy_dir: Path, target_dir: Path) -> None:
+    """Refuse a pair that is not two distinct real directories.
+
+    "The same bucket" is a fact about the FILESYSTEM, never about two names:
+    on a case-insensitive volume (the macOS default) `-Users-Me-Repo` and
+    `-users-me-repo` are one directory, and a merge that treated it as source
+    and target found every line "already in the target" and deleted the real
+    ledger. A symlinked bucket directory is refused for the same reason, and
+    because every unlink below would go through the link. Only a bucket that
+    IS a symlink is refused: the checkpoint directory itself may be one."""
+    for d in (legacy_dir, target_dir):
+        if d.is_symlink():
+            raise MigrationError(
+                f"{d.name} is a symlink, not a bucket directory; refusing to "
+                f"move files through it")
+    if (legacy_dir.exists() and target_dir.exists()
+            and os.path.samestat(os.stat(legacy_dir), os.stat(target_dir))):
+        raise MigrationError(
+            f"{legacy_dir.name} and {target_dir.name} are the same directory "
+            f"(a case-insensitive filesystem, or a link): there is nothing to "
+            f"merge, and merging would delete it")
+
+
 def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
                   dry_run: bool = False, by: str = "cli",
                   fold: bool = False) -> dict:
@@ -923,10 +965,27 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
     rule is the D16 one). A receipt is appended only when something moved, a
     partial migration was finished, or, for a fold, the legacy bucket was
     removed (an alias row is minted whenever it is, pointer-only buckets
-    included)."""
+    included).
+
+    The legacy bucket is held under its directory lock for the whole run, so a
+    writer cannot append a line between the read that decided "every line is
+    in the target" and the unlink that follows it. A dry run takes no lock and
+    writes nothing."""
     root = config.checkpoint_dir()
     legacy_dir = root / legacy
     target_dir = root / target
+    _refuse_aliased(legacy_dir, target_dir)
+    with contextlib.ExitStack() as stack:
+        if not dry_run:
+            stack.enter_context(jsonl.dir_lock(legacy_dir))
+        return _merge_locked(legacy, target, legacy_dir, target_dir,
+                             resolved=resolved, dry_run=dry_run, by=by,
+                             fold=fold)
+
+
+def _merge_locked(legacy: str, target: str, legacy_dir: Path,
+                  target_dir: Path, *, resolved: str | None, dry_run: bool,
+                  by: str, fold: bool) -> dict:
 
     # ONCE, before any merge work, and not inside the ledger loop below. A
     # legacy bucket holding only a pointer chain skips that loop entirely, so
@@ -1003,20 +1062,18 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
     store._record_ledger_census(target, force=True)
     leftovers = [n for n in _leftovers(legacy_dir)
                  if n != store._BUCKET_ROOT_NAME]
-    removed = False
-    if not leftovers:
-        removed = _retire(legacy_dir)
-        if not removed:  # a writer got there first: say what it left
-            leftovers = [n for n in _leftovers(legacy_dir)
-                         if n != store._BUCKET_ROOT_NAME]
-    record = _record("merge", legacy, target, ledgers=ledgers,
-                     pointers=merged.landed, leftovers=leftovers,
-                     unreadable=unreadable,
-                     stranded_pointers=merged.stranded_labels,
-                     target_unreadable=merged.target_unreadable,
-                     target_slots=merged.target_slots, promoted=promoted,
-                     pointers_evicted=evicted, pointers_dropped=dropped,
-                     by=by)
+
+    def receipt(leftovers: list, observed: str = "") -> dict:
+        return _record("merge", legacy, target, ledgers=ledgers,
+                       pointers=merged.landed, leftovers=leftovers,
+                       unreadable=unreadable,
+                       stranded_pointers=merged.stranded_labels,
+                       target_unreadable=merged.target_unreadable,
+                       target_slots=merged.target_slots, promoted=promoted,
+                       pointers_evicted=evicted, pointers_dropped=dropped,
+                       observed=observed, by=by)
+
+    record = receipt(leftovers)
     # A run that MOVED nothing has nothing to record. Measured as what this
     # run ABSORBED, never as the size of the chain it rebuilt: a re-run
     # rebuilds the same chain over the same union, so a pointer COUNT is
@@ -1036,9 +1093,26 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
         record["complete"]
         and any(not _is_complete(row) for pair, row in latest_rows().items()
                 if pair == (legacy, target)))
-    if not (moved or completes_a_partial or (fold and removed)):
-        return record
-    _append_record(record)
+    retiring = not leftovers
+    wanted = moved or completes_a_partial or (fold and retiring)
+    # The durable record comes BEFORE the irreversible removal. The alias row
+    # is the only way readers follow the old name, so a crash, a full disk or
+    # a failed append between the two must find the bucket still standing (a
+    # rerun then finishes), never a bucket gone with no row to say where its
+    # history went.
+    if wanted:
+        _append_record(record)
+    if retiring and not _retire(legacy_dir):
+        # Not gone after all: a writer got there first, or the directory could
+        # not be removed. The row above claimed completion, and the last row
+        # for a pair wins, so correct it. Complete means REALLY gone.
+        record = receipt(
+            [n for n in _leftovers(legacy_dir)
+             if n != store._BUCKET_ROOT_NAME],
+            observed="the bucket directory could not be removed")
+        record["complete"] = False
+        if wanted:
+            _append_record(record)
     return record
 
 
