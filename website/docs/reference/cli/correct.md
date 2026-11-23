@@ -18,7 +18,7 @@ See also: [Correct memory](../../guides/correct-memory.md), [Rulings and checks]
 mark a checkpoint item resolved: append-only event, folds at read so the item stops carrying (#102)
 
 ```text
-daimon resolve target [--status STATUS] [--note NOTE] [--by agent] [--evidence EVIDENCE] [--project PROJECT] [--dry-run]
+daimon resolve target [--status STATUS] [--note NOTE] [--by agent] [--evidence EVIDENCE] [--project PROJECT] [--dry-run] [--json]
 ```
 
 | argument | value | default | description |
@@ -30,6 +30,7 @@ daimon resolve target [--status STATUS] [--note NOTE] [--by agent] [--evidence E
 | `--evidence` | `EVIDENCE` |  | verbatim transcript quote proving the claim: required with --by agent, rejected without it |
 | `--project` | `PROJECT` |  | project directory (default: DAIMON_PROJECT_DIR, then cwd) |
 | `--dry-run` |  |  | show what would resolve without writing an event: look before the write (#304) |
+| `--json` |  |  | print &#123;item_id, status, event_id&#125; instead of the sentence; the event_id is the one `why --json` shows as lifecycle_event.event_id |
 
 **Examples**
 

@@ -395,6 +395,12 @@ case("cli:request done", "id", A("request", "done", lambda w: w.request_id,
 case("cli:request reply", "id", A("request", "reply",
      lambda w: w.request_id, "--note", "progress"), tty=True, rc=(0, 1, 2),
      dests=("request_id",))
+case("cli:request done", "json", A("request", "done", lambda w: w.request_id,
+     "--evidence", "it shipped", "--json"), tty=True, rc=(0, 1, 2),
+     dests=("json",))
+case("cli:request reply", "json", A("request", "reply",
+     lambda w: w.request_id, "--note", "progress", "--json"), tty=True,
+     rc=(0, 1, 2), dests=("json",))
 case("cli:request withdraw", "id", A("request", "withdraw",
      lambda w: w.request_id, "--reason", "no longer needed"), tty=True,
      rc=(0, 1, 2), dests=("request_id",))
@@ -460,6 +466,8 @@ case("cli:resolve", "id", A("resolve", I("question")), tty=True, rc=(0, 1),
      dests=("target", "project"))
 case("cli:resolve", "dry", A("resolve", I("question"), "--dry-run"),
      tty=True, rc=(0, 1), dests=("dry_run",))
+case("cli:resolve", "json", A("resolve", I("question"), "--json"),
+     tty=True, rc=(0, 1), dests=("json",))
 case("cli:forget", "no-match", A("forget", "zzzqqq"), tty=True, rc=(0, 1),
      dests=("target",))
 case("cli:forget", "dry", A("forget", I("question"), "--dry-run"), tty=True,

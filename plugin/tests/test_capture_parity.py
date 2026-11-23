@@ -105,14 +105,16 @@ def _seed_home(monkeypatch, home):
 
 
 def _rows_minus_ts(path):
-    """Ledger rows with the append-time wall stamp popped — `ts` is the ONE
-    intended per-run difference (append happens at two different instants)."""
+    """Ledger rows with the per-write stamps popped — `ts` (append happens at
+    two different instants) and `event_id` (minted fresh per row) are the
+    intended per-run differences."""
     if not path.exists():
         return []
     rows = [json.loads(line) for line in
             path.read_text(encoding="utf-8").splitlines() if line.strip()]
     for r in rows:
         r.pop("ts", None)
+        r.pop("event_id", None)
     return rows
 
 

@@ -339,7 +339,7 @@ def _lifecycle_event(latest) -> dict | None:
     if latest is None:
         return None
     return {"status": latest.status, "timestamp": latest.ts,
-            "source": latest.source}
+            "source": latest.source, "event_id": latest.event_id}
 
 
 def _corroboration(item: dict, entry) -> dict:

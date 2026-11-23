@@ -673,6 +673,7 @@ def _cmd_request_revise(args) -> int:
             [f"{args.request_id}: revision recorded in this project's ledger",
              "  the record is not readable from this bucket right now — the "
              "revision is on the ledger and renders with the request"])
+        _say_event(event_id)
         return 0
     render.render_ledger_lines(_request_lines(
         _masked(project, [record], snap=snap)[0], project_dir=project))
@@ -699,6 +700,7 @@ def _cmd_request_withdraw(args) -> int:
         render.render_ledger_lines(
             [f"{args.request_id}: withdrawal recorded in this project's "
              "ledger"])
+        _say_event(event_id)
         return 0
     render.render_ledger_lines(_request_lines(
         _masked(project, [record], snap=snap)[0], project_dir=project))
@@ -725,6 +727,7 @@ def _cmd_request_severity(args) -> int:
         render.render_ledger_lines(
             [f"{args.request_id}: severity recorded in this project's "
              "ledger"])
+        _say_event(event_id)
         return 0
     render.render_ledger_lines(_request_lines(
         _masked(project, [record], snap=snap)[0], project_dir=project))
@@ -762,6 +765,23 @@ def _say_effect(request_id: str, event_id: str, project, record=None) -> None:
                                         project_dir=project, record=record)
     if line:
         render.render_ledger_lines([line])
+    _say_event(event_id)
+
+
+def _say_event(event_id: str) -> None:
+    """The id of the row a write verb just wrote. For a row that moves the
+    record (open, revise, accept, reject, needs-info, done, reply, withdraw)
+    it is the record's `updated_event_id` on `request list`/`inbox --json`.
+    Suppress and severity are attention rows: they never move the record, so
+    their id is on the ledger row and in the record's `row_effects` only."""
+    render.render_ledger_lines([f"  event: {event_id}"])
+
+
+def _written_json(request_id: str, event: str, event_id: str) -> None:
+    """`--json` for a write verb: the request, the event kind and the id of
+    the row written, and nothing else (no card to parse around)."""
+    print(json.dumps({"request_id": request_id, "event": event,
+                      "event_id": event_id}, ensure_ascii=False))
 
 
 def _report(request_id: str, project, verb: str, snap, event_id: str) -> None:
@@ -797,6 +817,7 @@ def _report(request_id: str, project, verb: str, snap, event_id: str) -> None:
          "  no matching request in this bucket — an answer to another "
          "project's ask joins its origin at read time, and until then "
          "it renders nowhere"])
+    _say_event(event_id)
 
 
 @_cli.guarded(writes=True)
@@ -813,6 +834,9 @@ def _cmd_request_done(args) -> int:
         print(_refusal_message("request done refused", exc))
         return 1
     _cli._note_usage("request:done")
+    if args.json:
+        _written_json(args.request_id, "done", event_id)
+        return 0
     # #1333: the line that says whether this closed it (a held claim still
     # waits on a person, #978) is the fold's word for the row just written,
     # printed by `_report` on the local AND the cross-bucket path alike. It
@@ -837,6 +861,9 @@ def _cmd_request_reply(args) -> int:
         print(_refusal_message("request reply refused", exc))
         return 1
     _cli._note_usage("request:reply")
+    if args.json:
+        _written_json(args.request_id, "replied", event_id)
+        return 0
     _report(args.request_id, project, "reply", snap, event_id)
     return 0
 
@@ -1033,6 +1060,9 @@ def register(sub, fmt) -> None:
     rq_done.add_argument("--by", choices=["agent"], default=None,
                          help="declare yourself an agent; omit it only from "
                               "an interactive terminal")
+    rq_done.add_argument("--json", action="store_true",
+                         help="print {request_id, event, event_id} instead "
+                              "of the card")
     _common(rq_done)
     rq_done.set_defaults(func=_cli._cmd_request_done)
 
@@ -1049,6 +1079,9 @@ def register(sub, fmt) -> None:
                           help="declare yourself an agent; omit it only from "
                                "an interactive terminal. An agent reply "
                                "reaches the sender labeled unverified")
+    rq_reply.add_argument("--json", action="store_true",
+                          help="print {request_id, event, event_id} instead "
+                               "of the card")
     _common(rq_reply)
     rq_reply.set_defaults(func=_cli._cmd_request_reply)
 

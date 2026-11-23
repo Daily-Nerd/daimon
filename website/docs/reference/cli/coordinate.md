@@ -189,7 +189,7 @@ report the ask as satisfied; an agent claim renders as claimed-and-unverified un
 An agent may run this on an accepted ask without asking the human.
 
 ```text
-daimon request done request_id --evidence EVIDENCE [--by agent] [--project PROJECT]
+daimon request done request_id --evidence EVIDENCE [--by agent] [--json] [--project PROJECT]
 ```
 
 | argument | value | default | description |
@@ -197,6 +197,7 @@ daimon request done request_id --evidence EVIDENCE [--by agent] [--project PROJE
 | `request_id` |  |  | exact q-… id |
 | `--evidence` | `EVIDENCE` |  | what settles it; a verbatim quote from an agent is byte-checked at session end (required) |
 | `--by` | `agent` |  | declare yourself an agent; omit it only from an interactive terminal |
+| `--json` |  |  | print &#123;request_id, event, event_id&#125; instead of the card |
 | `--project` | `PROJECT` |  | project directory (default: DAIMON_PROJECT_DIR, then cwd) |
 
 ### `daimon request reply`
@@ -204,7 +205,7 @@ daimon request done request_id --evidence EVIDENCE [--by agent] [--project PROJE
 send the sender a progress note on a request you accepted; it moves no state, and the request stays owed until `done`
 
 ```text
-daimon request reply request_id --note NOTE [--evidence EVIDENCE] [--by agent] [--project PROJECT]
+daimon request reply request_id --note NOTE [--evidence EVIDENCE] [--by agent] [--json] [--project PROJECT]
 ```
 
 | argument | value | default | description |
@@ -213,6 +214,7 @@ daimon request reply request_id --note NOTE [--evidence EVIDENCE] [--by agent] [
 | `--note` | `NOTE` |  | the update the sender reads; 2000 characters (required) |
 | `--evidence` | `EVIDENCE` |  | optional pointer to what backs the update |
 | `--by` | `agent` |  | declare yourself an agent; omit it only from an interactive terminal. An agent reply reaches the sender labeled unverified |
+| `--json` |  |  | print &#123;request_id, event, event_id&#125; instead of the card |
 | `--project` | `PROJECT` |  | project directory (default: DAIMON_PROJECT_DIR, then cwd) |
 
 ### `daimon request list`

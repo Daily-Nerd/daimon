@@ -9818,7 +9818,8 @@ def test_resolve_human_path_records_observed_tty_source_and_status(
     assert rc == 0
     out = capsys.readouterr().out
     text = cp["working_context"]["open_questions"][0]["text"]
-    assert out == f"resolved {iid}: {text} [resolved]\n"
+    assert out == (f"resolved {iid}: {text} [resolved]\n"
+                   f"  event: {store.resolutions(project_dir='/p/A')[iid]['event_id']}\n")
     evt = store.resolutions(project_dir="/p/A")[iid]
     assert evt["source"] == "cli-tty"
     assert evt["status"] == "resolved"

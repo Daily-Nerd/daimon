@@ -125,6 +125,7 @@ DESTS = {
         "evidence": ("INE", "R6"),
         "project": ("OUT", "R1"),
         "dry_run": ("OUT", "R3"),
+        "json": ("OUT", "R4"),
     },
     "forget": {
         "target": ("OUT", "R2"),
@@ -423,6 +424,7 @@ DESTS = {
         "evidence": ("INE", "R6"),
         "by": ("INE", "X-HUMAN"),
         "project": ("OUT", "R1"),
+        "json": ("OUT", "R4"),
     },
     "request withdraw": {
         "request_id": ("OUT", "R2"),
@@ -443,6 +445,7 @@ DESTS = {
         "evidence": ("INE", "R6"),
         "by": ("INE", "X-HUMAN"),
         "project": ("OUT", "R1"),
+        "json": ("OUT", "R4"),
     },
     "request list": {
         "json": ("OUT", "R4"),

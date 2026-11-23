@@ -99,10 +99,11 @@ def test_a_person_binds_a_quarantined_exact_id_with_no_echo(
     item_id = _id(Q1)
     rc, out, err = _run(capsys, item_id, "--note", "done")
     assert rc == 0, err
-    assert out.strip() == (
-        f"resolved {item_id} [question] [withheld: quarantine {qid}] [resolved]")
-    assert "SENTINEL-q1" not in out + err
     row = json.loads(_events_bytes().splitlines()[-1])
+    assert out.splitlines() == [
+        f"resolved {item_id} [question] [withheld: quarantine {qid}] [resolved]",
+        f"  event: {row['event_id']}"]
+    assert "SENTINEL-q1" not in out + err
     assert row["item_ref"] == item_id and row["status"] == "resolved"
     assert "item_text" not in row and b"SENTINEL-q1" not in _events_bytes()
     assert store.is_resolved(store.resolutions(project_dir=PROJECT)[item_id])
@@ -207,8 +208,9 @@ def test_a_visible_bind_prints_the_text_and_writes_none(tmp_checkpoint_dir, caps
     item_id = _id(Q2)
     rc, out, _err = _run(capsys, item_id)
     assert rc == 0
-    assert out.strip() == f"resolved {item_id}: {Q2} [resolved]"
     row = json.loads(_events_bytes().splitlines()[-1])
+    assert out.splitlines() == [f"resolved {item_id}: {Q2} [resolved]",
+                                f"  event: {row['event_id']}"]
     assert "item_text" not in row and Q2.encode() not in _events_bytes()
 
 

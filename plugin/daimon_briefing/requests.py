@@ -729,6 +729,19 @@ def _row_order(row: dict) -> int:
         return 0
 
 
+def _moved(current: dict, row: dict) -> None:
+    """Record that `row` is now the last one folded into `current`: its second
+    resolution `ts`, its nanosecond `order`, and its `event_id` (None for a
+    row written before ids existed, the one encoding of "no id" every reader
+    shares). One place, so the three keys can never describe different rows.
+    Only a row that MOVES the record comes through here: attention rows
+    (`suppressed`, `severity_set`, the stamps) leave `updated_*` alone, as they
+    leave the sort and overdue clocks alone."""
+    current["updated_at"] = row.get("ts") or current["updated_at"]
+    current["updated_order"] = _row_order(row)
+    current["updated_event_id"] = row.get("event_id") or None
+
+
 def _recency(record: dict) -> tuple[int, str]:
     """The sort key for every reader that orders folded requests by recency:
     the nanosecond stamp of the last row folded in, the id only to break an
@@ -1561,6 +1574,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
                 "updated_order": _row_order(row),
+                "updated_event_id": row.get("event_id") or None,
                 "history_count": 1,
             }
             # #1131: present only when the sender set one, so a request
@@ -1730,8 +1744,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 continue
             current["withdrawn_from"] = current["state"]
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             if current["done_pending"]:
                 _supersede_claim(current, claim_meta.pop(q_id, {}), row,
                                  current["revision"])
@@ -1777,8 +1790,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             current["replies"].append(entry)
             _note_effect(current, row, "reply_recorded")
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             continue
         if event == "surfaced":
             # Attention rows never move the record's rendered age: a brief
@@ -1899,8 +1911,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             current["revision"] += 1
             current["state"] = "open"
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             if current["done_pending"]:
                 # #978 review round 1 (F1), gated per review round 2 (B1): a
                 # `revised` row on a record with a PENDING AGENT claim clears
@@ -1978,8 +1989,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             # claim overwrites the first, the same latest-wins posture the
             # generic `done` landing already gives `done_evidence`.
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             current["done_by"] = authority
             current["done_claimed"] = True
             current["done_evidence"] = str(row.get("evidence") or "")
@@ -2013,8 +2023,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 _note_effect(current, row, "no_claim_to_verify")
             continue
         current["history_count"] += 1
-        current["updated_at"] = row.get("ts") or current["updated_at"]
-        current["updated_order"] = _row_order(row)
+        _moved(current, row)
         # #1333: decided here, from the state BEFORE the move, because the
         # move below is what erases the difference between an accept and an
         # accept that ratified a claim, and a first needs-info from a repeat.
@@ -2582,16 +2591,46 @@ def set_severity(request_id: str, level: str, *, reason: str = "",
     return row["event_id"]
 
 
-def _answering(request_id: str, project_dir, event: str) -> dict | None:
-    """The local record a recipient-side row answers, or None when this
-    bucket cannot see it.
+def _was_ever_sent(request_id: str, project_dir) -> bool:
+    """Whether another bucket this host can PROVE holds the `opened` row of
+    `request_id`, addressed to anyone: the existence test a person's verdict
+    needs (#895), which does not care who the ask was addressed to. This
+    project's own bucket was already read by the caller (`get`), and a ledger
+    the join skips decides nothing here either."""
+    own = store.project_bucket(project_dir)
+    for slug in (s for s in _bucket_slugs() if s != own):
+        foreign, skip, _torn = _foreign_requests(slug)
+        if skip:
+            continue
+        if any(r.get("event") == "opened"
+               and r.get("request_id") == request_id
+               for r in events(project_dir=slug, rows=foreign.rows)):
+            return True
+    return False
 
-    Shape-checked, never resolved. A request lives in the SENDER's bucket, so
-    the recipient answering one has nothing local to resolve against: an
-    answer to a foreign id is written here and stays an orphan — inert in
-    this bucket's fold, visible in the raw audit — until the read-time join
-    (PR 2) pairs it with its origin. Refusing what cannot be resolved would
-    make the recipient side unimplementable.
+
+def _answering(request_id: str, project_dir, event: str,
+               channel: str) -> dict | None:
+    """The record a recipient-side row answers (None for a person deciding an
+    ask this bucket cannot read), or a refusal when there is nothing to
+    answer.
+
+    The write boundary of every recipient verb (`accept`, `reject`,
+    `needs-info`, `suppress`, `done`): a row is written only for a request
+    that exists. An id nobody sent used to be accepted on its shape alone and
+    land as an orphan row no reader surfaced, so a host could take a typo or
+    a request meant for another project for a recorded answer. A request
+    lives in the SENDER's bucket, so the bucket-local fold cannot be the
+    judge (scar 0056): the answer comes from the recipient join, the read
+    `reply` and `request inbox` use, which also carries the record's state,
+    so the state refusals see a foreign ask too.
+
+    Who may answer depends on the channel. An agent speaks for its own
+    project, so the ask must be addressed to THIS project. A person decides
+    from wherever they stand (#895), so an ask addressed to another project
+    passes when it exists anywhere. A request this project was offered but
+    has not accepted IS addressed to it and passes: a `done` on it is a held
+    claim (#1333).
     """
     if not is_request_id(request_id):
         raise RequestError(f"invalid request id: {request_id!r}")
@@ -2600,15 +2639,38 @@ def _answering(request_id: str, project_dir, event: str) -> dict | None:
     # table the fold reads says whether `event` may be written from the
     # sender's side, and refusing here, with the verb that does fit, beats
     # writing a row the fold would only mark inert.
-    if current is not None and not row_holds_role(
-            EVENT_ROLE[event], origin="", from_slug=current["from_slug"],
-            to=current["to"], home_slugs=_home_slugs(project_dir)):
+    if current is not None:
+        if not row_holds_role(
+                EVENT_ROLE[event], origin="", from_slug=current["from_slug"],
+                to=current["to"], home_slugs=_home_slugs(project_dir)):
+            raise RequestError(
+                f"{request_id} is a request this project sent, and "
+                f"{_EVENT_VERB.get(event, event)} is the recipient's call; "
+                "to take your own ask back run `daimon request withdraw "
+                f"{request_id} --reason \"...\"`")
+        return current
+    joined = join(project_dir)
+    addressed = joined.by_id.get(request_id)
+    if addressed is not None:
+        return addressed
+    if joined.skipped:
+        # The ask may well exist: a sender's ledger the join cannot prove was
+        # left out of the read, so "unknown" would be a false statement.
         raise RequestError(
-            f"{request_id} is a request this project sent, and "
-            f"{_EVENT_VERB.get(event, event)} is the recipient's call; to "
-            "take your own ask back run `daimon request withdraw "
-            f"{request_id} --reason \"...\"`")
-    return current
+            f"cannot tell whether {request_id} was sent to this project: "
+            f"{joined.skipped} sender request ledger(s) could not be read, "
+            "so nothing is written; run `daimon status` for the cure, then "
+            "answer it again")
+    # A person may answer an ask addressed elsewhere (#895), but not on a
+    # tenant-scoped home: there, whether another tenant's id exists is the
+    # one thing an accept that succeeds or refuses would tell.
+    if (of_channel("requests", channel) == "human"
+            and not config.tenant_scoped()
+            and _was_ever_sent(request_id, project_dir)):
+        return None
+    raise RequestError(
+        f"unknown request: {request_id} is not a request addressed to this "
+        "project; check the id with `daimon request inbox`")
 
 
 # What the sender-side refusal calls each recipient act.
@@ -2671,7 +2733,7 @@ def _verdict(event: str, request_id: str, *, channel: str, note: str = "",
         raise RequestError(
             f"{article} {state} verdict requires a human channel; this call "
             f"arrived through {channel!r}")
-    current = _answering(request_id, project_dir, event)
+    current = _answering(request_id, project_dir, event, channel)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected, and a rejection is final for that "
@@ -2770,10 +2832,7 @@ def accept(request_id: str, *, channel: str, note: str = "",
             raise RequestError(
                 "an accepted verdict requires a human channel; this call "
                 f"arrived through {channel!r}")
-        current = _answering(request_id, project_dir, "accepted")
-        if current is None:
-            current = recipient_join(project_dir=project_dir).get(
-                request_id)
+        current = _answering(request_id, project_dir, "accepted", channel)
         covered = False
         stamp = {}
         synthetic = None
@@ -2883,7 +2942,7 @@ def suppress(request_id: str, *, channel: str, note: str = "",
         raise RequestError(
             "suppressing an addressed request requires a human channel; this "
             f"call arrived through {channel!r}")
-    _answering(request_id, project_dir, "suppressed")
+    _answering(request_id, project_dir, "suppressed", channel)
     row = _stamp("suppressed", request_id, channel, author=author)
     note = _text("note", note, required=False)
     if note:
@@ -2904,7 +2963,7 @@ def done(request_id: str, *, channel: str, evidence: str,
     with a per-act identity may carry one — an agent's claim is signed by
     the process that made it, as it always was. Refused by `_stamp` below,
     which is the one chokepoint every row on this path passes through."""
-    current = _answering(request_id, project_dir, "done")
+    current = _answering(request_id, project_dir, "done", channel)
     if current is not None and current["state"] == "rejected":
         raise RequestError(
             f"{request_id} was rejected; a rejected request cannot be "
@@ -3184,6 +3243,7 @@ class Join(NamedTuple):
     notes the read carries (`sender-skipped`, worded by `display`)."""
     by_id: dict
     notes: tuple
+    skipped: int = 0
 
 
 class Inbox(NamedTuple):
@@ -3332,7 +3392,7 @@ def join(project_dir=None) -> Join:
     # project's own ledger the same way `_open_policies_local` reads it.
     return Join(fold(all_rows, fold_inputs(
         all_rows, perspective=Perspective.RECIPIENT, project_dir=project_dir)),
-        _skipped_notes(skipped, degraded))
+        _skipped_notes(skipped, degraded), skipped)
 
 
 def inbox(project_dir=None, *, min_severity=None) -> Inbox:

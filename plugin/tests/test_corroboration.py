@@ -662,9 +662,11 @@ def test_both_capture_doors_emit_one_corroboration_row(
     assert rows[0]["source"] == "serializer"
     assert rows[0]["item_ref"].startswith("corroboration:")
     assert "item_text" not in rows[0]
-    # Door parity: the append-time wall stamp is the one intended difference.
+    # Door parity: the append-time stamps (`ts`, the fresh `event_id`) are the
+    # intended differences.
     for r in rows + per_door["hook"]:
         r.pop("ts", None)
+        r.pop("event_id", None)
     assert per_door["hook"] == rows
 
     fold = store.corroborations(project_dir=E2E_PROJECT)   # the hook's home
