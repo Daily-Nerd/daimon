@@ -275,6 +275,10 @@ def test_layer_refutation_does_not_render_as_a_ruling(tmp_path, monkeypatch):
 def test_manifest_enforce_line_for_worktree_not_in_the_ledger_walk(
         tmp_path, monkeypatch):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    # A worktree whose main does not list it (git older than 2.36, or a
+    # worktree its main has pruned) keeps a bucket of its own: that is the case
+    # the manifest lines below exist for.
+    monkeypatch.setattr(config, "worktree_main", lambda path: None)
     subprocess.run(["git", "-c", "user.email=t@t.com", "-c", "user.name=t",
                     "commit", "--allow-empty", "-q", "-m", "init"],
                    cwd=str(repo), check=True)
@@ -332,6 +336,10 @@ def _worktree(repo):
 def test_manifest_enforce_lines_are_capped_and_count_toward_overflow(
         tmp_path, monkeypatch):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    # A worktree whose main does not list it (git older than 2.36, or a
+    # worktree its main has pruned) keeps a bucket of its own: that is the case
+    # the manifest lines below exist for.
+    monkeypatch.setattr(config, "worktree_main", lambda path: None)
     wt = _worktree(repo)
     for n in range(3):
         _arm_enforce(repo, f"cap post rule {n}")
@@ -350,6 +358,10 @@ def test_manifest_enforce_lines_are_capped_and_count_toward_overflow(
 def test_manifest_enforce_lines_share_the_cap_with_own_rows(
         tmp_path, monkeypatch):
     tmp_home, work, repo = _home_work_repo(tmp_path, monkeypatch)
+    # A worktree whose main does not list it (git older than 2.36, or a
+    # worktree its main has pruned) keeps a bucket of its own: that is the case
+    # the manifest lines below exist for.
+    monkeypatch.setattr(config, "worktree_main", lambda path: None)
     wt = _worktree(repo)
     _rule_at(wt, "own prose rule in the worktree bucket",
             subject="wt own subject")

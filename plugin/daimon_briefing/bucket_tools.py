@@ -269,10 +269,10 @@ def _worktree_fold(name: str, root: str | None) -> str | None:
     if identity.home_of(root) == root:
         return None
     answer = identity.resolve(root)
-    if (answer.bound and answer.slug and answer.slug != name
-            and (config.checkpoint_dir() / answer.slug).is_dir()):
-        return answer.slug
-    return None
+    if not (answer.bound and answer.slug and answer.slug != name):
+        return None
+    target = store.bucket_dir(answer.slug)
+    return answer.slug if target is not None and target.is_dir() else None
 
 
 def _newest(bucket: Path) -> float:
