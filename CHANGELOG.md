@@ -5,6 +5,24 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.0](https://github.com/Daily-Nerd/daimon/compare/v0.73.0...v0.74.0) (2026-11-23)
+
+
+### Features
+
+* expose one stable event id on every write verb and read ([7f8a9fa](https://github.com/Daily-Nerd/daimon/commit/7f8a9fa26ddee932c5269aa57f02a1cf1038bdb2))
+
+
+### Bug Fixes
+
+* name an unreadable sender ledger, gate the person path, and encode a missing event id as null ([448d754](https://github.com/Daily-Nerd/daimon/commit/448d7546faae42b4887c17071d8ddc1d95d517b7))
+* refuse a recipient verb for a request that was never sent here ([36932a3](https://github.com/Daily-Nerd/daimon/commit/36932a3e23c32d0f08592d491ce538ff26ea9689))
+
+
+### Documentation
+
+* **scars:** candidate for the per-channel guard on recipient verbs ([cfad7e2](https://github.com/Daily-Nerd/daimon/commit/cfad7e2a3486a50c8dadb699277eff7131b4c37c))
+
 ## [0.73.0](https://github.com/Daily-Nerd/daimon/compare/v0.72.0...v0.73.0) (2026-11-23)
 
 
