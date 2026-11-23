@@ -102,6 +102,7 @@ DESTS = {
         "from_root": ("INE", "R6"),
         "to_root": ("INE", "R6"),
         "apply": ("OUT", "R3"),
+        "force": ("INE", "R6"),
         "json": ("INE", "R6"),
     },
     "bucket doctor": {

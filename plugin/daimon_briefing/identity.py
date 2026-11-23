@@ -26,7 +26,6 @@ import hashlib
 import os
 import secrets
 import shutil
-import stat
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -293,17 +292,6 @@ UNBOUND_NOTICE = (
     "`daimon bucket doctor --path .` themselves.")
 
 
-def _has_gitfile(location: str) -> bool:
-    """Whether `<location>/.git` is a REGULAR FILE (what a linked worktree
-    has; a normal repo has a directory). One `lstat`: no git fork, no symlink
-    followed, and nothing inside the file read, so repository-controlled
-    content picks nothing."""
-    try:
-        return stat.S_ISREG(os.lstat(os.path.join(location, ".git")).st_mode)
-    except (OSError, ValueError):
-        return False
-
-
 def is_unbound(project) -> bool:
     """Whether `project` is an absolute location no bucket is bound to: exactly
     the resolver's step 5, the one trigger of the notice. False for anything
@@ -319,7 +307,7 @@ def is_unbound(project) -> bool:
     # slice 5. TEMPORARY: it silences only the notice. Resolution and claim of
     # a worktree are unchanged, and a submodule (also a `.git` file) is
     # silenced with it.
-    if _has_gitfile(text):
+    if hostgit.has_gitfile(text):
         return False
     answer = resolve(text)
     return answer.slug is not None and not answer.bound

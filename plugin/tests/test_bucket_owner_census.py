@@ -93,6 +93,9 @@ SEED_SITES = {
     ("cli/projects.py", "_cmd_slug"): "`daimon slug` prints the seed (#913)",
     ("bucket_tools.py", "stamp"): (
         "stamp matches an explicit scan directory's seed to a bucket name"),
+    ("bucket_tools.py", "adopt"): (
+        "adopt looks for the folder's OWN seed bucket (an unstamped legacy "
+        "bucket the rebind would orphan): a seed is exactly what it needs"),
     ("identity.py", "resolve"): (
         "the resolver IS the owner's answer: the seed is its step 2 probe, "
         "its step 4 legacy directory and the first birth name"),
@@ -145,6 +148,9 @@ JOIN_SITES = {
         "a verb argument that NAMES a bucket (validated by parse_bucket), the "
         "way merge names its two"),
     ("bucket_tools.py", "remap"): _ENUM,
+    ("bucket_tools.py", "adopt"): (
+        "joins the folder's own SEED name to find its legacy bucket, to refuse "
+        "orphaning it; reads, never names where a write goes"),
     ("store.py", "make_bucket"): (
         "creates the bucket a verb NAMES (migrate folding into the rule's "
         "name); must not ask the resolver, which may answer another bucket"),
