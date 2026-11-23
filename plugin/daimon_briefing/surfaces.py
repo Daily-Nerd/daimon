@@ -445,6 +445,15 @@ SURFACES: tuple[Surface, ...] = (
     #    exists for it. `config.layer_scopes` is the one reader. --
     Surface("checkpoints/{slug}/root", "store.record_bucket_root",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
+    # -- the identity record (slice 3b): evidence anchors for the bucket, written
+    #    by `bucket stamp`: the origin URL (credentials stripped), the root
+    #    commit, the folder name and the roots the bucket has had. Locations
+    #    and hashes, never item text, so there is nothing for forget to reach
+    #    and no rewrite path. Read only by `bucket doctor`; no automatic
+    #    decision reads it. Named WITHOUT `.json` (see store._IDENTITY_NAME):
+    #    every `*.json` in a bucket is walked as a plaintext checkpoint. --
+    Surface("checkpoints/{slug}/identity", "bucket_tools.write_identity",
+            False, "exempt-no-plaintext", "none", audit_exempt=True),
     # -- the ledger census marker (#1132 PR 2b): written once per bucket, on
     #    its first checkpoint write, by ledger_census.record_marker. A version,
     #    a UTC stamp, and per bucket-ledger FILE NAME -> {state, torn, split,
@@ -533,7 +542,8 @@ SURFACES: tuple[Surface, ...] = (
     # -- the bucket-migration receipt (#963): one line per move that actually
     #    moved something, {version, ts, from_slug, to_slug, mode, ledgers,
     #    pointers, leftovers, unreadable, stranded_pointers,
-    #    target_unreadable, target_slots, complete, observed, by}.
+    #    target_unreadable, target_slots, promoted, pointers_evicted,
+    #    pointers_dropped, complete, observed, by}.
     #    Global rather than per-bucket on purpose — it names a bucket that no
     #    longer exists, so it cannot live inside one.
     #
@@ -547,6 +557,12 @@ SURFACES: tuple[Surface, ...] = (
     #    `target_slots` is how many pointer slots the target holds after the
     #    run, recorded so the remedy for a stranded pointer is arithmetic on
     #    what is there rather than on the current knob.
+    #    `promoted`, `pointers_evicted` and `pointers_dropped` are written by
+    #    `bucket merge` only (a fold into a live main): the session id whose
+    #    pointer became the target's latest, the target sessions that
+    #    rotation displaced, and the folded sessions that fit no slot. Session
+    #    ids, never content; a dropped pointer's flat signed file still holds
+    #    its bytes.
     #    `observed` is free text for a state the fields cannot carry, and
     #    today holds one value: a legacy bucket a person cleared themselves.
     #

@@ -686,6 +686,29 @@ def has_entry(path) -> bool:
     return (Path(path) / ".git").exists()
 
 
+def has_gitfile(path) -> bool:
+    """True when `path` holds a `.git` that is a regular FILE (a pointer, which
+    is what a linked worktree has). One lstat, no git spawn, and the same
+    answer in both postures: it reports the shape of the entry and never
+    follows it."""
+    st = _lstat(os.path.join(os.fspath(path), ".git"))
+    return st is not None and stat.S_ISREG(st.st_mode)
+
+
+def root_commit(path) -> str | None:
+    """The hash of the first root commit reachable from HEAD, or None (no git,
+    not a repo, no commits). Evidence for `bucket stamp`, never an identity.
+    SEALED never asks: a sealed run has no use for an anchor and the run
+    families are a closed set, so the answer is None."""
+    if _sealed():
+        return None
+    out = _read(_argv("rev-list", "--max-parents=0", "HEAD", "--", path=path),
+                timeout=PROJECT_TIMEOUT)
+    roots = sorted(line.strip() for line in (out or "").splitlines()
+                   if line.strip())
+    return roots[0] if roots else None
+
+
 def refs_dir(path) -> Path | None:
     """The git dir whose refs/heads is authoritative for `path`, or None.
     In a linked WORKTREE `.git` is a file pointing at <common>/worktrees/<x>,

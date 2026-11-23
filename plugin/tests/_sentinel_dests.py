@@ -84,6 +84,22 @@ DESTS = {
         "dry_run": ("OUT", "R3"),
         "json": ("INE", "R6"),
     },
+    "bucket merge": {
+        "from_bucket": ("OUT", "R1"),
+        "into_bucket": ("OUT", "R1"),
+        "apply": ("OUT", "R3"),
+        "force": ("INE", "R6"),
+        "json": ("INE", "R6"),
+    },
+    "bucket doctor": {
+        "path": ("OUT", "R4"),
+        "json": ("INE", "R6"),
+    },
+    "bucket stamp": {
+        "scan": ("OUT", "R1"),
+        "apply": ("OUT", "R3"),
+        "json": ("INE", "R6"),
+    },
     "slug": {
         "path": ("OUT", "R4"),
     },

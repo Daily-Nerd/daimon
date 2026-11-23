@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import stat
 import time
 from datetime import datetime, timezone
@@ -180,6 +181,82 @@ def project_bucket(project_dir) -> str | None:
 
 _BUCKET_ROOT_NAME = "root"
 _LEDGER_CENSUS_NAME = ".ledger-census"  # #1132: see ledger_census.record_marker
+# Evidence anchors for a bucket (origin, root commit, folder, old roots). Named
+# WITHOUT a `.json` suffix on purpose: `_plaintext_surfaces`, `project_surfaces`,
+# the recall fingerprint and index scan, and the privacy audit each read every
+# `*.json` in a bucket directory as a plaintext checkpoint, so a JSON document
+# of another kind under that suffix is walked by all of them. Like `root` and
+# `.ledger-census`, this one is invisible to those walks by construction.
+_IDENTITY_NAME = "identity"
+
+
+def create_exclusive(path: Path, text: str) -> bool:
+    """Create `path` holding `text` unless anything is already there. True
+    when THIS call created it, False when something was. Raises OSError.
+
+    The text is written whole to a private staging file and then LINKED into
+    place, which fails when `path` exists, so two creators cannot both win and
+    the file is never visible half-written. A filesystem without hard links
+    (exFAT, some network and FUSE mounts) answers the link with an OSError
+    other than "exists"; there the final path is created with `O_EXCL`
+    instead, which is still exclusive and is at worst visible empty for an
+    instant (an empty `root` counts as unstamped)."""
+    staging = path.with_name(f"{path.name}.{secrets.token_hex(6)}.tmp")
+    data = text.encode("utf-8")
+    fd = os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    try:
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(staging, path)
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            pass  # no hard links here: fall back to the exclusive create
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            return False
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return True
+    finally:
+        try:
+            os.unlink(staging)
+        except OSError:
+            pass
+
+
+def stamp_root(bucket: Path, location: str) -> bool:
+    """Record `location` as the root of `bucket` unless the bucket already
+    has a non-empty one. True when THIS call wrote it, False when another
+    writer's record stands (first writer wins, #1092).
+
+    The create is `create_exclusive`, so two writers racing on a fresh bucket
+    cannot both believe they stamped it. An EMPTY `root` (a crash, or an
+    older daimon) counts as unstamped and is claimed under the bucket's
+    directory lock: the first claimant replaces it, the next finds it
+    non-empty. Raises OSError; `record_bucket_root` owns the never-fatal
+    contract."""
+    path = Path(bucket) / _BUCKET_ROOT_NAME
+    text = f"{location}\n"
+    if create_exclusive(path, text):
+        return True
+    with jsonl.dir_lock(Path(bucket)):
+        try:
+            if path.read_text(encoding="utf-8").strip():
+                return False
+        except OSError:
+            return False
+        _atomic_write(path, text)
+        return True
 
 
 def record_bucket_root(project_dir) -> None:
@@ -208,11 +285,9 @@ def record_bucket_root(project_dir) -> None:
         slug = project_slug(resolved)
         if not slug or not os.path.isabs(str(resolved)):
             return
-        root_path = config.checkpoint_dir() / slug / _BUCKET_ROOT_NAME
-        if root_path.exists():
-            return
-        root_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(root_path, f"{resolved}\n")
+        bucket = config.checkpoint_dir() / slug
+        bucket.mkdir(parents=True, exist_ok=True)
+        stamp_root(bucket, str(resolved))
     except OSError:
         pass
 
@@ -284,6 +359,30 @@ def bucket_root(project_dir_or_slug) -> str | None:
     except OSError:
         return None
     return text or None
+
+
+def root_eq(a, b) -> bool:
+    """Whether two recorded or resolved locations name the same directory.
+
+    Equality of `normcase` strings, nothing more: a stored root was realpath'd
+    when it was written, so only a live location needs resolving, once, by its
+    caller, and no recorded root is ever stat'd here (a dead mount must not
+    hang a comparison)."""
+    return bool(a) and bool(b) and os.path.normcase(str(a)) == \
+        os.path.normcase(str(b))
+
+
+def bucket_roots() -> dict[str, str]:
+    """{bucket name: recorded root} for every bucket that has a non-empty
+    `root`, in one pass over the bucket directories. Pure file-ops, never
+    raises. A bucket with an empty or unreadable record is unstamped and
+    absent here."""
+    out: dict[str, str] = {}
+    for child in bucket_dirs().buckets:
+        root = bucket_root(child.name)
+        if root:
+            out[child.name] = root
+    return out
 
 
 def buckets_under(layer_dir) -> list:
@@ -396,12 +495,21 @@ def _advance_pointers(d: Path, blob: str, new_epoch: float | None,
     (fail-open, as before). `rotate=False` overwrites latest without retaining
     the old one. Touches pointer copies only, never a flat `<session>.json`."""
     with _pointer_lock(d):
-        if _pointer_regresses(d, new_epoch):
-            return False
-        if rotate:
-            _rotate_pointers(d, history)
-        _atomic_write(d / _LATEST, blob)
-        return True
+        return _advance_pointers_held(d, blob, new_epoch, rotate, history)
+
+
+def _advance_pointers_held(d: Path, blob: str, new_epoch: float | None,
+                           rotate: bool, history: int) -> bool:
+    """`_advance_pointers` for a caller that ALREADY holds `_pointer_lock(d)`
+    (the lock is a flock on a sidecar, so taking it again from the same
+    process would wait on itself). `bucket merge` plans and changes a live
+    bucket's chain in one critical section and promotes through this."""
+    if _pointer_regresses(d, new_epoch):
+        return False
+    if rotate:
+        _rotate_pointers(d, history)
+    _atomic_write(d / _LATEST, blob)
+    return True
 
 
 def _created_epoch(created) -> float | None:
@@ -1802,7 +1910,8 @@ def apply_foreign_tombstones(project_dir=None, all_projects=False) -> list[str]:
     if all_projects:
         try:
             targets = [d.name for d in config.checkpoint_dir().iterdir()
-                       if d.is_dir() and d.name != scope.CHUNK_CACHE]
+                       if d.is_dir()
+                       and d.name not in scope.CURRENT_INTERNAL_DIRS]
         except OSError:
             targets = []
     else:
@@ -1904,6 +2013,29 @@ def _reap_stale_tmps(d: Path) -> None:
                 pass
 
 
+def _reap_stale_births(d: Path) -> None:
+    """Remove orphaned `.birth/<pid>-<rand>/` stage directories (a birth killed
+    between building its stage and renaming it). `_reap_stale_tmps` cannot do
+    it: it unlinks FILES named `*.tmp`, and a stage is a directory. Same age
+    gate, so a birth in flight right now is never touched. Only directories
+    directly under the registered `.birth` go; the parent stays, and nothing is
+    removed anywhere else. Best-effort: never raises."""
+    cutoff = time.time() - _TMP_REAP_SECONDS
+    try:
+        stages = [p for p in (d / scope.BIRTH).iterdir()
+                  if p.is_dir() and not p.is_symlink()]
+    except OSError:
+        return
+    for stage in stages:
+        try:
+            newest = max([stage.stat().st_mtime]
+                         + [p.stat().st_mtime for p in stage.iterdir()])
+            if newest < cutoff:
+                shutil.rmtree(stage)
+        except OSError:
+            pass
+
+
 def _max_importance(path: Path) -> int:
     """Max item importance in a checkpoint file, 0 when unreadable/unstamped.
     Torn or legacy files pin nothing — recency retention handles them as
@@ -1933,6 +2065,7 @@ def _gc_checkpoints(d: Path, keep: int) -> None:
     Harmless in practice — that pointer references a just-written file, which the
     newest-`keep` window already retains (default 100 is generous for this too)."""
     _reap_stale_tmps(d)  # independent of `keep`: orphaned tmps are never data
+    _reap_stale_births(d)
     if keep <= 0:
         return
     try:

@@ -139,6 +139,8 @@ TTY_MODULES = {
     "cli/_observe.py",
     # Not tier decisions: an interactive wizard and the renderer/host gates.
     "cli/configure_cmd.py", "host_detect.py", "render.py",
+    # the bucket verbs' stdout gate: names print to a terminal, counts elsewhere
+    "cli/projects.py",
 }
 # LLM briefing is an egress path: the text it sends is the kept, post-view
 # text, so the axis is listed (and its accessor pinned) but never driven.
@@ -525,8 +527,11 @@ no_items("installs or lists host integration files; no store read",
          "cli:skill show", "cli:skill status", "cli:skill uninstall",
          "cli:configure")
 no_items("prints the project slug of a path",  "cli:slug")
+no_items("surveys bucket names, recorded roots and counts, never item text, "
+         "and names only to a terminal", "cli:bucket doctor")
 no_items("writes or migrates; reads names of buckets, never item text",
-         "cli:bucket migrate", "cli:team init", "cli:team sync",
+         "cli:bucket migrate", "cli:bucket merge", "cli:bucket stamp",
+         "cli:team init", "cli:team sync",
          "cli:write-checkpoint", "cli:serialize", "cli:import",
          "cli:handoff",
          "cli:refute add", "cli:ruling propose", "cli:ruling check try")

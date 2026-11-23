@@ -132,6 +132,20 @@ KNOWN_BYPASSES = frozenset({
     # target's own pointers are never rewritten (#963 review), so no
     # latest.json / prev-1 entry belongs here.
     ("bucket migrate", "checkpoints/{slug}/prev-3.json"),
+    # bucket merge (slice 3b): the same one-shot MOVE as `bucket migrate`, for
+    # a bucket folded into a live one. Ledger lines the target lacks are
+    # appended (bytes that already passed the seam), and one rotation step
+    # makes the folded bucket's newest pointer the target's latest, the way
+    # one more session in the target would (`store._advance_pointers`: the
+    # old latest is copied to prev-1, then latest is written). Re-admitting
+    # either against today's tombstones would rewrite history the person asked
+    # to fold, not to re-judge. Bounded: it writes only into the one bucket
+    # named by --into, plus the receipt and that bucket's census marker.
+    ("bucket merge", "checkpoints/migrations.jsonl"),
+    ("bucket merge", "checkpoints/{slug}/events.jsonl"),
+    ("bucket merge", "checkpoints/{slug}/latest.json"),
+    ("bucket merge", "checkpoints/{slug}/prev-1.json"),
+    ("bucket merge", "checkpoints/{slug}/.ledger-census"),
     # ledger repair (#1132 2c-2): like a bucket migration it MOVES bytes that
     # already passed the seam. The ledger is rewritten with the very rows it
     # held (split rows rejoined), the lines it could not parse go verbatim to
@@ -527,6 +541,51 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         # has nothing to move and writes nothing at all.
         assert not legacy.exists(), "the merge left the legacy bucket standing"
         run(["bucket", "migrate", f"--project={link}"], 0, env=history)
+
+    def r_bucket_merge():
+        # Slice 3b: an abandoned bucket folded into a live one. Both are
+        # planted through the BUILTIN open (see the migrate recipe), so the
+        # fixture's own setup is not recorded as a write by the command under
+        # audit. The abandoned bucket's recorded root does not exist, so no
+        # --force is needed, and its one pointer is newer than the target's
+        # latest, so the merge exercises the promotion (latest and prev-1
+        # writes) as well as the ledger append.
+        base = config.checkpoint_dir()
+        into = base / "-guard-merge-main"
+        gone = base / "-guard-merge-gone"
+        for d in (into, gone):
+            d.mkdir(parents=True, exist_ok=True)
+            audit.placeholders[d.name] = "{slug}"
+        with open(gone / "root", "w", encoding="utf-8") as fh:
+            fh.write(str(tmp_path / "no-such-folder") + "\n")
+        with open(gone / "events.jsonl", "w", encoding="utf-8") as fh:
+            fh.write('{"event_id": "e-gone-merged"}\n')
+        with open(into / "latest.json", "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"session_id": "S-merge-main",
+                                 "created": "2020-01-01T00:00:00Z",
+                                 "project_slug": into.name}))
+        with open(gone / "latest.json", "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"session_id": "S-merge-gone",
+                                 "created": "2021-01-01T00:00:00Z",
+                                 "project_slug": gone.name}))
+        run(["bucket", "merge", f"--from={gone.name}", f"--into={into.name}",
+             "--apply"], 0)
+        assert not gone.exists(), "the merge left the folded bucket standing"
+        assert json.loads((into / "latest.json").read_text(
+            encoding="utf-8"))["session_id"] == "S-merge-gone"
+
+    def r_bucket_stamp():
+        # Slice 3b: every stamped bucket in the drive's store gains an identity
+        # record: locations, an origin URL without credentials, a commit hash
+        # and a folder name, declared audit-exempt in surfaces.py and written
+        # through the builtin open and a link, like `root`, so the audit
+        # observes nothing here (a new bypass would still fail the ratchet).
+        run(["bucket", "stamp", "--apply"], 0)
+        assert any((d / "identity").is_file()
+                   for d in store.bucket_dirs().buckets)
+
+    def r_bucket_doctor():
+        run(["bucket", "doctor"], 0)
 
     def r_slug():
         # #913: drives the command so the audit proves it makes no
@@ -1006,6 +1065,9 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("blame",): r_blame,
         ("projects",): r_projects,
         ("bucket", "migrate"): r_bucket_migrate,
+        ("bucket", "merge"): r_bucket_merge,
+        ("bucket", "stamp"): r_bucket_stamp,
+        ("bucket", "doctor"): r_bucket_doctor,
         ("slug",): r_slug,
         ("refute", "add"): r_refute_add,
         ("refute", "ratify"): r_refute_ratify,

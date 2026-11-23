@@ -72,7 +72,12 @@ def parse_bucket(name) -> BucketId | None:
 # on purpose, and anything else that is not a bucket name is a stray (see
 # `classify_dir`).
 CHUNK_CACHE = ".chunk-cache"
-CURRENT_INTERNAL_DIRS: frozenset[str] = frozenset({CHUNK_CACHE})
+# The staging directory a bucket birth is built in before it is renamed to its
+# final name (slice 3b registers it; the claim that uses it ships later).
+# `parse_bucket(".birth")` is None, so unregistered it would be a STRAY walked
+# by `forget --all-projects` and the privacy audit and counted by stats.
+BIRTH = ".birth"
+CURRENT_INTERNAL_DIRS: frozenset[str] = frozenset({CHUNK_CACHE, BIRTH})
 # RETIRED: names daimon wrote in a past version and no longer writes. `.partials`
 # held chunk partials across heals (#316, 6e18433) and was replaced by
 # `.chunk-cache` (#348, 0e5db26); stores of users who ran that version still

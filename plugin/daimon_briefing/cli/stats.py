@@ -20,6 +20,7 @@ from .. import (
     refutations,
     render,
     schema,
+    scope,
     serializer,
     store,
     worldcheck,
@@ -87,7 +88,9 @@ def _stats_store(now=None) -> dict:
     priced = True
     d = config.checkpoint_dir()
     try:
-        out["project_buckets"] = sum(1 for p in d.iterdir() if p.is_dir())
+        out["project_buckets"] = sum(
+            1 for p in d.iterdir()
+            if p.is_dir() and p.name not in scope.CURRENT_INTERNAL_DIRS)
         files = store._session_files(d)
     except OSError:
         return out

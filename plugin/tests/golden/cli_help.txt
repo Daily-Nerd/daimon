@@ -14,7 +14,10 @@ audit-quotes
 blame
 brief
 bucket
+bucket doctor
+bucket merge
 bucket migrate
+bucket stamp
 check
 check sync
 configure
@@ -271,8 +274,11 @@ DAIMON_PROJECT_DIR, then cwd) --json machine-readable output Examples: daimon pr
 projects --json
 
 === bucket ===
-usage: daimon bucket [-h] {migrate} ... positional arguments: {migrate} migrate move a bucket
-written before 0.42.0 into the one daimon reads options: -h, --help show this help message and exit
+usage: daimon bucket [-h] {migrate,merge,doctor,stamp} ... positional arguments:
+{migrate,merge,doctor,stamp} migrate move a bucket written before 0.42.0 into the one daimon reads
+merge fold one bucket into another, once (a worktree or ghost bucket) doctor survey the buckets:
+dangling, unstamped, shared, empty, worktree stamp record where each bucket's project lives, before
+a move options: -h, --help show this help message and exit
 
 === bucket migrate ===
 usage: daimon bucket migrate [-h] [--project PROJECT] [--dry-run] [--json] Move the bucket a
@@ -284,6 +290,40 @@ state it finds. options: -h, --help show this help message and exit --project PR
 directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run print the plan and write nothing --json
 machine-readable output Examples: daimon bucket migrate daimon bucket migrate --project /tmp/my-repo
 --dry-run
+
+=== bucket merge ===
+usage: daimon bucket merge [-h] --from BUCKET --into BUCKET [--apply] [--force] [--json] Fold the
+bucket named by --from into the bucket named by --into: ledger lines the target lacks are appended,
+the newest session of --from becomes the target's latest when it is newer, and --from is removed
+with an alias recorded so readers follow it. Pointers that fit no slot are dropped and listed (the
+flat session files still hold them). Refused while --from's recorded root still exists on disk or is
+not recorded, unless --force. Dry run by default. Human-only, and refused on a tenant-scoped home.
+options: -h, --help show this help message and exit --from BUCKET the bucket to fold away (its
+directory name under checkpoints/) --into BUCKET the bucket that keeps the history (must exist)
+--apply write the merge (default: print the plan only) --force merge even though --from's recorded
+root still exists, or it has none (nothing then proves its project is gone) --json machine-readable
+output Examples: daimon bucket merge --from=-Users-me-repo-wt --into=-Users-me-repo daimon bucket
+merge --from=OLD --into=MAIN --apply Bucket names usually start with '-', so write --from=NAME.
+
+=== bucket doctor ===
+usage: daimon bucket doctor [-h] [--path PATH] [--json] Read-only survey of every bucket: recorded
+roots that no longer exist, buckets with no root, two buckets with one root, empty and ghost
+buckets, worktree-looking roots, buckets left by an unfinished merge, identity records that
+disagree. With --path, also lists dangling buckets whose recorded origin URL or root commit match
+that folder (evidence, not proof). Bucket names are printed only to a terminal, counts otherwise.
+Human-only, and refused on a tenant-scoped home. options: -h, --help show this help message and exit
+--path PATH a project folder to look for old buckets of --json machine-readable output Examples:
+daimon bucket doctor daimon bucket doctor --path .
+
+=== bucket stamp ===
+usage: daimon bucket stamp [-h] [--scan DIR] [--apply] [--json] Give every stamped bucket an
+identity record (origin URL without credentials, root commit, folder name) and stamp an unstamped
+bucket with its folder when exactly one repository under a --scan directory has that bucket's name;
+two matches refuse. Run it on the OLD machine, before copying the store. Dry run by default. Signed
+checkpoints are never touched. Human-only, and refused on a tenant-scoped home. options: -h, --help
+show this help message and exit --scan DIR a folder to look for repositories in (repeatable) --apply
+write the stamps (default: print the plan only) --json machine-readable output Examples: daimon
+bucket stamp --scan ~/code daimon bucket stamp --scan ~/code --scan ~/work --apply
 
 === slug ===
 usage: daimon slug [-h] path Print the checkpoint directory name daimon derives from a project path.

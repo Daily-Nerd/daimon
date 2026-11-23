@@ -134,6 +134,9 @@ daimon bucket <command>
 | comando | qué hace |
 | --- | --- |
 | [`migrate`](#daimon-bucket-migrate) | move a bucket written before 0.42.0 into the one daimon reads |
+| [`merge`](#daimon-bucket-merge) | fold one bucket into another, once (a worktree or ghost bucket) |
+| [`doctor`](#daimon-bucket-doctor) | survey the buckets: dangling, unstamped, shared, empty, worktree |
+| [`stamp`](#daimon-bucket-stamp) | record where each bucket's project lives, before a move |
 
 ### `daimon bucket migrate`
 
@@ -156,6 +159,77 @@ daimon bucket migrate [--project PROJECT] [--dry-run] [--json]
 ```text
 daimon bucket migrate
 daimon bucket migrate --project /tmp/my-repo --dry-run
+```
+
+### `daimon bucket merge`
+
+fold one bucket into another, once (a worktree or ghost bucket)
+
+Fold the bucket named by --from into the bucket named by --into: ledger lines the target lacks are appended, the newest session of --from becomes the target's latest when it is newer, and --from is removed with an alias recorded so readers follow it. Pointers that fit no slot are dropped and listed (the flat session files still hold them). Refused while --from's recorded root still exists on disk or is not recorded, unless --force. Dry run by default. Human-only, and refused on a tenant-scoped home.
+
+```text
+daimon bucket merge --from BUCKET --into BUCKET [--apply] [--force] [--json]
+```
+
+| argumento | valor | por defecto | descripción |
+| --- | --- | --- | --- |
+| `--from` | `BUCKET` |  | the bucket to fold away (its directory name under checkpoints/) (obligatorio) |
+| `--into` | `BUCKET` |  | the bucket that keeps the history (must exist) (obligatorio) |
+| `--apply` |  |  | write the merge (default: print the plan only) |
+| `--force` |  |  | merge even though --from's recorded root still exists, or it has none (nothing then proves its project is gone) |
+| `--json` |  |  | machine-readable output |
+
+**Ejemplos**
+
+```text
+  daimon bucket merge --from=-Users-me-repo-wt --into=-Users-me-repo
+  daimon bucket merge --from=OLD --into=MAIN --apply
+Bucket names usually start with '-', so write --from=NAME.
+```
+
+### `daimon bucket doctor`
+
+survey the buckets: dangling, unstamped, shared, empty, worktree
+
+Read-only survey of every bucket: recorded roots that no longer exist, buckets with no root, two buckets with one root, empty and ghost buckets, worktree-looking roots, buckets left by an unfinished merge, identity records that disagree. With --path, also lists dangling buckets whose recorded origin URL or root commit match that folder (evidence, not proof). Bucket names are printed only to a terminal, counts otherwise. Human-only, and refused on a tenant-scoped home.
+
+```text
+daimon bucket doctor [--path PATH] [--json]
+```
+
+| argumento | valor | por defecto | descripción |
+| --- | --- | --- | --- |
+| `--path` | `PATH` |  | a project folder to look for old buckets of |
+| `--json` |  |  | machine-readable output |
+
+**Ejemplos**
+
+```text
+daimon bucket doctor
+daimon bucket doctor --path .
+```
+
+### `daimon bucket stamp`
+
+record where each bucket's project lives, before a move
+
+Give every stamped bucket an identity record (origin URL without credentials, root commit, folder name) and stamp an unstamped bucket with its folder when exactly one repository under a --scan directory has that bucket's name; two matches refuse. Run it on the OLD machine, before copying the store. Dry run by default. Signed checkpoints are never touched. Human-only, and refused on a tenant-scoped home.
+
+```text
+daimon bucket stamp [--scan DIR] [--apply] [--json]
+```
+
+| argumento | valor | por defecto | descripción |
+| --- | --- | --- | --- |
+| `--scan` | `DIR` |  | a folder to look for repositories in (repeatable) |
+| `--apply` |  |  | write the stamps (default: print the plan only) |
+| `--json` |  |  | machine-readable output |
+
+**Ejemplos**
+
+```text
+daimon bucket stamp --scan ~/code
+daimon bucket stamp --scan ~/code --scan ~/work --apply
 ```
 
 ## `daimon ledger`
