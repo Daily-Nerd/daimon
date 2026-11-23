@@ -114,6 +114,13 @@ HANDOFF (left deliberately by previous session, 2026-08-03T03:43:58Z):
 → Cortá el release primero. Ojo: la clave de caché rotó.
 ```
 
+El encabezado dice quién lo escribió. Un batón escrito desde una terminal se ve
+como arriba. Uno escrito sin terminal, o con `daimon handoff --by agent`, dice
+`HANDOFF (written by an agent, unverified, <hora>):` y hay que tomarlo como una
+nota de un agente, no como una instrucción de una persona. Los batones
+guardados antes de que esto se registrara llevan la fuente `cli` heredada y
+conservan la primera redacción.
+
 Se guarda como evento, nunca como ítem cognitivo, no puede entrar al
 ranking, al dedup ni al scoring de carry, y no puede resolver nada. Un batón
 por proyecto; uno nuevo reemplaza al anterior (el rastro de eventos guarda la

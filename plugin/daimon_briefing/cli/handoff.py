@@ -7,7 +7,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import render, store
+from .. import handoff, render, store
 from ..surfaces import Writer
 from . import _observe
 
@@ -15,7 +15,7 @@ from . import _observe
 # #523: a baton is small on purpose — "do X first, beware Y", not a second
 # checkpoint. Over-cap input is REFUSED, never silently truncated: it is an
 # authored artifact and the author trims it.
-_HANDOFF_MAX_CHARS = 2000
+_HANDOFF_MAX_CHARS = handoff.MAX_CHARS
 
 
 def _cmd_handoff(args) -> int:

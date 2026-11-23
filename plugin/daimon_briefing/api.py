@@ -69,9 +69,20 @@ host, and the assertion would heal a serialize that is still running. Without
 it, a killed run frees itself after `hung_after_seconds`. It is ignored with a
 note under `everywhere=True`.
 
-`api` is read-side with one named exception (design D23): `heal_all` is a
-launcher. It starts daimon's own serialize repair and writes no cognitive
-content; nothing else here starts a process.
+`api` is read-side with two named exceptions. `heal_all` (design D23) is a
+launcher: it starts daimon's own serialize repair and writes no cognitive
+content; nothing else here starts a process. `write_handoff` is the one write.
+
+Handoff (`write_handoff`). `write_handoff(project, text)` leaves the baton the
+next briefing leads with, for a project given as a path. It is ALWAYS agent
+tier: it never asks the terminal, so a host process that holds a TTY still
+writes an agent row, and `daimon brief` prints it as "written by an agent,
+unverified", never as a person's note. The size limit is `HANDOFF_MAX_CHARS`
+(read it before building the text). Over it raises `HandoffTooLong`, which
+carries `.limit` and `.length`; nothing is truncated or written. An empty text
+raises `ValueError`; `HandoffNotRecorded` means daimon is disabled, the project
+is unknown or the ledger is unwritable. Latest wins. The MCP tool and
+`render_briefing` do not print the baton at all (only `daimon brief` does).
 
 Render (`render_briefing`, `briefing_text`, #1180). The MACHINE briefing, the
 same bytes the MCP `daimon_brief` tool returns: always the deterministic render,
@@ -114,6 +125,9 @@ from dataclasses import dataclass
 from .briefing import RenderedBriefing, briefing_text, render_briefing
 from .display import withheld_json, withheld_marker
 from .heal import HealPlan, HealReport, HealSkip, HealTarget
+from .handoff import MAX_CHARS as HANDOFF_MAX_CHARS
+from .handoff import HandoffNotRecorded, HandoffTooLong
+from .handoff import write as write_handoff
 from .heal_host import heal_all, heal_plan
 from .hostgit import declare as declare_project
 from .inspector import human_lines as why_lines
@@ -137,7 +151,9 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "HealPlan",
            "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
            "RenderedBriefing", "render_briefing", "briefing_text",
-           "BRIEFING_FORMAT", "declare_project", "Briefing", "parse_briefing")
+           "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
+           "HandoffTooLong", "HandoffNotRecorded", "write_handoff", "Briefing",
+           "parse_briefing")
 
 
 @dataclass(frozen=True)
