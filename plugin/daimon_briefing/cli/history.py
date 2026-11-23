@@ -305,7 +305,7 @@ def _cmd_diff(args) -> int:
             else changes(older["checkpoint"], newer["checkpoint"], snap))
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "project_slug": store.project_slug(project),
+        "project_slug": store.bucket_of(project),
         "history": depth,
         "retained": len(entries),
         "truncated": len(entries) >= depth,
@@ -432,7 +432,7 @@ def _cmd_blame(args) -> int:
     depth = config.checkpoint_history()
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "project_slug": store.project_slug(project),
+        "project_slug": store.bucket_of(project),
         "item_id": args.item_id,
         "kind": kind,
         "trust": trust,

@@ -740,7 +740,7 @@ def _slug_of(project) -> str:
     """The bucket slug a serialize-log `project` (a cwd) addresses, or ""."""
     if not project or str(project).strip() in ("", "?"):
         return ""
-    return store.project_slug(store._resolved(project)) or ""
+    return store.project_bucket(project) or ""
 
 
 def admission_notes(slug: str, *, text: str | None = None,

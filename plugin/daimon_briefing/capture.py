@@ -32,8 +32,9 @@ import logging
 import time
 from pathlib import Path
 
-from . import (amendments, authority, carry, config, normalize, provenance, requests,
-               schema, serializer, session_transcript, store, transcript)
+from . import (amendments, authority, carry, config, identity, normalize,
+               provenance, requests, schema, serializer, session_transcript,
+               store, transcript)
 from .surfaces import Writer
 
 log = logging.getLogger(__name__)
@@ -152,6 +153,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # the checkpoint OR ride on carry being on.
     try:
         _verify_agent_resolutions(project, messages)
+    except identity.LOUD:
+        raise
     except Exception:
         log.warning("agent resolution verification pass failed", exc_info=True)
     # #691: same posture for pending agent amendments, as its own pass —
@@ -161,6 +164,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # carry, same never-cost-the-checkpoint try/except.
     try:
         _verify_agent_amendments(project, messages)
+    except identity.LOUD:
+        raise
     except Exception:
         log.warning("agent amendment verification pass failed", exc_info=True)
     # #694 PR 3 (D8): same posture again — its own pass, deliberately NOT
@@ -170,6 +175,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
     # try/except.
     try:
         _verify_agent_request_done(project, messages)
+    except identity.LOUD:
+        raise
     except Exception:
         log.warning("agent request-done verification pass failed",
                     exc_info=True)
@@ -182,6 +189,8 @@ def run(session_id: str, messages, *, project, chat, deadline,
         for row in serializer.verification_rejections(checkpoint):
             store.append_verification(row["item_ref"], row["check"],
                                       row["reason"], project_dir=project)
+    except identity.LOUD:
+        raise
     except Exception:
         pass
     return out
@@ -325,7 +334,7 @@ def _origin_on_disk(origin_session: str, project) -> bool:
     if cp.get("source") == "introspection":
         return False
     return store.stamp_matches(cp.get("project_slug"),
-                               store.project_slug(project))
+                               store.bucket_of(project))
 
 
 def _emit_corroborations(observed, events: dict, forgotten_ids: set, project,
@@ -692,6 +701,8 @@ def carry_forward(checkpoint: dict, project) -> dict:
                 observed, events,
                 _forgotten_item_ids(forgotten, checkpoint, prev),
                 project, str(checkpoint.get("session_id") or ""))
+    except identity.LOUD:
+        raise
     except Exception:  # keep the unmerged checkpoint, proceed to write
         pass
     return checkpoint

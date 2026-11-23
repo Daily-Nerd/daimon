@@ -375,7 +375,7 @@ def audit_project(project_dir=None) -> dict:
     # #948: the report names a project, and the tombstone read below is scoped
     # to the same one, so both take the resolution the CLI applies.
     project_dir = config.resolve_project_dir(project_dir)
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     keys = store.forgotten_content_keys(project_dir=project_dir)
     # #620 item 2: a teammate's forget is a SEPARATE contract from this
     # project's own (keys, above) — it suppresses reads by default but never
@@ -402,6 +402,8 @@ def audit_project(project_dir=None) -> dict:
         result["requests"] = {"records": 0, "rows": 0, "bytes": 0}
         result["trust"] = {"records": 0, "rows": 0, "bytes": 0}
         return result
+    bucket = store.bucket_dir(project_dir)
+    assert bucket is not None  # a known slug always names a bucket directory
     known, unknown = _checkpoint_candidates()
     # Only this project's blind spots: an unknown file in ANOTHER bucket is
     # that project's audit's problem (None = flat dir = everyone's).
@@ -464,7 +466,7 @@ def audit_project(project_dir=None) -> dict:
     # "forgotten:<hash>": hashing that STRING can never equal the key it
     # names, so it needs no special case. `item_id` is always the row's
     # item_ref, whichever field matched.
-    events = config.checkpoint_dir() / slug / _EVENTS_NAME
+    events = bucket / _EVENTS_NAME
     # `jsonl.read` asks nothing first (`events.exists()` RAISES on an
     # unreadable parent dir, which would crash the auditor on exactly the
     # tree it must report on) and never raises: a file it cannot vouch for
@@ -489,7 +491,7 @@ def audit_project(project_dir=None) -> dict:
     # posture as the event ledger above, and the same whole-value hashing.
     # The FIELD SET is refutations' own declaration, not a copy: the deleter
     # reads it too, so a value the audit reports is a value forget can reach.
-    ledger = config.checkpoint_dir() / slug / _REFUTATIONS_NAME
+    ledger = bucket / _REFUTATIONS_NAME
     scanned = _scan_rows(ledger, result)
     ledger_records: set[str] = set()
     ledger_rows = 0
@@ -530,7 +532,7 @@ def audit_project(project_dir=None) -> dict:
     # about erased content, which relations.forget_item_id exists to remove.
     # A hit here means the scrub was missed or raced; after it runs, this
     # scan is what proves the deletion reached the edges.
-    rel_path = config.checkpoint_dir() / slug / _RELATIONS_NAME
+    rel_path = bucket / _RELATIONS_NAME
     scanned = _scan_rows(rel_path, result)
     tombstoned = store.tombstoned_item_ids(project_dir=project_dir)
     rel_records: set[str] = set()
@@ -574,7 +576,7 @@ def audit_project(project_dir=None) -> dict:
     # `tombstoned` is the set the RELATIONS block above computed
     # (store.tombstoned_item_ids): a deliberate shared read, named here
     # so reordering these blocks does not silently sever it.
-    amend_path = config.checkpoint_dir() / slug / _AMENDMENTS_NAME
+    amend_path = bucket / _AMENDMENTS_NAME
     scanned = _scan_rows(amend_path, result)
     amend_records: set[str] = set()
     amend_rows = 0
@@ -611,7 +613,7 @@ def audit_project(project_dir=None) -> dict:
     # no counterpart, and inventing one would report a class of residue that
     # cannot exist. The hash intersection runs over requests' own plaintext
     # declaration, so a value the audit reports is a value forget can reach.
-    req_path = config.checkpoint_dir() / slug / _REQUESTS_NAME
+    req_path = bucket / _REQUESTS_NAME
     scanned = _scan_rows(req_path, result)
     req_records: set[str] = set()
     req_rows = 0
@@ -642,7 +644,7 @@ def audit_project(project_dir=None) -> dict:
     # compared against `tombstoned` — that item-id comparison is a
     # read-path concern (PR 2), not a residue-of-this-ledger's-own-prose
     # concern, which is all this block answers.
-    trust_path = config.checkpoint_dir() / slug / _TRUST_NAME
+    trust_path = bucket / _TRUST_NAME
     scanned = _scan_rows(trust_path, result)
     trust_records: set[str] = set()
     trust_rows = 0
@@ -668,7 +670,7 @@ def audit_project(project_dir=None) -> dict:
     # same keys as every ledger above, over the line and the JSON strings
     # inside it (ledger_repair.matched_keys), the reach the deleter
     # (ledger_repair.forget_quarantined_lines) has when it holds only a key.
-    for side_path in ledger_repair.sidecars(config.checkpoint_dir() / slug):
+    for side_path in ledger_repair.sidecars(bucket):
         for row in _scan_rows(side_path, result):
             for value in surfaces.prose_values(_SIDECAR_PROSE, row):
                 for h in ledger_repair.matched_keys(value, keys):

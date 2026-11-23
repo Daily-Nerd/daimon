@@ -995,7 +995,7 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
     # ledger reads again, when they are ordinary healable failures.
     try:
         admission = ledger.admission_notes(
-            store.project_slug(config.resolve_project_dir(project)) or "")
+            store.project_bucket(project) or "")
     except Exception:  # noqa: BLE001 - a log it cannot read is no note
         admission = ()
     if admission:

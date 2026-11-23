@@ -163,11 +163,12 @@ def not_as_ratified_line(report: SyncReport, layer_home: str = "") -> str:
 
 def _sync(project_dir, writer: Writer) -> SyncReport:
     resolved = config.resolve_project_dir(project_dir)
-    slug = store.project_slug(resolved)
-    if not slug:
+    bucket = store.bucket_dir(resolved)
+    if bucket is None:
         return SyncReport(False, 0, "", "that project directory names no "
                                         "bucket, so there is no ledger to read")
-    judged = jsonl.posture(config.checkpoint_dir() / slug / "refutations.jsonl",
+    slug = bucket.name
+    judged = jsonl.posture(bucket / "refutations.jsonl",
                            "refutations.jsonl", writer)
     if judged.write is WritePosture.REFUSE:
         return SyncReport(False, 0, slug, str(judged.refusal()))

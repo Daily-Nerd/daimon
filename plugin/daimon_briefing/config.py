@@ -1196,16 +1196,14 @@ def _layer_scopes(project_dir) -> list[str]:
         if not at_or_below_home:
             break  # walked past home; nothing further out qualifies
         if not _git_shadowed(candidate):
-            slug = store.project_slug(candidate_str)
-            if slug:
-                bucket_dir = checkpoint_dir() / slug
-                if bucket_dir.is_dir():
-                    recorded = store.bucket_root(slug)
-                    if recorded is not None:
-                        if recorded == candidate_str:
-                            layers.append(candidate_str)
-                    elif not briefing.rulings_read(candidate_str).rows:
+            bucket = store.bucket_dir(candidate_str)
+            if bucket is not None and bucket.is_dir():
+                recorded = store.bucket_root(candidate_str)
+                if recorded is not None:
+                    if recorded == candidate_str:
                         layers.append(candidate_str)
+                elif not briefing.rulings_read(candidate_str).rows:
+                    layers.append(candidate_str)
         if candidate_str == home_str:
             break
     return layers

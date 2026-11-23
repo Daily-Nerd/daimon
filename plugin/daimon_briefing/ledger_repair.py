@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (config, forget, jsonl, normalize, refutations, store,
+from . import (config, forget, identity, jsonl, normalize, refutations, store,
                surfaces)
 from .forget import Unreached  # noqa: F401 - the type moved; callers import it here too
 
@@ -25,8 +25,7 @@ class Purged(NamedTuple):
 
 def _bucket_dir(project_dir) -> Path | None:
     # #948: resolve BEFORE slugging, like every ledger path in this package.
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    return config.checkpoint_dir() / slug if slug else None
+    return store.bucket_dir(store._resolved(project_dir))
 
 
 def sidecars(bucket: Path) -> list[Path]:
@@ -375,7 +374,11 @@ def _scratch_store(bucket: Path):
         copy = Path(tmp) / bucket.name
         copy.mkdir()
         for entry in bucket.iterdir():
+            # `root` rides along: the repair re-addresses the bucket from the
+            # scratch store, and a bucket without its record is a different
+            # bucket to anything that reads the record.
             if entry.is_file() and (entry.suffix == ".jsonl"
+                                    or entry.name == store._BUCKET_ROOT_NAME
                                     or surfaces.is_quarantine_sidecar(
                                         entry.name)):
                 shutil.copy2(entry, copy / entry.name)
@@ -399,6 +402,10 @@ def repair(project_dir, ledger: str, *, dry_run: bool = False,
     `approve(rulings)` is the human gate in front of the re-scrub (see
     `_rescrub`); without one the re-scrub refuses to remove a ruling."""
     approve = approve or refusal_for
+    # The bucket is named ONCE, here: the scratch copy of a dry run and the
+    # repair inside it address the bucket by this ref, not by re-deriving it
+    # from the location under a store that lacks the real one.
+    project_dir = identity.bind(project_dir) or project_dir
     bucket = _bucket_dir(project_dir)
     if bucket is None:
         return Report(ledger, "error", error="no project to address",

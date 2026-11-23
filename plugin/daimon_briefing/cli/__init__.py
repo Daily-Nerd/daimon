@@ -31,7 +31,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path  # noqa: F401 — tests reach it as cli.Path
 
-from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, inspector, jsonl, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, render, requests, schema, serializer, store, teamsync, transcript, view, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
+from .. import amendments, anchor, briefing, buckets, capture, carry, config, configure, harvest, identity, inspector, jsonl, ledger, ledger_census, llm, normalize, privacy, provenance, recall, recall_telemetry, receipts, redact, refutations, render, requests, schema, serializer, store, teamsync, transcript, view, worldcheck  # noqa: F401 — several are re-exported for compat only (#708): `cli.<name>` is a stable seam
 # Aliased: `trust` below (from . import (..., trust)) already binds the
 # `cli.trust` VERB submodule at this scope — this is the LIBRARY ledger
 # module (daimon_briefing.trust). cli/brief.py reads it directly now; the
@@ -198,7 +198,7 @@ def _note_receipt_probe_usage(project_dir, wc_stats: dict) -> None:
     "did nothing". A count of zero writes nothing — `_note_usage` in a
     zero-length range is simply never called, so a disabled or silent run
     leaves the log untouched, same as every other counter here."""
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     if not slug:
         return
     probe = worldcheck.last_receipt_probe()
@@ -276,7 +276,7 @@ def guarded(fn=None, *, writes: bool = False):
         def wrapper(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except (jsonl.Refused, view.ScopeRefused):
+            except (jsonl.Refused, view.ScopeRefused, *identity.LOUD):
                 raise
             # reported as one line, never shown around
             except Exception as exc:  # noqa: BLE001

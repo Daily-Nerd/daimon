@@ -72,7 +72,7 @@ def _lease_slug():
     resolves (the stamp then keeps empty content, which the liveness read
     reports as `project_slug=None`). Never raises."""
     try:
-        return store.project_slug(config.resolve_project_root(config.project_dir()))
+        return store.bucket_of(config.resolve_project_root(config.project_dir()))
     except Exception:
         return None
 

@@ -39,8 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (config, hostgit, jsonl, normalize, policy, receipts, redact,
-               schema, scope, serializer, surfaces, teamproject)
+from . import (config, hostgit, identity, jsonl, normalize, policy, receipts,
+               redact, schema, scope, serializer, surfaces, teamproject)
 from .surfaces import Writer
 
 log = logging.getLogger("daimon_briefing")
@@ -163,8 +163,31 @@ def _resolved(project_dir):
     reaches the filesystem on every call. store.py owns no subprocess code and
     this does not change that — the git dependency lives in config, which is
     where the resolution policy lives (scar 0).
+
+    A `BucketRef` is already resolved and claimed: it passes through as itself,
+    so the ref (and the bucket it carries) survives every layer below.
     """
+    if isinstance(project_dir, identity.BucketRef):
+        return project_dir
     return config.resolve_project_dir(project_dir)
+
+
+def bucket_of(x) -> str | None:
+    """THE owner of a bucket name: the directory name under the checkpoint root
+    that `x` belongs to, or None when the project is unknown.
+
+    `x` is already resolved: a `BucketRef` (answers its claimed `.slug`), a
+    resolved directory, or a bucket slug (passes through, the transform is
+    idempotent). No git, no resolution happens here, so a site that names a
+    literal subdirectory keeps naming exactly that one.
+
+    Every site that names a bucket, a bucket path or a stamp asks THIS, never
+    `project_slug` on a location (a census test pins it). Today the answer for
+    a path is `project_slug`'s; the day identity stops being a function of
+    location, this is the one function that changes."""
+    if isinstance(x, identity.BucketRef):
+        return x.slug
+    return project_slug(x)
 
 
 def project_bucket(project_dir) -> str | None:
@@ -176,7 +199,15 @@ def project_bucket(project_dir) -> str | None:
     what every read and write below actually addresses. A host that wants the
     two to agree hands this value, or the resolved directory from
     `config.resolve_project_dir`, to whatever else it calls."""
-    return project_slug(_resolved(project_dir))
+    return bucket_of(_resolved(project_dir))
+
+
+def bucket_dir(x) -> Path | None:
+    """The bucket directory of `x` (a ref, a resolved directory or a slug), or
+    None when the project is unknown. The one place a bucket path is joined
+    from a name, so the name and the path cannot come from two derivations."""
+    slug = bucket_of(x)
+    return config.checkpoint_dir() / slug if slug else None
 
 
 _BUCKET_ROOT_NAME = "root"
@@ -282,10 +313,9 @@ def record_bucket_root(project_dir) -> None:
         return
     try:
         resolved = _resolved(project_dir)
-        slug = project_slug(resolved)
-        if not slug or not os.path.isabs(str(resolved)):
+        bucket = bucket_dir(resolved)
+        if bucket is None or not os.path.isabs(str(resolved)):
             return
-        bucket = config.checkpoint_dir() / slug
         bucket.mkdir(parents=True, exist_ok=True)
         stamp_root(bucket, str(resolved))
     except OSError:
@@ -299,6 +329,13 @@ def ensure_bucket(project_dir) -> Path | None:
     ledger writer calls this instead of `mkdir` on a bucket path; a census
     test fails when a module outside this one makes a directory unlisted.
 
+    A writer hands in the `BucketRef` it claimed at its entry
+    (`identity.claim`) and this only VERIFIES it: the owner must still name the
+    ref's bucket (`identity.BucketMismatch` otherwise, never an `OSError`),
+    and the directory exists. Anything else (a raw directory or slug from an
+    in-process caller that never claimed) is claimed here first, so the
+    result is the same either way.
+
     Returns the bucket directory, or None when the project is unknown. A
     filesystem failure creating the directory raises OSError, which each
     writer already handles as its own best-effort contract; the stamp itself
@@ -309,13 +346,12 @@ def ensure_bucket(project_dir) -> Path | None:
     and NO root is stamped, because a root record names an absolute directory
     and the slug text is not one. The bucket stays unstamped until a write
     that knows its directory lands, and first writer wins from there."""
-    resolved = _resolved(project_dir)
-    slug = project_slug(resolved)
-    if not slug:
+    ref = identity.claim(project_dir)  # #1092: first writer wins the root
+    if ref is None:
         return None
-    bucket = config.checkpoint_dir() / slug
+    identity.verify(ref)
+    bucket = config.checkpoint_dir() / ref.slug
     bucket.mkdir(parents=True, exist_ok=True)
-    record_bucket_root(resolved)  # #1092: first writer to this bucket wins
     return bucket
 
 
@@ -350,10 +386,10 @@ def bucket_root(project_dir_or_slug) -> str | None:
     without the git-toplevel walk collapsing it into a different bucket.
     `project_slug` is idempotent on a slug it is handed, the same contract
     every slug-accepting reader in this module already relies on."""
-    slug = project_slug(project_dir_or_slug)
-    if not slug:
+    bucket = bucket_dir(project_dir_or_slug)
+    if bucket is None:
         return None
-    root_path = config.checkpoint_dir() / slug / _BUCKET_ROOT_NAME
+    root_path = bucket / _BUCKET_ROOT_NAME
     try:
         text = root_path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -684,7 +720,7 @@ def project_surfaces(project_dir=None) -> list[Path]:
     A file whose slug cannot be read is EXCLUDED. Deleting from a surface whose
     ownership is unknown is the failure this function exists to prevent."""
     project_dir = _resolved(project_dir)
-    slug = project_slug(project_dir)
+    slug = bucket_of(project_dir)
     if not slug:
         return []
     out: list[Path] = []
@@ -882,7 +918,7 @@ def _own_team_files(project_dir) -> list:
     is (the audit's own blindness, shared so scrub and audit agree)."""
     team = config.team_dir()
     own = scope.segment(config.author()) or "unknown"
-    slug = project_slug(project_dir)
+    slug = bucket_of(project_dir)
     stamps = stamp_slugs(slug)
     try:
         segs = {tuple(s) for s in teamproject.read_candidates(project_dir)}
@@ -1642,7 +1678,9 @@ def foreign_ledger(slug: str, name: str) -> ForeignLedger:
     registry's foreign column decides, so the inbox, the decide counts and
     the listings cannot disagree about what a torn or unreadable foreign
     ledger means. Never raises."""
-    read = jsonl.read(config.checkpoint_dir() / slug / name)
+    bucket = bucket_dir(slug)
+    assert bucket is not None  # a caller names a bucket it enumerated
+    read = jsonl.read(bucket / name)
     posture = surfaces.read_posture(surfaces.bucket_ledger(name),
                                     read.health.value, foreign=True)
     return ForeignLedger(
@@ -2180,6 +2218,8 @@ def _drop_ruling_echoes(checkpoint: dict, project_dir=None) -> list:
                     "(content hash %s)",
                     normalize.content_key(item.get("text") or ""))
         return dropped
+    except identity.LOUD:
+        raise
     except Exception:
         # Fail-open must still leave a trace: if this fires AFTER the drop
         # mutated the checkpoint, the accounting above never ran.
@@ -2229,8 +2269,8 @@ def ledger_file(project_dir, name: str):
     """The path of the bucket ledger `name` ("amendments.jsonl") of this
     project, or None when the project names no bucket. The one place a verb
     resolves a ledger path from a project directory."""
-    slug = project_slug(_resolved(project_dir))
-    return config.checkpoint_dir() / slug / name if slug else None
+    bucket = bucket_dir(_resolved(project_dir))
+    return bucket / name if bucket else None
 
 
 def emitters_open(project_dir) -> bool:
@@ -2293,6 +2333,10 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     # D10.4: the one read of events.jsonl, before any directory or file is
     # made, so a refused write leaves nothing behind.
     forgotten = admission_gate(project_dir, writer)
+    # The claim comes after the gate (a refused write leaves nothing behind) and
+    # before the first stamp: the signed `project_slug`, the flat file's bucket
+    # and the pointer directory all take the ref's one name.
+    project_dir = identity.claim(project_dir) or project_dir
     d = config.checkpoint_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = _contained_path(d, session_id)
@@ -2329,7 +2373,7 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     # work" proactive recall exists for). Team copies already carry this stamp
     # (#111); this makes the local flat file carry it too. Never stamped when
     # the project is unknown — a wrong slug is worse than none.
-    slug = project_slug(project_dir)
+    slug = bucket_of(project_dir)
     if slug:
         checkpoint.setdefault("project_slug", slug)
         # #672: the slug is a lossy flattening (slash, space, and hyphen all
@@ -2380,10 +2424,9 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
     # write win latest. _pointer_lock serializes it; on lock failure the
     # sequence proceeds unguarded (pre-lock behavior, fail-open).
     _advance_pointers(d, blob, new_epoch, rotate, history)
-    if slug:
-        pdir = d / slug
-        ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
-        _record_ledger_census(slug)  # #1132: one census per bucket, ever
+    pdir = ensure_bucket(project_dir)  # #1337: dir + root, first writer wins
+    if pdir is not None:
+        _record_ledger_census(pdir.name)  # #1132: one census per bucket, ever
         _advance_pointers(pdir, blob, new_epoch, rotate, history)
     # Mint the receipt now that the checkpoint file is durably on disk (#204):
     # outputs_hash covers those exact bytes. Best-effort and self-contained —
@@ -2462,11 +2505,8 @@ def global_latest_path() -> Path | None:
 
 def project_latest_path(project_dir) -> Path | None:
     """Where a project's latest pointer lives, or None if project unknown."""
-    project_dir = _resolved(project_dir)
-    slug = project_slug(project_dir)
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / _LATEST
+    bucket = bucket_dir(_resolved(project_dir))
+    return bucket / _LATEST if bucket else None
 
 
 def sibling_buckets(project_dir) -> list[dict]:
@@ -2475,7 +2515,7 @@ def sibling_buckets(project_dir) -> list[dict]:
     bucket — the #74 shape). Pure file-ops, never raises. Returns [] when the slug
     is unknown or the checkpoint dir is absent."""
     project_dir = _resolved(project_dir)
-    slug = project_slug(project_dir)
+    slug = bucket_of(project_dir)
     if not slug:
         return []
     prefix = slug + "-"
@@ -2737,10 +2777,11 @@ def _scoped_read(project_dir, route: "Route", admit: "Admit") -> "ReadResult":
     if not isinstance(admit, Admit):
         raise TypeError(f"admit must be an Admit, got {admit!r}")
     d = config.checkpoint_dir()
-    slug = project_slug(project_dir)
-    if not slug:
+    bucket = bucket_dir(project_dir)
+    if bucket is None:
         return ReadResult(None, False, None)
-    got = _read_pointer_object(d / slug / _LATEST)
+    slug = bucket.name
+    got = _read_pointer_object(bucket / _LATEST)
     if got is not None:
         return _admit_payload(got, slug, admit, fell_back=False)
     if route is Route.OWN or not global_pointer_readable():
@@ -2779,9 +2820,9 @@ def read_own_stream_latest(project_dir=None) -> dict | None:
     the global pointer IS that stream's own prior checkpoint (pre-routing
     legacy). Takes NO policy argument on purpose: nothing an env var can
     reach may change what write_checkpoint persists."""
-    slug = project_slug(_resolved(project_dir))
+    bucket = bucket_dir(_resolved(project_dir))
     d = config.checkpoint_dir()
-    return _read_pointer_object(d / slug / _LATEST if slug else d / _LATEST)
+    return _read_pointer_object(bucket / _LATEST if bucket else d / _LATEST)
 
 
 # The legacy surface — read_latest(fallback=) and read_latest_reportable —
@@ -2870,7 +2911,7 @@ def _dual_write_team(session_id: str, checkpoint: dict, project_dir) -> None:
         # Shallow copy is deliberate and sufficient: only top-level keys are
         # stamped below; nested structures are never mutated on this path.
         blob = dict(checkpoint)
-        blob.setdefault("project_slug", project_slug(project_dir))
+        blob.setdefault("project_slug", bucket_of(project_dir))
         if segs:
             blob.setdefault("team_project", "/".join(segs))
         payload = json.dumps(blob, indent=2, ensure_ascii=False)
@@ -2961,7 +3002,7 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
         # copy of a value it forgot could not be told from any other: no
         # foreign checkpoint is admitted (the mirror of an unproven author).
         return []
-    want_slug = project_slug(project_dir)
+    want_slug = bucket_of(project_dir)
     if want_slug is None:
         return []
     want_stamps = stamp_slugs(want_slug)
@@ -3051,10 +3092,8 @@ def read_team(project_dir=None) -> list[tuple[str, dict]]:
 
 
 def _events_path(project_dir=None):
-    slug = project_slug(project_dir)
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "events.jsonl"
+    bucket = bucket_dir(project_dir)
+    return bucket / "events.jsonl" if bucket else None
 
 
 def sessions_since_count(ts: str, project_dir=None) -> int:
@@ -3079,10 +3118,9 @@ def sessions_since_count(ts: str, project_dir=None) -> int:
     if not ts:
         return 0
     project_dir = _resolved(project_dir)
-    slug = project_slug(project_dir)
-    if not slug:
+    d = bucket_dir(project_dir)
+    if d is None:
         return 0
-    d = config.checkpoint_dir() / slug
     try:
         entries = list(d.iterdir())
     except OSError:
@@ -3143,10 +3181,8 @@ def active_handoff(project_dir=None) -> dict | None:
 
 
 def _ledger_path(project_dir=None):
-    slug = project_slug(project_dir)
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "verification.jsonl"
+    bucket = bucket_dir(project_dir)
+    return bucket / "verification.jsonl" if bucket else None
 
 
 def append_verification(item_ref: str, check: str, reason: str,
@@ -3174,7 +3210,7 @@ def append_verification(item_ref: str, check: str, reason: str,
         return False
     if claim_key is not None and not _valid_claim_key(claim_key):
         return False
-    project_dir = _resolved(project_dir)
+    project_dir = identity.claim(project_dir) or project_dir
     path = _ledger_path(project_dir)
     if path is None:
         return False
@@ -3233,10 +3269,8 @@ WORLD_OUTCOME_VERDICTS = frozenset({"confirmed", "contradicted"})
 
 
 def _outcomes_path(project_dir=None):
-    slug = project_slug(project_dir)
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / WORLD_OUTCOMES
+    bucket = bucket_dir(project_dir)
+    return bucket / WORLD_OUTCOMES if bucket else None
 
 
 def first_world_outcomes(*, bucket=None, project_dir=None) -> dict:
@@ -3288,7 +3322,7 @@ def append_world_outcomes(rows, project_dir=None) -> bool:
     switch or an unknown project, False on OSError or a skipped ledger."""
     if config.is_disabled():
         return False
-    project_dir = _resolved(project_dir)
+    project_dir = identity.claim(project_dir) or project_dir
     path = _outcomes_path(project_dir)
     if path is None:
         return False
@@ -3503,10 +3537,8 @@ _FORGET_HITS = "forget-hits.jsonl"
 
 
 def _forget_hits_path(project_dir=None):
-    slug = project_slug(project_dir)
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / _FORGET_HITS
+    bucket = bucket_dir(project_dir)
+    return bucket / _FORGET_HITS if bucket else None
 
 
 def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
@@ -3530,7 +3562,7 @@ def record_forget_hits(items, project_dir=None, reason: str = "") -> bool:
     # from the arguments alone, and resolution reaches the filesystem.
     if config.is_disabled() or not items:
         return False
-    project_dir = _resolved(project_dir)
+    project_dir = identity.claim(project_dir) or project_dir
     path = _forget_hits_path(project_dir)
     if path is None:
         return False
@@ -3782,7 +3814,7 @@ def append_events(specs, project_dir=None, allow_disabled: bool = False,
         return False
     if config.is_disabled() and not allow_disabled:
         return False
-    project_dir = _resolved(project_dir)
+    project_dir = identity.claim(project_dir) or project_dir
     path = _events_path(project_dir)
     if path is None:
         return False

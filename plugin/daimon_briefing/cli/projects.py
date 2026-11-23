@@ -54,7 +54,7 @@ def projects_listing(project_arg=None, *, own_only: bool = False) -> tuple:
     own and never opens another. `own_only` narrows the same way without
     tenant scope: the MCP tool lists only its own bucket unless the host
     granted cross-project reads (#1223)."""
-    cur_slug = store.project_slug(_cli._resolve_project(project_arg))
+    cur_slug = store.bucket_of(_cli._resolve_project(project_arg))
     rows = []
     listed = view.projects(cur_slug, own_only=own_only)
     for b in listed:

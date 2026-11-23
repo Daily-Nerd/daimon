@@ -47,8 +47,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping, NamedTuple
 
-from . import (buckets, clock, config, display, jsonl, normalize, policy,
-               redact, refutations, scope, store, surfaces)
+from . import (buckets, clock, config, display, identity, jsonl, normalize,
+               policy, redact, refutations, scope, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. `authority.py` owns the tier a
 # channel carries, so a future channel tier ("ui", "signed") stays consistent
@@ -654,10 +654,7 @@ def _path(project_dir=None):
     # Without this a host calling in with "<repo>/plugin" wrote a bucket the
     # CLI's read of the same path never looked at. A bucket slug handed in by
     # `--slug` routing or a bucket-iterating reader passes through untouched.
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "requests.jsonl"
+    return store.ledger_file(project_dir, "requests.jsonl")
 
 
 def _text(name: str, value, *, required: bool = True,
@@ -816,6 +813,7 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row. Never mutates another bucket."""
     if config.is_disabled():
         return False
+    project_dir = identity.claim(project_dir) or project_dir
     path = _path(project_dir)
     if path is None:
         return False
@@ -1241,7 +1239,7 @@ class PolicyReads:
 def _home_slugs(project_dir) -> frozenset:
     """The composer's own bucket plus every alias that reaches it: what a LOCAL
     founder's `to` is compared with to tell a self-addressed ask (#1346)."""
-    mine = store.project_slug(config.resolve_project_dir(project_dir)) or ""
+    mine = store.project_bucket(project_dir) or ""
     return frozenset({mine} | buckets.aliases_for(mine)) - {""}
 
 
@@ -1273,12 +1271,11 @@ def fold_inputs(rows: list[dict], *, perspective: Perspective,
         return FoldInputs(
             policies=frozenset(),
             policies_by_to=MappingProxyType(_policies_by_to(rows, reads)),
-            own_slug=store.project_slug(
-                config.resolve_project_dir(project_dir)) or "",
+            own_slug=store.project_bucket(project_dir) or "",
             open_policies=MappingProxyType({"": reads.of(project_dir)}),
             home_slugs=home)
     if perspective is Perspective.RECIPIENT:
-        my_slug = store.project_slug(config.resolve_project_dir(project_dir))
+        my_slug = store.project_bucket(project_dir)
         open_policies = {"": reads.of(my_slug)}
         for row in rows:
             if row.get("event") == "opened":
@@ -2367,7 +2364,7 @@ def open_request(*, to: str, ask: str, why: str, channel: str,
             "--to-human addresses that project's person, which is always "
             "the work approval requirement; it cannot be opened as kind "
             "info")
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     if not slug:
         raise RequestError("project unknown; requests are recorded in the "
                            "sender's own bucket")
@@ -3102,7 +3099,7 @@ def _sender_group(project_dir) -> Join:
     # #948: one resolution, shared with the CLI. Everything below keys
     # on the project, so a caller standing in a subdir must not answer
     # for a bucket of its own.
-    sender_slug = store.project_slug(config.resolve_project_dir(project_dir))
+    sender_slug = store.project_bucket(project_dir)
     if not sender_slug:
         return Join({}, ())
     by_id: dict[str, list] = {}
@@ -3230,7 +3227,7 @@ def join(project_dir=None) -> Join:
     # #948: one resolution, shared with the CLI. Everything below keys
     # on the project, so a caller standing in a subdir must not answer
     # for a bucket of its own.
-    my_slug = store.project_slug(config.resolve_project_dir(project_dir))
+    my_slug = store.project_bucket(project_dir)
     if not my_slug:
         return Join({}, ())
     # #963: an ask minted before 0.42.0 is addressed to the LITERAL-path slug

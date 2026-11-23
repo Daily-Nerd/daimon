@@ -564,7 +564,7 @@ def _cmd_forget(args) -> int:
     # closed). `human` is the observed channel: a quarantined target is a
     # person's call, a closed one is not (the deletion promise outranks the
     # outage, H6).
-    snap = view.judge(store.project_slug(config.resolve_project_dir(project))).snap
+    snap = view.judge(store.project_bucket(project)).snap
     human = _observe.attended()
     exact = [it for _, _, it in candidates if it["id"] == args.target]
     target = exact[0] if len(exact) == 1 else None
@@ -833,7 +833,7 @@ def _cmd_unforget(args) -> int:
         jsonl.require_writable(events_path, Writer.HUMAN)
     # The view's snapshot must be buildable before a person lifts anything: a
     # lift is judged against what the view withholds, never against a guess.
-    view.judge(store.project_slug(config.resolve_project_dir(project)))
+    view.judge(store.project_bucket(project))
     key = forget.key_of(project, args.target)
     if not key:
         print("no forgotten item with that id in this project")

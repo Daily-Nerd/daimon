@@ -38,7 +38,8 @@ import hashlib
 import re
 from datetime import datetime, timezone
 
-from . import clock, config, jsonl, normalize, policy, redact, store, surfaces
+from . import (clock, config, identity, jsonl, normalize, policy, redact,
+               store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself (see the refutations table for the
 # full argument). `authority.py` owns the tier a channel carries, which keeps
@@ -125,10 +126,7 @@ def _path(project_dir=None):
     # Without this a host calling in with "<repo>/plugin" wrote a bucket the
     # CLI's read of the same path never looked at. A bucket slug handed in by
     # `--slug` routing or a bucket-iterating reader passes through untouched.
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "amendments.jsonl"
+    return store.ledger_file(project_dir, "amendments.jsonl")
 
 
 def _text(name: str, value, *, required: bool = True) -> str:
@@ -180,6 +178,7 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row. Never mutates another ledger."""
     if config.is_disabled():
         return False
+    project_dir = identity.claim(project_dir) or project_dir
     path = _path(project_dir)
     if path is None:
         return False

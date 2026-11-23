@@ -14,9 +14,8 @@ on `daimon_briefing.api`.
 import sys
 import time
 
-from . import config, display, heal, serialize_liveness
+from . import config, display, heal, serialize_liveness, store
 from .heal import HealPlan, HealReport
-from .store import project_slug
 
 
 
@@ -29,7 +28,7 @@ def _heal_scope(project_dir, sessions, everywhere, presumed_dead_before):
     project = slug = None
     if not everywhere:
         project = config.resolve_project_dir(project_dir)
-        slug = project_slug(project) or None
+        slug = store.bucket_of(project) or None
     if presumed_dead_before is not None and slug is None:
         notes.append(display.heal_epoch_ignored_note())
     return project, slug, notes

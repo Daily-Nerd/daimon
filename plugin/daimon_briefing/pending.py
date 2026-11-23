@@ -492,7 +492,7 @@ def queue_notes(*, project_dir=None, joined=None) -> tuple:
     changes is that it is said. `joined` is the request join a caller already
     holds."""
     project_dir = config.resolve_project_dir(project_dir)
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     notes: list[str] = []
     if slug:
         lanes = ("requests.jsonl", "refutations.jsonl", "amendments.jsonl",
@@ -542,7 +542,7 @@ def queue(*, project_dir=None, masked: bool = True) -> dict:
 
 
 def _queue(project_dir, joined, masked: bool = True) -> dict:
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     try:
         snap = view.judge(slug).snap if masked else None
     except Exception as exc:  # noqa: BLE001
@@ -810,7 +810,7 @@ def foreign_queues_typed(*, project_dir=None) -> ForeignQueues:
     Scar 0055 still governs the DEFAULT surface: nothing here is reached
     without the flag, and the caller typing it is the user-invoked crossing
     `recall --all-projects` already is."""
-    own = store.project_slug(config.resolve_project_dir(project_dir))
+    own = store.project_bucket(project_dir)
     # A project can be waited on before it has ever written a bucket of its
     # own: its mail sits in the SENDER's ledger, addressed by slug. So the
     # candidates are every bucket directory plus every `to` an opened row
@@ -877,7 +877,7 @@ def foreign_counts_typed(*, project_dir=None) -> ForeignCounts:
     degrades that bucket's contribution, never the whole count, and never
     `queue`'s own local result.
     """
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
+    slug = store.project_bucket(project_dir)
     counts: dict[str, int] = {}
     tally = _Tally()
     try:

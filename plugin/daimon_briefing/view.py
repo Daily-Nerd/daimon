@@ -318,8 +318,7 @@ class Match:
 
 
 def _bucket(project):
-    slug = store.project_slug(config.resolve_project_dir(project))
-    return config.checkpoint_dir() / slug if slug else None
+    return store.bucket_dir(store._resolved(project))
 
 
 def _is_bucket(name: str) -> bool:
@@ -423,7 +422,7 @@ def read_scope(project, *, slug: str | None = None,
         return Named(slug)
     if all_projects and not config.tenant_scoped():
         return All()
-    own = store.project_slug(config.resolve_project_dir(project))
+    own = store.project_bucket(project)
     if own is None:
         return Denied()
     return Own(own, tuple(config.extra_read_slugs()))
@@ -469,11 +468,11 @@ def _decide(*, slug: str | None, all_projects: bool, project: str | None,
     directory whose bucket is not the server's own. A request that leaves it
     without the surface's grant is refused out loud (`ScopeRefused`); one that
     stays inside is answered, whichever argument expressed it."""
-    own = store.project_slug(config.resolve_read_project(None))
+    own = store.bucket_of(config.resolve_read_project(None))
     target = config.resolve_read_project(project)
     leaves = (bool(all_projects) or bool(global_fallback)
               or bool(slug and slug != own)
-              or store.project_slug(target) != own)
+              or store.bucket_of(target) != own)
     if leaves and not granted:
         raise ScopeRefused(refusal)
     return ModelRead(read_scope(target, slug=slug or None,
@@ -1710,7 +1709,7 @@ def lookup_many(project, ids, *, snap: Snapshot | None = None,
     wanted = list(dict.fromkeys(i for i in ids if isinstance(i, str) and i))
     if not wanted:
         return {}
-    slug = store.project_slug(config.resolve_project_dir(project))
+    slug = store.project_bucket(project)
     snap = snap if snap is not None else judge(slug).snap
     window = (window if window is not None
               else pointers(project, snap=snap))
@@ -1967,7 +1966,7 @@ def match(project, query: str, *, how: str = "terms") -> Match:
     candidate an exact id named (no value, no forgotten key)."""
     if how not in _MATCH_HOW:
         raise ValueError(f"unknown match mode: {how!r}")
-    slug = store.project_slug(config.resolve_project_dir(project))
+    slug = store.project_bucket(project)
     snap = judge(slug).snap
     raw = store.read_latest_body(project_dir=project, route=store.Route.OWN,
                                  admit=store.Admit.ANY)
@@ -2225,7 +2224,7 @@ def _mask_rows(project, ledger_name: str, rows,
     paths = surface.prose + surface.folded_prose
     enforcement = frozenset(surfaces.path_string(fp)
                             for fp in surface.enforcement)
-    own_slug = store.project_slug(config.resolve_project_dir(project))
+    own_slug = store.project_bucket(project)
     own = snap if snap is not None else judge(own_slug).snap
     others: dict[str, Snapshot] = {}
 

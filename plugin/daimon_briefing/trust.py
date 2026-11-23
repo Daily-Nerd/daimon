@@ -41,8 +41,8 @@ import re
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from . import (channels, clock, config, jsonl, normalize, policy, redact, schema, store,
-               surfaces)
+from . import (channels, clock, config, identity, jsonl, normalize, policy,
+               redact, schema, store, surfaces)
 from .authority import channels as known_channels
 from .authority import of_channel, of_row
 from .authority import table as authority_table
@@ -126,10 +126,7 @@ def _path(project_dir=None):
     # #948: resolve BEFORE slugging, the same way every other ledger here
     # does — without this a host calling in with "<repo>/plugin" writes a
     # bucket the CLI's read of the same path never looks at.
-    slug = store.project_slug(config.resolve_project_dir(project_dir))
-    if not slug:
-        return None
-    return config.checkpoint_dir() / slug / "trust.jsonl"
+    return store.ledger_file(project_dir, "trust.jsonl")
 
 
 def _text(name: str, value, *, required: bool = True) -> str:
@@ -231,6 +228,7 @@ def append(row: dict, project_dir=None, *, writer: Writer) -> bool:
     """Append one admitted lifecycle row. Never mutates another ledger."""
     if config.is_disabled():
         return False
+    project_dir = identity.claim(project_dir) or project_dir
     path = _path(project_dir)
     if path is None:
         return False
@@ -476,7 +474,7 @@ def propose(*, text, kind: str, reason, evidence, channel: str,
     if item_id and not _ITEM_ID_RE.fullmatch(str(item_id)):
         raise TrustError(f"invalid item id: {item_id!r}")
     _require_writable(project_dir)
-    scope_slug = store.project_slug(config.resolve_project_dir(project_dir))
+    scope_slug = store.project_bucket(project_dir)
     if not scope_slug:
         raise TrustError(
             "project is unknown; a quarantine needs a resolvable project")

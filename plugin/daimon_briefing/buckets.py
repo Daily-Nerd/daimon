@@ -169,7 +169,7 @@ def target_slug(project_dir) -> str | None:
     bucket by copying its directory name, which is the reach #899's tenant
     mode and scar 0071 exist to remove.
     """
-    return store.project_slug(
+    return store.location_slug(
         config.resolve_project_dir(project_dir, allow_slug=False))
 
 
