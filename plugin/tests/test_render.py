@@ -116,7 +116,7 @@ def test_render_brief_rich_handoff_is_a_panel(monkeypatch, sample_checkpoint, ca
     # Content-only-ish assertion per the rich smoke idiom — except the one
     # format fact under test: the HANDOFF header sits ON a panel border line.
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "merge PR first\nthen review"}
     render.render_brief(sample_checkpoint, handoff=handoff)
     out = capsys.readouterr().out
     header_lines = [ln for ln in out.splitlines() if "HANDOFF" in ln]
@@ -130,7 +130,7 @@ def test_render_brief_rich_handoff_is_a_panel(monkeypatch, sample_checkpoint, ca
 def test_render_brief_plain_handoff_unchanged(monkeypatch, sample_checkpoint, capsys):
     # #566: the plain path is a compatibility surface (non-TTY hosts, hook
     # briefings) — byte-identical to the pre-#566 shape.
-    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "merge PR first\nthen review"}
     render.render_brief(sample_checkpoint, handoff=handoff)
     out = capsys.readouterr().out
     assert out.startswith(
@@ -145,7 +145,7 @@ def test_render_handoff_public_seam_plain(capsys):
     # own-checkpoint path uses (#740): its own call site into
     # `_print_handoff`'s plain branch now that `render_brief`'s non-rich
     # path composes the handoff text itself instead of routing through it.
-    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "merge PR first\nthen review"}
+    handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "merge PR first\nthen review"}
     render.render_handoff(handoff)
     out = capsys.readouterr().out
     assert out == (
@@ -203,7 +203,7 @@ def test_render_brief_plain_total_stdout_bounded_by_byte_ceiling(
     # 2,000 chars is cli.py's own _HANDOFF_MAX_CHARS ceiling: the largest a
     # handoff can be at author time.
     handoff_note = "x" * 2000
-    handoff = {"ts": "2026-08-04T18:09:41Z", "note": handoff_note}
+    handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": handoff_note}
     drift = [{"item": {"text": "Adopt D-007 prompt"}, "kind": "soft",
              "anchor": {"qualified_name": "plugin/x.py::run"}}]
     teammates = _teammate_sections()
@@ -232,7 +232,7 @@ def test_render_brief_plain_body_budget_has_a_floor(monkeypatch,
     # deliberately small one.
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "50")
-    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "x" * 2000}
+    handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "x" * 2000}
     render.render_brief(sample_checkpoint, handoff=handoff)
     out = capsys.readouterr().out
     # The body still rendered something, not nothing, despite a ceiling far

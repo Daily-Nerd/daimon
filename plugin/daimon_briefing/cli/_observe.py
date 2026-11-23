@@ -38,10 +38,13 @@ def channel(*, agent: bool = False) -> str | None:
     return "cli-tty" if attended() else None
 
 
-def event_source() -> str:
+def event_source(*, agent: bool = False) -> str:
     """The `source` of an events row written from this invocation. A missing
     or unreadable stdin reads as no terminal: doubt resolves away from the
-    human tier."""
+    human tier. `agent` is the caller's `--by agent`, the self-declaration of
+    the NARROWER tier (as in `channel`): honoured even at a terminal."""
+    if agent:
+        return store.observed_event_source(False)
     try:
         tty = sys.stdin is not None and sys.stdin.isatty()
     except (OSError, ValueError):

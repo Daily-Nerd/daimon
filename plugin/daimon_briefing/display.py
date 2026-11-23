@@ -15,6 +15,41 @@ from . import marks
 from .surfaces import ledger_hint  # noqa: F401 — the cure rule lives in the registry
 
 _SPACE_RE = re.compile(r"\s+")
+
+# What a terminal acts on: C0 except tab and newline (ESC starts every cursor
+# move, erase and title sequence, CR rewrites a row), DEL, C1 (NEL, and the
+# single-byte CSI and OSC introducers) and the Unicode line and paragraph
+# separators. Text that carries any of these is not shown, never "escaped".
+_UNPRINTABLE_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def has_unprintable(text) -> bool:
+    """Whether `text` carries a character a terminal would act on."""
+    return bool(_UNPRINTABLE_RE.search(str(text or "")))
+
+
+def printable(text):
+    """`text` without the characters a terminal acts on (`_UNPRINTABLE_RE`).
+    Foreign text (a stored item, a ledger prose value, a baton) is data, and a
+    reader's terminal must never take an instruction from it. A non-string is
+    returned as it is. Tab and newline survive."""
+    if not isinstance(text, str):
+        return text
+    return _UNPRINTABLE_RE.sub("", text)
+
+
+def printable_tree(node):
+    """`node` with `printable` applied to every string in it (dict values,
+    list members), in place; returns `node`."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            node[key] = (printable(value) if isinstance(value, str)
+                         else printable_tree(value))
+    elif isinstance(node, list):
+        for index, member in enumerate(node):
+            node[index] = (printable(member) if isinstance(member, str)
+                           else printable_tree(member))
+    return node
 _MIN_SENTENCE = 20
 _SENTENCE_END_RE = re.compile(r"[.?!](?= [A-Z])")
 

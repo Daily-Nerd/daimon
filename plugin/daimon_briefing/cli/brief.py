@@ -204,12 +204,9 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     # for v1 (degrades safely); origin-project gating is future work (#60 follow-up).
     drift = (anchor.drifted(checkpoint, drift_project)
              if checkpoint and drift_project else [])
-    # #523: the baton leads the briefing. Fail-open like the view's reads — a broken
-    # events file must never take the briefing down.
-    try:
-        handoff = store.active_handoff(route)
-    except Exception:
-        handoff = None
+    # #523: the baton leads the briefing. `briefing.prepare` read it (fail-open);
+    # this host only renders it.
+    handoff = annotated.handoff if annotated else None
     trailer = _withheld_trailer(annotated, team_counts)
     # One cap over every note this brief carries: the #1236 import note of
     # the body rendered here, the snapshot's, the request joins' (merged in
@@ -367,7 +364,7 @@ def _cmd_brief(args, fx) -> int:
         # orientation it has — status says "waiting baton"; brief must not
         # swallow it on the header-only path. Read-only: consumption stays
         # serialize-count-based in store.active_handoff.
-        render.render_handoff(store.active_handoff(project))
+        render.render_handoff(annotated.handoff)
         render.render_brief_note(list(annotated.notes))
         render.render_brief_line([
             "No briefing for this project yet — the first serialized session "

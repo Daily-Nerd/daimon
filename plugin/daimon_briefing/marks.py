@@ -12,7 +12,7 @@ it, and neither may drift from the other.
 # as `api.BRIEFING_FORMAT` and never printed into one. Bump it with ANY change
 # to the constants below or to the parser's rules; `test_render_briefing`
 # hashes the constants and fails on a change that did not bump it.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 # The first line of every briefing, and what a parser takes as its header
 # once the warnings above it are set aside.
@@ -39,7 +39,23 @@ VERIFY_PHRASE = "VERIFY BEFORE TRUSTING"
 
 WARNING_MARKERS = (WARNING_MARK, VERIFY_PHRASE)
 
+# The baton block (#523) leads a briefing: a title line, then one line per
+# line of the baton, each behind the line mark, then a blank line. The title
+# says who wrote it. `left deliberately` is a person's (the human tier); an
+# agent's baton, or one whose source no table knows, says so.
+HANDOFF_LEAD = "HANDOFF ("
+HANDOFF_BY_HUMAN = "left deliberately by previous session"
+HANDOFF_BY_AGENT = "written by an agent, unverified"
+HANDOFF_LINE_MARK = "\u2192"
+
 
 def warning(text: str) -> str:
     """`text` as a warning line: the warning mark in front, once."""
     return text if text.startswith(WARNING_MARK) else f"{WARNING_MARK} {text}"
+
+
+def handoff_title(tier, ts: str) -> str:
+    """The baton block's title line, without its closing colon. Only the human
+    tier reads as a person's; anything else is shown as agent text."""
+    by = HANDOFF_BY_HUMAN if tier == "human" else HANDOFF_BY_AGENT
+    return f"{HANDOFF_LEAD}{by}, {ts})"

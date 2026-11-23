@@ -1254,8 +1254,15 @@ def _greeting_pattern(greeting: str) -> str:
     return re.escape(greeting).replace("'", "['’]")
 
 
+# The baton block leads a briefing, above the greeting, so its title is a
+# marker too: an agent's baton text must not survive as a witness because the
+# strip started at the greeting below it.
+_HANDOFF_HEAD = (re.escape(marks.HANDOFF_LEAD) + "(?:"
+                 + re.escape(marks.HANDOFF_BY_HUMAN) + "|"
+                 + re.escape(marks.HANDOFF_BY_AGENT) + "), ")
+
 _BRIEF_HEAD_RE = re.compile(
-    "(?:DAIMON BRIEFING |"
+    "(?:DAIMON BRIEFING |" + _HANDOFF_HEAD + "|"
     + "|".join(_greeting_pattern(g)
                for g in (marks.GREETING, *marks.LEGACY_GREETINGS))
     + ").*", re.DOTALL)

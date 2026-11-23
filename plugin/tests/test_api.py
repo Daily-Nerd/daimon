@@ -4,7 +4,7 @@
 import ast
 from pathlib import Path
 
-from daimon_briefing import (api, briefing, display, heal, heal_host, hostgit, inspector,
+from daimon_briefing import (api, briefing, display, handoff, heal, heal_host, hostgit, inspector,
                              marks,
                              pending, requests, serialize_liveness, store, surfaces,
                              transcript, view)
@@ -17,8 +17,10 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "SERIALIZE_STATES", "LIVE_STATES", "HealPlan", "HealReport",
              "HealTarget", "HealSkip", "heal_plan", "heal_all",
              "RenderedBriefing", "render_briefing", "briefing_text",
-             "BRIEFING_FORMAT", "declare_project")
-OWNED = ("Briefing", "parse_briefing")
+             "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
+             "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
+             "HandoffNotRecorded", "write_handoff")
+OWNED = ("Handoff", "Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
 
@@ -48,6 +50,12 @@ def test_every_name_is_the_source_object():
     assert api.EXCLUDED_ROWS is transcript.EXCLUDED_ROWS
     assert api.Admitted is transcript.Admitted
     assert api.admitted_messages is transcript.admitted_messages
+    assert api.HANDOFF_MAX_CHARS == handoff.MAX_CHARS
+    assert api.HANDOFF_MAX_BYTES == handoff.MAX_BYTES
+    assert api.HandoffUnprintable is handoff.HandoffUnprintable
+    assert api.HandoffTooLong is handoff.HandoffTooLong
+    assert api.HandoffNotRecorded is handoff.HandoffNotRecorded
+    assert api.write_handoff is handoff.write
     assert api.serializes is serialize_liveness.serializes
     assert api.serialize_rows is serialize_liveness.serialize_rows
     assert api.SerializeRow is serialize_liveness.SerializeRow

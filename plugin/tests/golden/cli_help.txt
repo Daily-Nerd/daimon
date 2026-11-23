@@ -890,10 +890,11 @@ relation_id exact rel-… id options: -h, --help show this help message and exit
 project directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === handoff ===
-usage: daimon handoff [-h] [--clear] [--project PROJECT] [text] positional arguments: text the
-baton: imperative, small: what to do first and what to beware options: -h, --help show this help
-message and exit --clear retract the active baton --project PROJECT project directory (default:
-DAIMON_PROJECT_DIR, then cwd)
+usage: daimon handoff [-h] [--clear] [--by {agent}] [--project PROJECT] [text] positional arguments:
+text the baton: imperative, small: what to do first and what to beware options: -h, --help show this
+help message and exit --clear retract the active baton --by {agent} write the baton as agent text
+even at a terminal: it renders as written by an agent, unverified --project PROJECT project
+directory (default: DAIMON_PROJECT_DIR, then cwd)
 
 === log ===
 usage: daimon log [-h] --text TEXT [--kind KIND] [--status STATUS] [--project PROJECT] options: -h,

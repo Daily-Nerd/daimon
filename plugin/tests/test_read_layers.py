@@ -97,6 +97,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/identity.py": "write",  # claims a bucket for a location and returns the ref; asks store, reads no checkpoint
     "daimon_briefing/configure.py": "write",  # writes ~/.daimon/env
     "daimon_briefing/field_table.py": "write",  # the checkpoint field contract and validator
+    "daimon_briefing/handoff.py": "write",  # the baton's size cap and the in-process agent-tier write (api.write_handoff)
     "daimon_briefing/forget.py": "write",  # runs every step of the forget registry in phase order
     "daimon_briefing/harvest.py": "write",  # harvests host memory files into checkpoints
     "daimon_briefing/host_detect.py": "write",  # host and plugin detection for installers

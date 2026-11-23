@@ -479,6 +479,7 @@ DESTS = {
     "handoff": {
         "text": ("INE", "R6"),
         "clear": ("INE", "R6"),
+        "by": ("INE", "X-HUMAN"),
         "project": ("OUT", "R1"),
     },
     "log": {

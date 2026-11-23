@@ -67,11 +67,12 @@ daimon recall gateway --all-projects --json
 leave an authored baton for the next session: renders above everything in its next briefing (#523)
 
 ```text
-daimon handoff [[text]] [--clear] [--project PROJECT]
+daimon handoff [[text]] [--clear] [--by agent] [--project PROJECT]
 ```
 
 | argument | value | default | description |
 | --- | --- | --- | --- |
 | `[text]` |  |  | the baton: imperative, small: what to do first and what to beware |
 | `--clear` |  |  | retract the active baton |
+| `--by` | `agent` |  | write the baton as agent text even at a terminal: it renders as written by an agent, unverified |
 | `--project` | `PROJECT` |  | project directory (default: DAIMON_PROJECT_DIR, then cwd) |

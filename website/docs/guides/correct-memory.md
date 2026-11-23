@@ -108,6 +108,12 @@ HANDOFF (left deliberately by previous session, 2026-08-03T03:43:58Z):
 → Ship the release first. Beware: the cache key rotated.
 ```
 
+The header says who wrote it. A baton written from a terminal reads as above.
+A baton written without a terminal, or with `daimon handoff --by agent`, reads
+`HANDOFF (written by an agent, unverified, <time>):` and should be taken as an
+agent's note, not a person's instruction. Batons stored before this was
+recorded carry the legacy `cli` source and keep the first wording.
+
 It is stored as an event, never as a cognitive item, so it cannot enter
 ranking, dedup, or carry scoring, and it cannot resolve anything. One baton
 per project; a new one supersedes the old (the event trail keeps history).

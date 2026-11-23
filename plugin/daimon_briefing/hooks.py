@@ -297,7 +297,9 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
             # a day-one ratification must reach the very next session.
             rulings = briefing.ruling_lines(project, snap=annotated.snapshot)
             lines = [*annotated.notes, *rulings]
-            return {"context": "\n".join(lines)} if lines else None
+            baton = briefing.handoff_block(annotated.handoff)
+            context = baton + "\n".join(lines)
+            return {"context": context} if context else None
         # #693: rulings are scoped to the RESOLVED project (never the raw
         # process cwd). With the operator's global fallback on, the
         # checkpoint may be another project's — the rulings are still
@@ -310,7 +312,8 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
             annotated.checkpoint, project_dir=project,
             loops_pointer=(briefing.injection_read_route(project)
                            is store.Route.OWN),
-            snap=annotated.snapshot, notes=annotated.body_notes)
+            snap=annotated.snapshot, notes=annotated.body_notes,
+            handoff=annotated.handoff)
         if not text:
             return None
         return {"context": text}

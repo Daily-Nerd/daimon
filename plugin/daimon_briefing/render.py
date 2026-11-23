@@ -132,18 +132,19 @@ def _print_version_note(checkpoint) -> None:
     print(_format_version_note(checkpoint), end="")
 
 
+def _handoff_title(handoff) -> str:
+    """The baton's header, shared by both render paths and the machine brief
+    (`marks.handoff_title`): a human-tier row keeps the original wording,
+    anything else reads as agent text, named and unverified."""
+    return briefing.handoff_lines(handoff)[0]
+
+
 def _format_handoff(handoff) -> str:
-    """Plain-path text for the baton block (#523, #1044): identical bytes to
-    what `_print_handoff`'s non-rich branch used to print directly, extracted
-    so `render_brief`'s byte-ceiling accounting can measure it before the
-    body renders. "" when there is no handoff (nothing to reserve or print).
-    Multi-line batons keep one arrow per line."""
-    if not handoff:
-        return ""
-    lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
-    parts = [f"HANDOFF (left deliberately by previous session, {handoff['ts']}):"]
-    parts.extend(f"→ {line}" for line in lines)
-    return "\n".join(parts) + "\n\n"
+    """Plain-path text for the baton block (#523, #1044), the one
+    `briefing.handoff_block` writes for every host, so `render_brief`'s
+    byte-ceiling accounting can measure it before the body renders. ""
+    when there is no handoff (nothing to reserve or print)."""
+    return briefing.handoff_block(handoff)
 
 
 def _print_handoff(handoff) -> None:
@@ -153,14 +154,15 @@ def _print_handoff(handoff) -> None:
 
     #566: on the rich path the baton gets a bordered panel like every ambient
     section below it — bare stdout above the panels inverted the visual
-    hierarchy for the one block a human wrote deliberately. Magenta border:
+    hierarchy for the one block a person may have written deliberately (the
+    title says who wrote it: `_handoff_title`). Magenta border:
     distinct from red (drift/external warnings) so "read this first" never
     reads as "something is wrong". The plain path stays byte-identical — it is
     a compatibility surface for non-TTY hosts and hook briefings."""
     if not handoff:
         return
     if supports_rich():
-        lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
+        lines = briefing.handoff_lines(handoff)[1]
         from rich.console import Console
         from rich.panel import Panel
         from rich.text import Text
@@ -168,7 +170,7 @@ def _print_handoff(handoff) -> None:
         body = Text("\n".join(f"→ {ln}" for ln in lines), style="bold")
         Console().print(Panel(
             body,
-            title=f"HANDOFF (left deliberately by previous session, {handoff['ts']})",
+            title=_handoff_title(handoff),
             border_style="magenta", title_align="left",
         ))
         return

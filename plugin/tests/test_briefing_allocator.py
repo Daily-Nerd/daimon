@@ -43,7 +43,7 @@ def _printed(capsys, **kw):
 
 
 def test_total_printed_bytes_stay_within_the_budget(monkeypatch, capsys):
-    handoff = {"ts": "2026-08-04T18:09:41Z", "note": "hand off " * 40}
+    handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "hand off " * 40}
     drift = [{"item": {"text": "Adopt D-007 prompt"}, "kind": "soft",
               "anchor": {"qualified_name": "plugin/x.py::run"}}]
     trailer = ["2 resolved item(s) withheld - `daimon status --suppressed` to list"]

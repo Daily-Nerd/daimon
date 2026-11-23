@@ -69,9 +69,31 @@ host, and the assertion would heal a serialize that is still running. Without
 it, a killed run frees itself after `hung_after_seconds`. It is ignored with a
 note under `everywhere=True`.
 
-`api` is read-side with one named exception (design D23): `heal_all` is a
-launcher. It starts daimon's own serialize repair and writes no cognitive
-content; nothing else here starts a process.
+`api` is read-side with two named exceptions. `heal_all` (design D23) is a
+launcher: it starts daimon's own serialize repair and writes no cognitive
+content; nothing else here starts a process. `write_handoff` is the one write.
+
+Handoff (`write_handoff`). `write_handoff(project, text)` leaves the baton the
+next briefing leads with, for a project given as a path. It is ALWAYS agent
+tier: it never asks the terminal, so a host process that holds a TTY still
+writes an agent row, and `daimon brief` prints it as "written by an agent,
+unverified", never as a person's note. The size limit is `HANDOFF_MAX_CHARS`
+and `HANDOFF_MAX_BYTES` (UTF-8; read both before building the text). Over
+either raises `HandoffTooLong`, which carries `.limit`, `.length`,
+`.byte_limit` and `.size`; nothing is truncated or written. A text with a
+character a terminal acts on (a C0 control other than newline and tab, DEL, a
+C1 control, U+2028 or U+2029) raises `HandoffUnprintable`. An empty text
+raises `ValueError`; `HandoffNotRecorded` means daimon is disabled, the project
+is unknown or the ledger is unwritable. Latest wins.
+
+The baton leads every briefing, whichever host renders it (the CLI, the MCP
+tool, `render_briefing`, the Hermes hook): `briefing.prepare` reads it once.
+Its block is a title line, one `\u2192 ` line per line of the baton, and a blank
+line. The title names the writer: `HANDOFF (left deliberately by previous
+session, <ts>):` for a person, `HANDOFF (written by an agent, unverified,
+<ts>):` for an agent or a source no table knows. `parse_briefing` returns it as
+`Briefing.handoff` (`Handoff(text, ts, tier)`, tier `human` or `agent`) and
+keeps its lines out of every other field (format 3).
 
 Render (`render_briefing`, `briefing_text`, #1180). The MACHINE briefing, the
 same bytes the MCP `daimon_brief` tool returns: always the deterministic render,
@@ -109,11 +131,16 @@ parser. `BRIEFING_FORMAT` is an integer that changes only when what
 renderers write with, so the format and its reader cannot drift apart.
 """
 
+import re as _re
 from dataclasses import dataclass
 
 from .briefing import RenderedBriefing, briefing_text, render_briefing
 from .display import withheld_json, withheld_marker
 from .heal import HealPlan, HealReport, HealSkip, HealTarget
+from .handoff import MAX_BYTES as HANDOFF_MAX_BYTES
+from .handoff import MAX_CHARS as HANDOFF_MAX_CHARS
+from .handoff import HandoffNotRecorded, HandoffTooLong, HandoffUnprintable
+from .handoff import write as write_handoff
 from .heal_host import heal_all, heal_plan
 from .hostgit import declare as declare_project
 from .inspector import human_lines as why_lines
@@ -121,6 +148,7 @@ from .inspector import inspect_item as why
 from .serialize_liveness import (LIVE_STATES, SERIALIZE_STATES, SerializeRow,
                                  Serializes, serialize_rows, serializes)
 from .marks import FORMAT_VERSION as BRIEFING_FORMAT
+from . import marks as _marks
 from .marks import ITEM_MARKS, RULING_MARK, WARNING_MARKERS
 from .pending import queue
 from .requests import inbox, inbox_listing, join, listing
@@ -137,7 +165,22 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "HealPlan",
            "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
            "RenderedBriefing", "render_briefing", "briefing_text",
-           "BRIEFING_FORMAT", "declare_project", "Briefing", "parse_briefing")
+           "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
+           "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
+           "HandoffNotRecorded", "write_handoff", "Handoff",
+           "Briefing", "parse_briefing")
+
+
+@dataclass(frozen=True)
+class Handoff:
+    """The baton block of a briefing: its `text` (the lines behind the arrow
+    mark, joined by newlines), the `ts` it was written and the `tier` the
+    title names, `human` or `agent` (an agent's baton, or one whose source no
+    table knows, reads `agent`)."""
+
+    text: str
+    ts: str
+    tier: str
 
 
 @dataclass(frozen=True)
@@ -145,13 +188,23 @@ class Briefing:
     """A briefing split by line kind. `header` is the first line that is not
     a warning, `standing_rulings` start with the ruling mark, `items` with an
     item mark, and `warnings` carry a warning marker anywhere. Any other line
-    is not kept. `raw` is the text as given."""
+    is not kept. `handoff` is the baton block that leads a briefing (format
+    3), or None; its lines are only ever the baton's text, so what a baton
+    says can never read as a header, a ruling, an item or a warning. `raw` is
+    the text as given."""
 
     header: str = ""
     standing_rulings: tuple = ()
     items: tuple = ()
     warnings: tuple = ()
     raw: str = ""
+    handoff: Handoff | None = None
+
+
+_HANDOFF_TITLE = _re.compile(
+    "^" + _re.escape(_marks.HANDOFF_LEAD) + "(" + _re.escape(_marks.HANDOFF_BY_HUMAN) + "|"
+    + _re.escape(_marks.HANDOFF_BY_AGENT) + r"), (.*)\):$")
+_ARROW = _marks.HANDOFF_LINE_MARK + " "
 
 
 def parse_briefing(text: str) -> Briefing:
@@ -163,9 +216,24 @@ def parse_briefing(text: str) -> Briefing:
     rulings: list = []
     items: list = []
     warnings: list = []
+    handoff = None
+    open_baton: tuple | None = None    # (tier, ts, lines) while in the block
     for line in text.splitlines():
         stripped = line.strip()
+        if open_baton is not None:
+            if stripped.startswith(_ARROW):
+                open_baton[2].append(stripped[len(_ARROW):])
+                continue
+            handoff = Handoff("\n".join(open_baton[2]), open_baton[1],
+                              open_baton[0])
+            open_baton = None
         if not stripped:
+            continue
+        titled = (_HANDOFF_TITLE.match(stripped)
+                  if handoff is None and not header else None)
+        if titled:
+            tier = "human" if titled[1] == _marks.HANDOFF_BY_HUMAN else "agent"
+            open_baton = (tier, titled[2], [])
             continue
         if any(marker in stripped for marker in WARNING_MARKERS):
             warnings.append(stripped)
@@ -177,5 +245,8 @@ def parse_briefing(text: str) -> Briefing:
             rulings.append(stripped)
         elif stripped.startswith(ITEM_MARKS):
             items.append(stripped)
+    if open_baton is not None:
+        handoff = Handoff("\n".join(open_baton[2]), open_baton[1],
+                          open_baton[0])
     return Briefing(header, tuple(rulings), tuple(items), tuple(warnings),
-                    text)
+                    text, handoff)
