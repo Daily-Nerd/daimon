@@ -1466,6 +1466,9 @@ class Event:
     note: str | None
     item_text: str | None
     tombstone: bool = False
+    # The row's stable identifier; None for a row written before the ledger
+    # carried one (an absent key is data, scar 0042).
+    event_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1512,7 +1515,7 @@ def _event(row: dict, snap: Snapshot) -> Event:
     return Event(_text(row.get("ts")), _text(row.get("kind")),
                  _text(row.get("item_ref")), status, _text(row.get("source")),
                  _judged(row.get("note"), snap, closed_masks=False),
-                 item_text, tombstone)
+                 item_text, tombstone, _text(row.get("event_id")))
 
 
 def events(project, *, snap: Snapshot | None = None) -> tuple[Event, ...]:

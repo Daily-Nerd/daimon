@@ -39,8 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from . import (authority, config, hostgit, identity, jsonl, normalize, policy, receipts,
-               redact, schema, scope, serializer, surfaces, teamproject)
+from . import (authority, clock, config, hostgit, identity, jsonl, normalize,
+               policy, receipts, redact, schema, scope, serializer, surfaces, teamproject)
 from .surfaces import Writer
 
 log = logging.getLogger("daimon_briefing")
@@ -3774,8 +3774,8 @@ def _event_row(item_ref: str, status: str, note: str = "",
     the row on disk with its admission."""
     evt = policy.admit_row(
         {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-         "kind": kind, "item_ref": item_ref, "status": status,
-         "source": source, "note": note, "item_text": item_text},
+         "event_id": clock.new_id(), "kind": kind, "item_ref": item_ref,
+         "status": status, "source": source, "note": note, "item_text": item_text},
         redact_fields=("status", "note", "item_text"))
     # Empty optional fields never land on the row — unchanged shape.
     if not evt["note"]:
@@ -3785,11 +3785,11 @@ def _event_row(item_ref: str, status: str, note: str = "",
     return evt
 
 
-def append_event(item_ref: str, status: str, note: str = "",
-                 kind: str = "resolution", project_dir=None,
-                 item_text: str = "", allow_disabled: bool = False,
-                 tombstone: bool = False, *, source: str,
-                 writer: Writer) -> bool:
+def write_event(item_ref: str, status: str, note: str = "",
+                kind: str = "resolution", project_dir=None,
+                item_text: str = "", allow_disabled: bool = False,
+                tombstone: bool = False, *, source: str,
+                writer: Writer) -> str:
     """One appended JSON line per lifecycle fact (#102). Append-only: the
     file is never rewritten — resolution is a derivation at read, so the
     audit trail must stay byte-stable. The ONE exception is
@@ -3814,12 +3814,28 @@ def append_event(item_ref: str, status: str, note: str = "",
     default that is a member of `authority.HUMAN_EVENT_SOURCES` turns every omission into
     a person's act. A human path passes the tier it observed (`cli-tty`), a
     machine path names itself (`agent`, `serializer`), and
-    `cli/_observe.py` is the one reading of the terminal."""
-    return append_events(
+    `cli/_observe.py` is the one reading of the terminal.
+
+    Returns the row's `event_id`, or "" when nothing was written: the one
+    identifier a host compares against what it reads back (`why --json`), since
+    `ts` is only second resolution."""
+    ids = _append_rows(
         [{"item_ref": item_ref, "status": status, "note": note, "kind": kind,
           "source": source, "item_text": item_text}],
         project_dir=project_dir, allow_disabled=allow_disabled,
         tombstone=tombstone, writer=writer)
+    return ids[0] if ids else ""
+
+
+def append_event(item_ref: str, status: str, note: str = "",
+                 kind: str = "resolution", project_dir=None,
+                 item_text: str = "", allow_disabled: bool = False,
+                 tombstone: bool = False, *, source: str,
+                 writer: Writer) -> bool:
+    """`write_event`, answering only whether the row landed."""
+    return bool(write_event(
+        item_ref, status, note, kind, project_dir, item_text, allow_disabled,
+        tombstone, source=source, writer=writer))
 
 
 def append_events(specs, project_dir=None, allow_disabled: bool = False,
@@ -3832,15 +3848,23 @@ def append_events(specs, project_dir=None, allow_disabled: bool = False,
     `forgotten:` status is refused unless `tombstone` is set, nothing is
     written under the kill switch without `allow_disabled`, and an unknown
     project has no ledger. Returns whether the rows landed."""
+    return _append_rows(specs, project_dir, allow_disabled, tombstone,
+                        writer=writer) is not None
+
+
+def _append_rows(specs, project_dir=None, allow_disabled: bool = False,
+                 tombstone: bool = False, *, writer: Writer) -> list[str] | None:
+    """The one writer behind `append_events` and `write_event`: the `event_id`
+    of every row that landed, in order, or None when the write did not happen."""
     if any(is_tombstone_status(spec["status"]) for spec in specs) \
             and not tombstone:
-        return False
+        return None
     if config.is_disabled() and not allow_disabled:
-        return False
+        return None
     project_dir = identity.claim(project_dir) or project_dir
     path = _events_path(project_dir)
     if path is None:
-        return False
+        return None
     try:
         rows = []
         for spec in specs:
@@ -3850,11 +3874,13 @@ def append_events(specs, project_dir=None, allow_disabled: bool = False,
         # `writer` picks the row of the registry's write column (#1132 PR
         # 10b): a person and an admission are REFUSED an unproven events
         # ledger, a machine row is SKIPPED, a cure always writes.
-        return jsonl.append_rows_as(path, rows, writer)
+        if not jsonl.append_rows_as(path, rows, writer):
+            return None
+        return [row["event_id"] for row in rows]
     except jsonl.Refused:
         raise  # only when the run surfaces refusals (jsonl.append_as)
     except OSError:
-        return False
+        return None
 
 
 def new_key_ref() -> str:

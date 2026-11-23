@@ -6,6 +6,7 @@ keeps working on moved code.
 """
 
 import datetime
+import json
 import sys
 import textwrap
 import time
@@ -198,22 +199,26 @@ def _cmd_resolve(args) -> int:
         render.render_lifecycle_lines(
             [f"would resolve {shown} [{effective_status}]"])
         return 0
-    ok = store.append_event(
+    event_id = store.write_event(
         item_id, effective_status,
         note=(evidence if by_agent else (args.note or "")),
         source=event_source,
         project_dir=project, writer=Writer.HUMAN)
-    if not ok:
+    if not event_id:
         print("event not written (daimon disabled or project unknown)")
         return 1
+    _cli._note_usage("resolve:agent" if by_agent else "resolve")
+    if args.json:
+        print(json.dumps({"item_id": item_id, "status": effective_status,
+                          "event_id": event_id}, ensure_ascii=False))
+        return 0
     if by_agent:
-        _cli._note_usage("resolve:agent")
         render.render_lifecycle_lines(
             [f"claim recorded {shown} "
              "— pending verification at session end"])
-        return 0
-    _cli._note_usage("resolve")
-    render.render_lifecycle_lines([f"resolved {shown} [{args.status}]"])
+    else:
+        render.render_lifecycle_lines([f"resolved {shown} [{args.status}]"])
+    render.render_lifecycle_lines([f"  event: {event_id}"])
     return 0
 
 def _unreached_line(u) -> str:
@@ -1493,6 +1498,10 @@ def register(sub, fmt) -> None:
     p_resolve.add_argument(
         "--dry-run", action="store_true",
         help="show what would resolve without writing an event: look before the write (#304)")
+    p_resolve.add_argument(
+        "--json", action="store_true",
+        help="print {item_id, status, event_id} instead of the sentence; the "
+             "event_id is the one `why --json` shows as lifecycle_event.event_id")
     p_resolve.set_defaults(func=_cli._cmd_resolve)
 
     p_forget = sub.add_parser(

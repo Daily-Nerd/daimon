@@ -365,15 +365,16 @@ daimon slug -- -Users-x # '--' escapes a path starting with '-'
 
 === resolve ===
 usage: daimon resolve [-h] [--status STATUS] [--note NOTE] [--by {agent}] [--evidence EVIDENCE]
-[--project PROJECT] [--dry-run] target positional arguments: target item id (exact) or a query that
-must match exactly one item options: -h, --help show this help message and exit --status STATUS
-free-form lifecycle status (default: resolved; a status starting with 'reopen' revives the item)
---note NOTE optional context recorded on the event --by {agent} declare an agent-initiated claim
-(requires --evidence); omit for the human path (default) --evidence EVIDENCE verbatim transcript
-quote proving the claim: required with --by agent, rejected without it --project PROJECT project
-directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run show what would resolve without writing
-an event: look before the write (#304) Examples: daimon resolve o-3f8a2c daimon resolve "release
-pipeline approval" --note "shipped in 0.9"
+[--project PROJECT] [--dry-run] [--json] target positional arguments: target item id (exact) or a
+query that must match exactly one item options: -h, --help show this help message and exit --status
+STATUS free-form lifecycle status (default: resolved; a status starting with 'reopen' revives the
+item) --note NOTE optional context recorded on the event --by {agent} declare an agent-initiated
+claim (requires --evidence); omit for the human path (default) --evidence EVIDENCE verbatim
+transcript quote proving the claim: required with --by agent, rejected without it --project PROJECT
+project directory (default: DAIMON_PROJECT_DIR, then cwd) --dry-run show what would resolve without
+writing an event: look before the write (#304) --json print {item_id, status, event_id} instead of
+the sentence; the event_id is the one `why --json` shows as lifecycle_event.event_id Examples:
+daimon resolve o-3f8a2c daimon resolve "release pipeline approval" --note "shipped in 0.9"
 
 === forget ===
 usage: daimon forget [-h] [--reason REASON] [--project PROJECT] [--dry-run] [--resume] [--only
@@ -826,20 +827,22 @@ DAIMON_PROJECT_DIR, then cwd) --slug SLUG route to another project's bucket by i
 --slug=<slug> (a slug starts with '-'); routing only, the channel gate is unchanged (#766)
 
 === request done ===
-usage: daimon request done [-h] --evidence EVIDENCE [--by {agent}] [--project PROJECT] request_id An
-agent may run this on an accepted ask without asking the human. positional arguments: request_id
-exact q-… id options: -h, --help show this help message and exit --evidence EVIDENCE what settles
-it; a verbatim quote from an agent is byte-checked at session end --by {agent} declare yourself an
-agent; omit it only from an interactive terminal --project PROJECT project directory (default:
-DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request done [-h] --evidence EVIDENCE [--by {agent}] [--json] [--project PROJECT]
+request_id An agent may run this on an accepted ask without asking the human. positional arguments:
+request_id exact q-… id options: -h, --help show this help message and exit --evidence EVIDENCE what
+settles it; a verbatim quote from an agent is byte-checked at session end --by {agent} declare
+yourself an agent; omit it only from an interactive terminal --json print {request_id, event,
+event_id} instead of the card --project PROJECT project directory (default: DAIMON_PROJECT_DIR, then
+cwd)
 
 === request reply ===
-usage: daimon request reply [-h] --note NOTE [--evidence EVIDENCE] [--by {agent}] [--project
-PROJECT] request_id positional arguments: request_id exact q-… id options: -h, --help show this help
-message and exit --note NOTE the update the sender reads; 2000 characters --evidence EVIDENCE
-optional pointer to what backs the update --by {agent} declare yourself an agent; omit it only from
-an interactive terminal. An agent reply reaches the sender labeled unverified --project PROJECT
-project directory (default: DAIMON_PROJECT_DIR, then cwd)
+usage: daimon request reply [-h] --note NOTE [--evidence EVIDENCE] [--by {agent}] [--json]
+[--project PROJECT] request_id positional arguments: request_id exact q-… id options: -h, --help
+show this help message and exit --note NOTE the update the sender reads; 2000 characters --evidence
+EVIDENCE optional pointer to what backs the update --by {agent} declare yourself an agent; omit it
+only from an interactive terminal. An agent reply reaches the sender labeled unverified --json print
+{request_id, event, event_id} instead of the card --project PROJECT project directory (default:
+DAIMON_PROJECT_DIR, then cwd)
 
 === request list ===
 usage: daimon request list [-h] [--json] [--min-severity {critical,high,normal,low}] [--project

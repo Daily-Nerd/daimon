@@ -729,6 +729,16 @@ def _row_order(row: dict) -> int:
         return 0
 
 
+def _moved(current: dict, row: dict) -> None:
+    """Record that `row` is now the last one folded into `current`: its second
+    resolution `ts`, its nanosecond `order`, and its `event_id`, the stable
+    identifier a host compares with what its own write returned. One place, so
+    the three keys can never describe different rows."""
+    current["updated_at"] = row.get("ts") or current["updated_at"]
+    current["updated_order"] = _row_order(row)
+    current["updated_event_id"] = str(row.get("event_id") or "")
+
+
 def _recency(record: dict) -> tuple[int, str]:
     """The sort key for every reader that orders folded requests by recency:
     the nanosecond stamp of the last row folded in, the id only to break an
@@ -1561,6 +1571,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
                 "updated_order": _row_order(row),
+                "updated_event_id": str(row.get("event_id") or ""),
                 "history_count": 1,
             }
             # #1131: present only when the sender set one, so a request
@@ -1730,8 +1741,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 continue
             current["withdrawn_from"] = current["state"]
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             if current["done_pending"]:
                 _supersede_claim(current, claim_meta.pop(q_id, {}), row,
                                  current["revision"])
@@ -1777,8 +1787,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             current["replies"].append(entry)
             _note_effect(current, row, "reply_recorded")
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             continue
         if event == "surfaced":
             # Attention rows never move the record's rendered age: a brief
@@ -1899,8 +1908,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             current["revision"] += 1
             current["state"] = "open"
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             if current["done_pending"]:
                 # #978 review round 1 (F1), gated per review round 2 (B1): a
                 # `revised` row on a record with a PENDING AGENT claim clears
@@ -1978,8 +1986,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
             # claim overwrites the first, the same latest-wins posture the
             # generic `done` landing already gives `done_evidence`.
             current["history_count"] += 1
-            current["updated_at"] = row.get("ts") or current["updated_at"]
-            current["updated_order"] = _row_order(row)
+            _moved(current, row)
             current["done_by"] = authority
             current["done_claimed"] = True
             current["done_evidence"] = str(row.get("evidence") or "")
@@ -2013,8 +2020,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 _note_effect(current, row, "no_claim_to_verify")
             continue
         current["history_count"] += 1
-        current["updated_at"] = row.get("ts") or current["updated_at"]
-        current["updated_order"] = _row_order(row)
+        _moved(current, row)
         # #1333: decided here, from the state BEFORE the move, because the
         # move below is what erases the difference between an accept and an
         # accept that ratified a claim, and a first needs-info from a repeat.
