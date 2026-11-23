@@ -197,3 +197,29 @@ def test_inbox_json_rows_carry_the_latest_event_id(offered, monkeypatch,
     rows = json.loads(out.out)
     assert rc == 0
     assert rows[0]["updated_event_id"] == accepted
+
+
+def test_a_request_record_with_no_event_id_reads_null(tmp_checkpoint_dir):
+    q_id = requests.open_request(
+        to=store.project_slug(PROJECT), ask="check the retry budget",
+        why="it blocks the release", channel="cli-agent", project_dir=SENDER)
+    rows = requests.events(project_dir=SENDER)
+    for row in rows:
+        row.pop("event_id")
+    folded = requests.fold(rows, requests.fold_inputs(
+        rows, perspective=requests.Perspective.SENDER, project_dir=SENDER))
+    assert folded[q_id]["updated_event_id"] is None
+
+
+def test_attention_rows_print_an_id_but_do_not_move_the_record(offered):
+    before = requests.recipient_join(project_dir=PROJECT)[offered]
+    suppressed = requests.suppress(offered, channel="cli-tty",
+                                   project_dir=PROJECT)
+    after = requests.recipient_join(project_dir=PROJECT)[offered]
+    assert after["updated_event_id"] == before["updated_event_id"]
+    assert after["row_effects"][suppressed]["reason"] == "suppressed"
+    level = requests.set_severity(offered, "high", reason="blocks the release",
+                                  channel="cli-agent", project_dir=SENDER)
+    sent = requests.sender_join(project_dir=SENDER)[offered]
+    assert sent["updated_event_id"] != level
+    assert sent["row_effects"][level]["reason"] == "severity_set"

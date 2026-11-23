@@ -769,9 +769,11 @@ def _say_effect(request_id: str, event_id: str, project, record=None) -> None:
 
 
 def _say_event(event_id: str) -> None:
-    """The id of the row a write verb just wrote: the one identifier that a
-    read (`request list`/`inbox --json` `updated_event_id`, `why --json`)
-    carries too, so a host can tell its own write from an earlier one."""
+    """The id of the row a write verb just wrote. For a row that moves the
+    record (open, revise, accept, reject, needs-info, done, reply, withdraw)
+    it is the record's `updated_event_id` on `request list`/`inbox --json`.
+    Suppress and severity are attention rows: they never move the record, so
+    their id is on the ledger row and in the record's `row_effects` only."""
     render.render_ledger_lines([f"  event: {event_id}"])
 
 

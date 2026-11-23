@@ -731,12 +731,15 @@ def _row_order(row: dict) -> int:
 
 def _moved(current: dict, row: dict) -> None:
     """Record that `row` is now the last one folded into `current`: its second
-    resolution `ts`, its nanosecond `order`, and its `event_id`, the stable
-    identifier a host compares with what its own write returned. One place, so
-    the three keys can never describe different rows."""
+    resolution `ts`, its nanosecond `order`, and its `event_id` (None for a
+    row written before ids existed, the one encoding of "no id" every reader
+    shares). One place, so the three keys can never describe different rows.
+    Only a row that MOVES the record comes through here: attention rows
+    (`suppressed`, `severity_set`, the stamps) leave `updated_*` alone, as they
+    leave the sort and overdue clocks alone."""
     current["updated_at"] = row.get("ts") or current["updated_at"]
     current["updated_order"] = _row_order(row)
-    current["updated_event_id"] = str(row.get("event_id") or "")
+    current["updated_event_id"] = row.get("event_id") or None
 
 
 def _recency(record: dict) -> tuple[int, str]:
@@ -1571,7 +1574,7 @@ def fold(rows: list[dict], inputs: FoldInputs) -> dict[str, dict]:
                 "created_at": row.get("ts"),
                 "updated_at": row.get("ts"),
                 "updated_order": _row_order(row),
-                "updated_event_id": str(row.get("event_id") or ""),
+                "updated_event_id": row.get("event_id") or None,
                 "history_count": 1,
             }
             # #1131: present only when the sender set one, so a request
@@ -2594,9 +2597,13 @@ def _was_ever_sent(request_id: str, project_dir) -> bool:
     needs (#895), which does not care who the ask was addressed to."""
     own = store.project_bucket(project_dir)
     for slug in _bucket_slugs():
-        read = (events(project_dir=slug) if slug == own
-                else events(project_dir=slug,
-                            rows=_foreign_requests(slug)[0].rows))
+        if slug == own:
+            read = events(project_dir=slug)
+        else:
+            foreign, skip, _torn = _foreign_requests(slug)
+            if skip:
+                continue  # a ledger the join refuses to trust decides nothing
+            read = events(project_dir=slug, rows=foreign.rows)
         if any(r.get("event") == "opened"
                and r.get("request_id") == request_id for r in read):
             return True
@@ -2643,10 +2650,23 @@ def _answering(request_id: str, project_dir, event: str,
                 "to take your own ask back run `daimon request withdraw "
                 f"{request_id} --reason \"...\"`")
         return current
-    addressed = recipient_join(project_dir=project_dir).get(request_id)
+    joined = join(project_dir)
+    addressed = joined.by_id.get(request_id)
     if addressed is not None:
         return addressed
+    if joined.skipped:
+        # The ask may well exist: a sender's ledger the join cannot prove was
+        # left out of the read, so "unknown" would be a false statement.
+        raise RequestError(
+            f"cannot tell whether {request_id} was sent to this project: "
+            f"{joined.skipped} sender request ledger(s) could not be read, "
+            "so nothing is written; run `daimon status` for the cure, then "
+            "answer it again")
+    # A person may answer an ask addressed elsewhere (#895), but not on a
+    # tenant-scoped home: there, whether another tenant's id exists is the
+    # one thing an accept that succeeds or refuses would tell.
     if (of_channel("requests", channel) == "human"
+            and not config.tenant_scoped()
             and _was_ever_sent(request_id, project_dir)):
         return None
     raise RequestError(
@@ -3224,6 +3244,7 @@ class Join(NamedTuple):
     notes the read carries (`sender-skipped`, worded by `display`)."""
     by_id: dict
     notes: tuple
+    skipped: int = 0
 
 
 class Inbox(NamedTuple):
@@ -3372,7 +3393,7 @@ def join(project_dir=None) -> Join:
     # project's own ledger the same way `_open_policies_local` reads it.
     return Join(fold(all_rows, fold_inputs(
         all_rows, perspective=Perspective.RECIPIENT, project_dir=project_dir)),
-        _skipped_notes(skipped, degraded))
+        _skipped_notes(skipped, degraded), skipped)
 
 
 def inbox(project_dir=None, *, min_severity=None) -> Inbox:
