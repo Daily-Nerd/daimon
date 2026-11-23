@@ -146,6 +146,18 @@ KNOWN_BYPASSES = frozenset({
     ("bucket merge", "checkpoints/{slug}/latest.json"),
     ("bucket merge", "checkpoints/{slug}/prev-1.json"),
     ("bucket merge", "checkpoints/{slug}/.ledger-census"),
+    # bucket adopt and bucket remap (slice 4b): the explicit rebind rewrites a
+    # bucket's `root` and extends its `identity` record, each by an atomic
+    # swap. Both are declared audit-exempt, no-plaintext surfaces in
+    # surfaces.py (a folder path and the anchors that survive a move, never
+    # item text), so there is no belief byte to admit and nothing for forget to
+    # reach; the swap is what is observed. Bounded: the bucket(s) the person
+    # named or the folder prefix selected, each under its own lock, and
+    # nothing else (no ledger, no signed file, no receipt).
+    ("bucket adopt", "checkpoints/{slug}/root"),
+    ("bucket adopt", "checkpoints/{slug}/identity"),
+    ("bucket remap", "checkpoints/{slug}/root"),
+    ("bucket remap", "checkpoints/{slug}/identity"),
     # ledger repair (#1132 2c-2): like a bucket migration it MOVES bytes that
     # already passed the seam. The ledger is rewritten with the very rows it
     # held (split rows rejoined), the lines it could not parse go verbatim to
@@ -583,6 +595,47 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         run(["bucket", "stamp", "--apply"], 0)
         assert any((d / "identity").is_file()
                    for d in store.bucket_dirs().buckets)
+
+    def r_bucket_adopt():
+        # Slice 4b: a bucket whose recorded folder is gone is bound to the one
+        # it lives in now. Planted through the builtin open (see the migrate
+        # recipe); the rewrite is the atomic `root` swap and the identity
+        # record, both already declared, so the audit must observe no write
+        # the registry does not know.
+        base = config.checkpoint_dir()
+        gone = base / "-guard-adopt-gone"
+        gone.mkdir(parents=True, exist_ok=True)
+        audit.placeholders[gone.name] = "{slug}"
+        with open(gone / "root", "w", encoding="utf-8") as fh:
+            fh.write(str(tmp_path / "no-such-folder-adopt") + "\n")
+        # A folder no other recipe's bucket records (adopt refuses one that
+        # another bucket already holds).
+        here = tmp_path / "adopt-target"
+        here.mkdir(exist_ok=True)
+        run(["bucket", "adopt", f"--bucket={gone.name}", f"--path={here}",
+             "--apply"], 0)
+        assert (gone / "root").read_text(encoding="utf-8").strip() == \
+            os.path.realpath(here)
+
+    def r_bucket_remap():
+        # Slice 4b: every bucket under a folder that is gone moves under the
+        # folder that exists. One bucket, one rewrite, then the idempotent
+        # rerun writes nothing at all.
+        base = config.checkpoint_dir()
+        old_home = tmp_path / "old-home-remap"
+        new_home = tmp_path / "new-home-remap"
+        (new_home / "p").mkdir(parents=True, exist_ok=True)
+        moved = base / "-guard-remap-moved"
+        moved.mkdir(parents=True, exist_ok=True)
+        audit.placeholders[moved.name] = "{slug}"
+        with open(moved / "root", "w", encoding="utf-8") as fh:
+            fh.write(str(old_home / "p") + "\n")
+        argv = ["bucket", "remap", f"--from={old_home}", f"--to={new_home}",
+                "--apply"]
+        run(argv, 0)
+        assert (moved / "root").read_text(encoding="utf-8").strip() == \
+            os.path.realpath(new_home / "p")
+        run(argv, 0)
 
     def r_bucket_doctor():
         run(["bucket", "doctor"], 0)
@@ -1067,6 +1120,8 @@ def _drive_all(audit, tmp_path, monkeypatch, proj):
         ("bucket", "migrate"): r_bucket_migrate,
         ("bucket", "merge"): r_bucket_merge,
         ("bucket", "stamp"): r_bucket_stamp,
+        ("bucket", "adopt"): r_bucket_adopt,
+        ("bucket", "remap"): r_bucket_remap,
         ("bucket", "doctor"): r_bucket_doctor,
         ("slug",): r_slug,
         ("refute", "add"): r_refute_add,

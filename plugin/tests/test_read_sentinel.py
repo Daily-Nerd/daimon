@@ -531,6 +531,7 @@ no_items("surveys bucket names, recorded roots and counts, never item text, "
          "and names only to a terminal", "cli:bucket doctor")
 no_items("writes or migrates; reads names of buckets, never item text",
          "cli:bucket migrate", "cli:bucket merge", "cli:bucket stamp",
+         "cli:bucket adopt", "cli:bucket remap",
          "cli:team init", "cli:team sync",
          "cli:write-checkpoint", "cli:serialize", "cli:import",
          "cli:handoff",

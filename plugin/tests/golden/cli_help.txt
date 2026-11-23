@@ -14,9 +14,11 @@ audit-quotes
 blame
 brief
 bucket
+bucket adopt
 bucket doctor
 bucket merge
 bucket migrate
+bucket remap
 bucket stamp
 check
 check sync
@@ -274,11 +276,13 @@ DAIMON_PROJECT_DIR, then cwd) --json machine-readable output Examples: daimon pr
 projects --json
 
 === bucket ===
-usage: daimon bucket [-h] {migrate,merge,doctor,stamp} ... positional arguments:
-{migrate,merge,doctor,stamp} migrate move a bucket written before 0.42.0 into the one daimon reads
-merge fold one bucket into another, once (a worktree or ghost bucket) doctor survey the buckets:
-dangling, unstamped, shared, empty, worktree stamp record where each bucket's project lives, before
-a move options: -h, --help show this help message and exit
+usage: daimon bucket [-h] {migrate,merge,doctor,stamp,adopt,remap} ... positional arguments:
+{migrate,merge,doctor,stamp,adopt,remap} migrate move a bucket written before 0.42.0 into the one
+daimon reads merge fold one bucket into another, once (a worktree or ghost bucket) doctor survey the
+buckets: dangling, unstamped, shared, empty, worktree stamp record where each bucket's project
+lives, before a move adopt bind one bucket to the folder its project lives in now remap move every
+bucket under one folder to the same place under another options: -h, --help show this help message
+and exit
 
 === bucket migrate ===
 usage: daimon bucket migrate [-h] [--project PROJECT] [--dry-run] [--json] Move the bucket a
@@ -324,6 +328,33 @@ checkpoints are never touched. Human-only, and refused on a tenant-scoped home. 
 show this help message and exit --scan DIR a folder to look for repositories in (repeatable) --apply
 write the stamps (default: print the plan only) --json machine-readable output Examples: daimon
 bucket stamp --scan ~/code daimon bucket stamp --scan ~/code --scan ~/work --apply
+
+=== bucket adopt ===
+usage: daimon bucket adopt [-h] --bucket BUCKET --path DIR [--apply] [--force] [--json] Rewrite the
+recorded root of ONE bucket to a folder, after a project moved and `remap` does not cover it. The
+bucket keeps its name and every signed file; its old root is kept in its identity history. Refused
+when the folder is not a directory, when another bucket already records it (fold that one with
+`bucket merge` first), when the bucket's recorded root still exists (a clone) unless --force, and
+when its identity record cannot be read. Dry run by default. Human-only, and refused on a
+tenant-scoped home. options: -h, --help show this help message and exit --bucket BUCKET the bucket
+to rebind (its directory name under checkpoints/) --path DIR the folder the project lives in now
+(must exist) --apply write the rebind (default: print the plan only) --force rebind even though the
+bucket's recorded root still exists --json machine-readable output Examples: daimon bucket adopt
+--bucket=-Users-me-old --path ~/code/new daimon bucket adopt --bucket=NAME --path . --apply Bucket
+names usually start with '-', so write --bucket=NAME.
+
+=== bucket remap ===
+usage: daimon bucket remap [-h] --from DIR --to DIR [--apply] [--json] After a folder or username
+change, rewrite the recorded root of every bucket under --from to the same place under --to.
+Matching stops at a separator, so /Users/a never matches /Users/abc. A bucket whose new folder does
+not exist yet (a project not cloned here) is skipped and listed; one whose new folder already
+belongs to another bucket is skipped and listed with the `bucket merge` that folds them. Refused for
+the filesystem root, a bare drive, a relative --to or a --to inside --from. Safe to run twice. Dry
+run by default. Human-only, and refused on a tenant-scoped home. options: -h, --help show this help
+message and exit --from DIR the folder the projects used to live under --to DIR the folder they live
+under now --apply write the rebinds (default: print the plan only) --json machine-readable output
+Examples: daimon bucket remap --from /Users/alice --to /Users/bob daimon bucket remap --from
+C:\Users\a --to C:\Users\b --apply
 
 === slug ===
 usage: daimon slug [-h] path Print the checkpoint directory name daimon derives from a project path.

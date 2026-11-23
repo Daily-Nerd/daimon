@@ -1,11 +1,14 @@
-"""The repair tools that read and annotate buckets: `bucket stamp` and
-`bucket doctor` (slice 3b of "project identity survives moves").
+"""The repair tools that read, annotate and rebind buckets: `bucket stamp`,
+`bucket doctor` (slice 3b of "project identity survives moves") and `bucket
+adopt` and `bucket remap` (slice 4b).
 
 A bucket's directory name is its permanent id; its `root` file is the one
 place that binds it to a location. Both tools are human surfaces. They stat
 recorded roots and walk directories, so they never run on a hook path, and they
-make no decision of their own: every finding is evidence for a person, and
-nothing here changes which bucket a project resolves to.
+make no decision of their own: every finding is evidence for a person. `stamp`
+and `doctor` change nothing about which bucket a project resolves to; `adopt`
+and `remap` are the only verbs that rewrite a bucket's `root`, the one binding,
+and only on explicit request: nothing rebinds automatically.
 
 `identity` is the evidence record: where the bucket's project was when it was
 stamped (`root`), the anchors that survive a move (origin URL with credentials
@@ -15,11 +18,12 @@ stripped, root commit, folder name) and the roots it has had (`history`, which
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-from . import buckets, config, hostgit, store
+from . import buckets, config, hostgit, identity, jsonl, scope, store
 
 IDENTITY_VERSION = 1
 
@@ -352,3 +356,267 @@ def doctor(path=None) -> dict:
     return {"buckets": len(dirs), "findings": found,
             "candidates": candidates, "candidates_note": "evidence, not proof",
             "suggestions": suggestions, "suggestions_withheld": withheld}
+
+
+# ---------------------------------------------------------------------------
+# adopt and remap
+# ---------------------------------------------------------------------------
+
+
+class RebindRefused(RuntimeError):
+    """The rebind cannot be carried out as asked; nothing was written."""
+
+
+def _write_rebind(bucket: Path, old: str, new: str) -> str:
+    """Rewrite one bucket's `root` from `old` to `new`, under the bucket's
+    directory lock, FAIL-CLOSED: a lock that is not held is `locked` and
+    nothing is written (the hooks' lock fails open, a verb that rewrites the
+    one binding must not). The root is re-read under the lock and a bucket
+    that no longer records `old` is `raced`, left as it is. Returns
+    `rewrite`, `locked` or `raced`.
+
+    The old root joins the identity record's `history` and the record's root
+    follows, written AFTER `root` and not atomically with it (`doctor` reports
+    a transient disagreement). An existing record is extended, never rebuilt
+    from scratch, so its anchors and older roots stay. Raises OSError."""
+    with jsonl.dir_lock(bucket) as held:
+        if not held:
+            return "locked"
+        if not store.root_eq(identity.read_root(bucket), old):
+            return "raced"
+        record = read_identity(bucket)
+        store._atomic_write(bucket / store._BUCKET_ROOT_NAME, f"{new}\n")
+        history = list(record.get("history") or []) if record else []
+        if old not in history:
+            history.append(old)
+        anchors = (record.get("anchors") or {}) if record else anchors_for(new)
+        write_identity(bucket, new, anchors, history=history, replace=True)
+    identity.invalidate()
+    return "rewrite"
+
+
+def _stamp_unstamped(bucket: Path, real: str) -> str:
+    """Adopt into a bucket that records no root: stamp it, under its lock."""
+    with jsonl.dir_lock(bucket) as held:
+        if not held:
+            return "locked"
+        if identity.read_root(bucket) is not None:
+            return "raced"
+        store._atomic_write(bucket / store._BUCKET_ROOT_NAME, f"{real}\n")
+        record = read_identity(bucket)
+        write_identity(bucket, real,
+                       (record.get("anchors") or {}) if record
+                       else anchors_for(real),
+                       history=list(record.get("history") or [])
+                       if record else [], replace=True)
+    identity.invalidate()
+    return "rewrite"
+
+
+def _bucket_dir_named(name: str) -> Path:
+    if scope.parse_bucket(name) is None:
+        raise RebindRefused(f"{name!r} is not a bucket name")
+    bucket = config.checkpoint_dir() / name
+    if not bucket.is_dir() or bucket.is_symlink():
+        raise RebindRefused(f"there is no bucket {name}")
+    return bucket
+
+
+def _identity_blocks(bucket: Path) -> bool:
+    """An identity record that exists but cannot be read is evidence a rebind
+    must not destroy (torn, or a newer version carrying roots this code does
+    not know)."""
+    path = bucket / store._IDENTITY_NAME
+    return os.path.lexists(path) and read_identity(bucket) is None
+
+
+def adopt(bucket: str, path, *, apply: bool = False, force: bool = False
+          ) -> dict:
+    """`daimon bucket adopt`: bind bucket `bucket` to the folder `path`, the
+    explicit answer when a project moved and no `remap` covers it. Dry run
+    unless `apply`.
+
+    REFUSES (nothing written) when the folder is not a directory, when ANY
+    other bucket already records it (the day-one fresh bucket: `merge` it
+    first, or the folder would answer for two), when the bucket's recorded
+    root is a live directory (a clone, D2) unless `force`, when its identity
+    record cannot be read, and when the bucket cannot be locked. Adopting what
+    is already adopted is a no-op.
+
+    The root becomes `realpath(path)`; the old one joins the identity history.
+    `evidence` compares the bucket's recorded anchors with the folder's (origin
+    URL, root commit, folder name): labelled evidence, never a decision."""
+    target = _bucket_dir_named(bucket)
+    text = os.fspath(path)
+    if not os.path.isdir(text):
+        raise RebindRefused(f"{text!r} is not a directory")
+    real = os.path.realpath(text)
+    for name, root in sorted(store.bucket_roots().items()):
+        if name != bucket and store.root_eq(root, real):
+            raise RebindRefused(
+                f"the bucket {name} already records {real}. Fold it into "
+                f"{bucket} first with `daimon bucket merge --from={name} "
+                f"--into={bucket}`, or the folder would answer for two "
+                f"buckets.")
+    recorded = identity.read_root(target)
+    if _identity_blocks(target):
+        raise RebindRefused(
+            f"the identity record of {bucket} cannot be read, and a rebind "
+            f"will not replace evidence it cannot read")
+    theirs = ((read_identity(target) or {}).get("anchors") or {})
+    here = anchors_for(real)
+    shared = [k for k in ("origin", "root_commit", "folder")
+              if theirs.get(k) and here.get(k)]
+    evidence = {"matched": [k for k in shared if theirs[k] == here[k]],
+                "differs": [k for k in shared if theirs[k] != here[k]]}
+    plan = {"applied": False, "bucket": bucket, "from": recorded, "to": real,
+            "action": "rewrite", "evidence": evidence}
+    if store.root_eq(recorded, real):
+        return dict(plan, action="kept")
+    if recorded and not force and os.path.isdir(recorded):
+        raise RebindRefused(
+            f"the root recorded for {bucket} still exists on disk "
+            f"({recorded}): it may be a clone that keeps its own history. "
+            f"Pass --force to move it anyway.")
+    if not apply:
+        return plan
+    outcome = (_write_rebind(target, recorded, real) if recorded
+               else _stamp_unstamped(target, real))
+    if outcome == "locked":
+        raise RebindRefused(
+            f"could not lock the bucket {bucket} (another daimon process is "
+            f"writing to it, or it cannot be locked); nothing was changed. "
+            f"Try again in a moment.")
+    if outcome == "raced":
+        raise RebindRefused(
+            f"the bucket {bucket} was rebound by someone else while this "
+            f"ran; nothing was changed. Look at it and run again.")
+    return dict(plan, applied=True)
+
+
+_DRIVE_RE = re.compile(r"[A-Za-z]:(?:[\\/]|$)")
+
+
+def _windows_shaped(text: str) -> bool:
+    return bool(_DRIVE_RE.match(text)) or text.startswith("\\\\")
+
+
+def _posix_shaped(text: str) -> bool:
+    return text.startswith("/")
+
+
+def _separator(text: str) -> str:
+    return "/" if _posix_shaped(text) else "\\"
+
+
+def _normalized_root(text, *, what: str) -> str:
+    """`text` as a root for `remap`: stripped, trailing separators removed, and
+    refused when it is not absolute or is so broad it would match everything
+    (the filesystem root, a bare drive, a UNC prefix with no share)."""
+    raw = str(text or "").strip()
+    if not raw:
+        raise RebindRefused(f"{what} is empty")
+    if not (_posix_shaped(raw) or _windows_shaped(raw)):
+        raise RebindRefused(f"{what} {raw!r} is not an absolute path")
+    trimmed = raw.rstrip("/\\")
+    parts = [p for p in re.split(r"[\\/]+", trimmed) if p]
+    if (not trimmed or re.fullmatch(r"[A-Za-z]:", trimmed)
+            or (raw.startswith("\\\\") and len(parts) < 2)):
+        raise RebindRefused(
+            f"{what} {raw!r} would match every bucket; name the folder "
+            f"that moved")
+    return trimmed
+
+
+def _below(root: str, base: str) -> str | None:
+    """The tail of `root` when it is `base` or lies strictly below it,
+    separator-bounded (`/Users/a` never matches `/Users/abc`); else None. The
+    tail starts with `base`'s own separator, or is empty for `base` itself."""
+    sep = os.path.normcase(_separator(base))
+    nroot, nbase = os.path.normcase(root), os.path.normcase(base)
+    if nroot == nbase:
+        return ""
+    if nroot.startswith(nbase + sep):
+        return root[len(base):]
+    return None
+
+
+def _mapped(root: str, old: str, new: str) -> tuple[str | None, str | None]:
+    """(new root, None) for `root` under `old` moved to `new`, or (None,
+    reason). Separators in the tail follow `new`'s system; a tail that already
+    holds the target's separator as a name character is refused."""
+    tail = _below(root, old)
+    if tail is None:
+        return None, "unmatched"
+    src, dst = _separator(old), _separator(new)
+    if src != dst:
+        if dst in tail:
+            return None, "separator"
+        tail = tail.replace(src, dst)
+    return new + tail, None
+
+
+def remap(from_root, to_root, *, apply: bool = False) -> dict:
+    """`daimon bucket remap`: after a folder or username change, rewrite the
+    `root` of every bucket whose root lies under `from_root` to the same place
+    under `to_root`. Dry run unless `apply`; a rerun is idempotent.
+
+    Matching is separator-bounded (`/Users/a` never matches `/Users/abc`);
+    `from_root` loses a trailing separator; the filesystem root, a bare drive
+    and a UNC prefix are refused, and so is a `to_root` that is not absolute or
+    lies inside `from_root` (rewriting a tree into itself would map twice).
+
+    Per bucket, one action: `rewrite`; `missing` (the mapped folder is not
+    there yet, the normal case for projects not yet cloned on a fresh machine:
+    skipped, not an error); `collision` (another bucket already records the
+    mapped folder, or an earlier bucket of this run maps to it: skipped and
+    listed with that bucket so `merge` can fold them); `separator` (the tail
+    holds the target's separator as a name character); `unreadable` (an
+    identity record this code cannot read); `locked` and `raced` (applied
+    per bucket under its own lock, fail-closed). A bucket with no root is out
+    of reach: `doctor` lists those.
+
+    Returns {"applied": bool, "actions": [...]}, each action naming the
+    bucket, `from` and `to`."""
+    old = _normalized_root(from_root, what="--from")
+    new = _normalized_root(to_root, what="--to")
+    if _below(new, old) is not None:
+        raise RebindRefused(
+            f"--to {new!r} is {old!r} or inside it: remapping a folder onto "
+            f"itself would move its buckets twice")
+    roots = store.bucket_roots()
+    claimed: dict[str, str] = {}  # normcase target -> bucket, this run
+    actions: list[dict] = []
+    for name in sorted(roots):
+        root = roots[name]
+        target, why = _mapped(root, old, new)
+        if target is None:
+            if why == "separator":
+                actions.append({"bucket": name, "action": "separator",
+                                "from": root, "to": None})
+            continue
+        entry = {"bucket": name, "from": root, "to": target}
+        if not os.path.isdir(target):
+            actions.append(dict(entry, action="missing"))
+            continue
+        real = os.path.realpath(target)
+        entry["to"] = real
+        other = next((n for n, r in sorted(roots.items())
+                      if n != name and store.root_eq(r, real)), None)
+        key = os.path.normcase(real)
+        other = other or claimed.get(key)
+        if other is not None:
+            actions.append(dict(entry, action="collision", other=other))
+            continue
+        if _identity_blocks(config.checkpoint_dir() / name):
+            actions.append(dict(entry, action="unreadable"))
+            continue
+        claimed[key] = name
+        actions.append(dict(entry, action="rewrite"))
+    if apply:
+        for entry in actions:
+            if entry["action"] == "rewrite":
+                entry["action"] = _write_rebind(
+                    config.checkpoint_dir() / entry["bucket"],
+                    entry["from"], entry["to"])
+    return {"applied": apply, "actions": actions}
