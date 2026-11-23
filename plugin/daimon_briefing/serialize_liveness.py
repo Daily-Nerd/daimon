@@ -225,7 +225,7 @@ def serializes(project_dir=None, *, sessions=None, since=None,
     Never raises on an unreadable log or heartbeat directory: those become
     notes."""
     t = now if now is not None else time.time()
-    slug = store.project_slug(config.resolve_project_dir(project_dir)) or ""
+    slug = store.project_bucket(project_dir) or ""
     log_unreadable = hb_unreadable = cut = False
     text = ""
     try:

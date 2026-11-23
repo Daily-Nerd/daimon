@@ -77,7 +77,7 @@ def _cmd_recall(args, fx) -> int:
             except Exception:  # noqa: BLE001 - the probe is best-effort
                 wide = []
             counts: dict = {}
-            here = store.project_slug(project)
+            here = store.bucket_of(project)
             for r in wide:
                 s = r.get("project_slug")
                 if s and s != here:
@@ -123,7 +123,7 @@ def _cmd_recall(args, fx) -> int:
         # is a machine identity, one constant across every project here. The
         # row has always known its origin project; only --json ever showed it,
         # so a foreign hit and a local one rendered identically.
-        scope = recall.describe_scope(r, store.project_slug(project))
+        scope = recall.describe_scope(r, store.bucket_of(project))
         scope_mark = f" ({scope})" if scope else ""
         # #890: whose STATEMENT this is, when the record names one. Absent
         # means unknown and renders as nothing — never a guess and never a

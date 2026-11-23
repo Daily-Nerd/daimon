@@ -365,7 +365,7 @@ def _verified_receipts(project_dir, *, fresh_only: bool = False):
     walked before the fresh item it was copied from; a fold that filtered
     the copy AFTER this walk had marked its id seen would count the fresh
     quote zero times. The filter belongs to the walk for that reason."""
-    want_slug = store.project_slug(project_dir)
+    want_slug = store.bucket_of(project_dir)
     try:
         files = store._session_files(config.checkpoint_dir())
     except OSError:
@@ -495,7 +495,7 @@ def _stats_receipts(project_dir, usage: dict) -> dict:
     DAIMON_RECEIPTS off after accumulating counts, and the render needs to
     tell "no receipts configured" apart from "configured, nothing has fired
     yet" — the exact ambiguity #919 diagnosed in the first place."""
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     attempted = usage.get(f"{_cli._RECEIPT_PROBE_USAGE_PREFIX}attempted:{slug}", 0) if slug else 0
     eligible = usage.get(f"{_cli._RECEIPT_PROBE_USAGE_PREFIX}eligible:{slug}", 0) if slug else 0
     confirmed = usage.get(f"{_cli._RECEIPT_PROBE_USAGE_PREFIX}confirmed:{slug}", 0) if slug else 0
@@ -696,7 +696,7 @@ def _stats_worldcheck(project_dir) -> dict:
         out["since"] = datetime.fromtimestamp(floor, timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
         counts = _stats_checks_between(floor, time.time(),
-                                       store.project_slug(project_dir))
+                                       store.bucket_of(project_dir))
     for cls, held in notes.items():
         checks = counts.get(cls)
         out["classes"][cls] = {

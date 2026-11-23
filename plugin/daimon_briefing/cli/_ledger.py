@@ -97,7 +97,7 @@ def _snap(project):
     """The bucket's light snapshot, taken BEFORE a write verb appends, so the
     echo is judged by what was true when the person acted and a failure to
     judge refuses before the row lands."""
-    return view.judge(store.project_slug(config.resolve_project_dir(project))).snap
+    return view.judge(store.project_bucket(project)).snap
 
 
 def _masked_records(project, records, *, snap=None) -> list:

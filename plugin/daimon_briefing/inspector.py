@@ -464,7 +464,7 @@ def inspect_item(project_dir, item_id: str, *, include_source: bool = False,
         now = time.time()
     lineage = view.lineage(project_dir, item_id)
     verdict = lineage.verdict
-    slug = store.project_slug(project_dir)
+    slug = store.bucket_of(project_dir)
     if isinstance(verdict, view.Withheld):
         return _withheld_result(verdict, lineage, slug, include_source,
                                 resolver)

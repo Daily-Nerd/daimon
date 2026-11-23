@@ -538,7 +538,7 @@ def _cmd_ruling_list(args) -> int:
     rc = 0
     if not rows:
         if read.state == "unreadable":
-            print(f"cannot read the ledger for {store.project_slug(project)} "
+            print(f"cannot read the ledger for {store.bucket_of(project)} "
                   f"(resolved {project}): {read.path} exists but could not "
                   f"be read", file=sys.stderr)
             rc = 1
@@ -553,7 +553,7 @@ def _cmd_ruling_list(args) -> int:
             legacy = buckets.legacy_bucket(raw)
             hint = (f"; a legacy bucket {legacy} exists, "
                     f"{_cli._migrate_command(raw)}") if legacy else ""
-            print(f"no bucket for {store.project_slug(project)} yet (resolved "
+            print(f"no bucket for {store.bucket_of(project)} yet (resolved "
                   f"{project}): nothing has been written from this project{hint}",
                   file=sys.stderr)
             rc = 1

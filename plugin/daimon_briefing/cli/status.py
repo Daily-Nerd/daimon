@@ -548,10 +548,10 @@ def _status_ledgers(slug, outstanding=()) -> dict | None:
     """The ledger census for `status`: this bucket's ledgers plus the
     machine-level ledger files under "other". None when the project has no
     bucket name to census."""
-    if not slug:
+    bucket = store.bucket_dir(slug)
+    if bucket is None:
         return None
     states = view.ledger_states(slug)
-    bucket = config.checkpoint_dir() / slug
     # What to do about each ledger that is not read as-is, and where it is
     # (the human's own status names paths).
     repair = {name: {"hint": display.ledger_hint(
@@ -588,7 +588,7 @@ def _status_world(project_arg=None) -> dict:
     identity: dict = {
         "cwd": str(Path(project_arg or ".").expanduser().resolve()),
         "git_root": project,
-        "slug": store.project_slug(project),
+        "slug": store.bucket_of(project),
     }
     now = time.time()
     proj = _checkpoint_info(store.project_latest_path(project), now)

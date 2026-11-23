@@ -88,7 +88,7 @@ def _cmd_ledger_repair(args) -> int:
     if (ledger == "events.jsonl" and not report.dry_run
             and report.outcome == "repaired"):
         waiting = _ledger.admission_waiting(
-            store.project_slug(store._resolved(project)) or "")
+            store.project_bucket(project) or "")
         if waiting:
             lines.append(f"{waiting} session(s) wait to be serialized; "
                          "daimon heal repairs one per run")

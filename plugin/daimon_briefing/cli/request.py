@@ -596,7 +596,7 @@ def _cmd_request_open(args) -> int:
             print(f"resolved {value!r} -> {to}", file=sys.stderr)
         else:
             names = {r["name"] for r in rows}
-    if not requests.recipient_in_scope(to, store.project_slug(project) or ""):
+    if not requests.recipient_in_scope(to, store.bucket_of(project) or ""):
         # Tenant-scoped home: the recipient is outside this caller's scope.
         # Refused before the unknown-bucket suggestions below, which would
         # otherwise list other tenants' buckets.

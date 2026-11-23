@@ -183,7 +183,7 @@ def _cmd_action_recall(args, fx) -> int:
         # record-only soak measures exactly what delivery would have measured.
         if not args.record_only:
             print(_cli._suggest_line(row, terms, now,
-                                own_slug=store.project_slug(project),
+                                own_slug=store.bucket_of(project),
                                 width=_cli._LEAD_WIDTH,
                                 mcp_tool_available=mcp_available,
                                 mcp_tool_name=mcp_name,

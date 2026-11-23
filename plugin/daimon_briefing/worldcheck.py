@@ -443,7 +443,7 @@ def _receipt_eligible(carried, project, deadline) -> list:
     briefing can still be blocked by."""
     if not config.receipts_enabled():
         return []
-    slug = store.project_slug(config.resolve_project_dir(project))
+    slug = store.project_bucket(project)
     if not slug:
         return []
     eligible, seen = [], set()

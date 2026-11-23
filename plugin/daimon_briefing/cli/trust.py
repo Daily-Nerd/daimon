@@ -254,7 +254,7 @@ def _cmd_trust_repair(args) -> int:
 
 
 def _slug_of(project) -> str:
-    return store.project_slug(config.resolve_project_dir(project)) or ""
+    return store.project_bucket(project) or ""
 
 
 def _resolve_project(project):

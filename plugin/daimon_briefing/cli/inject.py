@@ -582,7 +582,7 @@ def _cmd_recall_inject(args, fx) -> int:
                 "now": datetime.fromtimestamp(now, tz=timezone.utc),
                 "best_refused": max(numeric) if numeric else None}),)))
             return 0
-        own_slug = store.project_slug(project)
+        own_slug = store.bucket_of(project)
         # #1062: same posture, same call site, the sibling value the hook
         # exports next to the flag above.
         mcp_name = config.mcp_tool_name()

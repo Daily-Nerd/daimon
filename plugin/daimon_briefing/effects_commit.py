@@ -176,7 +176,7 @@ def _commit_worldcheck(cli, record: Verification) -> None:
     # the one the per-note half of the section reads; the aggregates stay
     # machine-wide. A project with no slug writes the unnamed form.
     from . import store, worldcheck
-    slug = store.project_slug(route) or store.project_slug(project)
+    slug = store.bucket_of(route) or store.bucket_of(project)
     # #397: the dict carries the aggregate outcomes AND a "<class>:<outcome>"
     # key per class, so one pass emits both the slice-1 counters and the
     # per-class fires-true rate the next expansion gate reads.

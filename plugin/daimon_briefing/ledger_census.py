@@ -82,7 +82,8 @@ def census_bucket(slug: str, *, checkpoints: bool = True) -> dict:
     events.jsonl is unreadable or transient the keys cannot be trusted:
     `forgotten_check` is "unavailable" and every `tombstoned_present` is None
     (never 0), the checkpoint walk is skipped and its numbers are None."""
-    bucket = config.checkpoint_dir() / slug
+    bucket = store.bucket_dir(slug)
+    assert bucket is not None  # a census names a bucket that exists
     declared = surfaces.bucket_ledger_names()
     reads = {name: jsonl.read(bucket / name) for name in declared}
     trusted = reads["events.jsonl"].health not in (
@@ -156,7 +157,9 @@ def record_marker(slug: str, *, force: bool = False) -> None:
     row content, no checkpoint-surface walk (that part of the census grows
     with the whole store, and a first write should not pay for it). Raises on
     failure; the caller (`store._record_ledger_census`) owns the swallowing."""
-    path = config.checkpoint_dir() / slug / MARKER_NAME
+    bucket = store.bucket_dir(slug)
+    assert bucket is not None  # a marker belongs to a named bucket
+    path = bucket / MARKER_NAME
     if path.exists() and not force and _marker_version(path) >= MARKER_VERSION:
         return
     census = census_bucket(slug, checkpoints=False)
