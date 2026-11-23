@@ -5,6 +5,37 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.0](https://github.com/Daily-Nerd/daimon/compare/v0.72.0...v0.73.0) (2026-11-23)
+
+
+### Features
+
+* **api:** write_handoff, an in-process baton writer that is always agent tier ([7152e58](https://github.com/Daily-Nerd/daimon/commit/7152e58a93bb55532c4aab1d6be17c8e97905ba7))
+* **buckets:** doctor suggests and merge allows folding a live worktree bucket ([a79356d](https://github.com/Daily-Nerd/daimon/commit/a79356de5b7b7318e38a26cc8cf463cafc926b99))
+* **hostgit:** ask a repository's own worktree list who its linked worktrees are ([2c936d3](https://github.com/Daily-Nerd/daimon/commit/2c936d3e62e586d106050d97a7bd700586f4d87d))
+* **identity:** a linked worktree uses its main repository's bucket ([fd467fd](https://github.com/Daily-Nerd/daimon/commit/fd467fd516dfb0b1e646a7bcda8af6a9d9698129))
+* **import:** accept a transcript recorded under a former root of the bucket ([b5707ef](https://github.com/Daily-Nerd/daimon/commit/b5707ef4a4c05720cc48e1ff317127d165e5cf9f)), closes [#1384](https://github.com/Daily-Nerd/daimon/issues/1384)
+
+
+### Bug Fixes
+
+* **briefing:** keep terminal instructions in foreign text away from the reader ([b379dbc](https://github.com/Daily-Nerd/daimon/commit/b379dbc63058ebfcf79de9e203f8389f88946fdf))
+* **briefing:** read the baton in the shared preparation so every host shows it ([30964e3](https://github.com/Daily-Nerd/daimon/commit/30964e37acfea8c86cac41f1dddf874d80290f5c))
+* **bucket:** print a merge for a collision that runs as printed ([6ccf3fb](https://github.com/Daily-Nerd/daimon/commit/6ccf3fb483c4e19aed6da445ba548e3ed9b8c246)), closes [#1384](https://github.com/Daily-Nerd/daimon/issues/1384)
+* **buckets:** name the fold target through the bucket owner and keep the census honest ([e425275](https://github.com/Daily-Nerd/daimon/commit/e42527507ea1e275abf3229d9eac67045d2a718a))
+* **handoff:** label the baton by the tier its row was written at ([739a20a](https://github.com/Daily-Nerd/daimon/commit/739a20aa282855a5205c8e765e2e2dfd81354b45))
+* **hostgit:** key the worktree memo on what the answer depends on ([ec219a6](https://github.com/Daily-Nerd/daimon/commit/ec219a64c983914025e9b6b4c61786d95ce6c33a))
+* **identity:** the folder a session binds is the main for a worktree ([01be5c8](https://github.com/Daily-Nerd/daimon/commit/01be5c8df097ac4be6b5b462c8e568b133fdff94))
+
+
+### Documentation
+
+* **bucket:** linked worktrees use their main repository's bucket ([7ce2449](https://github.com/Daily-Nerd/daimon/commit/7ce2449ba5d6f32259c79229e7f5309fa1ef2ee2))
+* describe the final project identity model in concepts and references ([458cb02](https://github.com/Daily-Nerd/daimon/commit/458cb02526456d853dc77c5be108e90d55eda015)), closes [#1384](https://github.com/Daily-Nerd/daimon/issues/1384)
+* **guides:** move daimon to a new machine or folder, run end to end as a test ([32dcd59](https://github.com/Daily-Nerd/daimon/commit/32dcd59dc980ac5273e8ea0026c25408870e2f65)), closes [#1384](https://github.com/Daily-Nerd/daimon/issues/1384)
+* **scars:** candidate for a printed repair command that its own verb refuses ([a14825b](https://github.com/Daily-Nerd/daimon/commit/a14825ba0e4cbf99ce68c6d56e415a43870d8685))
+* **scars:** candidate on binding a worktree through the main's own list ([faee698](https://github.com/Daily-Nerd/daimon/commit/faee69804074908cc6e8f6531ead83d2a3f1479e))
+
 ## [0.72.0](https://github.com/Daily-Nerd/daimon/compare/v0.71.0...v0.72.0) (2026-11-23)
 
 
