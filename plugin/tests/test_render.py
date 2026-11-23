@@ -1000,6 +1000,24 @@ def test_render_brief_drift_malformed_anchor_label(sample_checkpoint, capsys):
     assert "- [GONE] broken-item  (malformed anchor)\n" in out
 
 
+def test_rich_brief_opens_with_the_one_greeting(capsys, monkeypatch):
+    # The greeting is defined once, in marks; the rich path must print that
+    # constant, not a second copy of its text.
+    import pytest
+    pytest.importorskip("rich")
+    from daimon_briefing import marks, render
+
+    monkeypatch.setenv("COLUMNS", "400")
+    monkeypatch.setattr(marks, "GREETING", "GREETING-SENTINEL")
+    monkeypatch.setattr(render.briefing, "GREETING", "GREETING-SENTINEL")
+    render._rich_brief({
+        "external": [], "open_loops": [],
+        "decisions": [{"text": "d", "trust": "inferred"}],
+        "active_topic": None, "beliefs": [], "uncertainties": [],
+    })
+    assert capsys.readouterr().out.startswith("GREETING-SENTINEL")
+
+
 def test_rich_brief_shows_overflow_marker(capsys, monkeypatch):
     import pytest
     pytest.importorskip("rich")

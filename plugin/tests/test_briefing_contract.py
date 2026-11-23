@@ -317,7 +317,7 @@ def test_the_plain_renderer_adds_nothing(capsys, monkeypatch):
 
 
 def test_the_format_is_defined_in_one_place():
-    assert marks.GREETING == "While you were away — here's where we left off."
+    assert marks.GREETING == "While you were away, here's where we left off."
     assert marks.RULING_MARK == "§"
     assert marks.ITEM_MARKS == ("-", "*")
     assert marks.WARNING_MARK == "⚠"
