@@ -265,20 +265,21 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
             f"{len(refused)} session(s) not serialized: events.jsonl is "
             f"{refused[0]['state']}; {refused[0]['hint']}, then daimon heal")
 
-    # Last, so a failure still leads the verdict. This location is bound to no
-    # bucket: a project that moved looks, from here, exactly like one that is
-    # new, so the fixed line says so (the same text the briefing carries;
-    # nothing in it comes from the store). Injected, like `legacy`: a verdict
+    # The unbound notice is INFORMATION: a project that moved looks, from
+    # here, exactly like one that is new, so the fixed line says so (the same
+    # text the briefing carries; nothing in it comes from the store). It is
+    # listed last and never decides `ok` or the verdict, so a legitimately new
+    # folder is not reported as a failure. Injected, like `legacy`: a verdict
     # that reads the store cannot be tested alone.
-    if unbound:
-        warnings.append(bucket_identity.UNBOUND_NOTICE)
+    info = [bucket_identity.UNBOUND_NOTICE] if unbound else []
 
     if not warnings:
         verdict = "✓ fresh"
         if glob.get("same_session_as_project"):
             verdict += " — this project produced the most recent checkpoint"
-        return {"ok": True, "verdict": verdict, "warnings": []}
-    return {"ok": False, "verdict": "⚠ " + warnings[0], "warnings": warnings}
+        return {"ok": True, "verdict": verdict, "warnings": info}
+    return {"ok": False, "verdict": "⚠ " + warnings[0],
+            "warnings": warnings + info}
 
 
 def _tail_log_info(path: Path, now: float) -> dict | None:

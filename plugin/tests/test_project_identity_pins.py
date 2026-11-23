@@ -21,6 +21,7 @@ declared-slug idempotence in test_hostgit_declare.py.
 """
 
 import ast
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -167,6 +168,7 @@ def test_same_store_new_home_username_finds_the_same_bucket_after_rebind(
     monkeypatch.setenv("HOME", str(new_home))
     config.resolve_project_root.cache_clear()
     assert store.project_bucket(str(new_tree)) != bucket  # not found yet
+    shutil.rmtree(old_tree)  # the old home is gone, as after a real move
     plan = bucket_tools.remap(str(old_home.resolve()), str(new_home.resolve()),
                               apply=True)
     assert [a["action"] for a in plan["actions"]] == ["rewrite"]

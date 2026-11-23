@@ -55,8 +55,8 @@ def test_a_real_briefing_is_returned_whole(lib):
     assert lib.injectable(text) == text.strip()
 
 
-def test_only_a_trailing_pointer_is_dropped(lib):
-    """A line that merely starts the same way inside a body is body."""
+def test_a_line_that_only_starts_alike_is_body(lib):
+    """Only the CLI's own pointer sentence is dropped, wherever it sits."""
     text = "- one\nNo checkpoint yet in this note\n- two"
     assert lib.injectable(text) == text
 

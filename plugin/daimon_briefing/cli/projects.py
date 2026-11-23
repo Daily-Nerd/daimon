@@ -12,7 +12,8 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import bucket_tools, buckets, config, effects_commit, render, store, view
+from .. import (bucket_tools, buckets, config, effects_commit, hostgit, render,
+               store, view)
 from ..effects import Effects
 from ..display import one_line
 from ..ledger import _format_age
@@ -266,6 +267,32 @@ def _refuse_on_tenant_scope(args, verb: str) -> int | None:
     return 2
 
 
+def _refuse_when_rebinding_is_inert(args, verb: str) -> int | None:
+    """The refusal for the two rebind verbs: tenant scope (a tenant may not
+    choose which bucket a folder answers for, scar 0071) and SEALED (a declared
+    slug names the bucket before any recorded root is read, so the rewrite
+    would change nothing and only mislead). rc 2 and the refusal printed, or
+    None."""
+    refused = _refuse_on_tenant_scope(args, verb)
+    if refused is not None:
+        return refused
+    try:
+        sealed = hostgit.posture() is hostgit.Posture.SEALED
+    except ValueError:
+        sealed = True  # an unreadable posture is the narrow one
+    if not sealed:
+        return None
+    message = (f"this process runs under SEALED posture, where the host's "
+               f"declared slug names the bucket before any recorded root is "
+               f"read: `bucket {verb}` would change nothing here. Run it from "
+               f"an ambient home.")
+    if getattr(args, "json", False):
+        print(json.dumps({"refused": message}, indent=2, ensure_ascii=False))
+    else:
+        print(f"error: {message}", file=sys.stderr)
+    return 2
+
+
 def _refused(args, exc) -> int:
     if getattr(args, "json", False):
         print(json.dumps({"refused": str(exc)}, indent=2, ensure_ascii=False))
@@ -377,10 +404,11 @@ def _cmd_bucket_doctor(args) -> int:
         if listing:
             for match in survey["candidates"]:
                 lines.append(f"  candidate {match['bucket']}: same "
-                             f"{' and '.join(match['matched'])} as {args.path}")
+                             f"{' and '.join(match['matched'])} as "
+                             f"{survey['path']}")
                 lines.append(f"    if it is the same project: daimon bucket "
                              f"adopt --bucket={match['bucket']} "
-                             f"--path {args.path}")
+                             f"--path {survey['path']}")
         lines.append(f"candidates: {len(survey['candidates'])} "
                      f"({survey['candidates_note']})")
     if survey["suggestions_withheld"]:
@@ -473,7 +501,7 @@ def _cmd_bucket_adopt(args) -> int:
     """Bind one bucket to a folder, on purpose (slice 4b). Dry run unless
     `--apply`. rc 0 done or nothing to do, 2 refused. See
     `bucket_tools.adopt` for what is refused."""
-    refused = _refuse_on_tenant_scope(args, "adopt")
+    refused = _refuse_when_rebinding_is_inert(args, "adopt")
     if refused is not None:
         return refused
     try:
@@ -498,7 +526,7 @@ def _cmd_bucket_adopt(args) -> int:
 # the normal case on a fresh machine) but everything that was skipped for a
 # reason a person has to look at.
 _REMAP_NEEDS_A_PERSON = ("collision", "separator", "unreadable", "locked",
-                         "raced")
+                         "raced", "live-source", "not-a-root")
 
 
 def _remap_lines(result: dict, old: str, *, listing: bool) -> list:
@@ -535,12 +563,12 @@ def _cmd_bucket_remap(args) -> int:
     under another, once a folder or a username changed (slice 4b). Dry run
     unless `--apply`; rc 1 when a bucket needed a person (a collision, a lock,
     a lost race), 2 refused. See `bucket_tools.remap`."""
-    refused = _refuse_on_tenant_scope(args, "remap")
+    refused = _refuse_when_rebinding_is_inert(args, "remap")
     if refused is not None:
         return refused
     try:
         result = bucket_tools.remap(args.from_root, args.to_root,
-                                    apply=args.apply)
+                                    apply=args.apply, force=args.force)
     except bucket_tools.RebindRefused as exc:
         return _refused(args, exc)
     tally: dict[str, int] = {}
@@ -775,7 +803,8 @@ def register(sub, fmt) -> None:
                     "does not exist yet (a project not cloned here) is "
                     "skipped and listed; one whose new folder already "
                     "belongs to another bucket is skipped and listed with "
-                    "the `bucket merge` that folds them. Refused for the "
+                    "the `bucket merge` that folds them; one whose old root still "
+                    "exists (a clone kept) is skipped unless --force. Refused for the "
                     "filesystem root, a bare drive, a relative --to or a "
                     "--to inside --from. Safe to run twice. Dry run by "
                     "default. Human-only, and refused on a tenant-scoped "
@@ -794,6 +823,9 @@ def register(sub, fmt) -> None:
     p_bucket_remap.add_argument(
         "--apply", action="store_true",
         help="write the rebinds (default: print the plan only)")
+    p_bucket_remap.add_argument(
+        "--force", action="store_true",
+        help="also move a bucket whose old root still exists on disk")
     p_bucket_remap.add_argument(
         "--json", action="store_true", help="machine-readable output")
     p_bucket_remap.set_defaults(func=_cmd_bucket_remap)

@@ -26,6 +26,7 @@ import hashlib
 import os
 import secrets
 import shutil
+import stat
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -108,7 +109,9 @@ def operation():
     inside it shares ONE scan of the recorded roots, built on first need. The
     index lives only as long as the `with`: nothing is kept between operations,
     so `adopt`, `remap` and `merge` take effect at the next one in a
-    long-lived host, and a nested operation joins the outer one."""
+    long-lived host, and a nested operation joins the outer one. A CLI verb,
+    a host read and every MCP tool call open one; a blocking server verb
+    opens none itself, so each request does."""
     if _HOLDER.get() is not None:
         yield
         return
@@ -212,9 +215,12 @@ def _birth_names(location: str, seed: str) -> list[str]:
     seed with 6 and with 12 hex digits of the sha256 of its normalized real
     path. A suffixed name is kept inside the 255 characters a bucket name may
     have."""
+    try:
+        real = os.path.realpath(location)
+    except ValueError:  # an embedded NUL: resolution never raises
+        real = location
     digest = hashlib.sha256(
-        os.path.normcase(os.path.realpath(location)).encode("utf-8")
-    ).hexdigest()
+        os.path.normcase(real).encode("utf-8", "surrogatepass")).hexdigest()
     return [seed] + [f"{seed[:255 - 1 - n]}-{digest[:n]}" for n in (6, 12)]
 
 
@@ -287,6 +293,17 @@ UNBOUND_NOTICE = (
     "`daimon bucket doctor --path .` themselves.")
 
 
+def _has_gitfile(location: str) -> bool:
+    """Whether `<location>/.git` is a REGULAR FILE (what a linked worktree
+    has; a normal repo has a directory). One `lstat`: no git fork, no symlink
+    followed, and nothing inside the file read, so repository-controlled
+    content picks nothing."""
+    try:
+        return stat.S_ISREG(os.lstat(os.path.join(location, ".git")).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def is_unbound(project) -> bool:
     """Whether `project` is an absolute location no bucket is bound to: exactly
     the resolver's step 5, the one trigger of the notice. False for anything
@@ -297,8 +314,27 @@ def is_unbound(project) -> bool:
     text = str(project) if project else ""
     if not text or not os.path.isabs(text) or _pure():
         return False
+    # TODO(root-cause): linked worktrees resolve to their own bucket until
+    # slice 5 binds them to the main repo (#1384); remove this suppression in
+    # slice 5. TEMPORARY: it silences only the notice. Resolution and claim of
+    # a worktree are unchanged, and a submodule (also a `.git` file) is
+    # silenced with it.
+    if _has_gitfile(text):
+        return False
     answer = resolve(text)
     return answer.slug is not None and not answer.bound
+
+
+def session_root(path) -> str:
+    """The folder a SESSION opens for `path`: absolute, symlinks collapsed,
+    normalized to the git toplevel (`config.resolve_project_dir`), real-pathed.
+
+    The one derivation of "which folder is this project". `adopt`, `remap` and
+    `doctor --path` bind, check and print THIS, never a typed spelling: a
+    root recorded as `<repo>/plugin` would be a folder no session ever opens
+    (sessions resolve to `<repo>`), so the project would stay unbound."""
+    return os.path.realpath(
+        config.resolve_project_dir(os.fspath(path), allow_slug=False))
 
 
 def bucket_for(location) -> str | None:

@@ -264,10 +264,10 @@ Bucket names usually start with '-', so write --bucket=NAME.
 
 move every bucket under one folder to the same place under another
 
-After a folder or username change, rewrite the recorded root of every bucket under --from to the same place under --to. Matching stops at a separator, so /Users/a never matches /Users/abc. A bucket whose new folder does not exist yet (a project not cloned here) is skipped and listed; one whose new folder already belongs to another bucket is skipped and listed with the `bucket merge` that folds them. Refused for the filesystem root, a bare drive, a relative --to or a --to inside --from. Safe to run twice. Dry run by default. Human-only, and refused on a tenant-scoped home.
+After a folder or username change, rewrite the recorded root of every bucket under --from to the same place under --to. Matching stops at a separator, so /Users/a never matches /Users/abc. A bucket whose new folder does not exist yet (a project not cloned here) is skipped and listed; one whose new folder already belongs to another bucket is skipped and listed with the `bucket merge` that folds them; one whose old root still exists (a clone kept) is skipped unless --force. Refused for the filesystem root, a bare drive, a relative --to or a --to inside --from. Safe to run twice. Dry run by default. Human-only, and refused on a tenant-scoped home.
 
 ```text
-daimon bucket remap --from DIR --to DIR [--apply] [--json]
+daimon bucket remap --from DIR --to DIR [--apply] [--force] [--json]
 ```
 
 | argumento | valor | por defecto | descripción |
@@ -275,6 +275,7 @@ daimon bucket remap --from DIR --to DIR [--apply] [--json]
 | `--from` | `DIR` |  | the folder the projects used to live under (obligatorio) |
 | `--to` | `DIR` |  | the folder they live under now (obligatorio) |
 | `--apply` |  |  | write the rebinds (default: print the plan only) |
+| `--force` |  |  | also move a bucket whose old root still exists on disk |
 | `--json` |  |  | machine-readable output |
 
 **Ejemplos**

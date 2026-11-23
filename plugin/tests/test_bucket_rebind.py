@@ -244,7 +244,8 @@ def test_remap_is_separator_bounded(home, tmp_checkpoint_dir):
     (home["tmp"] / "a").mkdir()
     near = _make(tmp_checkpoint_dir, "-near", str(home["tmp"] / "abc"))
     exact = _make(tmp_checkpoint_dir, "-exact", str(home["tmp"] / "a"))
-    bucket_tools.remap(str(home["tmp"] / "a"), home["new"], apply=True)
+    bucket_tools.remap(str(home["tmp"] / "a"), home["new"], apply=True,
+                       force=True)  # both folders still exist here
     assert _root(near) == str(home["tmp"] / "abc")
     assert _root(exact) == home["new"]
 

@@ -16,6 +16,7 @@ stripped, root commit, folder name) and the roots it has had (`history`, which
 `bucket adopt` will append to). Read by `doctor` only.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -342,8 +343,13 @@ def doctor(path=None) -> dict:
                            for n in group if n != main)
 
     candidates: list[dict] = []
+    resolved = None
     if path is not None:
-        here = anchors_for(os.path.realpath(os.fspath(path)))
+        # The folder a session opens for what was typed (the one derivation
+        # adopt binds), so a candidate is looked up, and its command printed,
+        # for a folder that can actually be bound.
+        resolved = identity.session_root(path)
+        here = anchors_for(resolved)
         for name in sorted(dangling):
             record = read_identity(config.checkpoint_dir() / name)
             if record is None:
@@ -355,7 +361,8 @@ def doctor(path=None) -> dict:
                 candidates.append({"bucket": name, "matched": matched})
 
     return {"buckets": len(dirs), "findings": found,
-            "candidates": candidates, "candidates_note": "evidence, not proof",
+            "path": resolved, "candidates": candidates,
+            "candidates_note": "evidence, not proof",
             "suggestions": suggestions, "suggestions_withheld": withheld}
 
 
@@ -386,12 +393,17 @@ def _write_rebind(bucket: Path, old: str, new: str) -> str:
         if not store.root_eq(identity.read_root(bucket), old):
             return "raced"
         record = read_identity(bucket)
-        store._atomic_write(bucket / store._BUCKET_ROOT_NAME, f"{new}\n")
         history = list(record.get("history") or []) if record else []
         if old not in history:
             history.append(old)
         anchors = (record.get("anchors") or {}) if record else anchors_for(new)
+        # The record FIRST, the root second. A crash between the two leaves a
+        # bucket that still records `old`, so a rerun matches it again and
+        # finishes (the record's write is idempotent: `old` is already in its
+        # history). The other order left a moved root and a stale record that
+        # nothing ever repaired.
         write_identity(bucket, new, anchors, history=history, replace=True)
+        store._atomic_write(bucket / store._BUCKET_ROOT_NAME, f"{new}\n")
     identity.invalidate()
     return "rewrite"
 
@@ -412,6 +424,33 @@ def _stamp_unstamped(bucket: Path, real: str) -> str:
                        if record else [], replace=True)
     identity.invalidate()
     return "rewrite"
+
+
+@contextlib.contextmanager
+def _store_lock():
+    """The checkpoint store's own lock, held across a rebind's collision check
+    AND its write, fail-closed. The per-bucket lock cannot make "no other
+    bucket records this folder" true: two adopts of different buckets onto one
+    folder each hold only their own."""
+    with jsonl.dir_lock(config.checkpoint_dir()) as held:
+        if not held:
+            raise RebindRefused(
+                "could not lock the checkpoint store (another daimon process "
+                "is rebinding, or it cannot be locked); nothing was changed. "
+                "Try again in a moment.")
+        yield
+
+
+def _holder_of(real: str, besides: str) -> str | None:
+    """A bucket other than `besides` whose recorded root is `real`, read fresh."""
+    return next((n for n, r in sorted(store.bucket_roots().items())
+                 if n != besides and store.root_eq(r, real)), None)
+
+
+def _collision_message(name: str, bucket: str, real: str) -> str:
+    return (f"the bucket {name} already records {real}. Fold it into "
+            f"{bucket} first with `daimon bucket merge --from={name} "
+            f"--into={bucket}`, or the folder would answer for two buckets.")
 
 
 def _bucket_dir_named(name: str) -> Path:
@@ -451,14 +490,18 @@ def adopt(bucket: str, path, *, apply: bool = False, force: bool = False
     text = os.fspath(path)
     if not os.path.isdir(text):
         raise RebindRefused(f"{text!r} is not a directory")
-    real = os.path.realpath(text)
-    for name, root in sorted(store.bucket_roots().items()):
-        if name != bucket and store.root_eq(root, real):
-            raise RebindRefused(
-                f"the bucket {name} already records {real}. Fold it into "
-                f"{bucket} first with `daimon bucket merge --from={name} "
-                f"--into={bucket}`, or the folder would answer for two "
-                f"buckets.")
+    typed = os.path.realpath(text)
+    real = identity.session_root(text)
+    if real != typed:
+        # Refuse rather than quietly bind another folder than the one typed:
+        # sessions open the project root, so a subdirectory would be bound to
+        # nothing, and the person asked for THIS folder. Say which to use.
+        raise RebindRefused(
+            f"{typed} is inside a project whose folder is {real}, the one a "
+            f"session opens. Adopt that folder: --path {real}")
+    holder = _holder_of(real, bucket)
+    if holder:
+        raise RebindRefused(_collision_message(holder, bucket, real))
     recorded = identity.read_root(target)
     if _identity_blocks(target):
         raise RebindRefused(
@@ -474,6 +517,17 @@ def adopt(bucket: str, path, *, apply: bool = False, force: bool = False
             "action": "rewrite", "evidence": evidence}
     if store.root_eq(recorded, real):
         return dict(plan, action="kept")
+    seed = store.location_slug(real)
+    legacy = config.checkpoint_dir() / seed if seed else None
+    if (legacy is not None and seed != bucket and not force
+            and os.path.isdir(legacy) and identity.read_root(legacy) is None
+            and not _is_empty(legacy)):
+        raise RebindRefused(
+            f"the folder's own bucket {seed} has no recorded root and holds "
+            f"history; once {bucket} records the folder, {seed} is never "
+            f"found again. Fold it first with `daimon bucket merge "
+            f"--from={seed} --into={bucket} --force`, or pass --force here to "
+            f"leave it behind.")
     if recorded and not force and os.path.isdir(recorded):
         raise RebindRefused(
             f"the root recorded for {bucket} still exists on disk "
@@ -481,8 +535,12 @@ def adopt(bucket: str, path, *, apply: bool = False, force: bool = False
             f"Pass --force to move it anyway.")
     if not apply:
         return plan
-    outcome = (_write_rebind(target, recorded, real) if recorded
-               else _stamp_unstamped(target, real))
+    with _store_lock():
+        holder = _holder_of(real, bucket)  # again, under the lock
+        if holder:
+            raise RebindRefused(_collision_message(holder, bucket, real))
+        outcome = (_write_rebind(target, recorded, real) if recorded
+                   else _stamp_unstamped(target, real))
     if outcome == "locked":
         raise RebindRefused(
             f"could not lock the bucket {bucket} (another daimon process is "
@@ -557,7 +615,8 @@ def _mapped(root: str, old: str, new: str) -> tuple[str | None, str | None]:
     return new + tail, None
 
 
-def remap(from_root, to_root, *, apply: bool = False) -> dict:
+def remap(from_root, to_root, *, apply: bool = False,
+          force: bool = False) -> dict:
     """`daimon bucket remap`: after a folder or username change, rewrite the
     `root` of every bucket whose root lies under `from_root` to the same place
     under `to_root`. Dry run unless `apply`; a rerun is idempotent.
@@ -573,7 +632,11 @@ def remap(from_root, to_root, *, apply: bool = False) -> dict:
     mapped folder, or an earlier bucket of this run maps to it: skipped and
     listed with that bucket so `merge` can fold them); `separator` (the tail
     holds the target's separator as a name character); `unreadable` (an
-    identity record this code cannot read); `locked` and `raced` (applied
+    identity record this code cannot read); `live-source` (the old root still
+    exists, so it may be a clone that keeps its history: skipped unless
+    `force`); `not-a-root` (the mapped folder is not the folder a session opens
+    for it, `identity.session_root`, so binding it would bind nothing);
+    `locked` and `raced` (applied
     per bucket under its own lock, fail-closed). A bucket with no root is out
     of reach: `doctor` lists those.
 
@@ -585,23 +648,41 @@ def remap(from_root, to_root, *, apply: bool = False) -> dict:
         raise RebindRefused(
             f"--to {new!r} is {old!r} or inside it: remapping a folder onto "
             f"itself would move its buckets twice")
+    # `--from` through a symlink matches the real roots too (they are stored
+    # real-pathed), never silently nothing.
+    bases = [old]
+    real_old = os.path.realpath(old)
+    if real_old != old and not _below(real_old, old):
+        bases.append(real_old)
     roots = store.bucket_roots()
     claimed: dict[str, str] = {}  # normcase target -> bucket, this run
     actions: list[dict] = []
     for name in sorted(roots):
         root = roots[name]
-        target, why = _mapped(root, old, new)
+        target: str | None = None
+        why: str | None = "unmatched"
+        for base in bases:
+            target, why = _mapped(root, base, new)
+            if target is not None or why == "separator":
+                break
         if target is None:
             if why == "separator":
                 actions.append({"bucket": name, "action": "separator",
                                 "from": root, "to": None})
             continue
         entry = {"bucket": name, "from": root, "to": target}
+        if not force and os.path.isdir(root):
+            actions.append(dict(entry, action="live-source"))
+            continue
         if not os.path.isdir(target):
             actions.append(dict(entry, action="missing"))
             continue
         real = os.path.realpath(target)
         entry["to"] = real
+        opened = identity.session_root(real)
+        if opened != real:
+            actions.append(dict(entry, to=opened, action="not-a-root"))
+            continue
         other = next((n for n, r in sorted(roots.items())
                       if n != name and store.root_eq(r, real)), None)
         key = os.path.normcase(real)
@@ -614,10 +695,21 @@ def remap(from_root, to_root, *, apply: bool = False) -> dict:
             continue
         claimed[key] = name
         actions.append(dict(entry, action="rewrite"))
-    if apply:
-        for entry in actions:
-            if entry["action"] == "rewrite":
+    if apply and any(a["action"] == "rewrite" for a in actions):
+        with _store_lock():
+            live = store.bucket_roots()  # fresh, and nobody rebinds while held
+            for entry in actions:
+                if entry["action"] != "rewrite":
+                    continue
+                other = next((n for n, r in sorted(live.items())
+                              if n != entry["bucket"]
+                              and store.root_eq(r, entry["to"])), None)
+                if other is not None:
+                    entry.update(action="collision", other=other)
+                    continue
                 entry["action"] = _write_rebind(
                     config.checkpoint_dir() / entry["bucket"],
                     entry["from"], entry["to"])
+                if entry["action"] == "rewrite":
+                    live[entry["bucket"]] = entry["to"]
     return {"applied": apply, "actions": actions}

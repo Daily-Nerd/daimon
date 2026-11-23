@@ -164,8 +164,11 @@ def _handle_tools_call(params):
     handler = mcp_tools.HANDLERS.get(name)
     if handler is None:
         raise _UnknownTool(name)
+    from . import identity
     try:
-        result = handler(arguments)
+        # One operation per call: every resolution it makes shares one scan.
+        with identity.operation():
+            result = handler(arguments)
     except mcp_tools.ToolError as e:
         return {"content": [{"type": "text", "text": str(e)}],
                 "isError": True}
