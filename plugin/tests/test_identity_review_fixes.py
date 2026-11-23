@@ -462,3 +462,24 @@ def test_the_check_forks_no_git_and_reads_no_file(
     monkeypatch.setattr(subprocess, "run", boom)
     monkeypatch.setattr(subprocess, "Popen", boom)
     assert identity.is_unbound(str(wt.resolve())) is False
+
+
+def test_a_bad_posture_setting_refuses_the_rebind_verbs_as_json(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    import json
+
+    monkeypatch.setenv("DAIMON_GIT_POSTURE", "nonsense")
+    assert cli.main(["bucket", "remap", "--from=/a", "--to=/b", "--json"]) == 2
+    assert "SEALED" in json.loads(capsys.readouterr().out)["refused"]
+
+
+def test_adopt_into_a_bucket_locked_by_another_process_is_refused(
+        tmp_path, tmp_checkpoint_dir, monkeypatch):
+    new = tmp_path / "new"
+    new.mkdir()
+    b = _bucket(tmp_checkpoint_dir, "-old", "/gone/old")
+    monkeypatch.setattr(bucket_tools, "_write_rebind",
+                        lambda bucket, old, to: "locked")
+    with pytest.raises(bucket_tools.RebindRefused, match="could not lock"):
+        bucket_tools.adopt("-old", str(new), apply=True)
+    assert _root(b) == "/gone/old"
