@@ -1,11 +1,14 @@
 ---
-id: 0
+id: 181
 type: fence
 title: store.bucket_of is called through the module at call time, never imported by name, so one rebinding moves every writer
 severity: medium
 confidence: 0.8
 created: 2026-11-22
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/bucket-owner-is-looked-up-on-the-module-at-call-time.md
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/tests/test_bucket_owner_lock_in.py
@@ -14,7 +17,7 @@ evidence:
 expires:
   condition: "the owner is passed in explicitly instead of looked up as store.bucket_of"
   review_after: 2027-05-22
-status: candidate
+status: active
 ---
 
 The lock-in test proves one owner decides every bucket name by replacing

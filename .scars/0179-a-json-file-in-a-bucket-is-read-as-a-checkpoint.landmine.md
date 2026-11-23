@@ -1,11 +1,14 @@
 ---
-id: 0
+id: 179
 type: landmine
 title: Any file ending in .json inside a bucket directory is walked as a plaintext checkpoint by several readers, so a bucket-level document must not end in .json
 severity: medium
 confidence: 0.85
 created: 2026-11-22
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/a-json-file-in-a-bucket-is-read-as-a-checkpoint.md
 anchors:
   - path: plugin/daimon_briefing/store.py
   - path: plugin/daimon_briefing/recall.py
@@ -16,7 +19,7 @@ evidence:
 expires:
   condition: "the bucket walkers share one classification of what a bucket file is, instead of each testing the .json suffix"
   review_after: 2027-06-01
-status: candidate
+status: active
 ---
 
 Scar 0101 lists four registries for a new file under `checkpoints/{slug}/`. It
