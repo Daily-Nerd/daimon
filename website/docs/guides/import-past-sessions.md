@@ -42,6 +42,15 @@ record no project in their transcripts, so they are never discovered: pass
 CLI and Hermes have no transcript root daimon registers, so import reaches
 neither, by discovery or by path.
 
+A project that moved keeps its transcripts. Claude Code and Codex write the
+folder a session ran in, and after a move that folder is the old one, which
+does not exist on this machine. Once `daimon bucket remap` or `adopt` has
+bound the project's bucket to its new folder, the old folder is kept in the
+bucket's history, and a transcript that recorded it (or a folder under it) is
+accepted for the project, by discovery and by `--transcript`. A transcript from
+any other folder is still refused. The whole move is in [Move daimon to a new
+machine or folder](move-to-a-new-machine.md).
+
 The call count is a plan: one call per chunk of the rendered transcript plus
 the merges. The run stops before the session whose planned calls would take
 the spent count past `--max-calls`. The default is the planned total, so a

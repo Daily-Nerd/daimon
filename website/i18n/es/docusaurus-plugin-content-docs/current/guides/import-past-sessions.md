@@ -44,6 +44,16 @@ de comandos. Gemini CLI y Hermes no tienen una raíz de transcripciones que
 daimon registre, así que la importación no llega a ninguno, ni por
 descubrimiento ni por ruta.
 
+Un proyecto que se mudó conserva sus transcripciones. Claude Code y Codex
+escriben la carpeta donde corrió una sesión, y después de una mudanza esa
+carpeta es la vieja, que no existe en esta máquina. Una vez que
+`daimon bucket remap` o `adopt` asoció el bucket del proyecto a su carpeta
+nueva, la carpeta vieja queda en el historial del bucket, y un transcript que
+la registró (o una carpeta debajo) se acepta para el proyecto, por
+descubrimiento y por `--transcript`. Un transcript de cualquier otra carpeta se
+sigue rechazando. La mudanza completa está en [Mover daimon a una máquina o
+carpeta nueva](move-to-a-new-machine.md).
+
 La cantidad de llamadas es un plan: una llamada por fragmento de la
 transcripción renderizada más las fusiones. La corrida se detiene antes de la
 sesión cuyas llamadas planificadas llevarían el gasto por encima de
