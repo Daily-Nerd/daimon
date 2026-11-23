@@ -19,7 +19,7 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "RenderedBriefing", "render_briefing", "briefing_text",
              "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
              "HandoffTooLong", "HandoffNotRecorded", "write_handoff")
-OWNED = ("Briefing", "parse_briefing")
+OWNED = ("Handoff", "Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
 

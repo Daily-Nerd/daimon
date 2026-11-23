@@ -133,27 +133,18 @@ def _print_version_note(checkpoint) -> None:
 
 
 def _handoff_title(handoff) -> str:
-    """The baton's header, shared by both render paths. A row the human tier
-    wrote keeps the original wording. Anything else (an agent, or a source no
-    table knows) reads as agent text, the way an agent's claim is shown
-    elsewhere: named and unverified."""
-    if handoff.get("tier") == "human":
-        return f"HANDOFF (left deliberately by previous session, {handoff['ts']})"
-    return f"HANDOFF (written by an agent, unverified, {handoff['ts']})"
+    """The baton's header, shared by both render paths and the machine brief
+    (`marks.handoff_title`): a human-tier row keeps the original wording,
+    anything else reads as agent text, named and unverified."""
+    return marks.handoff_title(handoff.get("tier"), handoff["ts"])
 
 
 def _format_handoff(handoff) -> str:
-    """Plain-path text for the baton block (#523, #1044): identical bytes to
-    what `_print_handoff`'s non-rich branch used to print directly, extracted
-    so `render_brief`'s byte-ceiling accounting can measure it before the
-    body renders. "" when there is no handoff (nothing to reserve or print).
-    Multi-line batons keep one arrow per line."""
-    if not handoff:
-        return ""
-    lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
-    parts = [f"{_handoff_title(handoff)}:"]
-    parts.extend(f"→ {line}" for line in lines)
-    return "\n".join(parts) + "\n\n"
+    """Plain-path text for the baton block (#523, #1044), the one
+    `briefing.handoff_block` writes for every host, so `render_brief`'s
+    byte-ceiling accounting can measure it before the body renders. ""
+    when there is no handoff (nothing to reserve or print)."""
+    return briefing.handoff_block(handoff)
 
 
 def _print_handoff(handoff) -> None:

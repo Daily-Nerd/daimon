@@ -34,8 +34,8 @@ from . import (capture, checks_host, checks_runtime, clock, config, display, hos
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
 from .amendments import found_label as _amend_found_label
-from .marks import (GREETING, ITEM_MARKS, RULING_MARK, VERIFY_PHRASE,
-                    WARNING_MARK)
+from .marks import (GREETING, HANDOFF_LINE_MARK, ITEM_MARKS, RULING_MARK,
+                    VERIFY_PHRASE, WARNING_MARK, handoff_title)
 
 log = logging.getLogger("daimon.briefing")
 
@@ -778,6 +778,11 @@ class Annotated(NamedTuple):
     # CALLER to record beside the counters; () when it did not run.
     worldcheck_skips: tuple = ()
     import_note: str | None = None
+    # #523: the project's active baton (`store.active_handoff`: ts, note and
+    # the authority `tier` of the row), or None. Read here, once, so every
+    # host renders the same section and none reads the events ledger for it
+    # on its own. The teammate blocks (`stamps=False`) carry none.
+    handoff: dict | None = None
 
     @property
     def body_notes(self) -> tuple:
@@ -1064,11 +1069,20 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
                     f"Git-backed reads unavailable for {room}: "
                     f"checkout refused ({reason}).")
                 notes = display.merge_notes((warning,), display.all_notes(notes))
+    handoff = None
+    if stamps:
+        # Fail-open like the view's reads: a broken events file must never
+        # take the briefing down. Keyed on the REQUESTED project, not on the
+        # body served (a global-fallback body is another project's).
+        try:
+            handoff = store.active_handoff(project)
+        except Exception:  # noqa: BLE001 - the baton is advisory, never the briefing
+            handoff = None
     return Annotated(
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
-        notes, opened.fell_back, tuple(skips), note)
+        notes, opened.fell_back, tuple(skips), note, handoff)
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -2147,6 +2161,33 @@ def _world(annotated) -> dict:
             "worldcheck_skips": tuple(annotated.worldcheck_skips)}
 
 
+def handoff_block(handoff) -> str:
+    """The baton block every plain host prints first (#523): the title that
+    says who wrote it (`marks.handoff_title`), one arrow line per line of the
+    baton, and a blank line. "" when there is no baton. The CLI, the MCP tool,
+    `api.render_briefing` and the Hermes hook all write it here, and
+    `api.parse_briefing` reads it back."""
+    if not handoff:
+        return ""
+    lines = [ln.strip() for ln in str(handoff["note"]).splitlines()
+             if ln.strip()]
+    parts = [f"{handoff_title(handoff.get('tier'), handoff['ts'])}:"]
+    parts.extend(f"{HANDOFF_LINE_MARK} {line}" for line in lines)
+    return "\n".join(parts) + "\n\n"
+
+
+def _room_after(block: str) -> int | None:
+    """The byte budget left for a body once `block` is printed ahead of it, as
+    the `max_bytes` override `effective_budget` takes. None when there is no
+    block, which leaves the budget as it was."""
+    if not block:
+        return None
+    budget = effective_budget()
+    if budget is None:
+        return None
+    return max(1, budget - len(block.encode("utf-8")))
+
+
 def machine_brief(target, now, *, loops_pointer: bool,
                   worldcheck_project=None) -> RenderedBriefing:
     """The briefing a machine consumer reads (the MCP tool, `render_briefing`):
@@ -2177,6 +2218,8 @@ def machine_brief(target, now, *, loops_pointer: bool,
     world = _world(annotated)
     notes = annotated.notes
     snap = annotated.snapshot
+    # #523: the baton leads every state, charged to the same budget as the body.
+    baton = handoff_block(annotated.handoff)
     # #693: one strictly-scoped ledger read serves every return below, since
     # standing rulings exist before the first checkpoint does.
     rulings = ruling_lines(target, snap=snap)
@@ -2198,23 +2241,26 @@ def machine_brief(target, now, *, loops_pointer: bool,
                 "session creates one." if cross else
                 "the first serialized session creates one.")
         return RenderedBriefing(
-            f"{ruling_text}no checkpoint for this project. {hint}",
+            f"{baton}{ruling_text}no checkpoint for this project. {hint}",
             "no-checkpoint", notes, **world)
     b = build(filtered)
     if b is None:
         if snap.closed:
             return RenderedBriefing(
-                f"{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed", notes,
+                f"{baton}{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed",
+                notes,
                 **world)
         return RenderedBriefing(
-            f"{ruling_text}checkpoint exists but has nothing worth surfacing.",
+            f"{baton}{ruling_text}checkpoint exists but has nothing worth "
+            "surfacing.",
             "empty", notes, **world)
     # #1236: the body renders, so its import note leads the notes; the
     # returns above print no body and keep the reader's notes alone.
     notes = annotated.body_notes
     return RenderedBriefing(
-        render_plain(b, receipt_degraded(filtered), rulings,
-                     loops_pointer=loops_pointer, notes=notes),
+        baton + render_plain(b, receipt_degraded(filtered), rulings,
+                             loops_pointer=loops_pointer, notes=notes,
+                             max_bytes=_room_after(baton)),
         "briefing", notes, **world)
 
 
@@ -2904,7 +2950,8 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
 
 def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
            loops_pointer: bool = True, snap=None,
-           notes=(), cards_out: dict | None = None) -> str | None:
+           notes=(), cards_out: dict | None = None,
+           handoff=None) -> str | None:
     """Render the briefing, or None if there is nothing worth surfacing.
     LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
     quote integrity, and falls back to deterministic on any doubt.
@@ -2922,7 +2969,14 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     own `worldcheck_project`, D2).
 
     `cards_out`, when given, receives the request and verdict cards the same
-    read printed (both panels print whole here), for the caller's stamps."""
+    read printed (both panels print whole here), for the caller's stamps.
+
+    `handoff` (#523) is `Annotated.handoff`: its block leads the text and is
+    charged to the byte budget, so a host that injects this text (the Hermes
+    hook) shows the baton like the CLI does. The CLI prints its own and
+    passes none."""
+    baton = handoff_block(handoff)
+    room = _room_after(baton)
     b = build(checkpoint)
     # #1132 PR 7a: `snap` is the view's snapshot (the rulings are read once
     # out of it and every panel masks a withheld whole value); `notes` are its
@@ -2961,17 +3015,17 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
         # checkpoint (a day-one action) — must still reach context;
         # "nothing worth surfacing" is no longer true when any of these exist.
         if not skeleton_blocks:
-            return None
+            return baton.rstrip("\n") or None
         if closed:
             skeleton_blocks.append([CLOSED_LINE])
-        return "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
+        return baton + "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
     degraded = receipt_degraded(checkpoint)
     if config.llm_briefing():
         # #1128: the LLM narrates only what `select` kept under the same
         # budget the deterministic render uses (the rulings and panels it is
         # handed are charged as protected furniture), and the verbatim-quote
         # check runs over that same set, so this path obeys the same model.
-        sel = select(b, effective_budget(), degraded=degraded,
+        sel = select(b, effective_budget(room), degraded=degraded,
                      rulings=rulings, request_lines=request_lines,
                      verdict_lines=verdict_lines, owed_lines=owed_lines,
                      overdue_lines=overdue_lines,
@@ -2993,13 +3047,14 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                 # `notes` ride in skeleton_blocks, first
                 parts.extend("\n".join(blk) for blk in skeleton_blocks)
                 parts.append(rendered)
-                return "\n\n".join(parts)
+                return baton + "\n\n".join(parts)
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return render_plain(b, degraded, rulings, request_lines, verdict_lines,
-                        owed_lines, decision_count,
-                        overdue_lines=overdue_lines,
-                        loops_pointer=loops_pointer, notes=notes)
+    return baton + render_plain(b, degraded, rulings, request_lines,
+                                verdict_lines, owed_lines, decision_count,
+                                overdue_lines=overdue_lines,
+                                loops_pointer=loops_pointer, notes=notes,
+                                max_bytes=room)
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a
