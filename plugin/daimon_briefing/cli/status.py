@@ -139,7 +139,7 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
                    global_fallback: bool = False,
                    legacy: tuple | None = None,
                    incomplete: list | None = None,
-                   unbound: bool = False) -> dict:
+                   unbound: bool = False, split: bool = False) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
     project checkpoint, outstanding serialize failures, or the kill switch being
@@ -272,6 +272,8 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
     # folder is not reported as a failure. Injected, like `legacy`: a verdict
     # that reads the store cannot be tested alone.
     info = [bucket_identity.UNBOUND_NOTICE] if unbound else []
+    if split:
+        info.append(bucket_identity.SPLIT_NOTICE)
 
     if not warnings:
         verdict = "✓ fresh"
@@ -704,7 +706,8 @@ def _status_world(project_arg=None) -> dict:
                             legacy=((legacy_slug, raw_project, legacy_holds)
                                     if legacy_slug else None),
                             incomplete=identity["incomplete"],
-                            unbound=bucket_identity.is_unbound(project))
+                            unbound=bucket_identity.is_unbound(project),
+                            split=bucket_identity.has_split_bucket(project))
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()

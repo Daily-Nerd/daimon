@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import bucket_tools, config, store
+from daimon_briefing import bucket_tools, config, hostgit, store
 from daimon_briefing.surfaces import Writer
 
 from .test_read_layers import PLUGIN
@@ -199,21 +199,9 @@ def main_and_worktree(tmp_path):
     return main, wt.resolve()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="project identity design (rev 3, slice 0, worktrees D3): a linked "
-           "worktree resolves to its own toplevel, so it gets its OWN bucket "
-           "instead of its main repository's. Passes once worktrees map to the "
-           "main repository's identity.")
 def test_a_linked_worktree_resolves_to_its_main_repos_bucket(main_and_worktree):
     main, wt = main_and_worktree
     assert store.project_bucket(str(wt)) == store.project_bucket(str(main))
-
-
-def test_a_linked_worktree_has_its_own_bucket_today(main_and_worktree):
-    main, wt = main_and_worktree
-    assert store.project_bucket(str(wt)) == store.project_slug(str(wt))
-    assert store.project_bucket(str(wt)) != store.project_bucket(str(main))
 
 
 # ---- security pin: a pointer at ANOTHER repo's admin dir ------------------------------------
@@ -237,8 +225,10 @@ def test_a_gitfile_pointing_at_another_repos_admin_dir_does_not_adopt_its_bucket
     got = store.project_bucket(str(evil))
     assert got != store.project_bucket(str(victim))
     assert got != store.project_bucket(str(victim_wt))
-    # Today git itself answers the directory the pointer sits in.
+    # daimon checks membership itself: the victim's own worktree list does not
+    # name this directory, so it keeps a bucket of its own.
     assert got == store.project_slug(str(evil.resolve()))
+    assert hostgit.linked_main(str(evil.resolve())) is None
 
 
 # ---- census: modules that carry a copy of the slug regex ------------------------------------

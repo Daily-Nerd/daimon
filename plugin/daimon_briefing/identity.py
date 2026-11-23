@@ -73,11 +73,16 @@ class BucketRef(str):
 
     slug: str
     bound: bool
+    home: str
 
-    def __new__(cls, location: str, slug: str, *, bound: bool = True):
+    def __new__(cls, location: str, slug: str, *, bound: bool = True,
+                home: str | None = None):
         ref = super().__new__(cls, location)
         ref.slug = slug
         ref.bound = bound
+        # The location the bucket's `root` records: the same as the value,
+        # except for a linked worktree, which uses its main repository's.
+        ref.home = home or location
         return ref
 
 
@@ -240,6 +245,16 @@ def _free_name(root: Path, location: str, seed: str) -> str | None:
     return None
 
 
+def home_of(location: str) -> str:
+    """The location a bucket is bound to for `location`: its main repository
+    when it is a linked worktree of one (step 1), else itself. The physical
+    folder stays the session's location (worldcheck and branch stamps read the
+    real working tree); only the BINDING follows the main."""
+    if not os.path.isabs(location):
+        return location  # a slug or a relative name is no folder to ask about
+    return config.worktree_main(location) or location
+
+
 def resolve(location) -> Resolution:
     """The owner's answer for an absolute, already resolved `location`.
 
@@ -253,9 +268,13 @@ def resolve(location) -> Resolution:
     5. Unbound: the first free birth name, which is what a read answers (it
        finds nothing) and what a claim creates.
 
+    1. (before 2, AMBIENT only) A linked worktree continues as its MAIN
+       repository (`home`), when that repository's own worktree list names
+       this exact path; see `hostgit.linked_main`.
+
     A stamped bucket is never returned for a location its root does not name.
-    No git, no stat of any recorded root, no refusal. (Step 1, linked
-    worktrees, arrives with the worktree slice.)"""
+    No git for an ordinary folder (one lstat), no stat of any recorded root,
+    no refusal."""
     from . import store  # local: store imports this module
 
     text = str(location) if location else ""
@@ -268,6 +287,9 @@ def resolve(location) -> Resolution:
     root = _store_root()
     if root is None:
         return Resolution(seed, False)
+    text = home_of(text)
+    seed = store.location_slug(text)
+    assert seed  # a non-empty absolute location always has a seed
     own = root / seed
     recorded = read_root(own)
     if recorded and store.root_eq(recorded, text):
@@ -302,15 +324,41 @@ def is_unbound(project) -> bool:
     text = str(project) if project else ""
     if not text or not os.path.isabs(text) or _pure():
         return False
-    # TODO(root-cause): linked worktrees resolve to their own bucket until
-    # slice 5 binds them to the main repo (#1384); remove this suppression in
-    # slice 5. TEMPORARY: it silences only the notice. Resolution and claim of
-    # a worktree are unchanged, and a submodule (also a `.git` file) is
-    # silenced with it.
-    if "\0" in text or hostgit.has_gitfile(text):  # a NUL names no folder
+    if "\0" in text:  # a NUL names no folder
         return False
     answer = resolve(text)
     return answer.slug is not None and not answer.bound
+
+
+# The second line, for a linked worktree whose OWN folder already has a bucket
+# from before it shared its main repository's. Fixed text like the first: no
+# bucket name, nothing from the store, and the survey it names is the user's.
+SPLIT_NOTICE = (
+    "This worktree has an earlier memory of its own, separate from its main "
+    "repository's. To fold it in, ask the user to run "
+    "`daimon bucket doctor` themselves.")
+
+
+def has_split_bucket(project) -> bool:
+    """Whether `project` is a linked worktree bound to its main repository
+    while its own folder still records a bucket of its own (the memory it had
+    before step 1 existed). False for anything that is not such a worktree,
+    and under tenant scope and SEALED, where nothing is derived. A read."""
+    text = str(project) if project else ""
+    if not text or not os.path.isabs(text) or _pure() or "\0" in text:
+        return False
+    if home_of(text) == text:
+        return False
+    root = _store_root()
+    if root is None:
+        return False
+    from . import store
+
+    own = store.location_slug(text)
+    assert own  # a non-empty absolute location always has a seed
+    recorded = read_root(root / own)
+    return bool(recorded and store.root_eq(recorded, text)
+                and resolve(text).slug != own)
 
 
 def session_root(path) -> str:
@@ -330,6 +378,20 @@ def bucket_for(location) -> str | None:
     return resolve(location).slug
 
 
+def worktree_binds_to(location, slug: str) -> bool:
+    """Whether `location` is a live linked worktree whose sessions now resolve
+    to the bucket `slug`: the one case where a folder that exists on disk
+    cannot birth the bucket it once recorded, because it answers its main
+    repository's. False for every other location."""
+    text = str(location) if location else ""
+    if not text or not os.path.isabs(text) or "\0" in text:
+        return False
+    if _pure() or home_of(text) == text:
+        return False
+    answer = resolve(text)
+    return answer.bound and answer.slug == slug
+
+
 def bind(project_dir) -> BucketRef | None:
     """Resolve `project_dir` and name its bucket through the owner, creating
     nothing: the ref for an operation that must not make a bucket (a repair
@@ -344,8 +406,9 @@ def bind(project_dir) -> BucketRef | None:
     slug = store.bucket_of(resolved)
     if not slug:
         return None
-    return BucketRef(str(resolved), slug,
-                     bound=os.path.isabs(str(resolved)))
+    text = str(resolved)
+    return BucketRef(text, slug, bound=os.path.isabs(text),
+                     home=home_of(text) if os.path.isabs(text) else text)
 
 
 # Errnos that say "that name is taken" after a birth rename. Anything else is
@@ -415,33 +478,34 @@ def _claim_once(text: str, res: Resolution) -> BucketRef | None:
     root = config.checkpoint_dir()
     slug = res.slug
     assert slug is not None
+    home = home_of(text)  # what the bucket records (a worktree's main)
     if res.bound:
         bucket = root / slug
         if hostgit.declared_slug(text):
             # The host named this bucket itself: first writer's root is
             # recorded, never enforced.
             bucket.mkdir(parents=True, exist_ok=True)
-            store.stamp_root(bucket, text)
+            store.stamp_root(bucket, home)
             invalidate()
-            return BucketRef(text, slug)
+            return BucketRef(text, slug, home=home)
         if read_root(bucket) is None:
             # An unstamped legacy directory: the first location to write
             # claims it, exclusively.
             bucket.mkdir(parents=True, exist_ok=True)
-            store.stamp_root(bucket, text)
+            store.stamp_root(bucket, home)
             invalidate()
-            if not store.root_eq(read_root(bucket), text):
+            if not store.root_eq(read_root(bucket), home):
                 return None  # another location stamped it first
-        return BucketRef(text, slug)
-    stage = _stage(root, text)
+        return BucketRef(text, slug, home=home)
+    stage = _stage(root, home)
     if _publish(stage, root / slug):
         invalidate()
-        return BucketRef(text, slug)
+        return BucketRef(text, slug, home=home)
     invalidate()
     # Taken. If the winner was this very location (two processes birthing
     # together) it is ours; otherwise resolve again for the next name.
-    if store.root_eq(read_root(root / slug), text):
-        return BucketRef(text, slug)
+    if store.root_eq(read_root(root / slug), home):
+        return BucketRef(text, slug, home=home)
     return None
 
 
@@ -481,6 +545,7 @@ def claim(project_dir) -> BucketRef | None:
             except OSError:
                 pass
         return ref
+    home = home_of(text)
     with operation():
         last: Resolution | None = None
         for _ in range(8):
@@ -491,12 +556,12 @@ def claim(project_dir) -> BucketRef | None:
                     "by another location; `daimon bucket doctor` lists the "
                     "buckets")
             if config.is_disabled():
-                return BucketRef(text, res.slug)
+                return BucketRef(text, res.slug, home=home)
             last = res
             try:
                 claimed = _claim_once(text, res)
             except OSError:
-                return BucketRef(text, res.slug)
+                return BucketRef(text, res.slug, home=home)
             if claimed is not None:
                 return claimed
         raise BucketClaimFailed(
@@ -517,7 +582,7 @@ def verify(ref: BucketRef) -> None:
     from . import store
 
     recorded = read_root(config.checkpoint_dir() / ref.slug)
-    if recorded and not store.root_eq(recorded, str(ref)):
+    if recorded and not store.root_eq(recorded, ref.home):
         raise BucketMismatch(
             f"bucket {ref.slug!r} was claimed for this location but now "
             f"records another one (rebound while this operation ran)")

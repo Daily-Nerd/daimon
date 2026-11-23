@@ -2386,7 +2386,8 @@ def write_checkpoint(session_id: str, checkpoint: dict, project_dir=None,
         # here, at the write boundary. Optional additive field; readers fall
         # back to slug-derived display when absent. Guarded by `slug` so the
         # unknown-project convention stays: absent field = unknown.
-        name = Path(project_dir).name
+        # The bound folder's name: a linked worktree is its main's project.
+        name = Path(getattr(project_dir, "home", project_dir)).name
         if name:
             checkpoint.setdefault("project_name", name)
     # Stamp the git branch at capture time (#222), same idempotent setdefault

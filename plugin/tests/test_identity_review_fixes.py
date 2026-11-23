@@ -388,7 +388,7 @@ def test_resolve_survives_a_receipts_path_that_is_a_directory(
 
 
 
-# ---- M2 (temporary): no notice in a linked worktree until slice 5 -------------------------------
+# ---- M2: a linked worktree follows its main repository's notice ----------------------------------
 
 
 @pytest.fixture
@@ -398,35 +398,37 @@ def folder(tmp_path):
     return str(p.resolve())
 
 
-def test_a_linked_worktree_gets_no_notice_and_a_plain_folder_still_does(
+def test_a_linked_worktree_gets_no_notice_once_its_main_is_bound(
         tmp_path, folder, tmp_checkpoint_dir):
     main = _repo(tmp_path / "main")
     wt = tmp_path / "wt"
     _git(main, "worktree", "add", "-q", "-b", "side", str(wt))
+    identity.claim(str(main.resolve()))
     assert identity.is_unbound(str(wt.resolve())) is False
     assert identity.is_unbound(folder) is True
 
 
-def test_the_suppression_changes_nothing_but_the_notice(
+def test_a_gitfile_that_names_no_listed_worktree_is_an_ordinary_folder(
         tmp_path, tmp_checkpoint_dir):
-    """Resolution and claim of a worktree are untouched: it still resolves
-    unbound and is born its own bucket (slice 5 binds it to the main repo)."""
+    """Nothing in the `.git` file picks a bucket: this one resolves, claims
+    and gets the notice exactly like a folder without it."""
     wt = tmp_path / "wt"
     wt.mkdir()
     (wt / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
     where = str(wt.resolve())
     assert identity.resolve(where).bound is False
-    assert identity.is_unbound(where) is False
+    assert identity.is_unbound(where) is True
     ref = identity.claim(where)
     assert ref.slug == store.location_slug(where)
     assert (tmp_checkpoint_dir / ref.slug / "root").is_file()
 
 
-def test_the_brief_of_a_linked_worktree_carries_no_notice(
+def test_the_brief_of_a_worktree_carries_its_mains_notice_state(
         tmp_path, tmp_checkpoint_dir, capsys):
+    main = _repo(tmp_path / "main")
     wt = tmp_path / "wt"
-    wt.mkdir()
-    (wt / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
+    _git(main, "worktree", "add", "-q", "-b", "side", str(wt))
+    identity.claim(str(main.resolve()))
     cli.main(["brief", "--project", str(wt)])
     assert "No memory is bound" not in capsys.readouterr().out
 
@@ -439,7 +441,7 @@ def test_a_git_directory_is_not_a_worktree(tmp_path, tmp_checkpoint_dir):
 
 def test_a_git_symlink_is_not_a_worktree(tmp_path, tmp_checkpoint_dir):
     """Repository-controlled content picks nothing: only a regular `.git` file
-    (lstat, never followed) counts, and nothing in it is read."""
+    (lstat, never followed) is even asked about, and nothing in it is read."""
     target = tmp_path / "somefile"
     target.write_text("gitdir: x\n")
     repo = tmp_path / "repo"
@@ -448,20 +450,19 @@ def test_a_git_symlink_is_not_a_worktree(tmp_path, tmp_checkpoint_dir):
     assert identity.is_unbound(str(repo.resolve())) is True
 
 
-def test_the_check_forks_no_git_and_reads_no_file(
+def test_a_plain_folder_and_a_git_directory_fork_no_git(
         tmp_path, tmp_checkpoint_dir, monkeypatch):
     import subprocess
 
-    wt = tmp_path / "wt"
-    wt.mkdir()
-    (wt / ".git").write_text("gitdir: /elsewhere\n")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
 
     def boom(*a, **k):
         raise AssertionError("forked")
 
     monkeypatch.setattr(subprocess, "run", boom)
     monkeypatch.setattr(subprocess, "Popen", boom)
-    assert identity.is_unbound(str(wt.resolve())) is False
+    assert identity.is_unbound(str(repo.resolve())) is True
 
 
 def test_a_bad_posture_setting_refuses_the_rebind_verbs_as_json(
