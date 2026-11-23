@@ -3,7 +3,7 @@ import json
 import pytest
 
 import daimon_briefing as plugin
-from daimon_briefing import hooks
+from daimon_briefing import hooks, identity, marks
 from tests.conftest import make_messages
 from daimon_briefing.surfaces import Writer
 
@@ -607,7 +607,9 @@ def test_pre_llm_call_routes_project_through_resolve_project_root(
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
     )
-    assert out is None  # the read returned None
+    # The read returned None, so there is no briefing; the folder is bound to
+    # no bucket, so the one thing the host is told is the unbound notice.
+    assert out == {"context": marks.warning(identity.UNBOUND_NOTICE)}
     assert captured["project_dir"] == "/git/top"
 
 
@@ -636,7 +638,7 @@ def test_pre_llm_call_reads_own_route_for_a_known_project(tmp_checkpoint_dir, mo
         session_id="S2", user_message="hi", conversation_history=[], is_first_turn=True,
         model="m", platform="cli",
     )
-    assert out is None
+    assert out == {"context": marks.warning(identity.UNBOUND_NOTICE)}
     assert captured["route"] is store.Route.OWN
     assert captured["admit"] is store.Admit.ANY
     assert captured["project_dir"] == "/git/top"

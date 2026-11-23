@@ -154,6 +154,28 @@ def run_brief(cli, cwd: str, host=None, *, timeout: float, auto: bool = False):
     return proc
 
 
+# The line `daimon brief` prints when there is no checkpoint to brief. It is an
+# instruction for a person at a terminal, never something to inject.
+NOTHING_TO_BRIEF = "No checkpoint yet"
+
+
+def injectable(stdout: str) -> str:
+    """What a briefing hook prints from `daimon brief`'s stdout: "" when there
+    is nothing to say.
+
+    The CLI's own "No checkpoint yet" pointer is dropped, but a note printed
+    ABOVE it is kept: a folder no bucket is bound to has no checkpoint to brief
+    and exactly one thing worth saying (the unbound notice). The old test, "the
+    text starts with the pointer", read that case as silence, because the
+    notice comes first."""
+    lines = stdout.strip().splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[-1].startswith(NOTHING_TO_BRIEF):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 def project_env(cwd, host=None, **extra):
     """Child env with code-owned project/host capture hints when known.
 

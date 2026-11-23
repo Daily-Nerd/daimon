@@ -96,12 +96,17 @@ def test_gemini_session_start_labels_global_fallback(
     assert "global fallback" in ctx
 
 
-def test_gemini_session_start_quiet_when_no_checkpoint(tmp_checkpoint_dir, tmp_path):
-    # No checkpoint anywhere: emit NOTHING. Empty stdout is the only other
-    # legal output under Gemini's pure-JSON rule.
+def test_gemini_session_start_says_only_the_notice_when_no_checkpoint(
+        tmp_checkpoint_dir, tmp_path):
+    # No checkpoint anywhere and the folder is bound to nothing: the one
+    # unbound notice, as pure JSON, and none of the CLI's own pointer text.
+    # Empty stdout stays the answer under tenant scope and SEALED
+    # (tests/test_hook_brief_text.py).
+    from daimon_briefing import identity, marks
     proc = _run(START_HOOK, {"cwd": "/p/never-seen", "source": "startup"}, tmp_path)
     assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
+    assert _additional_context(proc.stdout).strip() == marks.warning(
+        identity.UNBOUND_NOTICE)
 
 
 def test_gemini_session_start_missing_cli_emits_install_hint(tmp_checkpoint_dir, tmp_path):

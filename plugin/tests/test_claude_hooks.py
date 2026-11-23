@@ -153,10 +153,15 @@ def test_brief_hook_no_cwd_does_not_pick_the_global_pointer(tmp_checkpoint_dir, 
     assert "global fallback" not in proc.stdout
 
 
-def test_brief_hook_quiet_when_no_checkpoint_anywhere(tmp_checkpoint_dir, tmp_path):
+def test_brief_hook_says_only_the_unbound_notice_when_no_checkpoint_anywhere(
+        tmp_checkpoint_dir, tmp_path):
+    """A folder no bucket is bound to has nothing to brief and one thing to
+    say: the notice, never the CLI's own "No checkpoint yet" pointer. Silent
+    again under tenant scope and SEALED (tests/test_hook_brief_text.py)."""
+    from daimon_briefing import identity, marks
     proc = _run(BRIEF_HOOK, {"cwd": "/p/never-seen"}, tmp_path)
     assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
+    assert proc.stdout.strip() == marks.warning(identity.UNBOUND_NOTICE)
 
 
 def test_brief_hook_hints_install_when_cli_missing(tmp_checkpoint_dir, tmp_path):
