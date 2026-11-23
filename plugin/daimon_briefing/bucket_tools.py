@@ -259,6 +259,22 @@ def _looks_like_worktree(root: str) -> bool:
     return os.path.isdir(root) and hostgit.has_gitfile(root)
 
 
+def _worktree_fold(name: str, root: str | None) -> str | None:
+    """The bucket a live linked worktree now resolves to, when that is another
+    bucket that exists: where `name` should be folded. None for anything else
+    (no root, a folder that is gone, not linked to a listed main, already the
+    answer). A human surface: it may fork git."""
+    if not root or not os.path.isdir(root):
+        return None
+    if identity.home_of(root) == root:
+        return None
+    answer = identity.resolve(root)
+    if (answer.bound and answer.slug and answer.slug != name
+            and (config.checkpoint_dir() / answer.slug).is_dir()):
+        return answer.slug
+    return None
+
+
 def _newest(bucket: Path) -> float:
     return store._file_recency(bucket / store._LATEST) \
         if (bucket / store._LATEST).is_file() else 0.0
@@ -284,9 +300,10 @@ def doctor(path=None) -> dict:
     With `path`, `candidates` lists DANGLING buckets whose identity anchors
     (origin URL, root commit) equal that location's, labelled evidence and not
     proof. `suggestions` offers a merge for each shared root, into the bucket
-    with the newest session; it is withheld ("worktree") for worktree-looking
-    roots, because their live location would birth the folded bucket again
-    until the resolver learns worktrees. A candidate is where `bucket adopt`
+    with the newest session, and for each live linked worktree into the bucket
+    it now resolves to; a shared root that LOOKS like a worktree but is not a
+    listed one is withheld ("worktree"), because its live location would
+    birth the folded bucket again. A candidate is where `bucket adopt`
     starts: the CLI names that command for a person at a terminal, and nothing
     here rebinds anything."""
     found: dict[str, list] = {key: [] for key in FINDINGS}
@@ -333,9 +350,20 @@ def doctor(path=None) -> dict:
 
     suggestions: list[dict] = []
     withheld = None
+    # A live linked worktree whose sessions now use another bucket: fold it
+    # there. Its folder cannot birth the bucket again, which is what the
+    # withheld suggestion below protects against.
+    folds: dict[str, str] = {}
+    for name in found["worktree"]:
+        target = _worktree_fold(name, roots.get(name))
+        if target:
+            folds[name] = target
+            suggestions.append({"from": name, "into": target})
     for group in found["shared_root"]:
-        if any(name in found["worktree"] for name in group):
-            withheld = "worktree"
+        looks = [n for n in group if n in found["worktree"]]
+        if looks:
+            if any(n not in folds for n in looks):
+                withheld = "worktree"
             continue
         main = max(group, key=lambda n: (_newest(config.checkpoint_dir() / n),
                                          n))
