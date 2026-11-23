@@ -363,14 +363,15 @@ def has_split_bucket(project) -> bool:
 
 def session_root(path) -> str:
     """The folder a SESSION opens for `path`: absolute, symlinks collapsed,
-    normalized to the git toplevel (`config.resolve_project_dir`), real-pathed.
+    normalized to the git toplevel (`config.resolve_project_dir`), real-pathed,
+    and for a linked worktree the main repository its bucket is bound to.
 
     The one derivation of "which folder is this project". `adopt`, `remap` and
     `doctor --path` bind, check and print THIS, never a typed spelling: a
     root recorded as `<repo>/plugin` would be a folder no session ever opens
     (sessions resolve to `<repo>`), so the project would stay unbound."""
-    return os.path.realpath(
-        config.resolve_project_dir(os.fspath(path), allow_slug=False))
+    return home_of(os.path.realpath(
+        config.resolve_project_dir(os.fspath(path), allow_slug=False)))
 
 
 def bucket_for(location) -> str | None:

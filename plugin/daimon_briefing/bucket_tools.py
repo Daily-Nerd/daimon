@@ -525,8 +525,9 @@ def adopt(bucket: str, path, *, apply: bool = False, force: bool = False
         # sessions open the project root, so a subdirectory would be bound to
         # nothing, and the person asked for THIS folder. Say which to use.
         raise RebindRefused(
-            f"{typed} is inside a project whose folder is {real}, the one a "
-            f"session opens. Adopt that folder: --path {real}")
+            f"{typed} is inside a project, or is a linked worktree of one, whose "
+            f"folder is {real}, the one a session binds. Adopt that folder: "
+            f"--path {real}")
     holder = _holder_of(real, bucket)
     if holder:
         raise RebindRefused(_collision_message(holder, bucket, real))
