@@ -7,7 +7,7 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import handoff, render, store
+from .. import display, handoff, render, store
 from ..surfaces import Writer
 from . import _observe
 
@@ -41,20 +41,27 @@ def _cmd_handoff(args) -> int:
             return 1
         render.render_lifecycle_lines(["handoff cleared"])
         return 0
-    text = (args.text or "").strip()
-    if not text:
+    if not (args.text or "").strip():
         print("error: nothing to hand off — pass the baton text or --clear",
               file=sys.stderr)
         return 1
-    if len(text) > _HANDOFF_MAX_CHARS:
+    try:
+        text = handoff.validate(args.text)
+    except handoff.HandoffUnprintable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except handoff.HandoffTooLong as exc:
         # #902: a refusal that names no destination sends the trimmed content
         # to whatever store is nearest, which for an agent is the harness's
         # own memory file, where daimon never sees it. Name the daimon-side
         # homes. NOT `daimon log`: nothing reads a ref-less note back, so it
         # would be a void with a command name.
-        print(f"error: baton exceeds {_HANDOFF_MAX_CHARS} chars "
-              f"({len(text)}) — a handoff is \"do X first, beware Y\", not a "
-              "second checkpoint; trim it. The trimmed facts belong in a "
+        over = (f"{exc.length} chars" if exc.length > exc.limit
+                else f"{exc.size} bytes")
+        print(f"error: baton exceeds {_HANDOFF_MAX_CHARS} chars / "
+              f"{handoff.MAX_BYTES} bytes ({over}) — a handoff is \"do X "
+              "first, beware Y\", not a second "
+              "checkpoint; trim it. The trimmed facts belong in a "
               "checkpoint (the /daimon-end skill, `daimon write-checkpoint`), "
               "and a rule that must never decay in "
               "`daimon ruling propose --by agent`", file=sys.stderr)
@@ -69,7 +76,8 @@ def _cmd_handoff(args) -> int:
     if prior:
         print("warning: superseding an unconsumed baton — its text below "
               "never surfaces again; fold anything still relevant into the "
-              f"new baton:\n  {prior['note']}", file=sys.stderr)
+              f"new baton:\n  {display.printable(prior['note'])}",
+              file=sys.stderr)
     if not store.append_event("", "active", note=text, kind="handoff",
                               project_dir=project, writer=Writer.HUMAN,
                               source=source):

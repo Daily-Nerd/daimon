@@ -219,6 +219,4 @@ def test_an_unbounded_budget_leaves_the_body_unbounded(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     _seed()
     api.write_handoff(PROJECT, BATON)
-    assert briefing._room_after(briefing.handoff_block(
-        store.active_handoff(PROJECT))) is None
     assert AGENT_TITLE in api.render_briefing(PROJECT).text

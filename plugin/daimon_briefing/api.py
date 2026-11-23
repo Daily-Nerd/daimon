@@ -78,8 +78,11 @@ next briefing leads with, for a project given as a path. It is ALWAYS agent
 tier: it never asks the terminal, so a host process that holds a TTY still
 writes an agent row, and `daimon brief` prints it as "written by an agent,
 unverified", never as a person's note. The size limit is `HANDOFF_MAX_CHARS`
-(read it before building the text). Over it raises `HandoffTooLong`, which
-carries `.limit` and `.length`; nothing is truncated or written. An empty text
+and `HANDOFF_MAX_BYTES` (UTF-8; read both before building the text). Over
+either raises `HandoffTooLong`, which carries `.limit`, `.length`,
+`.byte_limit` and `.size`; nothing is truncated or written. A text with a
+character a terminal acts on (a C0 control other than newline and tab, DEL, a
+C1 control, U+2028 or U+2029) raises `HandoffUnprintable`. An empty text
 raises `ValueError`; `HandoffNotRecorded` means daimon is disabled, the project
 is unknown or the ledger is unwritable. Latest wins.
 
@@ -134,8 +137,9 @@ from dataclasses import dataclass
 from .briefing import RenderedBriefing, briefing_text, render_briefing
 from .display import withheld_json, withheld_marker
 from .heal import HealPlan, HealReport, HealSkip, HealTarget
+from .handoff import MAX_BYTES as HANDOFF_MAX_BYTES
 from .handoff import MAX_CHARS as HANDOFF_MAX_CHARS
-from .handoff import HandoffNotRecorded, HandoffTooLong
+from .handoff import HandoffNotRecorded, HandoffTooLong, HandoffUnprintable
 from .handoff import write as write_handoff
 from .heal_host import heal_all, heal_plan
 from .hostgit import declare as declare_project
@@ -162,7 +166,8 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
            "RenderedBriefing", "render_briefing", "briefing_text",
            "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
-           "HandoffTooLong", "HandoffNotRecorded", "write_handoff", "Handoff",
+           "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
+           "HandoffNotRecorded", "write_handoff", "Handoff",
            "Briefing", "parse_briefing")
 
 

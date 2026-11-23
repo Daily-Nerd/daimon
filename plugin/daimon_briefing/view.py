@@ -1198,6 +1198,9 @@ def _filter(raw: dict, snap: Snapshot, live_only: bool):
             else:
                 kept.append(item)
         block[fld.key] = kept
+    # The copy is what a reader shows: no stored item can carry a terminal
+    # instruction through it (`display.printable`).
+    display.printable_tree(out)
     return out, tuple(withheld), suppressed
 
 
@@ -2180,7 +2183,9 @@ def _leaf(text: str, snaps, seen: list | None = None, path: str = ""):
             seen.append(Withheld(None, "prose", "forgotten", None, "",
                                  path=path))
         return None
-    return _mask_text(text, snaps, False, seen, path)
+    # The one leaf every masked ledger row's strings pass through: a ruling, a
+    # request or an amendment cannot carry a terminal instruction to a printer.
+    return display.printable(_mask_text(text, snaps, False, seen, path))
 
 
 def named_snapshots(row: dict, cache: dict, *, skip=None) -> list[Snapshot]:

@@ -2087,7 +2087,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=(), verdict_lines=(), owed_lines=(),
                  decision_count: str | None = None, *,
                  max_bytes: int | None = None, overdue_lines=(),
-                 loops_pointer: bool = True, notes=()) -> str:
+                 loops_pointer: bool = True, notes=(),
+                 reserved: int = 0) -> str:
     """The deterministic briefing text: a thin wrapper over `select` and
     `render_selection` (#1128), kept so its many call sites keep working.
 
@@ -2110,7 +2111,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
                  request_lines=request_lines, verdict_lines=verdict_lines,
                  owed_lines=owed_lines, overdue_lines=overdue_lines,
                  decision_count=decision_count,
-                 loops_pointer=loops_pointer, notes=notes)
+                 loops_pointer=loops_pointer, notes=notes, reserved=reserved)
     text = render_selection(sel)
     _log_render_size(text, budget)
     return text
@@ -2161,6 +2162,18 @@ def _world(annotated) -> dict:
             "worldcheck_skips": tuple(annotated.worldcheck_skips)}
 
 
+def handoff_lines(handoff) -> tuple[str, list[str]]:
+    """The baton as it is shown: its title (without the colon) and its lines,
+    one per non-blank line of the note, every one through `display.printable`
+    (a baton is foreign text; a stored row may predate the write-time check).
+    The plain block, the rich panel and the parser's inverse all read these."""
+    title = handoff_title(handoff.get("tier"),
+                          display.printable(str(handoff["ts"])))
+    lines = [ln.strip() for ln in display.printable(
+        str(handoff["note"])).splitlines() if ln.strip()]
+    return title, lines
+
+
 def handoff_block(handoff) -> str:
     """The baton block every plain host prints first (#523): the title that
     says who wrote it (`marks.handoff_title`), one arrow line per line of the
@@ -2169,23 +2182,10 @@ def handoff_block(handoff) -> str:
     `api.parse_briefing` reads it back."""
     if not handoff:
         return ""
-    lines = [ln.strip() for ln in str(handoff["note"]).splitlines()
-             if ln.strip()]
-    parts = [f"{handoff_title(handoff.get('tier'), handoff['ts'])}:"]
+    title, lines = handoff_lines(handoff)
+    parts = [f"{title}:"]
     parts.extend(f"{HANDOFF_LINE_MARK} {line}" for line in lines)
     return "\n".join(parts) + "\n\n"
-
-
-def _room_after(block: str) -> int | None:
-    """The byte budget left for a body once `block` is printed ahead of it, as
-    the `max_bytes` override `effective_budget` takes. None when there is no
-    block, which leaves the budget as it was."""
-    if not block:
-        return None
-    budget = effective_budget()
-    if budget is None:
-        return None
-    return max(1, budget - len(block.encode("utf-8")))
 
 
 def machine_brief(target, now, *, loops_pointer: bool,
@@ -2260,7 +2260,7 @@ def machine_brief(target, now, *, loops_pointer: bool,
     return RenderedBriefing(
         baton + render_plain(b, receipt_degraded(filtered), rulings,
                              loops_pointer=loops_pointer, notes=notes,
-                             max_bytes=_room_after(baton)),
+                             reserved=_byte_len(baton)),
         "briefing", notes, **world)
 
 
@@ -2976,7 +2976,6 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
     hook) shows the baton like the CLI does. The CLI prints its own and
     passes none."""
     baton = handoff_block(handoff)
-    room = _room_after(baton)
     b = build(checkpoint)
     # #1132 PR 7a: `snap` is the view's snapshot (the rulings are read once
     # out of it and every panel masks a withheld whole value); `notes` are its
@@ -3025,8 +3024,8 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
         # budget the deterministic render uses (the rulings and panels it is
         # handed are charged as protected furniture), and the verbatim-quote
         # check runs over that same set, so this path obeys the same model.
-        sel = select(b, effective_budget(room), degraded=degraded,
-                     rulings=rulings, request_lines=request_lines,
+        sel = select(b, effective_budget(), degraded=degraded,
+                     reserved=_byte_len(baton), rulings=rulings, request_lines=request_lines,
                      verdict_lines=verdict_lines, owed_lines=owed_lines,
                      overdue_lines=overdue_lines,
                      decision_count=decision_count,
@@ -3054,7 +3053,7 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                                 verdict_lines, owed_lines, decision_count,
                                 overdue_lines=overdue_lines,
                                 loops_pointer=loops_pointer, notes=notes,
-                                max_bytes=room)
+                                reserved=_byte_len(baton))
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

@@ -136,7 +136,7 @@ def _handoff_title(handoff) -> str:
     """The baton's header, shared by both render paths and the machine brief
     (`marks.handoff_title`): a human-tier row keeps the original wording,
     anything else reads as agent text, named and unverified."""
-    return marks.handoff_title(handoff.get("tier"), handoff["ts"])
+    return briefing.handoff_lines(handoff)[0]
 
 
 def _format_handoff(handoff) -> str:
@@ -162,7 +162,7 @@ def _print_handoff(handoff) -> None:
     if not handoff:
         return
     if supports_rich():
-        lines = [ln.strip() for ln in str(handoff["note"]).splitlines() if ln.strip()]
+        lines = briefing.handoff_lines(handoff)[1]
         from rich.console import Console
         from rich.panel import Panel
         from rich.text import Text
