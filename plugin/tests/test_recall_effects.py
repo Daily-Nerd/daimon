@@ -342,7 +342,7 @@ def test_the_tenant_rule_never_lets_all_projects_widen_a_read(monkeypatch):
 
 
 def test_read_scope_of_an_unknown_project_is_denied(monkeypatch):
-    monkeypatch.setattr(store, "project_slug", lambda _p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda _p: None)
     assert view.read_scope(PROJECT, all_projects=False) == view.Denied()
 
 

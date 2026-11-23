@@ -198,14 +198,17 @@ def test_a_contradiction_stays_a_ledger_row_and_a_confirmation_stays_off_it(
 
 def test_an_unknown_project_reads_empty_and_writes_nothing(
         tmp_checkpoint_dir, monkeypatch):
-    monkeypatch.setattr(store, "project_slug", lambda _p=None: "")
+    monkeypatch.setattr(store, "bucket_of", lambda _p=None: "")
     assert store.first_world_outcomes(project_dir=PROJECT) == {}
     assert not store.append_world_outcomes(
         [("o-111aaa", "pr-state", "confirmed", KEY)], project_dir=PROJECT)
 
 
 def test_an_oserror_on_the_write_is_a_false_not_a_raise(tmp_checkpoint_dir):
-    _path().parent.parent.mkdir(parents=True, exist_ok=True)
-    _path().parent.write_text("a file where the bucket directory belongs")
+    # The store itself cannot be a directory: a file at the bucket name is a
+    # TAKEN name now (the claim walks on to a suffixed bucket), so the
+    # unwritable case is the checkpoint root.
+    tmp_checkpoint_dir.parent.mkdir(parents=True, exist_ok=True)
+    tmp_checkpoint_dir.write_text("a file where the store belongs")
     assert not store.append_world_outcomes(
         [("o-111aaa", "pr-state", "confirmed", KEY)], project_dir=PROJECT)

@@ -2848,7 +2848,7 @@ def test_write_policy_tombstones_is_a_no_op_with_nothing_doomed(
 
 def test_write_policy_tombstones_is_a_no_op_with_no_resolvable_project(
         tmp_checkpoint_dir, monkeypatch):
-    monkeypatch.setattr(refutations.store, "project_slug", lambda *a, **k: "")
+    monkeypatch.setattr(refutations.store, "bucket_of", lambda *a, **k: "")
     # Must not raise even though a real ruling id is named — there is
     # nowhere to write.
     refutations._write_policy_tombstones({"r-doesnotmatter"},

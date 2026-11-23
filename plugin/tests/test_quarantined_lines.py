@@ -155,7 +155,7 @@ def test_forget_without_a_key_or_a_project_purges_nothing(monkeypatch):
     path = _write_sidecar("trust.quarantined-lines", _envelope(VALUE))
     assert ledger_repair.forget_quarantined_lines(
         "", text=VALUE, project_dir=PROJECT) == ledger_repair.Purged(0, 0)
-    monkeypatch.setattr(store, "project_slug", lambda _p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda _p: None)
     assert ledger_repair.forget_quarantined_lines(
         KEY, text=VALUE, project_dir=PROJECT) == ledger_repair.Purged(0, 0)
     assert VALUE in path.read_text(encoding="utf-8")

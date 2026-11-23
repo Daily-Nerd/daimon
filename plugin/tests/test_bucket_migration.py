@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import buckets, cli, store, surfaces
+from daimon_briefing import buckets, cli, scope, store, surfaces
 from daimon_briefing.surfaces import Writer
 
 # ---------------------------------------------------------------------------
@@ -109,6 +109,10 @@ def _populate_legacy(link, sessions) -> Path:
     root = config.checkpoint_dir()
     legacy = root / (buckets.legacy_slug(link) or "")
     os.rename(root / (store.project_bucket(link) or ""), legacy)
+    # A 0.41.0 bucket predates the root record (#1092), so it names no
+    # directory: left in place, the renamed bucket's root would bind the
+    # project to the legacy name, which a recorded root now means.
+    (legacy / "root").unlink(missing_ok=True)
     return legacy
 
 
@@ -1182,7 +1186,11 @@ def test_a_cross_device_rename_of_a_pointer_only_bucket_still_lands(
     link, real = linked
     _populate_legacy(link, [("S-old", "2026-09-01T00:00:00Z")])
 
-    def _exdev(*_a, **_k):
+    real_rename = os.rename
+
+    def _exdev(src, dst, *a, **k):
+        if scope.BIRTH in Path(src).parts:
+            return real_rename(src, dst, *a, **k)  # a birth stays in-store
         raise OSError(18, "Invalid cross-device link")
 
     monkeypatch.setattr(buckets.os, "rename", _exdev)
@@ -1239,8 +1247,14 @@ def test_a_rename_that_the_filesystem_refuses_falls_back_to_the_merge(
     link, real = linked
     legacy = tmp_checkpoint_dir / (buckets.legacy_slug(link) or "")
     _plant(legacy, {"events.jsonl": _row("e1")})
-    monkeypatch.setattr(buckets.os, "rename",
-                        lambda *a, **k: (_ for _ in ()).throw(OSError("EXDEV")))
+    real_rename = os.rename
+
+    def exdev(src, dst, *a, **k):
+        if scope.BIRTH in Path(src).parts:
+            return real_rename(src, dst, *a, **k)  # a birth stays in-store
+        raise OSError("EXDEV")
+
+    monkeypatch.setattr(buckets.os, "rename", exdev)
 
     record = buckets.migrate(link)
 

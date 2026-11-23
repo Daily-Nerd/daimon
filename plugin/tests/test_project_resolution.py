@@ -20,7 +20,7 @@ import pytest
 from ._prepared import FrozenClock
 from daimon_briefing import (amendments, briefing, cli, config, pending,
                              privacy, refutations, relations,
-                             requests, store, view)
+                             requests, scope, store, view)
 
 
 def _init_git_repo(path: Path) -> None:
@@ -44,7 +44,8 @@ def _buckets(tmp_checkpoint_dir) -> list[str]:
     if not tmp_checkpoint_dir.exists():
         return []
     return sorted(child.name for child in tmp_checkpoint_dir.iterdir()
-                  if child.is_dir())
+                  if child.is_dir() and child.name not in
+                  scope.CURRENT_INTERNAL_DIRS)
 
 
 # ---- the four ledgers ----

@@ -16,7 +16,6 @@ handlers let it through, and the serialize spawn line that `heal` parses does
 not change shape.
 """
 
-import os
 import time
 from pathlib import Path
 
@@ -31,23 +30,18 @@ B = "-rebound-bucket-B"
 
 
 @pytest.fixture
-def rebound(tmp_path, tmp_checkpoint_dir, monkeypatch):
-    """(P, old slug of P) with the owner rebinding P to B."""
+def rebound(tmp_path, tmp_checkpoint_dir):
+    """(P, old slug of P) with P bound to bucket B by B's recorded root: the
+    real resolver finds B by its root, so P's seed names nothing."""
     proj = tmp_path / "proj"
     proj.mkdir()
     location = str(proj.resolve())
     old = store.project_slug(location)
     assert old != B
-    real = store.bucket_of
-
-    def owner(x):
-        if isinstance(x, identity.BucketRef):
-            return x.slug
-        if x and os.path.isabs(str(x)) and os.path.realpath(str(x)) == location:
-            return B
-        return real(x)
-
-    monkeypatch.setattr(store, "bucket_of", owner)
+    bucket = tmp_checkpoint_dir / B
+    bucket.mkdir(parents=True)
+    (bucket / "root").write_text(location + "\n", encoding="utf-8")
+    assert store.bucket_of(location) == B
     return location, old
 
 
@@ -159,13 +153,13 @@ def test_a_raw_caller_that_never_claimed_still_lands_under_the_owner(
 # ---- ledger repair takes the ref -------------------------------------------
 
 
-def _torn_events(bucket):
-    bucket.mkdir(parents=True)
+def _torn_events(bucket, root="/recorded/root"):
+    bucket.mkdir(parents=True, exist_ok=True)
     (bucket / "events.jsonl").write_text(
         '{"ts": "2026-11-20T00:00:00Z", "item_ref": "i-1"}\n'
         '{"ts": "2026-11-20T00:00:01Z", "item_re',
         encoding="utf-8")
-    (bucket / "root").write_text("/recorded/root\n", encoding="utf-8")
+    (bucket / "root").write_text(root + "\n", encoding="utf-8")
 
 
 def test_repair_dry_run_on_a_rebound_bucket_reports_its_real_counts(
@@ -175,7 +169,7 @@ def test_repair_dry_run_on_a_rebound_bucket_reports_its_real_counts(
     the name from the location inside a store that lacks the real one."""
     location, old = rebound
     bucket = tmp_checkpoint_dir / B
-    _torn_events(bucket)
+    _torn_events(bucket, location)
     before = (bucket / "events.jsonl").read_bytes()
 
     dry = ledger_repair.repair(location, "events.jsonl", dry_run=True)
@@ -271,43 +265,44 @@ def test_a_claim_that_cannot_make_the_directory_defers_to_ensure_bucket(
 
 
 def test_ensure_bucket_verifies_the_ref_and_raises_bucket_mismatch(
-        tmp_path, tmp_checkpoint_dir, monkeypatch):
+        tmp_path, tmp_checkpoint_dir):
     proj = tmp_path / "repo"
     proj.mkdir()
     ref = identity.claim(str(proj))
     assert store.ensure_bucket(ref) == tmp_checkpoint_dir / ref.slug
-    monkeypatch.setattr(store, "bucket_of", lambda x: "-another-bucket")
+    (tmp_checkpoint_dir / ref.slug / "root").write_text(
+        "/rebound/to/another/place\n", encoding="utf-8")
     with pytest.raises(identity.BucketMismatch):
         store.ensure_bucket(ref)
 
 
 def test_bucket_mismatch_is_not_an_oserror_so_no_writer_absorbs_it(
-        tmp_path, tmp_checkpoint_dir, monkeypatch):
+        tmp_path, tmp_checkpoint_dir):
     assert not issubclass(identity.BucketMismatch, OSError)
     assert not issubclass(identity.BucketClaimFailed, OSError)
     proj = tmp_path / "repo"
     proj.mkdir()
     ref = identity.claim(str(proj))
-    monkeypatch.setattr(store, "bucket_of", lambda x: "-another-bucket")
+    (tmp_checkpoint_dir / ref.slug / "root").write_text(
+        "/rebound/to/another/place\n", encoding="utf-8")
     with pytest.raises(identity.BucketMismatch):
         requests.append(_row(), project_dir=ref, writer=Writer.HUMAN)
 
 
-def test_a_lossy_twin_that_shares_a_bucket_is_not_a_mismatch(
+def test_a_lossy_twin_is_refused_the_bucket_another_location_holds(
         tmp_path, tmp_checkpoint_dir):
-    """4a: the directory used is `ref.slug`, whoever's root is recorded there.
-    Two locations that fold to one slug keep sharing and writing as before."""
+    """4b: the root check is on. A ref whose bucket records another location is
+    a mismatch (the twin that arrives later is born its own bucket by its
+    claim, see test_identity_claim)."""
     one = tmp_path / "my" / "app"
     two = tmp_path / "my-app"
     one.mkdir(parents=True)
     two.mkdir()
-    # Not lossy-equal on this tmp_path layout, so force the shared bucket by
-    # planting the other twin's root under the first twin's slug.
     ref = identity.claim(str(one))
     (tmp_checkpoint_dir / ref.slug / "root").write_text(
         str(two.resolve()) + "\n", encoding="utf-8")
-    assert store.ensure_bucket(ref) == tmp_checkpoint_dir / ref.slug
-    assert requests.append(_row(), project_dir=ref, writer=Writer.HUMAN)
+    with pytest.raises(identity.BucketMismatch):
+        store.ensure_bucket(ref)
 
 
 def test_the_verb_decorator_and_the_capture_handlers_let_it_through(
