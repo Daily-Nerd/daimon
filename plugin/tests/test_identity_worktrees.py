@@ -547,3 +547,87 @@ def test_an_undecidable_tenant_setting_is_the_narrow_answer(pair, monkeypatch):
 
     monkeypatch.setattr(config, "tenant_scoped", boom)
     assert config.worktree_main(wt) is None
+
+
+# ---- review fixes: memo keyed on what the answer depends on ---------------------------
+
+
+def test_a_path_re_added_from_another_repo_answers_the_new_main(tmp_path):
+    a = _repo(tmp_path / "a")
+    b = _repo(tmp_path / "b")
+    wt = tmp_path / "wt"
+    _git(a, "worktree", "add", "-q", "-b", "x", str(wt))
+    real = str(wt.resolve())
+    assert hostgit.linked_main(real) == str(a.resolve())
+    _git(a, "worktree", "remove", "--force", str(wt))
+    _git(b, "worktree", "add", "-q", "-b", "y", str(wt))
+    assert hostgit.linked_main(real) == str(b.resolve())
+
+
+def test_a_failed_first_ask_is_not_remembered(pair, monkeypatch):
+    main, wt = pair
+    real_read = hostgit._read
+    monkeypatch.setattr(hostgit, "_read", lambda *a, **k: None)
+    assert hostgit.linked_main(wt) is None
+    monkeypatch.setattr(hostgit, "_read", real_read)
+    assert hostgit.linked_main(wt) == main
+
+
+def test_a_pruned_entry_is_noticed_without_a_cache_clear(tmp_path):
+    main = _repo(tmp_path / "main")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "x", str(wt))
+    real = str(wt.resolve())
+    assert hostgit.linked_main(real) == str(main.resolve())
+    shutil.rmtree(main / ".git" / "worktrees")
+    assert hostgit.linked_main(real) is None
+
+
+def test_the_memo_forks_once_for_an_unchanged_worktree(pair, monkeypatch):
+    _, wt = pair
+    calls = _no_fork(monkeypatch)
+    for _ in range(5):
+        hostgit.linked_main(wt)
+    assert len(calls) == 1
+
+
+def test_a_separate_git_dir_store_is_not_a_main(tmp_path):
+    store_dir = tmp_path / "gstore"
+    sep = tmp_path / "sep"
+    sep.mkdir()
+    subprocess.run(["git", "init", "-q", "--separate-git-dir", str(store_dir),
+                    str(sep)], check=True, capture_output=True)
+    (sep / "f").write_text("x")
+    _git(sep, "add", "f")
+    _git(sep, "commit", "-q", "-m", "i")
+    wt = tmp_path / "sepwt"
+    _git(sep, "worktree", "add", "-q", "-b", "x", str(wt))
+    assert hostgit.linked_main(str(wt.resolve())) is None
+
+
+def test_the_listing_is_compared_the_way_roots_are(pair, monkeypatch):
+    main, wt = pair
+    monkeypatch.setattr(os.path, "normcase", lambda p: p.lower())
+    shouted = wt.upper()
+    hostgit.linked_main.cache_clear()
+    monkeypatch.setattr(hostgit, "_read", lambda *a, **k: (
+        f"worktree {main}\0\0worktree {shouted}\0\0"))
+    assert hostgit.linked_main(wt) == main
+
+
+def test_adopt_refuses_a_worktree_path_and_names_the_main(
+        pair, tmp_checkpoint_dir):
+    main, wt = pair
+    own = tmp_checkpoint_dir / "-old"
+    own.mkdir(parents=True)
+    (own / "root").write_text("/gone/old\n")
+    with pytest.raises(bucket_tools.RebindRefused) as err:
+        bucket_tools.adopt("-old", wt, apply=True)
+    assert main in str(err.value)
+    assert (own / "root").read_text().strip() == "/gone/old"
+
+
+def test_session_root_of_a_worktree_is_its_main(pair):
+    main, wt = pair
+    assert identity.session_root(wt) == main
+    assert identity.session_root(main) == main

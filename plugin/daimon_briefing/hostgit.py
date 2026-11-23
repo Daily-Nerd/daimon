@@ -115,7 +115,6 @@ import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
@@ -708,7 +707,8 @@ def linked_main(path) -> str | None:
     reached through one `git worktree list --porcelain -z`, and the answer is
     accepted only when ALL of these hold:
 
-    * the first entry is a main working tree (not bare) that is a directory;
+    * the first entry is a main working tree: not bare, and `<main>/.git`
+      exists (a `--separate-git-dir` repository lists its git store first);
     * `realpath(path)` equals one of the LINKED entries (a directory that
       merely points at a victim's admin dir is not in the victim's list);
     * the main differs from `path` (a submodule lists itself first).
@@ -716,20 +716,59 @@ def linked_main(path) -> str | None:
     `-z` is required: git older than 2.36 fails the call and the answer is
     None, with no newline-separated fallback, because a newline in a path or a
     lock reason could forge an entry there. A failure of any kind is None, so
-    a worktree keeps its own bucket rather than a wrong one. Memoized per
-    process like `config._git_toplevel`, and cleared by
-    `config.resolve_project_root.cache_clear()`."""
+    a worktree keeps its own bucket rather than a wrong one. A positive answer
+    is memoized per process keyed on `_admin_stamp`, a None never is, and
+    `config.resolve_project_root.cache_clear()` empties it."""
     try:
         if _sealed() or not has_gitfile(path):
             return None
         real = os.path.realpath(os.fspath(path))
     except ValueError:  # a NUL in the path names no folder; a bad posture
         return None     # setting is not a reason to look
-    return _linked_main(real)
+    stamp = _admin_stamp(real)
+    if stamp is not None:
+        held = _LINKED_MEMO.get(real)
+        if held is not None and held[0] == stamp:
+            return held[1]
+    main = _ask_linked_main(real)
+    if main is not None and stamp is not None:
+        if len(_LINKED_MEMO) >= 256:
+            _LINKED_MEMO.clear()
+        _LINKED_MEMO[real] = (stamp, main)
+    return main
 
 
-@lru_cache(maxsize=256)
-def _linked_main(real: str) -> str | None:
+# real path -> (stamp, main). A POSITIVE answer is remembered only with the
+# stamp of what it depends on (below); a None is never remembered, so a failed
+# or transient first ask cannot outlive the failure.
+_LINKED_MEMO: dict[str, tuple[tuple, str]] = {}
+
+
+def _admin_stamp(real: str) -> tuple | None:
+    """What a remembered answer depends on: the identity of the `.git` file
+    and of the admin directory it names (with that directory's `gitdir`
+    file), so a worktree removed and added again at the same path, or pruned
+    by its main, is asked again. Read only to KEY the memo: the file's text is
+    never believed, the list still decides. None (nothing is remembered) when
+    any piece is missing or unreadable."""
+    try:
+        dot = os.path.join(real, ".git")
+        st = os.lstat(dot)
+        with open(dot, "r", encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().strip()
+        if not first.startswith("gitdir:"):
+            return None
+        admin = os.path.normpath(os.path.join(
+            real, first[len("gitdir:"):].strip()))
+        ast = os.lstat(admin)
+        gst = os.lstat(os.path.join(admin, "gitdir"))
+    except (OSError, ValueError):
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size, admin,
+            ast.st_ino, ast.st_mtime_ns, gst.st_ino, gst.st_mtime_ns)
+
+
+def _ask_linked_main(real: str) -> str | None:
     out = _read(_argv("worktree", "list", "--porcelain", "-z", path=real),
                 timeout=PROJECT_TIMEOUT)
     if not out:
@@ -750,14 +789,24 @@ def _linked_main(real: str) -> str | None:
     if len(entries) < 2 or entries[0][1]:
         return None
     main = os.path.realpath(entries[0][0])
-    linked = {os.path.realpath(path) for path, bare in entries[1:]
-              if not bare}
-    if main == real or real not in linked or not os.path.isdir(main):
+    # Compared the way recorded roots are (`store.root_eq`): normcase.
+    linked = {os.path.normcase(os.path.realpath(path))
+              for path, bare in entries[1:] if not bare}
+    if (os.path.normcase(main) == os.path.normcase(real)
+            or os.path.normcase(real) not in linked):
+        return None
+    # A repository made with --separate-git-dir lists its git STORE as the
+    # main entry: the main must be a working tree, so `<main>/.git` exists.
+    if not os.path.lexists(os.path.join(main, ".git")):
         return None
     return main
 
 
-linked_main.cache_clear = _linked_main.cache_clear  # type: ignore[attr-defined]
+def _clear_linked_main() -> None:
+    _LINKED_MEMO.clear()
+
+
+linked_main.cache_clear = _clear_linked_main  # type: ignore[attr-defined]
 
 
 def root_commit(path) -> str | None:
