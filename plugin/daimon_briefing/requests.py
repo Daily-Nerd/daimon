@@ -2598,9 +2598,7 @@ def _was_ever_sent(request_id: str, project_dir) -> bool:
     project's own bucket was already read by the caller (`get`), and a ledger
     the join skips decides nothing here either."""
     own = store.project_bucket(project_dir)
-    for slug in _bucket_slugs():
-        if slug == own:
-            continue
+    for slug in (s for s in _bucket_slugs() if s != own):
         foreign, skip, _torn = _foreign_requests(slug)
         if skip:
             continue

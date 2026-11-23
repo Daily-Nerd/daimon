@@ -177,3 +177,8 @@ def test_the_existence_scan_ignores_a_ledger_the_join_refuses_to_trust(
     assert requests._was_ever_sent(offered, STRANGER) is True
     _damage_ledger(SENDER)
     assert requests._was_ever_sent(offered, STRANGER) is False
+
+
+def test_a_person_with_a_ledger_of_their_own_still_decides_elsewhere(offered):
+    _offer(to_project=SENDER, sender=STRANGER)
+    assert requests.accept(offered, channel="cli-tty", project_dir=STRANGER)
