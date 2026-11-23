@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import config, store
+from daimon_briefing import config, scope, store
 from daimon_briefing.surfaces import Writer
 
 
@@ -124,7 +124,8 @@ def test_a_subdir_write_and_a_root_write_share_one_bucket(
     store.write_checkpoint("S-root", dict(sample_checkpoint, session_id="S-root"),
                            project_dir=str(repo), writer=Writer.HUMAN)
 
-    buckets = [d.name for d in tmp_checkpoint_dir.iterdir() if d.is_dir()]
+    buckets = [d.name for d in tmp_checkpoint_dir.iterdir()
+               if d.is_dir() and d.name not in scope.CURRENT_INTERNAL_DIRS]
     assert buckets == [store.project_slug(str(repo))]
 
 

@@ -380,12 +380,19 @@ def test_a_different_session_gets_its_own_briefing(
     assert "DAIMON BRIEFING" in other.stdout
 
 
-def test_no_checkpoint_means_no_output_at_all(home, tmp_checkpoint_dir):
+def test_no_checkpoint_means_only_the_notice_and_only_on_the_first_prompt(
+        home, tmp_checkpoint_dir):
     """This hook fires on EVERY prompt. A diagnostic line per prompt would be
-    spam, so silence is the contract when there is nothing to say."""
-    proc = _prompt(home)
-    assert proc.returncode == 0
-    assert proc.stdout.strip() == ""
+    spam, so silence is the contract when there is nothing to say. The one
+    thing to say for a folder no bucket is bound to is the notice, and it
+    rides the briefing: the first prompt of a session, never the second."""
+    from daimon_briefing import identity, marks
+    first = _prompt(home)
+    assert first.returncode == 0
+    assert first.stdout.strip() == marks.warning(identity.UNBOUND_NOTICE)
+    second = _prompt(home)
+    assert second.returncode == 0
+    assert second.stdout.strip() == ""
 
 
 def test_the_prompt_part_list_is_flattened_for_recall(home):

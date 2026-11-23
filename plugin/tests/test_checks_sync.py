@@ -265,7 +265,7 @@ def test_sync_reports_a_failure_instead_of_raising(
 
 def test_sync_reports_a_failure_for_a_project_that_names_no_bucket(
         tmp_checkpoint_dir, monkeypatch):
-    monkeypatch.setattr(checks_sync.store, "project_slug", lambda *a, **k: "")
+    monkeypatch.setattr(checks_sync.store, "bucket_of", lambda *a, **k: "")
     report = checks_sync.sync(PROJECT, writer=Writer.HUMAN)
     assert report.ok is False
     assert report.reason

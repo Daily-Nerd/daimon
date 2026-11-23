@@ -97,8 +97,8 @@ def _brief(cli, cwd: str) -> str:
         proc = lib.run_brief(cli, cwd, timeout=BRIEF_TIMEOUT)
     except (subprocess.TimeoutExpired, OSError):
         return ""
-    text = proc.stdout.strip()
-    if proc.returncode != 0 or not text or text.startswith("No checkpoint yet"):
+    text = lib.injectable(proc.stdout)
+    if proc.returncode != 0 or not text:
         return ""
     return text
 

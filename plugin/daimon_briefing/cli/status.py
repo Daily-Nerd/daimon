@@ -21,6 +21,7 @@ from .. import (
     display,
     effects_commit,
     hostgit,
+    identity as bucket_identity,  # `identity` is the status payload's own name
     ledger,
     ledger_census,
     llm,
@@ -137,7 +138,8 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
                    disabled: bool = False,
                    global_fallback: bool = False,
                    legacy: tuple | None = None,
-                   incomplete: list | None = None) -> dict:
+                   incomplete: list | None = None,
+                   unbound: bool = False) -> dict:
     """Objective health verdict for `status`. Pure — `now` is injected. Warns only
     on data-driven signals: a NEWER phantom-child bucket (the #74 split), a missing
     project checkpoint, outstanding serialize failures, or the kill switch being
@@ -263,12 +265,21 @@ def _status_health(proj, glob, outstanding, siblings, *, now,
             f"{len(refused)} session(s) not serialized: events.jsonl is "
             f"{refused[0]['state']}; {refused[0]['hint']}, then daimon heal")
 
+    # The unbound notice is INFORMATION: a project that moved looks, from
+    # here, exactly like one that is new, so the fixed line says so (the same
+    # text the briefing carries; nothing in it comes from the store). It is
+    # listed last and never decides `ok` or the verdict, so a legitimately new
+    # folder is not reported as a failure. Injected, like `legacy`: a verdict
+    # that reads the store cannot be tested alone.
+    info = [bucket_identity.UNBOUND_NOTICE] if unbound else []
+
     if not warnings:
         verdict = "✓ fresh"
         if glob.get("same_session_as_project"):
             verdict += " — this project produced the most recent checkpoint"
-        return {"ok": True, "verdict": verdict, "warnings": []}
-    return {"ok": False, "verdict": "⚠ " + warnings[0], "warnings": warnings}
+        return {"ok": True, "verdict": verdict, "warnings": info}
+    return {"ok": False, "verdict": "⚠ " + warnings[0],
+            "warnings": warnings + info}
 
 
 def _tail_log_info(path: Path, now: float) -> dict | None:
@@ -692,7 +703,8 @@ def _status_world(project_arg=None) -> dict:
                             global_fallback=config.brief_global_fallback(),
                             legacy=((legacy_slug, raw_project, legacy_holds)
                                     if legacy_slug else None),
-                            incomplete=identity["incomplete"])
+                            incomplete=identity["incomplete"],
+                            unbound=bucket_identity.is_unbound(project))
     # ONE objective team line (#113), only when a team remote exists — the #84
     # health-line rule: no line, no false alarms when the team feature is unused.
     team = teamsync.status_line()
@@ -889,4 +901,5 @@ def register_mcp(sub, fmt) -> None:
         "serve",
         help="serve MCP over stdio until EOF: reads only, never writes; "
              "register in your host's MCP config (see the docs site)")
-    pm_serve.set_defaults(func=_cmd_mcp_serve)
+    # Lives as long as the process: not one identity operation (see `main`).
+    pm_serve.set_defaults(func=_cmd_mcp_serve, long_running=True)

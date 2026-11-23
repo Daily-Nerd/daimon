@@ -187,6 +187,8 @@ def bucket_of(x) -> str | None:
     location, this is the one function that changes."""
     if isinstance(x, identity.BucketRef):
         return x.slug
+    if x and os.path.isabs(str(x).strip()):
+        return identity.bucket_for(str(x).strip())
     return project_slug(x)
 
 
@@ -291,35 +293,37 @@ def stamp_root(bucket: Path, location: str) -> bool:
 
 
 def record_bucket_root(project_dir) -> None:
-    """Stamp a bucket with the absolute resolved directory that FIRST wrote
-    to it (#1092), so a later reader can ask "does this bucket really belong
-    to this directory" instead of trusting slug existence alone: two
-    distinct directories (`~/code/my/app` and `~/code/my-app`) can share a
-    slug, and slug existence alone cannot tell them apart.
+    """Make sure the bucket for `project_dir` exists and records the directory
+    that FIRST wrote to it (#1092), so a later reader can ask "does this bucket
+    really belong to this directory" instead of trusting slug existence alone.
 
-    FIRST WRITER WINS: an existing `root` file is never overwritten, even by
-    a different resolved directory landing on the same slug. The record
-    names whichever directory actually created the bucket, not whichever
-    directory happened to write to it most recently.
+    Since 4b this is `identity.claim`, the one place a bucket is born or
+    stamped: a location nothing is bound to is born under its seed, or under a
+    suffixed name when another location holds the seed, with its root inside
+    before the bucket is visible. First writer wins: a root is never
+    overwritten. A root record names an ABSOLUTE directory or is not written:
+    a slug handed in by `--slug` routing names no directory.
 
-    Called through `ensure_bucket`, the one owner of creating a bucket
-    directory (#1337), never from a read. A root record names an ABSOLUTE
-    directory or is not written: a bucket slug handed in by `--slug` routing
-    names no directory, so nothing is stamped for it.
-    Idempotent and silent under the kill switch, the same never-fatal
-    contract `append_event` holds: a bookkeeping record must never fail, or
-    even visibly affect, the write it rides along with."""
+    Never fatal for a filesystem that cannot be written (a bookkeeping record
+    must never fail the write it rides along with); silent under the kill
+    switch. `BucketClaimFailed` is NOT swallowed: it means every name is held."""
     if config.is_disabled():
         return
     try:
-        resolved = _resolved(project_dir)
-        bucket = bucket_dir(resolved)
-        if bucket is None or not os.path.isabs(str(resolved)):
-            return
-        bucket.mkdir(parents=True, exist_ok=True)
-        stamp_root(bucket, str(resolved))
+        identity.claim(project_dir)
     except OSError:
         pass
+
+
+def make_bucket(slug: str, location: str) -> Path:
+    """Create the bucket NAMED `slug` and record `location` as its root unless it
+    already has one. For the verbs that name the bucket themselves (`migrate`
+    folding a legacy bucket into the rule's name): they must not ask the
+    resolver, which may answer another bucket for `location`. Raises OSError."""
+    bucket = config.checkpoint_dir() / slug
+    bucket.mkdir(parents=True, exist_ok=True)
+    stamp_root(bucket, location)
+    return bucket
 
 
 def ensure_bucket(project_dir) -> Path | None:
@@ -330,8 +334,8 @@ def ensure_bucket(project_dir) -> Path | None:
     test fails when a module outside this one makes a directory unlisted.
 
     A writer hands in the `BucketRef` it claimed at its entry
-    (`identity.claim`) and this only VERIFIES it: the owner must still name the
-    ref's bucket (`identity.BucketMismatch` otherwise, never an `OSError`),
+    (`identity.claim`) and this only VERIFIES it: the bucket must not record
+    another location (`identity.BucketMismatch` otherwise, never an `OSError`),
     and the directory exists. Anything else (a raw directory or slug from an
     in-process caller that never claimed) is claimed here first, so the
     result is the same either way.
@@ -339,7 +343,8 @@ def ensure_bucket(project_dir) -> Path | None:
     Returns the bucket directory, or None when the project is unknown. A
     filesystem failure creating the directory raises OSError, which each
     writer already handles as its own best-effort contract; the stamp itself
-    is never fatal (`record_bucket_root`).
+    is never fatal (`record_bucket_root`; the claim does not raise `OSError`
+    either, a store it cannot write is this function's own `mkdir` failing).
 
     The slug-routed case is decided here, once: a `--slug` verb hands in a
     bucket name, not a directory. The bucket is created and written normally,
@@ -2510,23 +2515,36 @@ def project_latest_path(project_dir) -> Path | None:
 
 
 def sibling_buckets(project_dir) -> list[dict]:
-    """Phantom CHILD buckets of project_dir: checkpoint-dir entries whose slug is
-    this project's slug + '-<suffix>' (a subdir of the git-root that forked its own
-    bucket — the #74 shape). Pure file-ops, never raises. Returns [] when the slug
-    is unknown or the checkpoint dir is absent."""
+    """Phantom CHILD buckets of project_dir: buckets that hold history a
+    subdirectory of this project split off (the #74 shape, and a linked
+    worktree's own bucket). Pure file-ops, never raises. Returns [] when the
+    project is unknown or the checkpoint dir is absent.
+
+    A bucket that records a root is a child exactly when that root lies
+    strictly BELOW this project, separator-bounded (`buckets_under`): its name
+    says nothing, since a rebound bucket keeps its permanent name and a lossy
+    twin is born under `<S>-6hex` while living somewhere else entirely. A
+    bucket that records no root keeps the old rule: `<bucket>-<suffix>`."""
     project_dir = _resolved(project_dir)
     slug = bucket_of(project_dir)
     if not slug:
         return []
     prefix = slug + "-"
     d = config.checkpoint_dir()
+    below = ({name for name, _root in buckets_under(str(project_dir))}
+             if os.path.isabs(str(project_dir)) else set())
     try:
         entries = sorted(d.iterdir())
     except OSError:
         return []
     out: list[dict] = []
     for child in entries:
-        if not child.name.startswith(prefix):
+        if child.name == slug:
+            continue
+        if bucket_root(child.name):
+            if child.name not in below:
+                continue
+        elif not child.name.startswith(prefix):
             continue
         latest = child / _LATEST
         try:
@@ -4311,7 +4329,12 @@ def _forgotten_walk() -> tuple[frozenset, frozenset]:
     ledger read proven, so a repair or a retry shows at once."""
     root = config.checkpoint_dir()
     try:
-        children = sorted(root.iterdir())
+        # Not the store's own directories (`.birth`, `.chunk-cache`): they hold
+        # no ledger, and reading `<internal>/events.jsonl` is a read of a
+        # directory that is not a project.
+        children = sorted(
+            c for c in root.iterdir()
+            if scope.classify_dir(c.name) is not scope.DirKind.INTERNAL)
     except OSError:
         return frozenset(), frozenset()
     stamp: list[tuple] = []

@@ -27,7 +27,7 @@ from typing import Any, NamedTuple
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
 from . import (capture, checks_host, checks_runtime, clock, config, display, hostgit,
-               ledger,
+               identity, ledger,
                llm, marks, pending, receipts, refutations, requests, schema,
                scoring, store)
 # Imported as constants, not as the module.
@@ -1012,6 +1012,17 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             pending = None
         if pending:
             notes = display.merge_notes(notes, (pending,))
+    if stamps:
+        # A location no bucket is bound to: a moved project and a new one look
+        # the same from here, so the one fixed line says so and sends the
+        # question to the user. Fail-open like the other advisory lines.
+        try:
+            unbound = identity.is_unbound(project)
+        except Exception:  # noqa: BLE001 - an advisory line never costs the briefing
+            unbound = False
+        if unbound:
+            notes = display.merge_notes(
+                notes, (marks.warning(identity.UNBOUND_NOTICE),))
     if stamps and isinstance(checkpoint, dict):
         # The gap a dropped extraction call left is a fact about the body the
         # reader is shown, so it rides the same notes as the other head lines.
@@ -2216,9 +2227,10 @@ def render_briefing(project_dir=None, *, now=None,
     try:
         target = config.resolve_read_project(
             None if project_dir is None else str(project_dir))
-        got = machine_brief(target, time.time() if now is None else now,
-                            loops_pointer=loops_pointer,
-                            worldcheck_project=target)
+        with identity.operation():  # one scan of the recorded roots per read
+            got = machine_brief(target, time.time() if now is None else now,
+                                loops_pointer=loops_pointer,
+                                worldcheck_project=target)
     except Exception as exc:  # noqa: BLE001 — host reads never raise: the failure is the `unavailable` state
         return _unavailable(exc)
     try:

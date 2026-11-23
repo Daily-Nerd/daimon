@@ -3982,12 +3982,13 @@ def test_the_kill_switch_stops_the_ledger(project, monkeypatch):
 
 
 def test_an_unwritable_bucket_degrades_instead_of_raising(project):
-    """A bucket path occupied by a FILE cannot hold a ledger. `append` is the
-    layer that must not explode — it reports failure, and the verbs above it
-    turn that into a refusal."""
-    bucket = config.checkpoint_dir() / store.project_slug(project)
-    bucket.parent.mkdir(parents=True, exist_ok=True)
-    bucket.write_text("not a directory", encoding="utf-8")
+    """A store that cannot hold a ledger (a FILE where the checkpoint directory
+    belongs; a file at one bucket's name is only a taken name, the claim walks
+    on). `append` is the layer that must not explode: it reports failure, and
+    the verbs above it turn that into a refusal."""
+    store_dir = config.checkpoint_dir()
+    store_dir.parent.mkdir(parents=True, exist_ok=True)
+    store_dir.write_text("not a directory", encoding="utf-8")
     assert requests.append(requests._stamp("opened", "q-0123456789ab",
                                            "cli-tty"),
                            project_dir=project, writer=Writer.HUMAN) is False

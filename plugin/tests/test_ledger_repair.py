@@ -560,7 +560,7 @@ def test_a_project_with_no_bucket_has_nothing_to_repair(capsys):
 
 
 def test_repair_without_a_resolvable_project_reports_it(monkeypatch, capsys):
-    monkeypatch.setattr(store, "project_slug", lambda _p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda _p: None)
     assert _repair("trust") == 1
     assert "no project to address" in capsys.readouterr().out
 

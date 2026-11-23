@@ -91,6 +91,20 @@ DESTS = {
         "force": ("INE", "R6"),
         "json": ("INE", "R6"),
     },
+    "bucket adopt": {
+        "bucket": ("OUT", "R1"),
+        "path": ("INE", "R6"),
+        "apply": ("OUT", "R3"),
+        "force": ("INE", "R6"),
+        "json": ("INE", "R6"),
+    },
+    "bucket remap": {
+        "from_root": ("INE", "R6"),
+        "to_root": ("INE", "R6"),
+        "apply": ("OUT", "R3"),
+        "force": ("INE", "R6"),
+        "json": ("INE", "R6"),
+    },
     "bucket doctor": {
         "path": ("OUT", "R4"),
         "json": ("INE", "R6"),

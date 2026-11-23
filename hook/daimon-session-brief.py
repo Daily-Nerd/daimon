@@ -51,12 +51,12 @@ def _emit_briefing(cwd: str, cli) -> None:
         print(f"daimon: `daimon brief` timed out after {TIMEOUT}s — briefing skipped")
         return
 
-    text = proc.stdout.strip()
+    text = lib.injectable(proc.stdout)
     if proc.returncode != 0:
         err = (proc.stderr or "").strip().splitlines()
         print(f"daimon: brief failed (exit {proc.returncode}){': ' + err[0] if err else ''}")
         return
-    if not text or text.startswith("No checkpoint yet"):
+    if not text:
         return
 
     print(text)

@@ -137,6 +137,8 @@ daimon bucket <command>
 | [`merge`](#daimon-bucket-merge) | fold one bucket into another, once (a worktree or ghost bucket) |
 | [`doctor`](#daimon-bucket-doctor) | survey the buckets: dangling, unstamped, shared, empty, worktree |
 | [`stamp`](#daimon-bucket-stamp) | record where each bucket's project lives, before a move |
+| [`adopt`](#daimon-bucket-adopt) | bind one bucket to the folder its project lives in now |
+| [`remap`](#daimon-bucket-remap) | move every bucket under one folder to the same place under another |
 
 ### `daimon bucket migrate`
 
@@ -230,6 +232,57 @@ daimon bucket stamp [--scan DIR] [--apply] [--json]
 ```text
 daimon bucket stamp --scan ~/code
 daimon bucket stamp --scan ~/code --scan ~/work --apply
+```
+
+### `daimon bucket adopt`
+
+bind one bucket to the folder its project lives in now
+
+Rewrite the recorded root of ONE bucket to a folder, after a project moved and `remap` does not cover it. The bucket keeps its name and every signed file; its old root is kept in its identity history. Refused when the folder is not a directory, when another bucket already records it (fold that one with `bucket merge` first), when the bucket's recorded root still exists (a clone) unless --force, and when its identity record cannot be read. Dry run by default. Human-only, and refused on a tenant-scoped home.
+
+```text
+daimon bucket adopt --bucket BUCKET --path DIR [--apply] [--force] [--json]
+```
+
+| argument | value | default | description |
+| --- | --- | --- | --- |
+| `--bucket` | `BUCKET` |  | the bucket to rebind (its directory name under checkpoints/) (required) |
+| `--path` | `DIR` |  | the folder the project lives in now (must exist) (required) |
+| `--apply` |  |  | write the rebind (default: print the plan only) |
+| `--force` |  |  | rebind even though the bucket's recorded root still exists |
+| `--json` |  |  | machine-readable output |
+
+**Examples**
+
+```text
+  daimon bucket adopt --bucket=-Users-me-old --path ~/code/new
+  daimon bucket adopt --bucket=NAME --path . --apply
+Bucket names usually start with '-', so write --bucket=NAME.
+```
+
+### `daimon bucket remap`
+
+move every bucket under one folder to the same place under another
+
+After a folder or username change, rewrite the recorded root of every bucket under --from to the same place under --to. Matching stops at a separator, so /Users/a never matches /Users/abc. A bucket whose new folder does not exist yet (a project not cloned here) is skipped and listed; one whose new folder already belongs to another bucket is skipped and listed with the `bucket merge` that folds them; one whose old root still exists (a clone kept) is skipped unless --force. Refused for the filesystem root, a bare drive, a relative --to or a --to inside --from. Safe to run twice. Dry run by default. Human-only, and refused on a tenant-scoped home.
+
+```text
+daimon bucket remap --from DIR --to DIR [--apply] [--force] [--json]
+```
+
+| argument | value | default | description |
+| --- | --- | --- | --- |
+| `--from` | `DIR` |  | the folder the projects used to live under (required) |
+| `--to` | `DIR` |  | the folder they live under now (required) |
+| `--apply` |  |  | write the rebinds (default: print the plan only) |
+| `--force` |  |  | also move a bucket whose old root still exists on disk |
+| `--json` |  |  | machine-readable output |
+
+**Examples**
+
+```text
+daimon bucket remap --from /Users/alice --to /Users/bob
+daimon bucket remap --from C:\Users\a --to C:\Users\b --apply
 ```
 
 ## `daimon ledger`

@@ -291,7 +291,7 @@ def test_disabled_daimon_refuses_write(project, monkeypatch):
 def test_unresolvable_project_refuses_write(tmp_checkpoint_dir, monkeypatch):
     from daimon_briefing import config
     monkeypatch.setattr(config, "resolve_project_dir", lambda p=None: p)
-    monkeypatch.setattr("daimon_briefing.store.project_slug", lambda p: None)
+    monkeypatch.setattr("daimon_briefing.store.bucket_of", lambda p: None)
     with pytest.raises(trust.TrustError):
         _propose("/p/unresolvable")
 
@@ -349,7 +349,7 @@ def test_evidence_too_many_sources_refused():
 
 def test_path_returns_none_for_an_unresolvable_project(monkeypatch):
     from daimon_briefing import store
-    monkeypatch.setattr(store, "project_slug", lambda p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda p: None)
     assert trust._path("/p/anything") is None
 
 
@@ -372,7 +372,7 @@ def test_stamp_rejects_unknown_channel():
 
 def test_append_returns_false_for_an_unresolvable_project(monkeypatch):
     from daimon_briefing import store
-    monkeypatch.setattr(store, "project_slug", lambda p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda p: None)
     assert trust.append({"event": "quarantined"}, project_dir="/p/x", writer=Writer.HUMAN) is False
 
 
@@ -465,7 +465,7 @@ def test_redact_content_key_missing_ledger_returns_empty(project):
 
 def test_redact_content_key_unresolvable_project_returns_empty(monkeypatch):
     from daimon_briefing import store
-    monkeypatch.setattr(store, "project_slug", lambda p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda p: None)
     assert trust.redact_content_key("deadbeef", project_dir="/p/x") == []
 
 
@@ -557,7 +557,7 @@ def test_append_repairs_a_torn_ledger(project, tmp_checkpoint_dir):
 
 def test_events_returns_empty_for_an_unresolvable_project(monkeypatch):
     from daimon_briefing import store
-    monkeypatch.setattr(store, "project_slug", lambda p: None)
+    monkeypatch.setattr(store, "bucket_of", lambda p: None)
     assert trust.events(project_dir="/p/x") == []
 
 

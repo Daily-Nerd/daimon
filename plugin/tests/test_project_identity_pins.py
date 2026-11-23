@@ -21,12 +21,13 @@ declared-slug idempotence in test_hostgit_declare.py.
 """
 
 import ast
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from daimon_briefing import config, store
+from daimon_briefing import bucket_tools, config, store
 from daimon_briefing.surfaces import Writer
 
 from .test_read_layers import PLUGIN
@@ -145,14 +146,12 @@ def _fresh_root_memo():
 # ---- target invariant 1: a new username dir, after an explicit rebind ----------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="project identity design (rev 3, slice 0): the bucket is derived from "
-           "the absolute path, which embeds the username. No rebind verb exists, "
-           "so a project tree at a new HOME path resolves to a NEW bucket and the "
-           "old history is not found. Passes once the explicit rebind lands.")
 def test_same_store_new_home_username_finds_the_same_bucket_after_rebind(
         tmp_path, tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    """Slice 4b delivers it: the bucket is the project, `remap` is the one
+    explicit act that moves its binding. The bucket measured BEFORE the move is
+    the bucket the new tree finds AFTER it (the old tree's seed no longer
+    answers for it, by design: its root names the new tree now)."""
     old_home = tmp_path / "home" / "alice"
     new_home = tmp_path / "home" / "bob"
     old_tree = old_home / "code" / "proj"
@@ -163,13 +162,18 @@ def test_same_store_new_home_username_finds_the_same_bucket_after_rebind(
     monkeypatch.setenv("HOME", str(old_home))
     store.write_checkpoint("S1", dict(sample_checkpoint, created="2030-01-01T00:00:00Z"),
                            project_dir=str(old_tree), writer=Writer.HUMAN)
+    bucket = store.project_bucket(str(old_tree))
 
     # The same checkpoint store, a different username directory, the tree moved.
     monkeypatch.setenv("HOME", str(new_home))
     config.resolve_project_root.cache_clear()
-    # TODO(rebind): the explicit rebind step goes here once the verb exists.
+    assert store.project_bucket(str(new_tree)) != bucket  # not found yet
+    shutil.rmtree(old_tree)  # the old home is gone, as after a real move
+    plan = bucket_tools.remap(str(old_home.resolve()), str(new_home.resolve()),
+                              apply=True)
+    assert [a["action"] for a in plan["actions"]] == ["rewrite"]
 
-    assert store.project_bucket(str(new_tree)) == store.project_bucket(str(old_tree))
+    assert store.project_bucket(str(new_tree)) == bucket
     assert store.sessions_since_count("2020-01-01T00:00:00Z",
                                       project_dir=str(new_tree)) == 1
 

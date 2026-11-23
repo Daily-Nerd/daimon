@@ -155,6 +155,8 @@ def test_doctor_path_prints_candidates_as_evidence_on_a_terminal(
     out = capsys.readouterr().out
     assert "-old-proj" in out
     assert "evidence, not proof" in out
+    # a candidate now has a verb to act on it, named for the person to run
+    assert f"daimon bucket adopt --bucket=-old-proj --path {here}" in out
 
 
 def test_doctor_withholds_merge_suggestions_for_worktrees(

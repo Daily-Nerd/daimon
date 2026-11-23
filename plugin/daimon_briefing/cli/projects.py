@@ -12,7 +12,8 @@ import time
 
 import daimon_briefing.cli as _cli
 
-from .. import bucket_tools, buckets, config, effects_commit, render, store, view
+from .. import (bucket_tools, buckets, config, effects_commit, hostgit, render,
+               store, view)
 from ..effects import Effects
 from ..display import one_line
 from ..ledger import _format_age
@@ -266,6 +267,32 @@ def _refuse_on_tenant_scope(args, verb: str) -> int | None:
     return 2
 
 
+def _refuse_when_rebinding_is_inert(args, verb: str) -> int | None:
+    """The refusal for the two rebind verbs: tenant scope (a tenant may not
+    choose which bucket a folder answers for, scar 0071) and SEALED (a declared
+    slug names the bucket before any recorded root is read, so the rewrite
+    would change nothing and only mislead). rc 2 and the refusal printed, or
+    None."""
+    refused = _refuse_on_tenant_scope(args, verb)
+    if refused is not None:
+        return refused
+    try:
+        sealed = hostgit.posture() is hostgit.Posture.SEALED
+    except ValueError:
+        sealed = True  # an unreadable posture is the narrow one
+    if not sealed:
+        return None
+    message = (f"this process runs under SEALED posture, where the host's "
+               f"declared slug names the bucket before any recorded root is "
+               f"read: `bucket {verb}` would change nothing here. Run it from "
+               f"an ambient home.")
+    if getattr(args, "json", False):
+        print(json.dumps({"refused": message}, indent=2, ensure_ascii=False))
+    else:
+        print(f"error: {message}", file=sys.stderr)
+    return 2
+
+
 def _refused(args, exc) -> int:
     if getattr(args, "json", False):
         print(json.dumps({"refused": str(exc)}, indent=2, ensure_ascii=False))
@@ -377,7 +404,11 @@ def _cmd_bucket_doctor(args) -> int:
         if listing:
             for match in survey["candidates"]:
                 lines.append(f"  candidate {match['bucket']}: same "
-                             f"{' and '.join(match['matched'])} as {args.path}")
+                             f"{' and '.join(match['matched'])} as "
+                             f"{survey['path']}")
+                lines.append(f"    if it is the same project: daimon bucket "
+                             f"adopt --bucket={match['bucket']} "
+                             f"--path {survey['path']}")
         lines.append(f"candidates: {len(survey['candidates'])} "
                      f"({survey['candidates_note']})")
     if survey["suggestions_withheld"]:
@@ -438,6 +469,121 @@ def _cmd_bucket_stamp(args) -> int:
         lines.append("plan only, nothing was written: run again with --apply")
     render.render_ledger_lines(lines)
     return 1 if needs_a_person else 0
+
+
+def _adopt_lines(record: dict, *, listing: bool, dry_run: bool) -> list:
+    """The human render of one `bucket adopt` record. Pure. The root the bucket
+    leaves and the anchor evidence are another project's facts, so they are
+    shown to a terminal only."""
+    bucket, target = record["bucket"], record["to"]
+    if record["action"] == "kept":
+        return [f"nothing to do: {bucket} already records {target}"]
+    verb = "would rebind" if dry_run else "rebound"
+    lines = [f"{verb} {bucket} to {target}"]
+    if listing:
+        if record.get("from"):
+            lines.append(f"  it recorded {record['from']}, kept in its "
+                         f"identity history")
+        evidence = record.get("evidence") or {}
+        if evidence.get("matched"):
+            lines.append(f"  evidence, not proof: same "
+                         f"{' and '.join(evidence['matched'])} as that "
+                         f"folder")
+        if evidence.get("differs"):
+            lines.append(f"  evidence, not proof: different "
+                         f"{' and '.join(evidence['differs'])}")
+    if dry_run:
+        lines.append("plan only, nothing was written: run again with --apply")
+    return lines
+
+
+def _cmd_bucket_adopt(args) -> int:
+    """Bind one bucket to a folder, on purpose (slice 4b). Dry run unless
+    `--apply`. rc 0 done or nothing to do, 2 refused. See
+    `bucket_tools.adopt` for what is refused."""
+    refused = _refuse_when_rebinding_is_inert(args, "adopt")
+    if refused is not None:
+        return refused
+    try:
+        record = bucket_tools.adopt(args.bucket, args.path, apply=args.apply,
+                                    force=args.force)
+    except bucket_tools.RebindRefused as exc:
+        return _refused(args, exc)
+    listing = _stdout_is_tty()
+    if args.json:
+        shown = dict(record)
+        if not listing:
+            shown.pop("from", None)
+            shown.pop("evidence", None)
+        print(json.dumps(shown, indent=2, ensure_ascii=False))
+        return 0
+    render.render_ledger_lines(
+        _adopt_lines(record, listing=listing, dry_run=not args.apply))
+    return 0
+
+
+# What a remap leaves for a person: not "missing" (a project not cloned yet is
+# the normal case on a fresh machine) but everything that was skipped for a
+# reason a person has to look at.
+_REMAP_NEEDS_A_PERSON = ("collision", "separator", "unreadable", "locked",
+                         "raced", "live-source", "not-a-root")
+
+
+def _remap_lines(result: dict, old: str, *, listing: bool) -> list:
+    """The human render of one `bucket remap` result. Pure."""
+    actions = result["actions"]
+    if not actions:
+        return [f"no bucket records a root under {old}"]
+    applied = result["applied"]
+    tally: dict[str, int] = {}
+    for a in actions:
+        tally[a["action"]] = tally.get(a["action"], 0) + 1
+    lines = []
+    for action, count in sorted(tally.items()):
+        label = action
+        if action == "rewrite":
+            label = "rewritten" if applied else "would rewrite"
+        lines.append(f"{label}: {count}")
+    if listing:
+        for a in actions:
+            lines.append(f"  {a['action']} {a['bucket']}: {a['from']}"
+                         + (f" -> {a['to']}" if a.get("to") else ""))
+            if a["action"] == "collision":
+                lines.append(
+                    f"    that folder already belongs to {a['other']}: "
+                    f"daimon bucket merge --from={a['other']} "
+                    f"--into={a['bucket']}")
+    if not applied:
+        lines.append("plan only, nothing was written: run again with --apply")
+    return lines
+
+
+def _cmd_bucket_remap(args) -> int:
+    """Rewrite the root of every bucket under one folder to the same place
+    under another, once a folder or a username changed (slice 4b). Dry run
+    unless `--apply`; rc 1 when a bucket needed a person (a collision, a lock,
+    a lost race), 2 refused. See `bucket_tools.remap`."""
+    refused = _refuse_when_rebinding_is_inert(args, "remap")
+    if refused is not None:
+        return refused
+    try:
+        result = bucket_tools.remap(args.from_root, args.to_root,
+                                    apply=args.apply, force=args.force)
+    except bucket_tools.RebindRefused as exc:
+        return _refused(args, exc)
+    tally: dict[str, int] = {}
+    for a in result["actions"]:
+        tally[a["action"]] = tally.get(a["action"], 0) + 1
+    rc = 1 if any(tally.get(k) for k in _REMAP_NEEDS_A_PERSON) else 0
+    listing = _stdout_is_tty()
+    if args.json:
+        print(json.dumps({"applied": result["applied"], "counts": tally,
+                          **({"actions": result["actions"]} if listing
+                             else {})}, indent=2, ensure_ascii=False))
+        return rc
+    render.render_ledger_lines(
+        _remap_lines(result, args.from_root, listing=listing))
+    return rc
 
 
 @effects_commit.committing
@@ -612,6 +758,77 @@ def register(sub, fmt) -> None:
     p_bucket_stamp.add_argument(
         "--json", action="store_true", help="machine-readable output")
     p_bucket_stamp.set_defaults(func=_cmd_bucket_stamp)
+
+    p_bucket_adopt = bucket_sub.add_parser(
+        "adopt",
+        help="bind one bucket to the folder its project lives in now",
+        description="Rewrite the recorded root of ONE bucket to a folder, "
+                    "after a project moved and `remap` does not cover it. "
+                    "The bucket keeps its name and every signed file; its "
+                    "old root is kept in its identity history. Refused "
+                    "when the folder is not a directory, when another "
+                    "bucket already records it (fold that one with `bucket "
+                    "merge` first), when the bucket's recorded root still "
+                    "exists (a clone) unless --force, and when its identity "
+                    "record cannot be read. Dry run by default. Human-only, "
+                    "and refused on a tenant-scoped home.",
+        epilog="Examples:\n"
+               "  daimon bucket adopt --bucket=-Users-me-old --path ~/code/new\n"
+               "  daimon bucket adopt --bucket=NAME --path . --apply\n"
+               "Bucket names usually start with '-', so write --bucket=NAME.",
+    )
+    p_bucket_adopt.add_argument(
+        "--bucket", required=True, metavar="BUCKET",
+        help="the bucket to rebind (its directory name under checkpoints/)")
+    p_bucket_adopt.add_argument(
+        "--path", required=True, metavar="DIR",
+        help="the folder the project lives in now (must exist)")
+    p_bucket_adopt.add_argument(
+        "--apply", action="store_true",
+        help="write the rebind (default: print the plan only)")
+    p_bucket_adopt.add_argument(
+        "--force", action="store_true",
+        help="rebind even though the bucket's recorded root still exists")
+    p_bucket_adopt.add_argument(
+        "--json", action="store_true", help="machine-readable output")
+    p_bucket_adopt.set_defaults(func=_cmd_bucket_adopt)
+
+    p_bucket_remap = bucket_sub.add_parser(
+        "remap",
+        help="move every bucket under one folder to the same place under another",
+        description="After a folder or username change, rewrite the recorded "
+                    "root of every bucket under --from to the same place "
+                    "under --to. Matching stops at a separator, so /Users/a "
+                    "never matches /Users/abc. A bucket whose new folder "
+                    "does not exist yet (a project not cloned here) is "
+                    "skipped and listed; one whose new folder already "
+                    "belongs to another bucket is skipped and listed with "
+                    "the `bucket merge` that folds them; one whose old root still "
+                    "exists (a clone kept) is skipped unless --force. Refused for the "
+                    "filesystem root, a bare drive, a relative --to or a "
+                    "--to inside --from. Safe to run twice. Dry run by "
+                    "default. Human-only, and refused on a tenant-scoped "
+                    "home.",
+        epilog="Examples:\n"
+               "  daimon bucket remap --from /Users/alice --to /Users/bob\n"
+               "  daimon bucket remap --from C:\\Users\\a --to "
+               "C:\\Users\\b --apply\n",
+    )
+    p_bucket_remap.add_argument(
+        "--from", dest="from_root", required=True, metavar="DIR",
+        help="the folder the projects used to live under")
+    p_bucket_remap.add_argument(
+        "--to", dest="to_root", required=True, metavar="DIR",
+        help="the folder they live under now")
+    p_bucket_remap.add_argument(
+        "--apply", action="store_true",
+        help="write the rebinds (default: print the plan only)")
+    p_bucket_remap.add_argument(
+        "--force", action="store_true",
+        help="also move a bucket whose old root still exists on disk")
+    p_bucket_remap.add_argument(
+        "--json", action="store_true", help="machine-readable output")
+    p_bucket_remap.set_defaults(func=_cmd_bucket_remap)
 
     p_slug = sub.add_parser(
         "slug",

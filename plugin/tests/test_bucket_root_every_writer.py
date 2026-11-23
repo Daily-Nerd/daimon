@@ -127,6 +127,9 @@ _CKPT_ROOT = ("the checkpoint root itself (migrations.jsonl), which is not a "
 # bucket directory comes from store.ensure_bucket; nothing else belongs here.
 ALLOWLIST: dict[tuple[str, str], str] = {
     ("__init__.py", "_note_usage"): _LOGS,
+    ("identity.py", "claim"): "the claim IS the owner's create: a slug-routed bucket (no root) and the legacy stamp",
+    ("identity.py", "_claim_once"): "the claim IS the owner's create: a legacy or declared bucket made then stamped",
+    ("identity.py", "_stage"): "the `.birth` stage a bucket is built in, then renamed (the owner's birth)",
     ("buckets.py", "_append_record"): _CKPT_ROOT,
     ("checks_runtime.py", "log_firing"): _LOGS,
     ("_docgen.py", "write"): "the generated documentation pages in the repo's website tree, not a bucket",

@@ -15,8 +15,8 @@ from typing import NamedTuple
 import pytest
 
 import daimon_briefing
-from daimon_briefing import (api, briefing, cli, hooks, ledger, marks,
-                             mcp_tools, store, testing, trust)
+from daimon_briefing import (api, briefing, cli, hooks, identity, ledger,
+                             marks, mcp_tools, store, testing, trust)
 
 KEPT = "an unrelated decision that stays visible"
 Q = "SENTINEL-quarantined ship the migration on Friday"
@@ -196,6 +196,9 @@ def test_the_no_briefing_line_is_plain_and_not_a_warning(
     that line is the first non-warning line, so it IS the header. It must not
     pose as a warning."""
     _seed(box, project=box.other)
+    # Bound, so the folder has no notice of its own: an unbound one prints the
+    # unbound notice (a warning) above the orientation line.
+    identity.claim(box.project)
     rc, out = _brief(capsys)
     assert rc == 0
     got = api.parse_briefing(out)
@@ -213,6 +216,7 @@ def test_the_teammate_counts_on_the_header_only_path_are_plain(
 
     monkeypatch.setattr(brief_mod, "_team_briefings", fake)
     _seed(box, project=box.other)
+    identity.claim(box.project)  # bound: no unbound notice among the warnings
     rc, out = _brief(capsys, "--team")
     assert rc == 0
     assert "2 resolved item(s) withheld (a teammate's)" in out

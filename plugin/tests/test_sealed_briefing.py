@@ -202,7 +202,12 @@ def test_host_adapter_preserves_day_one_warning(sealed, capsys, script):
         calls.append((args, kwargs))
         return subprocess.CompletedProcess([], 0, stdout=text, stderr="")
 
-    adapter.__globals__["lib"] = SimpleNamespace(run_brief=run_brief)
+    # The adapter's one shared decision, "what is worth injecting", is the real
+    # library function, not a stub: only the subprocess is faked.
+    shared = runpy.run_path(str(Path(__file__).resolve().parents[2]
+                                / "hook" / "_daimon_hook_lib.py"))
+    adapter.__globals__["lib"] = SimpleNamespace(
+        run_brief=run_brief, injectable=shared["injectable"])
     if script.startswith("daimon-kimi"):
         output = adapter("daimon", str(sealed))
     else:
