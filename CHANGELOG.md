@@ -5,6 +5,42 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.72.0](https://github.com/Daily-Nerd/daimon/compare/v0.71.0...v0.72.0) (2026-11-23)
+
+
+### Features
+
+* **buckets:** add the stamp and doctor surveys with an identity record ([a22383e](https://github.com/Daily-Nerd/daimon/commit/a22383edf5371f721d4b38c504fcdc98074cbf9f))
+* **buckets:** fold one bucket into another with merge_buckets ([4de210c](https://github.com/Daily-Nerd/daimon/commit/4de210c3836ef5120d0ed78f043d1e209b965fe5))
+* **buckets:** stamp roots exclusively and register the birth staging dir ([fcdb20a](https://github.com/Daily-Nerd/daimon/commit/fcdb20ad3a7403529c344cfc3d3b8a6388977d89))
+* **cli:** add bucket adopt and bucket remap, the explicit rebind verbs ([c718bb0](https://github.com/Daily-Nerd/daimon/commit/c718bb00db72d88fdd89fddba87433443e0a01c3))
+* **cli:** add bucket merge, doctor and stamp ([7b8df68](https://github.com/Daily-Nerd/daimon/commit/7b8df68cb7f04f32aefda1a61fcb3fa022af87d5))
+* **identity:** one scan per operation, children by root, migrate asks the resolver ([cdee095](https://github.com/Daily-Nerd/daimon/commit/cdee0959de4b0e258fc9e36690fec7b32cf35c09))
+* **identity:** resolve a location through the recorded roots and birth a bucket by rename ([ee0a99e](https://github.com/Daily-Nerd/daimon/commit/ee0a99e26d709b9b6c30e2333ce1c0790a27b78f))
+* **identity:** tell the agent when no memory is bound to the folder ([e683fc8](https://github.com/Daily-Nerd/daimon/commit/e683fc8cfce1d718fbf0b56c9640c6a5d85c6838))
+
+
+### Bug Fixes
+
+* **briefing:** colon quote separator and one definition of the greeting ([a7cbccd](https://github.com/Daily-Nerd/daimon/commit/a7cbccdf0418ae315006d03ab31bb997c0c70ef6))
+* **buckets:** decide sameness by the filesystem and record before removing ([bac1efc](https://github.com/Daily-Nerd/daimon/commit/bac1efc25a1c05d055a4ab07f1b64cd99e86a425))
+* **buckets:** fail closed when a destructive merge cannot take its locks ([5fc478e](https://github.com/Daily-Nerd/daimon/commit/5fc478edc3ddd31b5e5e13cb6896b0827bba55a4))
+* **hooks:** speak for an unbound folder instead of reading its notice as silence ([de9f20f](https://github.com/Daily-Nerd/daimon/commit/de9f20f2a4742d67798902d59ff7febacfbd69cf))
+* **identity:** a blocking server verb is not one operation ([c2ec7f7](https://github.com/Daily-Nerd/daimon/commit/c2ec7f777e12592fe77854db729b9bba474aa4db))
+* **identity:** bind the folder a session opens, close the rebind guards, quiet worktrees for now ([8ee11e4](https://github.com/Daily-Nerd/daimon/commit/8ee11e4cc3ec684aaadea4e664c857a60f43cf24))
+* **identity:** finish alias-aware stamp readers and lock them with a census ([0610d54](https://github.com/Daily-Nerd/daimon/commit/0610d54093711b8412d08c9679843abab2fb5b3e)), closes [#1384](https://github.com/Daily-Nerd/daimon/issues/1384)
+* **identity:** is_unbound answers false for a path holding a NUL instead of raising ([77b6510](https://github.com/Daily-Nerd/daimon/commit/77b65107622762ccbf8b57c63e7784b1487e9e6d))
+* **identity:** let stamp-comparing readers follow merged-away buckets ([b93cebf](https://github.com/Daily-Nerd/daimon/commit/b93cebfe37cdc1812acc1ab55784c1af1890671c)), closes [#1384](https://github.com/Daily-Nerd/daimon/issues/1384)
+
+
+### Documentation
+
+* **identity:** say what the resolver and the claim do now, and let doctor name adopt ([b93981f](https://github.com/Daily-Nerd/daimon/commit/b93981f925e24579a32c9ac27cc1052fbc2adb8d))
+* render every published briefing sample from the real renderer ([5eed50e](https://github.com/Daily-Nerd/daimon/commit/5eed50e2339a20da9066f00927fd62d7021a368b))
+* **scars:** candidates for the birth rename, the resolver order and the taken name ([4ce3f51](https://github.com/Daily-Nerd/daimon/commit/4ce3f51c83a02ccc59e145793e0251e4ccfc350d))
+* **scars:** candidates for the claim and owner coupling ([4a4f4d5](https://github.com/Daily-Nerd/daimon/commit/4a4f4d5724698b895a565db0e3f6f42214ca290c))
+* **scars:** promote 0179 to 0184 on bucket identity, signed text and serialize partials ([8dcc95a](https://github.com/Daily-Nerd/daimon/commit/8dcc95a3c7fbe9e8599c4c0ce4aac7bc5f53ac61))
+
 ## [0.71.0](https://github.com/Daily-Nerd/daimon/compare/v0.70.0...v0.71.0) (2026-11-22)
 
 
