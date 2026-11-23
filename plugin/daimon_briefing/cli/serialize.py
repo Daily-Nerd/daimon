@@ -23,6 +23,7 @@ from .. import (
     config,
     harvest,
     heal,
+    identity,
     jsonl,
     ledger,
     llm,
@@ -185,6 +186,12 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # #194: serializer/llm diagnostics belong in serialize.log, not lastResort
     # stderr (which lands in serialize-crash.log and misreads as a crash).
     _attach_serialize_log_handler()
+    # The bucket is claimed here, before any extraction spend, so the name is
+    # decided in milliseconds and never after the LLM call. A ref passed in by
+    # `_cmd_serialize` is returned as is; `heal` hands the logged location
+    # string and gets the same claim. It is a `str` (the location), so the
+    # spawn-line log and `harvest` below see exactly what they always did.
+    project = identity.claim(project) or project
     path = transcript_path
     # Hash the raw transcript bytes at read time (#125), before any LLM work, so
     # the checkpoint can bind to its exact source content. None when unreadable —
@@ -260,7 +267,7 @@ def _run_serialize(transcript_path: Path, project: str | None,
     # stamp and no result. The lease exits before recall.warm() below, so an
     # index rebuild never extends liveness (#564).
     with ledger.heartbeat_lease(session_id,
-                                project_slug=store.project_slug(project)):
+                                project_slug=store.bucket_of(project)):
         try:
             # THE shared pipeline (#432): serialize -> stamps -> carry+fold ->
             # bind_links -> supersede emission -> write -> rejection ledger.
@@ -414,6 +421,7 @@ def _run_host(args, project: str) -> int:
 
 def _cmd_serialize(args) -> int:
     project = _cli._resolve_project(args.project)
+    project = identity.claim(project) or project
     if getattr(args, "host", None):
         return _run_host(args, project)
     return _cli._run_serialize(Path(args.transcript), project,
