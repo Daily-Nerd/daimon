@@ -629,6 +629,26 @@ def _below(root: str, base: str) -> str | None:
     return None
 
 
+def former_roots(project) -> tuple[str, ...]:
+    """Every root the bucket `project` resolves to has recorded before its
+    current one (`adopt` and `remap` append to the identity record's
+    `history`). Empty for a project that never moved, an unknown bucket or an
+    unreadable record. Never raises; reads one small file."""
+    folder = store.bucket_dir(project)
+    record = read_identity(folder) if folder is not None else None
+    return tuple(str(r) for r in (record or {}).get("history") or [] if r)
+
+
+def was_located_under_former_root(project, location) -> bool:
+    """Whether `location` is one of `project`'s former roots or lies below one
+    (separator-bounded, `normcase`-compared like every root comparison). The
+    importer's question: a transcript recorded on the old machine names a
+    folder that no longer exists here, so only the bucket's own history can
+    say it was this project's."""
+    return any(_below(str(location), root) is not None
+               for root in former_roots(project))
+
+
 def _mapped(root: str, old: str, new: str) -> tuple[str | None, str | None]:
     """(new root, None) for `root` under `old` moved to `new`, or (None,
     reason). Separators in the tail follow `new`'s system; a tail that already
