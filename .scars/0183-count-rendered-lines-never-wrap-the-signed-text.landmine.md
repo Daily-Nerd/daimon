@@ -1,21 +1,24 @@
 ---
-id: 0
+id: 183
 type: landmine
 title: daimon counts the lines handsal will render for signed text, and must never wrap or change that text
 severity: high
 confidence: 0.85
 created: 2026-11-21
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/count-rendered-lines-never-wrap-the-signed-text.md
 anchors:
   - path: plugin/daimon_briefing/authority.py
   - path: plugin/daimon_briefing/requests.py
   - path: plugin/daimon_briefing/refutations.py
 evidence:
-  - note: "handsal v0.4.2 spec/profile-interfaces.md RN-05 and RN-12; conformance vectors rnd.request-long-line-continuation, rnd.truncate-not-inside-escape"
+  - note: handsal v0.4.2 spec/profile-interfaces.md RN-05 and RN-12; conformance vectors rnd.request-long-line-continuation, rnd.truncate-not-inside-escape
 expires:
   condition: "handsal offers a call that counts or checks the render of bare content, so the copy of the rule can be deleted"
   review_after: 2027-05-21
-status: candidate
+status: active
 ---
 
 A person signs the stored text exactly as handsal's renderer shows it, and

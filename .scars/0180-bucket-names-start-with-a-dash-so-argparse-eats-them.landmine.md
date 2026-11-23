@@ -1,11 +1,14 @@
 ---
-id: 0
+id: 180
 type: landmine
 title: A bucket name starts with a dash, so a verb taking one must be written --flag=NAME or argparse reads it as an option
 severity: low
 confidence: 0.9
 created: 2026-11-22
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/bucket-names-start-with-a-dash-so-argparse-eats-them.md
 anchors:
   - path: plugin/daimon_briefing/cli/projects.py
   - path: plugin/tests/test_bucket_cli.py
@@ -14,7 +17,7 @@ evidence:
 expires:
   condition: "bucket names stop beginning with the separator of the location they were seeded from"
   review_after: 2027-06-01
-status: candidate
+status: active
 ---
 
 `store.location_slug` turns every separator into a dash, so the slug of any

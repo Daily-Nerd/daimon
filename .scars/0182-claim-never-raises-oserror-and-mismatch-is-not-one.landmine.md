@@ -1,11 +1,14 @@
 ---
-id: 0
+id: 182
 type: landmine
 title: identity.claim must not raise OSError and BucketMismatch must not subclass it, or every ledger writer changes contract
 severity: high
 confidence: 0.8
 created: 2026-11-22
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/claim-never-raises-oserror-and-mismatch-is-not-one.md
 anchors:
   - path: plugin/daimon_briefing/identity.py
   - path: plugin/daimon_briefing/store.py
@@ -15,7 +18,7 @@ evidence:
 expires:
   condition: "the ledger writers stop treating OSError as a best-effort False, or claim moves inside each writer's own try block"
   review_after: 2027-05-22
-status: candidate
+status: active
 ---
 
 Every ledger writer (append, append_events, write_checkpoint and the rest) ends

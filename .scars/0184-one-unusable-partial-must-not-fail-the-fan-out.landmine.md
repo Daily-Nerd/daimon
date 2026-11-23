@@ -1,11 +1,14 @@
 ---
-id: 0
+id: 184
 type: landmine
 title: A shape check at the partial boundary turns one bad chunk into a lost run unless the fan-out owns the failure
 severity: high
 confidence: 0.8
 created: 2026-11-22
 authors: ["claude-code"]
+promoted_by: Kibukx
+promoted_by_source: git-config-interactive
+promoted_from: candidates/one-unusable-partial-must-not-fail-the-fan-out.md
 anchors:
   - path: plugin/daimon_briefing/serializer.py
   - pattern: "_settle_extraction"
@@ -14,7 +17,7 @@ evidence:
 expires:
   condition: "partial_reason stops rejecting, or the fan-out stops raising OutputParseError per call"
   review_after: 2027-05-22
-status: candidate
+status: active
 ---
 
 Since #1218 a flat partial (open_questions at the top level) is rejected at the
