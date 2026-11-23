@@ -307,7 +307,7 @@ def is_unbound(project) -> bool:
     # slice 5. TEMPORARY: it silences only the notice. Resolution and claim of
     # a worktree are unchanged, and a submodule (also a `.git` file) is
     # silenced with it.
-    if hostgit.has_gitfile(text):
+    if "\0" in text or hostgit.has_gitfile(text):  # a NUL names no folder
         return False
     answer = resolve(text)
     return answer.slug is not None and not answer.bound
