@@ -24,6 +24,11 @@ from ..ledger import _format_age
 
 _TOPIC_TEASER_CHARS = 60
 
+# The runbook a person reads after a machine move, a username change or a
+# renamed folder. Fixed text on purpose (scar 0055): nothing from a bucket.
+MOVE_GUIDE_URL = ("https://daily-nerd.github.io/daimon/docs/guides/"
+                  "move-to-a-new-machine")
+
 
 def _topic_teaser(topic) -> str:
     """The topic on one line, at most `_TOPIC_TEASER_CHARS` wide. Kept off
@@ -423,6 +428,8 @@ def _cmd_bucket_doctor(args) -> int:
         else:
             lines.append(f"suggestions: {len(survey['suggestions'])} (shown "
                          f"on a terminal)")
+    if survey["findings"]["dangling"] or survey["findings"]["unstamped"]:
+        lines.append(f"moved to a new machine or folder? {MOVE_GUIDE_URL}")
     render.render_ledger_lines(lines)
     return 0
 
