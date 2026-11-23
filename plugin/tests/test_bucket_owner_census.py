@@ -141,8 +141,13 @@ JOIN_SITES = {
     ("buckets.py", "merge_buckets"): _MERGE,
     ("buckets.py", "migrate"): _MERGE,
     ("bucket_tools.py", "doctor"): _ENUM,
-    ("identity.py", "resolve"): _OWNER + " (the seed's own bucket, step 2/4)",
-    ("identity.py", "_free_name"): _OWNER + " (which birth name is free)",
+    ("bucket_tools.py", "_bucket_dir_named"): (
+        "a verb argument that NAMES a bucket (validated by parse_bucket), the "
+        "way merge names its two"),
+    ("bucket_tools.py", "remap"): _ENUM,
+    ("store.py", "make_bucket"): (
+        "creates the bucket a verb NAMES (migrate folding into the rule's "
+        "name); must not ask the resolver, which may answer another bucket"),
     ("identity.py", "_claim_once"): _OWNER + " (the claim's own directory)",
     ("identity.py", "claim"): _OWNER + " (a slug-routed bucket's directory)",
     ("identity.py", "verify"): _OWNER + " (the claimed ref's own directory)",
