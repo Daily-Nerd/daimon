@@ -345,38 +345,6 @@ def test_a_failed_refresh_still_serves_through_the_judge(tmp_checkpoint_dir,
     assert "stale" in got.notes
 
 
-# ---- find / lookup_item ---------------------------------------------------
-
-
-def test_find_returns_found_withheld_or_absent(tmp_checkpoint_dir,
-                                               monkeypatch):
-    project = _two_sessions()
-    ids = _ids(project)
-    slug = store.project_slug(project)
-    got = recall.find(ids[VISIBLE], slug=slug)
-    assert isinstance(got, recall.Found) and got.row["text"] == VISIBLE
-    assert isinstance(recall.find("d-000000", slug=slug), recall.Absent)
-    recall.rebuild()
-    monkeypatch.setattr(recall, "_ensure_fresh", lambda: None)
-    _quarantine(project, QUARANTINED)
-    verdict = recall.find(ids[QUARANTINED], slug=slug)
-    assert isinstance(verdict, recall.Withheld)
-    assert verdict.reason == "quarantine"
-    assert QUARANTINED not in repr(verdict)
-    assert QUARANTINED not in _texts()
-
-
-def test_lookup_item_keeps_its_shape(tmp_checkpoint_dir):
-    project = _two_sessions()
-    ids = _ids(project)
-    slug = store.project_slug(project)
-    row = recall.lookup_item(ids[VISIBLE], slug=slug)
-    assert isinstance(row, dict) and row["text"] == VISIBLE
-    assert recall.lookup_item("d-000000", slug=slug) is None
-    _quarantine(project, QUARANTINED)
-    assert recall.lookup_item(ids[QUARANTINED], slug=slug) is None
-
-
 # ---- suggest --------------------------------------------------------------
 
 

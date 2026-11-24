@@ -48,7 +48,6 @@ from . import (
     amendments,
     config,
     display,
-    recall,
     refutations,
     requests,
     store,
@@ -331,35 +330,49 @@ def _trust_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     return rows
 
 
-def _loop_text(item_id: str, slug: str) -> str:
-    """The target loop's own text, for the decide row (#1087 fact 1/4): a
-    quote is not decidable without knowing what it is claimed to change.
+def _shape_loop_text(text) -> str | None:
+    """The loop-text display contract (#1087), applied by `_loop_texts`: one line via `display.one_line`, bounded to
+    `_LOOP_TEXT_CAP` (the guard keeps a text of exactly CAP chars whole, as
+    it has always been). None when nothing may be shown — the caller
+    substitutes the unavailable placeholder."""
+    shaped = display.one_line(text)
+    if not shaped:
+        return None
+    if len(shaped) > _LOOP_TEXT_CAP:
+        # Fits in CAP chars total, "…" included.
+        shaped = display.shorten(shaped, _LOOP_TEXT_CAP - 1, hard=True)
+    return shaped
 
-    `slug` is always passed explicit — never the bare `project_dir` scope —
-    because without it `lookup_item` widens to `DAIMON_EXTRA_READ_SLUGS` and
-    takes the newest cross-scope match, which could hand this project's
-    decide row a DIFFERENT project's item text under the same id. Fails
-    toward the unavailable placeholder on any miss or read trouble: the row
-    stays in the queue either way (amendments.py's own fail-open posture),
-    it just cannot show what it is about."""
-    unavailable = _LOOP_TEXT_UNAVAILABLE
-    if not item_id:
-        return unavailable
-    try:
-        found = recall.find(item_id, slug=slug)
-    except Exception:
-        return unavailable
-    if not isinstance(found, recall.Found):
-        return unavailable
-    row = found.row
-    text = display.one_line(row.get("text"))
-    if not text:
-        return unavailable
-    if len(text) > _LOOP_TEXT_CAP:
-        # Fits in CAP chars total, "…" included; the guard keeps a text of
-        # exactly CAP chars whole, as it has always been.
-        text = display.shorten(text, _LOOP_TEXT_CAP - 1, hard=True)
-    return text
+
+def _loop_texts(item_ids, project_dir, snap=None) -> dict:
+    """ONE batched, READ-ONLY lookup of loop text for a whole lane (#1407),
+    through `view.lookup_many`: the pointer window plus the index locator
+    (`index_locate`, `mode=ro`, never refreshed), masked through the view
+    over `snap`. A queue read never rebuilds or writes the recall index
+    (scar 0136). Only ids whose text may be shown are in the map; every
+    other id (absent, withheld, unreadable) renders the unavailable
+    placeholder through the caller, so the row stays in the queue either
+    way (amendments.py's own posture), it just cannot show what it is about.
+    No try/except here: `view.lookup_many` is fail-open by contract (a
+    missing, corrupt or foreign-schema index is a note on `Absent`, a torn
+    pointer or session file is skipped, an unreadable trust ledger closes
+    the snapshot), so a raise is a bug that must stay visible, not blank
+    every row.
+
+    The read is bounded to THIS project's own bucket by construction (never
+    `DAIMON_EXTRA_READ_SLUGS`), so a decide row cannot show a different
+    project's item text under the same id."""
+    if not item_ids:
+        return {}
+    found = view.lookup_many(project_dir, item_ids, snap=snap)
+    out = {}
+    for item_id, result in found.items():
+        if not isinstance(result, view.Found):
+            continue
+        text = _shape_loop_text(result.item.get("text"))
+        if text is not None:
+            out[item_id] = text
+    return out
 
 
 def _current_state(records: dict, item_id: str, exclude_id: str) -> str:
@@ -411,8 +424,9 @@ def _amendment_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     confirm/reject pair.
 
     #1087: each row now carries the loop's own text, its current state, the
-    claimed change, and a neutral `found` label — see `_loop_text`,
-    `_current_state`, and `amendments.found_label`. `headline` is composed at
+    claimed change, and a neutral `found` label — see `_loop_texts` (the
+    batched read-only loop-text lookup), `_current_state`, and
+    `amendments.found_label`. `headline` is composed at
     read time from those fields (`_amendment_headline`), so it reads as a
     sentence about the change (#1124) even when the quote is a log fragment. The raw
     evidence quote rides in `amend["evidence"]` (never truncated here): the
@@ -428,12 +442,18 @@ def _amendment_rows(project_dir, slug, *, masked=True, snap=None) -> list:
     visible = _masked_lane(project_dir, "amendments.jsonl",
                    [record for _aid, record in verified],
                    masked=masked, snap=snap)
-    for (aid, _original), record in zip(verified, visible):
-        item_id = str(record.get("item_id") or "")
+    # #1407: the loop text for every row comes from ONE batched read-only
+    # lookup (`view.lookup_many`) over the verified ids, not one lookup per
+    # row — a queue read never rebuilds the recall index.
+    item_ids = [str(record.get("item_id") or "")
+                for (_aid, _original), record in zip(verified, visible)]
+    texts = _loop_texts(item_ids, project_dir, snap)
+    for (aid, _original), record, item_id in zip(verified, visible,
+                                                 item_ids):
         role = str(record.get("evidence_role") or "")
         amend = {
             "loop_id": item_id or "?",
-            "loop_text": _loop_text(item_id, slug),
+            "loop_text": texts.get(item_id) or _LOOP_TEXT_UNAVAILABLE,
             "state_from": _current_state(records, item_id, aid),
             "state_to": record.get("change") or "?",
             "evidence": record.get("evidence") or "",

@@ -163,7 +163,7 @@ def test_found_label_never_says_you_said():
 # ---- the row: loop text + current state -------------------------------------
 
 
-def test_row_shows_loop_text_from_lookup_item(project, capsys):
+def test_row_shows_loop_text_from_batched_lookup(project, capsys):
     store.write_checkpoint("S-1", _checkpoint_with_item(text="ship the fix"),
                            project_dir=project, writer=Writer.HUMAN)
     a_id = amendments.propose(item_id=ITEM, change="progressed",
@@ -180,7 +180,7 @@ def test_row_shows_loop_text_from_lookup_item(project, capsys):
 
 def test_row_loop_text_unavailable_when_lookup_misses_row_stays(
         project, capsys):
-    # No checkpoint written for this item at all -> lookup_item misses.
+    # No checkpoint written for this item at all -> the lookup misses.
     a_id = amendments.propose(item_id=ITEM, change="progressed",
                               evidence="the PR merged this morning",
                               channel="cli-agent", project_dir=project)
@@ -218,34 +218,40 @@ def test_row_state_reads_prior_ratified_amendment_as_baseline(project):
     assert row["amend"]["state_to"] == "progressed"
 
 
-# ---- _loop_text / _current_state: unit-level fail-open branches ------------
+# ---- _loop_texts / _current_state: unit-level fail-open branches -----------
 
 
-def test_loop_text_empty_item_id_is_unavailable():
-    assert pending._loop_text("", "slug-x") == "(loop text unavailable)"
+def _loop_text(item_id):
+    """One id through the batched lookup, as the amendment lane renders it:
+    a missing map entry is the unavailable placeholder."""
+    return pending._loop_texts([item_id], "/p/x").get(
+        item_id, "(loop text unavailable)")
 
 
-def test_loop_text_lookup_error_is_unavailable(monkeypatch):
-    def boom(item_id, project_dir=None, slug=None):
-        raise RuntimeError("index corrupt")
+def _stub_lookup(monkeypatch, result):
+    monkeypatch.setattr(pending.view, "lookup_many",
+                        lambda project, item_ids, **kw:
+                        {iid: result for iid in item_ids})
 
-    monkeypatch.setattr(pending.recall, "find", boom)
-    assert pending._loop_text(ITEM, "slug-x") == "(loop text unavailable)"
+
+def test_loop_text_no_ids_is_empty_map():
+    assert pending._loop_texts([], "/p/x") == {}
+
+
+def test_loop_text_non_found_is_unavailable(monkeypatch):
+    _stub_lookup(monkeypatch, pending.view.Absent())
+    assert _loop_text(ITEM) == "(loop text unavailable)"
 
 
 def test_loop_text_blank_text_field_is_unavailable(monkeypatch):
-    monkeypatch.setattr(pending.recall, "find",
-                        lambda item_id, project_dir=None, slug=None:
-                        pending.recall.Found({"text": "   "}))
-    assert pending._loop_text(ITEM, "slug-x") == "(loop text unavailable)"
+    _stub_lookup(monkeypatch, pending.view.Found({"text": "   "}, None, ()))
+    assert _loop_text(ITEM) == "(loop text unavailable)"
 
 
 def test_loop_text_truncates_over_cap(monkeypatch):
-    long_text = "x" * 200
-    monkeypatch.setattr(pending.recall, "find",
-                        lambda item_id, project_dir=None, slug=None:
-                        pending.recall.Found({"text": long_text}))
-    out = pending._loop_text(ITEM, "slug-x")
+    _stub_lookup(monkeypatch,
+                 pending.view.Found({"text": "x" * 200}, None, ()))
+    out = _loop_text(ITEM)
     assert len(out) == pending._LOOP_TEXT_CAP
     assert out.endswith("…")
 
@@ -254,26 +260,25 @@ def test_current_state_unreadable_records_returns_question_mark():
     assert pending._current_state(None, ITEM, "a-exclude") == "?"
 
 
-# ---- find scoping (#1087 fact 4) -------------------------------------
+# ---- lookup scoping (#1087 fact 4) ------------------------------------
 
 
-def test_find_called_with_slug(project, monkeypatch):
+def test_lookup_is_scoped_to_this_project(project, monkeypatch):
     a_id = amendments.propose(item_id=ITEM, change="progressed",
                               evidence="the PR merged this morning",
                               channel="cli-agent", project_dir=project)
     amendments.verify(a_id, role="assistant", project_dir=project)
     calls = []
-    from daimon_briefing import recall
-    real = recall.find
 
-    def spy(item_id, project_dir=None, slug=None):
-        calls.append({"item_id": item_id, "slug": slug})
-        return real(item_id, project_dir=project_dir, slug=slug)
+    def spy(proj, item_ids, **kw):
+        calls.append({"project": proj, "item_ids": list(item_ids)})
+        return {}
 
-    monkeypatch.setattr(pending.recall, "find", spy)
+    monkeypatch.setattr(pending.view, "lookup_many", spy)
     pending.queue(project_dir=project)
     assert calls
-    assert calls[0]["slug"] == store.project_slug(project)
+    assert calls[0]["project"] == project
+    assert calls[0]["item_ids"] == [ITEM]
 
 
 def test_extra_read_slug_loop_text_never_leaks_across_projects(

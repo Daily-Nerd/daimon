@@ -39,10 +39,12 @@ def test_agent_claim_none_is_empty_and_multiline_is_one_line():
 
 
 def _loop_with(monkeypatch, text):
-    monkeypatch.setattr(pending.recall, "find",
-                        lambda item_id, project_dir=None, slug=None:
-                        pending.recall.Found({"text": text}))
-    return pending._loop_text("item-1", "slug-x")
+    monkeypatch.setattr(
+        pending.view, "lookup_many",
+        lambda project, item_ids, **kw: {
+            "item-1": pending.view.Found({"text": text}, None, ())})
+    return pending._loop_texts(["item-1"], "/p/x").get(
+        "item-1", pending._LOOP_TEXT_UNAVAILABLE)
 
 
 def _legacy_loop(text):

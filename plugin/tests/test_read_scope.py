@@ -4,7 +4,7 @@
 `view.read_scope` returns a `Scope` (Own, Named, All or Denied). Before it,
 `view.read_scopes` returned `None` for an unknown project, and each consumer
 read that `None` its own way: `recall.query` searched every bucket,
-`recall.find` and `recall.suggest` read nothing, and the team read, the audit
+`recall.suggest` read nothing, and the team read, the audit
 corpus, the session listings and the Hermes hook all widened. Every consumer
 test here plants a FOREIGN bucket that matches, then asks as a project that
 resolves to no slug, with tenant scope on and off."""
@@ -98,8 +98,6 @@ def test_the_three_recall_consumers_agree_on_an_unknown_project(
     assert found_id
     assert recall.search(TERM, project_dir=None) == []
     assert recall.query(TERM, project_dir=None).rows == []
-    assert isinstance(recall.find(found_id, project_dir=None), recall.Absent)
-    assert recall.lookup_item(found_id, project_dir=None) is None
     assert recall.suggest(PROMPT, project_dir=None) == []
 
 

@@ -208,53 +208,6 @@ def test_local_and_team_copies_not_double_indexed(tmp_checkpoint_dir, monkeypatc
     assert len(hits) == 1
 
 
-# ---- #674: lookup_item — single-id read for why's index fallback ----
-
-
-def test_lookup_item_finds_team_only_row_scoped_to_project(
-    tmp_checkpoint_dir, monkeypatch
-):
-    _write_team_file("grace", "S-g", _cp("S-g", decisions=[
-        {"id": "d-aaaaaa111111", "text": "pelican decision", "trust": "inferred"}]),
-        project_dir="/repo/x")
-
-    row = recall.lookup_item("d-aaaaaa111111", project_dir="/repo/x")
-
-    assert row is not None
-    assert row["session_id"] == "S-g"
-    assert row["author"] == "grace"
-    assert row["text"] == "pelican decision"
-
-
-def test_lookup_item_never_crosses_project_scope(tmp_checkpoint_dir, monkeypatch):
-    _write_team_file("grace", "S-g", _cp("S-g", decisions=[
-        {"id": "d-aaaaaa111111", "text": "pelican decision", "trust": "inferred"}]),
-        project_dir="/repo/x")
-
-    # Same id, wrong project: scoping must be project_slug equality, exactly
-    # what search() enforces — never a looser team_project/segments match.
-    assert recall.lookup_item("d-aaaaaa111111", project_dir="/repo/y") is None
-    # Right project, wrong id: never fuzzy.
-    assert recall.lookup_item("d-does-not-exist", project_dir="/repo/x") is None
-    # No scope at all: nothing to check against, always None.
-    assert recall.lookup_item("d-aaaaaa111111", project_dir=None) is None
-
-
-def test_lookup_item_freshens_without_a_manual_rebuild(tmp_checkpoint_dir, monkeypatch):
-    # Mirrors search()'s own contract: the fingerprint mechanism notices a
-    # newly-written source file with no separate recall.rebuild() call.
-    assert recall.lookup_item("d-bbbbbb222222", project_dir="/repo/x") is None
-
-    _write_team_file("grace", "S-fresh", _cp("S-fresh", decisions=[
-        {"id": "d-bbbbbb222222", "text": "fresh pelican decision",
-         "trust": "inferred"}]),
-        project_dir="/repo/x")
-
-    row = recall.lookup_item("d-bbbbbb222222", project_dir="/repo/x")
-    assert row is not None
-    assert row["session_id"] == "S-fresh"
-
-
 # ---- supersession v3 (#234): item-level evidence flags, recency only ranks ----
 
 
@@ -1423,47 +1376,6 @@ def test_search_happy_path_writes_no_breadcrumb(tmp_checkpoint_dir, monkeypatch)
     store.write_checkpoint("S1", _cp("S1", decisions=[
         {"text": "pelican decision", "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
     assert recall.search("pelican", all_projects=True)
-    assert not (config.log_dir() / "recall-error.log").exists()
-
-
-def test_lookup_item_refresh_error_writes_breadcrumb(tmp_checkpoint_dir, monkeypatch):
-    # Same #28 fail-open contract as search()'s own refresh-error path: a
-    # broken _ensure_fresh() must never raise or block the fallback read.
-    from daimon_briefing import config
-
-    def boom():
-        raise OSError("disk full")
-    monkeypatch.setattr(recall, "_ensure_fresh", boom)
-    assert recall.lookup_item("d-aaaaaa111111", project_dir="/repo/x") is None
-    breadcrumb = config.log_dir() / "recall-error.log"
-    assert breadcrumb.exists()
-    assert "disk full" in breadcrumb.read_text(encoding="utf-8")
-
-
-def test_lookup_item_query_error_returns_none_and_writes_breadcrumb(
-    tmp_checkpoint_dir, monkeypatch
-):
-    import sqlite3 as sq
-    from daimon_briefing import config, store
-    store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"id": "d-aaaaaa111111", "text": "pelican decision",
-         "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
-
-    def bad_connect(*a, **k):
-        raise sq.OperationalError("database is locked")
-    monkeypatch.setattr(recall.sqlite3, "connect", bad_connect)
-    assert recall.lookup_item("d-aaaaaa111111", project_dir="/repo/x") is None
-    breadcrumb = config.log_dir() / "recall-error.log"
-    assert breadcrumb.exists()
-    assert "database is locked" in breadcrumb.read_text(encoding="utf-8")
-
-
-def test_lookup_item_happy_path_writes_no_breadcrumb(tmp_checkpoint_dir, monkeypatch):
-    from daimon_briefing import config, store
-    store.write_checkpoint("S1", _cp("S1", decisions=[
-        {"id": "d-aaaaaa111111", "text": "pelican decision",
-         "trust": "inferred"}]), project_dir="/repo/x", writer=Writer.HUMAN)
-    assert recall.lookup_item("d-aaaaaa111111", project_dir="/repo/x")
     assert not (config.log_dir() / "recall-error.log").exists()
 
 
@@ -2769,8 +2681,7 @@ def test_search_sorts_a_resolved_item_below_a_linked_one(tmp_checkpoint_dir,
 # ---- #899: host allowlist fans every single-scope read, and only those ----
 #
 # The caller never names a scope here. The host declares extra READ slugs out
-# of band and each of the three single-scope filters (search, lookup_item,
-# suggest) fans across own + listed. One filter reached and one missed gives
+# of band and each of the three single-scope filters (search, suggest) fans across own + listed. One filter reached and one missed gives
 # a shared memory that exists when asked for and vanishes when it would have
 # helped, so there is one test per filter and each must fail alone.
 
@@ -2797,15 +2708,6 @@ def test_extra_read_slugs_reach_search(tmp_checkpoint_dir, monkeypatch):
     assert by_text["toucan decision in y"] == store.project_slug("/repo/y")
 
 
-def test_extra_read_slugs_reach_lookup_item(tmp_checkpoint_dir, monkeypatch):
-    _two_buckets()
-    assert recall.lookup_item("d-bbbbbb222222", project_dir="/repo/x") is None
-    monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/y"))
-    row = recall.lookup_item("d-bbbbbb222222", project_dir="/repo/x")
-    assert row is not None and row["text"] == "toucan decision in y"
-    assert row["project_slug"] == store.project_slug("/repo/y")
-
-
 def test_extra_read_slugs_reach_suggest(tmp_checkpoint_dir, monkeypatch):
     _seed_history(project="/repo/x")
     prompt = "debugging the litellm gateway cache pinning again"
@@ -2825,8 +2727,6 @@ def test_extra_read_slugs_never_widen_an_explicit_scope(tmp_checkpoint_dir,
     monkeypatch.setenv("DAIMON_EXTRA_READ_SLUGS", store.project_slug("/repo/y"))
     hits = recall.search("toucan", slug=store.project_slug("/repo/x"))
     assert [h["text"] for h in hits] == ["toucan decision in x"]
-    assert recall.lookup_item("d-bbbbbb222222",
-                              slug=store.project_slug("/repo/x")) is None
 
 
 def test_extra_read_slugs_with_an_unknown_project_stay_silent(
