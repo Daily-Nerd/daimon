@@ -170,18 +170,3 @@ def test_a_failed_forced_rebuild_serves_the_judged_rows_with_a_stale_note(
     got = recall.query("quokkasentinel walrusharbor", project_dir=PROJECT)
     assert [r["text"] for r in got.rows] == [VISIBLE]
     assert "stale" in got.notes
-
-
-def test_a_closed_item_finds_absent_not_withheld(tmp_checkpoint_dir):
-    store.write_checkpoint("S1", {
-        "session_id": "S1", "created": "2026-08-01T00:00:00Z",
-        "working_context": {"recent_decisions": [
-            {"text": VISIBLE, "trust": "inferred"}]},
-        "epistemic_snapshot": {}}, project_dir=PROJECT, writer=Writer.HUMAN)
-    slug = store.project_slug(PROJECT)
-    got = store.read_latest_body(project_dir=PROJECT, route=store.Route.OWN,
-                                 admit=store.Admit.ANY)
-    item_id = got["working_context"]["recent_decisions"][0]["id"]
-    (config.checkpoint_dir() / slug / "trust.jsonl").write_text("garbage\n")
-    assert isinstance(recall.find(item_id, slug=slug), recall.Absent)
-    assert isinstance(recall.find(item_id, project_dir=None), recall.Absent)

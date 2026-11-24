@@ -8,7 +8,12 @@ by scanning the same files everything else reads:
                        <team_dir>/*/projects/**/authors/<author>/*.json (#200)
 
 Any doubt about the db — missing, corrupt, foreign schema, stale fingerprint —
-resolves to a full rebuild. Rebuild is a linear scan of at most a few hundred
+resolves to a full rebuild on the AUTO-REFRESH read paths (`query`, `search`,
+`suggest`). By-id reads never go through this module: they are
+`view.lookup_many` over `index_locate` (`mode=ro`, never refreshed), so a
+display read never rebuilds or writes the derived index (#1407, scar 0136).
+
+Rebuild is a linear scan of at most a few hundred
 small JSON files; correctness over cleverness (no incremental upserts).
 
 Schema: `items` carries one row per cognitive item (text/trust/kind/author/
@@ -1631,25 +1636,6 @@ class Recalled:
     notes: tuple = ()
 
 
-@dataclass(frozen=True)
-class Found:
-    row: dict
-
-
-@dataclass(frozen=True)
-class Withheld:
-    """The id names an item the reader may not see. Identity and reason only,
-    never a value."""
-
-    item_id: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class Absent:
-    pass
-
-
 def query(text: str, project_dir=None, all_projects: bool = False,
           limit: int = 20, slug: str | None = None) -> Recalled:
     """FTS5 MATCH over the (auto-refreshed) index, judged. Live items first,
@@ -1802,67 +1788,6 @@ def search(query: str, project_dir=None, all_projects: bool = False,
     it), with the notes dropped. See `query` for scope and ranking."""
     return _query_core(query, project_dir=project_dir,
                        all_projects=all_projects, limit=limit, slug=slug).rows
-
-
-def find(item_id: str, project_dir=None,
-         slug: str | None = None) -> "Found | Withheld | Absent":
-    """Single-id read against the (auto-refreshed) index (#674).
-
-    `why`'s own walk (store.project_surfaces) only ever sees this project's
-    local flat/pointer surfaces — never the team dir, and only a stampless
-    legacy file that happens to sit inside its project's bucket directory.
-    The index is deliberately more permissive (team ingestion, #158
-    _bucket_slugs pointer-derived attribution for legacy files), so a row
-    can exist here for an id `why`'s walk structurally cannot reach.
-
-    This is a companion to search(), never a substitute for its scoping:
-    same project_slug equality (never team_project/granted-segments), same
-    fail-open posture (any index trouble degrades to Absent, not a raise;
-    the caller's own "not found" refusal is the safe default already).
-    Read-only. Callers must never treat a hit here as license to widen what
-    forget/project_surfaces/the privacy audit consider this project's own
-    surfaces — this only ever feeds a DISPLAY fallback.
-
-    Found is the newest matching row (ties broken by `created`). Withheld
-    says the newest copy may not be shown (reason only, no value) and, like a
-    dropped query row, rebuilds the index once."""
-    scope = view.read_scope(project_dir, slug=slug)
-    if isinstance(scope, view.Denied):
-        return Absent()
-    try:
-        _ensure_fresh()
-    except (OSError, sqlite3.Error, RecallError) as exc:
-        _note_error("lookup_item.refresh", exc)
-    path = config.recall_db()
-    _closed_still(scope, path, [])
-    scope_sql, scope_params = _scope_filter(scope, "project_slug")
-    try:
-        rows = _select(
-            "SELECT text, quote, trust, kind, author, project_slug,"
-            " session_id, created, superseded_by, item_id, frontier,"
-            " scene AS _scene"
-            " FROM items WHERE item_id = ?"
-            + scope_sql
-            + " ORDER BY created DESC LIMIT 1",
-            (item_id, *scope_params))
-    except sqlite3.Error as exc:
-        _note_error("lookup_item", exc)
-        return Absent()
-    if not rows:
-        return Absent()
-    row = rows[0]
-    verdict = _withheld(row, view.judge(row.get("project_slug")))
-    if verdict is None:
-        return Found(row)
-    _rebuild_forced(path, [])
-    return Withheld(item_id, verdict.reason)
-
-
-def lookup_item(item_id: str, project_dir=None, slug: str | None = None) -> dict | None:
-    """`find(...)`'s row when it is Found, else None: the public shape. A
-    withheld item reads as an absent one."""
-    got = find(item_id, project_dir=project_dir, slug=slug)
-    return got.row if isinstance(got, Found) else None
 
 
 # ---- #125: proactive suggestion — "you worked on this before" ----
