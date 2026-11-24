@@ -7,9 +7,17 @@ description: "daimon writes a checkpoint when a session ends and injects a brief
 
 # daimon
 
+<div className="docCta">
+
+[Quickstart](getting-started/quickstart.md)
+
+Install to first briefing in six steps.
+
+</div>
+
 Your agent forgets everything between sessions. daimon writes a small
 **checkpoint** when a session ends and turns it into a **briefing** when the
-next one starts — so the agent resumes from a faithful prior state instead of
+next one starts, so the agent resumes from a faithful prior state instead of
 a confident guess:
 
 ```
@@ -34,15 +42,15 @@ checkpoint, injected when the next session starts.
 
 ## Why it's different
 
-Most memory tools store what a model *wrote about* what happened — and when
+Most memory tools store what a model *wrote about* what happened, and when
 that text is wrong, nothing tells you. daimon marks every line with how it
 came to exist: `[✓ verbatim]` lines are exact quotes a deterministic verifier
-found in the session transcript (pure string operations, no LLM — case,
-whitespace, and formatting folded, elided spans allowed); `[~ inferred]` lines
+found in the session transcript (pure string operations, no LLM, with case,
+whitespace, and formatting folded and elided spans allowed); `[~ inferred]` lines
 are the model's own conclusions, honest about being derivations. A "quote" that fails
 the check is demoted to inferred on the spot, so a hallucinated quote can
 never wear the verbatim badge. With [receipts](concepts/receipts.md) enabled,
-the checkpoint's exact bytes are signed — everything above is checkable
+the checkpoint's exact bytes are signed, so everything above is checkable
 offline, without trusting daimon, the model, or this page.
 
 ## An independent reading
@@ -55,14 +63,14 @@ It is not praise alone. The same summary names the weak half: "The retrieval hal
 
 ## The loop
 
-1. **A session ends** — a host hook serializes the transcript into a
+1. **A session ends.** A host hook serializes the transcript into a
    checkpoint. Local JSON on your disk; no server, no telemetry.
-2. **The next session starts** — a hook injects the briefing as context, so
+2. **The next session starts.** A hook injects the briefing as context, so
    the agent answers "where did we leave off?" before you ask.
-3. **You verify, resolve, or correct** — open items carry forward until
+3. **You verify, resolve, or correct.** Open items carry forward until
    closed, and go visibly stale instead of lying forever.
 
-**Start with the [Quickstart](getting-started/quickstart.md)** — install to
+**Start with the [Quickstart](getting-started/quickstart.md).** Install to
 first briefing in six steps. Per-host setup lives in
 [Hosts](hosts/index.md); the trust system is explained in
 [Trust classes](concepts/trust-classes.md).

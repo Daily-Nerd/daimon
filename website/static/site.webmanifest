@@ -1,0 +1,14 @@
+{
+  "name": "daimon",
+  "short_name": "daimon",
+  "description": "Session memory your agents can prove: briefings, trust classes, and receipts for coding agents",
+  "start_url": "./",
+  "scope": "./",
+  "theme_color": "#0E1632",
+  "background_color": "#0E1632",
+  "icons": [
+    {"src": "img/android-chrome-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "img/android-chrome-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "img/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

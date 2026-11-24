@@ -4,9 +4,19 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
+// The one place the base path is written. Head tags below build from it.
+const baseUrl = '/daimon/';
+
+// One tagline per locale; Docusaurus sets the current locale while building.
+const taglines: Record<string, string> = {
+  en: 'Session memory your agents can prove: briefings, trust classes, and receipts for coding agents',
+  es: 'Memoria de sesiones que tus agentes pueden demostrar: briefings, clases de confianza y receipts para agentes de código',
+};
+const locale = process.env.DOCUSAURUS_CURRENT_LOCALE ?? 'en';
+
 const config: Config = {
   title: 'daimon',
-  tagline: 'Session memory your agents can prove — briefings, trust classes, and receipts for coding agents',
+  tagline: taglines[locale] ?? taglines.en,
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -18,7 +28,7 @@ const config: Config = {
   url: 'https://daily-nerd.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/daimon/',
+  baseUrl,
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
@@ -39,6 +49,13 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en', 'es'],
   },
+
+  // Docusaurus does not prefix head tag hrefs with baseUrl, so build them here.
+  headTags: [
+    {tagName: 'link', attributes: {rel: 'icon', type: 'image/svg+xml', href: `${baseUrl}img/favicon.svg`}},
+    {tagName: 'link', attributes: {rel: 'apple-touch-icon', sizes: '180x180', href: `${baseUrl}img/apple-touch-icon.png`}},
+    {tagName: 'link', attributes: {rel: 'manifest', href: `${baseUrl}site.webmanifest`}},
+  ],
 
   plugins: [
     [
@@ -76,7 +93,7 @@ const config: Config = {
           feedOptions: {
             type: ['rss', 'atom'],
             description:
-              'daimon — releases, explainers, and field incidents.',
+              'daimon: releases, explainers, and field incidents.',
           },
           onInlineAuthors: 'throw',
           onUntruncatedBlogPosts: 'throw',
@@ -89,16 +106,22 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
-    image: 'img/social-card.png',
+    // Link-preview card: ink variant, the site is dark first. Docusaurus
+    // resolves it to an absolute URL and emits twitter:card summary_large_image.
+    image: 'img/daimon-og-ink-1200x630.png',
     colorMode: {
+      defaultMode: 'dark',
       respectPrefersColorScheme: true,
     },
     navbar: {
+      title: 'daimon',
       logo: {
         alt: 'daimon',
-        src: 'img/wordmark.svg',
-        srcDark: 'img/wordmark-dark.svg',
+        // Small cut: the kit says use it below 24 px, the mock uses it at 28.
+        src: 'img/daimon-symbol-small-ink.svg',
+        srcDark: 'img/daimon-symbol-small-white.svg',
+        width: 28,
+        height: 28,
       },
       items: [
         {
@@ -118,6 +141,12 @@ const config: Config = {
     },
     footer: {
       style: 'dark',
+      logo: {
+        alt: 'daimon',
+        src: 'img/daimon-symbol-small-white.svg',
+        width: 28,
+        height: 28,
+      },
       links: [
         {label: 'Docs', to: '/docs/'},
         {label: 'Blog', to: '/blog'},
