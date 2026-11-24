@@ -858,11 +858,27 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
         pointers = len(_pointer_files(legacy_dir))
         if dry_run:
             return _record("rename", legacy, target, pointers=pointers, by=by)
-        try:
-            os.rename(legacy_dir, target_dir)
-        except OSError:
-            pass  # cross-device or a race: fall through to the line-wise path
-        else:
+        # The rename removes `legacy_dir` from under anyone waiting on its
+        # lock, so it is a fold like any other and runs under the same lock.
+        # Nothing can lock a target that does not exist yet, and POSIX rename
+        # replaces an EMPTY directory. Looking at the target again after the
+        # lock narrows that to the two syscalls between `lexists` and
+        # `rename`: an empty target created in that gap is still replaced
+        # (benign: it holds nothing, and its writer recreates its files in
+        # the same path; a non-empty one makes the rename fail and falls
+        # through to the merge). A lock that is not granted falls through to
+        # the merge path, which refuses with the usual message; a platform
+        # with no locks at all renames unguarded, as it always did.
+        renamed = False
+        with jsonl.dir_lock(legacy_dir) as held:
+            if ((held or not jsonl.locking_available())
+                    and not os.path.lexists(target_dir)):
+                try:
+                    os.rename(legacy_dir, target_dir)
+                    renamed = True
+                except OSError:
+                    pass  # cross-device or a race: line-wise path below
+        if renamed:
             _restamp_root(target_dir, resolved)
             for path in _pointer_files(target_dir):
                 _restamp(path, legacy, target)
@@ -929,34 +945,60 @@ def merge(from_slug: str, into_slug: str, *, apply: bool = False,
                          dry_run=not apply, by=by, fold=True)
 
 
-def _retire(legacy_dir: Path) -> bool:
+class _Retired(NamedTuple):
+    removed: bool
+    where: Path       # the directory that still holds the bucket, if any
+    observed: str = ""
+
+
+def _retire(legacy_dir: Path) -> _Retired:
     """Remove the (already emptied) legacy bucket, its `root` LAST.
+
+    Called with the bucket locked. The directory is first RENAMED to a
+    tombstone in `.birth` (atomic, same filesystem), and everything after
+    happens there: an opener of the old path now gets ENOENT, so it can no
+    longer re-create the lock sidecar in a directory that is being removed and
+    lock a zombie. Never `rmtree`: a file that is still in the tombstone is a
+    fail-open writer's late append, and that data must survive.
 
     The record goes right before the `rmdir`, never earlier, so a bucket kept
     alive by anything is never left unstamped: an unstamped directory at a
     seed name is what a later resolution would adopt as its own. When the
-    `rmdir` loses a race with a writer the record is put back."""
+    `rmdir` fails the record is put back and the bucket is renamed back to its
+    own path, or, when something took the path meanwhile, left in the
+    tombstone and said so."""
     root = legacy_dir / store._BUCKET_ROOT_NAME
     try:
         held = root.read_text(encoding="utf-8").strip()
     except OSError:
         held = ""
-    # The lock sidecar first, then the record, then the directory, all while
-    # `merge_buckets` still holds the lock on the (now unlinked) sidecar and
-    # releases it only on return, after the `rmdir`. A writer that was waiting
-    # on that inode wakes to a directory that is gone.
+    try:
+        tomb = store.move_aside(legacy_dir)
+    except OSError:
+        return _Retired(False, legacy_dir)
+    # `merge_buckets` still holds the lock (on the inode now inside the
+    # tombstone) and releases it only on return.
     for name in (store._LOCK_NAME, store._BUCKET_ROOT_NAME):
         try:
-            (legacy_dir / name).unlink()
+            (tomb / name).unlink()
         except OSError:
             pass
     try:
-        legacy_dir.rmdir()
+        tomb.rmdir()
     except OSError:
-        if held and legacy_dir.is_dir():
-            store.stamp_root(legacy_dir, held)
-        return False
-    return True
+        if held:
+            store.stamp_root(tomb, held)
+        try:
+            if os.path.lexists(legacy_dir):
+                raise FileExistsError(legacy_dir)
+            os.rename(tomb, legacy_dir)
+        except OSError:
+            return _Retired(
+                False, tomb,
+                f"the bucket directory could not be removed and its path was "
+                f"taken, so it was left in {tomb}")
+        return _Retired(False, legacy_dir)
+    return _Retired(True, legacy_dir)
 
 
 def _refuse_aliased(legacy_dir: Path, target_dir: Path) -> None:
@@ -1025,11 +1067,30 @@ def merge_buckets(legacy: str, target: str, *, resolved: str | None = None,
             # is a refusal, raised before anything is written.
             for d in sorted({legacy_dir, target_dir}, key=lambda p: p.name):
                 held = stack.enter_context(jsonl.dir_lock(d))
-                if not held:
+                if held:
+                    continue
+                # Not held. `dir_lock` only reports a lock on the sidecar the
+                # path names NOW, so a bucket another run folded away while
+                # this one waited is "not held" too (#1411): the decisions
+                # taken before the locks are stale, and what is left to say
+                # is which of the two went.
+                if not d.is_dir():
+                    if d == legacy_dir:
+                        return _absent(legacy, target, dry_run=False, by=by)
                     raise MigrationError(
-                        f"could not lock the bucket {d.name} (another daimon "
-                        f"process is writing to it, or it cannot be locked); "
-                        f"nothing was changed. Try again in a moment.")
+                        f"the bucket {d.name} no longer exists (it was "
+                        f"folded away or removed before this merge got its "
+                        f"lock); nothing was changed.")
+                raise MigrationError(
+                    f"could not lock the bucket {d.name} (another daimon "
+                    f"process is writing to it, or it cannot be locked); "
+                    f"nothing was changed. Try again in a moment.")
+            if resolved is not None:
+                # Idempotent: stamps only a target that records no root. The
+                # call before the locks cannot see a target that was folded
+                # away and reborn while this waited; the reborn one is
+                # unstamped, and this is the first moment it is ours to stamp.
+                store.make_bucket(target, resolved)
         return _merge_locked(legacy, target, legacy_dir, target_dir,
                              dry_run=dry_run, by=by, fold=fold)
 
@@ -1108,8 +1169,11 @@ def _merge_locked(legacy: str, target: str, legacy_dir: Path,
                      by=by)
     # Everything removable goes EXCEPT the two files `_retire` takes last: the
     # `root` record (a bucket kept alive is never unstamped) and the lock
-    # sidecar. Unlinking the sidecar while holding it hands the next writer a
-    # fresh inode to lock, and the exclusion this run depends on is gone.
+    # sidecar. The sidecar goes only in `_retire`, right before the `rmdir`:
+    # unlinking it earlier would hand a writer that arrives during the rest of
+    # this run a fresh inode to lock, and the exclusion is gone. Unlinked
+    # there, a waiter already holding the old inode is not fooled by it:
+    # `dir_lock` re-checks that its inode is still the one the path names.
     for entry in list(legacy_dir.iterdir()):
         if entry.name not in _RETIRED_LAST and _is_removable(entry.name):
             try:
@@ -1165,7 +1229,8 @@ def _merge_locked(legacy: str, target: str, legacy_dir: Path,
         _append_record(record)
     if not retiring:
         return record
-    if _retire(legacy_dir):
+    retired = _retire(legacy_dir)
+    if retired.removed:
         if wanted and not recorded:
             _append_record(record)
         return record
@@ -1173,8 +1238,9 @@ def _merge_locked(legacy: str, target: str, legacy_dir: Path,
     # be removed. A row above claimed completion, and the last row for a pair
     # wins, so correct it, once. Complete means REALLY gone.
     record = receipt(
-        [n for n in _leftovers(legacy_dir) if n not in _RETIRED_LAST],
-        observed="the bucket directory could not be removed")
+        [n for n in _leftovers(retired.where) if n not in _RETIRED_LAST],
+        observed=(retired.observed
+                  or "the bucket directory could not be removed"))
     record["complete"] = False
     if recorded:
         _append_record(record)

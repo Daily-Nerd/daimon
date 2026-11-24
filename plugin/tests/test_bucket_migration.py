@@ -1189,8 +1189,8 @@ def test_a_cross_device_rename_of_a_pointer_only_bucket_still_lands(
     real_rename = os.rename
 
     def _exdev(src, dst, *a, **k):
-        if scope.BIRTH in Path(src).parts:
-            return real_rename(src, dst, *a, **k)  # a birth stays in-store
+        if scope.BIRTH in Path(src).parts or scope.BIRTH in Path(dst).parts:
+            return real_rename(src, dst, *a, **k)  # in-store: births, tombstones
         raise OSError(18, "Invalid cross-device link")
 
     monkeypatch.setattr(buckets.os, "rename", _exdev)
@@ -1250,8 +1250,8 @@ def test_a_rename_that_the_filesystem_refuses_falls_back_to_the_merge(
     real_rename = os.rename
 
     def exdev(src, dst, *a, **k):
-        if scope.BIRTH in Path(src).parts:
-            return real_rename(src, dst, *a, **k)  # a birth stays in-store
+        if scope.BIRTH in Path(src).parts or scope.BIRTH in Path(dst).parts:
+            return real_rename(src, dst, *a, **k)  # in-store: births, tombstones
         raise OSError("EXDEV")
 
     monkeypatch.setattr(buckets.os, "rename", exdev)
@@ -2326,7 +2326,9 @@ def test_a_legacy_directory_that_cannot_be_removed_is_reported_not_raised(
     orig_rmdir = pathlib.Path.rmdir
 
     def _boom(self, *a, **k):
-        if self == legacy:
+        # removed from its tombstone, named after the bucket
+        if self == legacy or self.name.startswith(
+                store.RETIRED_PREFIX + legacy.name):
             raise OSError("directory not empty")
         return orig_rmdir(self, *a, **k)
 

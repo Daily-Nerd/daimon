@@ -182,7 +182,9 @@ def test_a_root_put_back_when_the_directory_cannot_be_removed(
     real = type(_dir(g)).rmdir
 
     def refuse(self, *a):
-        if self.name == g:
+        # removed from its tombstone, named after the bucket
+        if self.name == g or self.name.startswith(
+                store.RETIRED_PREFIX + g):
             raise OSError("busy")
         return real(self, *a)
 

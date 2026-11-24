@@ -18,6 +18,7 @@ import pytest
 
 from daimon_briefing import buckets, config, jsonl, scope, store
 from tests.test_bucket_merge import _dir, _snapshot
+from tests._lockhooks import FirstFlockHook
 from tests.test_bucket_migration import _row
 
 
@@ -82,6 +83,38 @@ def test_a_dry_run_needs_no_lock(tmp_checkpoint_dir, fast_locks):
 # ---------------------------------------------------------------------------
 
 
+def _other_merge_wins_first(monkeypatch, src, dst):
+    """The interleaving of a real race. The merge under test has opened its
+    first sidecar and is about to be granted the flock when another merge
+    `src -> dst` runs to completion and folds its source away. The grant then
+    lands on an inode that merge unlinked."""
+    monkeypatch.setattr(jsonl, "_fcntl", FirstFlockHook(
+        lambda: buckets.merge(src, dst, apply=True, force=True)))
+
+
+def test_a_merge_whose_target_was_folded_away_before_its_lock_is_refused(
+        tmp_checkpoint_dir, monkeypatch):
+    mine = {f"a{i}" for i in range(3)}
+    theirs = {f"b{i}" for i in range(3)}
+    _bucket("-a", sorted(mine))
+    _bucket("-b", sorted(theirs))
+    _other_merge_wins_first(monkeypatch, "-a", "-b")
+    with pytest.raises(buckets.MigrationError, match="no longer exists"):
+        buckets.merge("-b", "-a", apply=True, force=True)
+    assert _events("-b") == mine | theirs
+    assert not _dir("-a").exists()
+
+
+def test_a_merge_whose_source_was_folded_away_before_its_lock_is_a_no_op(
+        tmp_checkpoint_dir, monkeypatch):
+    _bucket("-a", ["a1"])
+    _bucket("-b", ["b1"])
+    _other_merge_wins_first(monkeypatch, "-a", "-b")
+    record = buckets.merge("-a", "-b", apply=True, force=True)
+    assert record["mode"] == "absent"
+    assert _events("-b") == {"a1", "b1"}
+
+
 def test_opposite_merges_end_with_one_refused_and_no_event_lost(
         tmp_checkpoint_dir):
     mine = {f"a{i}" for i in range(5)}
@@ -96,18 +129,22 @@ def test_opposite_merges_end_with_one_refused_and_no_event_lost(
         try:
             buckets.merge(src, dst, apply=True, force=True)
             outcome[src] = "ok"
-        except buckets.MigrationError as exc:
-            outcome[src] = str(exc)
+        except buckets.MigrationError:
+            outcome[src] = "refused"
+        except BaseException as exc:  # recorded here, asserted below
+            outcome[src] = f"crashed: {exc!r}"
 
     threads = [threading.Thread(target=run, args=("-a", "-b")),
                threading.Thread(target=run, args=("-b", "-a"))]
     [t.start() for t in threads]
     [t.join() for t in threads]
-    done = sorted(k for k, v in outcome.items() if v == "ok")
-    assert len(done) == 1, outcome
-    survivor = "-b" if done == ["-a"] else "-a"
-    assert _events(survivor) == mine | theirs
-    assert not _dir(done[0]).exists()
+    # every outcome is a result or a refusal, never a raw exception
+    assert set(outcome.values()) <= {"ok", "refused"}, outcome
+    assert "ok" in outcome.values(), outcome
+    # exactly one bucket survives and it holds every event
+    alive = [s for s in ("-a", "-b") if _dir(s).exists()]
+    assert len(alive) == 1, outcome
+    assert _events(alive[0]) == mine | theirs
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +276,8 @@ def test_a_persistent_removal_failure_writes_two_rows_in_total(
     real = type(_dir("-g")).rmdir
 
     def refuse(self, *a):
-        if self.name == "-g":
+        # the bucket is removed from its tombstone, named after it
+        if self.name == "-g" or self.name.startswith(store.RETIRED_PREFIX + "-g"):
             raise PermissionError("busy")
         return real(self, *a)
 
@@ -293,3 +331,136 @@ def test_the_reaper_removes_an_old_staging_file(tmp_checkpoint_dir):
     os.utime(old, (past, past))
     store._gc_checkpoints(config.checkpoint_dir(), keep=0)
     assert not old.exists() and scope.BIRTH not in os.listdir(d)
+
+
+# ---------------------------------------------------------------------------
+# the fold's own removals take the same lock (#1411)
+# ---------------------------------------------------------------------------
+
+
+def test_a_migrate_rename_waits_on_the_lock_and_refuses_without_it(
+        tmp_checkpoint_dir, fast_locks, tmp_path):
+    from tests.test_bucket_migration import (_plant, _populate_legacy,
+                                             linked)  # noqa: F401
+    link = tmp_path / "real"
+    link.mkdir()
+    (tmp_path / "ln").symlink_to(link)
+    link = tmp_path / "ln"
+    legacy = _populate_legacy(link, [("S1", "2026-09-01T00:00:00Z")])
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    with jsonl.dir_lock(legacy) as held:
+        assert held
+        with pytest.raises(buckets.MigrationError, match="could not lock"):
+            buckets.migrate(link)
+    assert (legacy / "events.jsonl").is_file()
+
+
+def test_a_migrate_rename_never_replaces_a_target_born_after_its_check(
+        tmp_checkpoint_dir, monkeypatch, tmp_path):
+    from tests.test_bucket_migration import _plant, _populate_legacy
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "ln").symlink_to(real)
+    link = tmp_path / "ln"
+    legacy = _populate_legacy(link, [("S1", "2026-09-01T00:00:00Z")])
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    target = tmp_checkpoint_dir / store.project_bucket(real)
+    monkeypatch.setattr(jsonl, "_fcntl", FirstFlockHook(target.mkdir))
+    record = buckets.migrate(link)
+    assert record["mode"] == "merge"
+    assert json.loads((target / "events.jsonl").read_text().splitlines()[0])[
+        "event_id"] == "e1"
+    assert not legacy.exists()
+
+
+def _hook_final_rmdir(monkeypatch, hook):
+    """Run `hook(path)` right before `_retire`'s final rmdir of `path`."""
+    real = type(_dir("-x")).rmdir
+
+    def rmdir(self):
+        hook(self)
+        return real(self)
+
+    monkeypatch.setattr(type(_dir("-x")), "rmdir", rmdir)
+
+
+def test_an_opener_racing_the_retire_cannot_recreate_the_sidecar(
+        tmp_checkpoint_dir, monkeypatch):
+    g = _bucket("-g", ["g1"])
+    _bucket("-b", ["b1"])
+    seen = {}
+
+    def opener(path):
+        # a writer arriving while the bucket is being removed
+        with jsonl.dir_lock(g) as held:
+            seen["held"] = held
+        seen["sidecar_in_old_path"] = (g / jsonl.LOCK_NAME).exists()
+
+    _hook_final_rmdir(monkeypatch, opener)
+    buckets.merge("-g", "-b", apply=True, force=True)
+    assert seen == {"held": False, "sidecar_in_old_path": False}
+    assert not g.exists()
+    assert _events("-b") == {"b1", "g1"}
+
+
+def test_a_failed_rmdir_puts_the_bucket_back_whole(tmp_checkpoint_dir,
+                                                   monkeypatch):
+    d = _bucket("-g", ["g1"])
+
+    def stray(path):
+        # a fail-open writer appended after the copy
+        (path / "late.jsonl").write_text("x\n", encoding="utf-8")
+
+    _hook_final_rmdir(monkeypatch, stray)
+    out = buckets._retire(d)
+    assert out.removed is False
+    assert d.is_dir() and out.where == d
+    assert (d / "late.jsonl").read_text() == "x\n"
+    assert (d / "root").read_text().strip() == "/gone/place"
+    assert _events("-g") == {"g1"}
+    assert not list((d.parent / scope.BIRTH).glob("retired-*"))
+
+
+def test_a_failed_rmdir_with_the_path_taken_leaves_the_tombstone(
+        tmp_checkpoint_dir, monkeypatch):
+    d = _bucket("-g", ["g1"])
+
+    def stray_and_reborn(path):
+        (path / "late.jsonl").write_text("x\n", encoding="utf-8")
+        d.mkdir()
+
+    _hook_final_rmdir(monkeypatch, stray_and_reborn)
+    out = buckets._retire(d)
+    assert out.removed is False
+    assert out.where != d and (out.where / "late.jsonl").is_file()
+    assert (out.where / "root").read_text().strip() == "/gone/place"
+    assert "retired" in out.observed
+    assert list(d.iterdir()) == []   # the reborn bucket was not touched
+
+
+def test_the_reaper_never_removes_a_retired_tombstone(tmp_checkpoint_dir):
+    parent = tmp_checkpoint_dir / scope.BIRTH
+    tomb = parent / (store.RETIRED_PREFIX + "-g-abc")
+    tomb.mkdir(parents=True)
+    (tomb / "late.jsonl").write_text("x\n", encoding="utf-8")
+    old = time.time() - 10 * 3600
+    os.utime(tomb / "late.jsonl", (old, old))
+    os.utime(tomb, (old, old))
+    store._reap_stale_births(tmp_checkpoint_dir)
+    assert (tomb / "late.jsonl").is_file()
+
+
+def test_migrate_renames_on_a_platform_without_locks(tmp_checkpoint_dir,
+                                                     monkeypatch, tmp_path):
+    from tests.test_bucket_migration import _plant, _populate_legacy
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "ln").symlink_to(real)
+    link = tmp_path / "ln"
+    legacy = _populate_legacy(link, [("S1", "2026-09-01T00:00:00Z")])
+    _plant(legacy, {"events.jsonl": _row("e1")})
+    monkeypatch.setattr(jsonl, "_fcntl", None)
+    assert jsonl.locking_available() is False
+    record = buckets.migrate(link)
+    assert record["mode"] == "rename"
+    assert not legacy.exists()

@@ -162,7 +162,9 @@ def test_a_bucket_that_could_not_be_removed_is_not_complete_and_no_alias(
     real = type(_dir(g)).rmdir
 
     def refuse(self, *a):
-        if self.name == g:
+        # removed from its tombstone, named after the bucket
+        if self.name == g or self.name.startswith(
+                store.RETIRED_PREFIX + g):
             raise PermissionError("busy")
         return real(self, *a)
 
