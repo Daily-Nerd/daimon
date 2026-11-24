@@ -10296,6 +10296,59 @@ def test_cli_slug_whitespace_only_path_exits_2_with_no_stdout(capsys):
     assert captured.err.strip() != ""
 
 
+# ---- #1417: the literal contract is said out loud when the input is a path
+# that is not absolute and normalized. stdout and the exit code never change.
+
+_SLUG_HINT_FRAGMENTS = ("taken literally", "daimon status --project", "identity")
+
+
+@pytest.mark.parametrize("raw,slug", [
+    (".", "-"),
+    ("./", "--"),
+    ("..", "--"),
+    ("/a/b/.", "-a-b--"),
+    ("/a/b/", "-a-b-"),
+    ("/a//b", "-a--b"),
+    ("a/b", "a-b"),
+])
+def test_cli_slug_warns_on_stderr_for_a_path_not_absolute_and_normalized(
+        capsys, raw, slug):
+    assert cli.main(["slug", raw]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == slug + "\n"
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    assert all(f in lines[0] for f in _SLUG_HINT_FRAGMENTS)
+    assert "\u2014" not in lines[0]
+
+
+@pytest.mark.parametrize("raw,slug", [
+    ("/a/b", "-a-b"),
+    ("/", "-"),
+    ("-Users-x", "-Users-x"),
+    ("plainname", "plainname"),
+])
+def test_cli_slug_is_quiet_for_a_normalized_absolute_path_or_a_bare_slug(
+        capsys, raw, slug):
+    argv = ["slug", "--", raw] if raw.startswith("-") else ["slug", raw]
+    assert cli.main(argv) == 0
+    captured = capsys.readouterr()
+    assert captured.out == slug + "\n"
+    assert captured.err == ""
+
+
+def test_cli_slug_help_says_literal_and_points_at_status(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["slug", "--help"])
+    page = " ".join(capsys.readouterr().out.split())
+    assert "Takes the input literally" in page
+    assert "daimon status --project <path> --json" in page
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    top = " ".join(capsys.readouterr().out.split())
+    assert "literally" in top[top.index(" slug "):][:300]
+
+
 def test_cli_slug_is_idempotent(capsys):
     from daimon_briefing import store
 

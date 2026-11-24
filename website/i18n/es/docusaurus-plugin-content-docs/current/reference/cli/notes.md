@@ -268,7 +268,7 @@ Lista cada proyecto con checkpoint, con un adelanto del tema. Un tema en cuarent
 
 ### `daimon slug <path>`
 
-Imprime el nombre de directorio de checkpoint que daimon deriva de una ruta de proyecto. Sin acceso a store, config ni ledger, así que responde incluso para una ruta a la que daimon nunca escribió.
+Toma la entrada de forma literal e imprime el nombre de directorio de checkpoint que daimon deriva de esa cadena exacta. Para ver el bucket que un directorio usa de verdad, corré `daimon status --project <path> --json` y mirá `identity`. Sin acceso a store, config ni ledger, así que responde incluso para una ruta a la que daimon nunca escribió. Cuando la entrada parece una ruta pero no es absoluta y normalizada (`.`, `dir/`, `a/b`), una línea de aviso por stderr lo dice y nombra ese comando; stdout y el código de salida no cambian.
 
 ### `daimon bucket migrate`
 

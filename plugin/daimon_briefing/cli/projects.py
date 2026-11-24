@@ -85,16 +85,33 @@ def projects_listing(project_arg=None, *, own_only: bool = False) -> tuple:
     return rows, view.projects_notes(cur_slug, listed, own_only=own_only)
 
 
+def _looks_like_unnormalized_path(raw: str) -> bool:
+    """True for input that reads as a path (it is `.` or `..`, or holds a
+    separator) but is not absolute and normalized, so the slug of the literal
+    string is not the bucket that directory uses (#1417). Pure `os.path`
+    string work, no filesystem access (#913). A bare slug has no separator and
+    is never a path."""
+    seps = tuple(c for c in (os.sep, os.altsep) if c)
+    if raw not in (".", "..") and not any(c in raw for c in seps):
+        return False
+    return not os.path.isabs(raw) or os.path.normpath(raw) != raw
+
+
 def _cmd_slug(args) -> int:
     """Print the checkpoint bucket name daimon derives from a project path
-    (#913). No store, config, or ledger access — deliberately: a host that
-    wants this name before the first write (to lay out a fresh volume, or
+    string, taken literally (#913, #1417). No store, config, or ledger
+    access, deliberately: a host that wants this name before the first write (to lay out a fresh volume, or
     start a watcher on a directory daimon has not touched yet) has no bucket
     to list, so this must answer without one, unlike `projects` below."""
     slug = store.location_slug(args.path)
     if not slug:
         print("error: path must not be empty or whitespace-only", file=sys.stderr)
         return 2
+    if _looks_like_unnormalized_path(args.path):
+        print(f"warning: {args.path!r} is taken literally, so this is not "
+              "necessarily the bucket that directory uses; run `daimon "
+              "status --project <path> --json` and read `identity` for it",
+              file=sys.stderr)
     print(slug)
     return 0
 
@@ -839,13 +856,16 @@ def register(sub, fmt) -> None:
 
     p_slug = sub.add_parser(
         "slug",
-        help="print the checkpoint directory name daimon derives from a project path",
-        description="Print the checkpoint directory name daimon derives from "
-                     "a project path. Read-only: no store, config, or ledger "
-                     "access.",
+        help="take the path literally and print the checkpoint directory name "
+             "daimon derives from it",
+        description="Takes the input literally and prints the checkpoint "
+                     "directory name daimon derives from that exact string; "
+                     "for the bucket a directory uses, run `daimon status "
+                     "--project <path> --json` and read `identity`. "
+                     "Read-only: no store, config, or ledger access.",
         epilog="Examples:\n"
                "  daimon slug /Users/x/my.proj\n"
                "  daimon slug -- -Users-x        # '--' escapes a path starting with '-'\n",
     )
-    p_slug.add_argument("path", help="project directory path to slug")
+    p_slug.add_argument("path", help="project path, taken literally (not resolved)")
     p_slug.set_defaults(func=_cmd_slug)

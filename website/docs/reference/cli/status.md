@@ -104,9 +104,9 @@ daimon projects --json
 
 ## `daimon slug`
 
-print the checkpoint directory name daimon derives from a project path
+take the path literally and print the checkpoint directory name daimon derives from it
 
-Print the checkpoint directory name daimon derives from a project path. Read-only: no store, config, or ledger access.
+Takes the input literally and prints the checkpoint directory name daimon derives from that exact string; for the bucket a directory uses, run `daimon status --project <path> --json` and read `identity`. Read-only: no store, config, or ledger access.
 
 ```text
 daimon slug path
@@ -114,7 +114,7 @@ daimon slug path
 
 | argument | value | default | description |
 | --- | --- | --- | --- |
-| `path` |  |  | project directory path to slug |
+| `path` |  |  | project path, taken literally (not resolved) |
 
 **Examples**
 
