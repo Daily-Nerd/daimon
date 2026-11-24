@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="website/static/img/emblem.svg" alt="daimon mark, a coin of dots on the golden-angle spiral: the written half, the empty half still to come, three amber dots carried into the dark" width="190"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="website/static/img/daimon-symbol-white.svg">
+    <img src="website/static/img/daimon-symbol-ink.svg" alt="daimon mark: a round disc with a single spiral line cut through its middle" width="160"/>
+  </picture>
 </p>
 
 # Daimon

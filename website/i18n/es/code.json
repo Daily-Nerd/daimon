@@ -1,15 +1,12 @@
 {
-  "landing.hero.eyebrow": {
-    "message": "CLI de código abierto"
-  },
   "landing.hero.pain": {
     "message": "Tu agente olvida cada sesión, y luego afirma lo que recuerda a medias."
   },
   "landing.hero.title": {
     "message": "Memoria de sesiones para agentes de código"
   },
-  "landing.hero.sub": {
-    "message": "Cuando termina una sesión, daimon guarda lo que se decidió y lo que sigue abierto. Cuando empieza la siguiente, tu agente recibe un briefing corto, con cada punto marcado como cita exacta o como inferencia. Lo instalas una vez y los hooks hacen el resto, sin comandos que correr en el uso normal."
+  "landing.hero.lead": {
+    "message": "daimon guarda lo que se decidió y lo que sigue abierto."
   },
   "landing.hero.not": {
     "message": "No es un monitor en vivo de agentes en segundo plano. No aprende habilidades ni pasa arreglos de un agente a otro."
@@ -36,7 +33,7 @@
     "message": "Cada afirmación se vuelve a comprobar contra el transcript antes de llegar a tu agente."
   },
   "landing.verify.scope": {
-    "message": "Verificado significa que daimon encontró esta cita exacta en tu transcript — comparada tras normalizar mayúsculas, espacios y formato, con tramos elididos permitidos. Es una comprobación mecánica, no una afirmación de verdad."
+    "message": "Verificado significa que daimon encontró esta cita exacta en tu transcript, comparada tras normalizar mayúsculas, espacios y formato, con tramos elididos permitidos. Es una comprobación mecánica, no una afirmación de verdad."
   },
   "landing.replay.barTitle": {
     "message": "repetición del checkpoint"
@@ -51,7 +48,7 @@
     "message": "Cómo un ítem demuestra lo que dice"
   },
   "landing.anatomy.claim": {
-    "message": "Un checkpoint es el registro firmado que deja una sesión — cada línea en él se gana su clase."
+    "message": "Un checkpoint es el registro firmado que deja una sesión, y cada línea en él se gana su clase."
   },
   "landing.anatomy.class.term": {
     "message": "clase"
@@ -72,7 +69,7 @@
     "message": "el número de línea y la firma que puedes consultar"
   },
   "landing.close.conviction": {
-    "message": "Todo lo de arriba se puede comprobar offline — sin confiar en nosotros, ni en el modelo, ni en esta página."
+    "message": "Todo lo de arriba se puede comprobar offline, sin confiar en nosotros, ni en el modelo, ni en esta página."
   },
   "landing.close.deps": {
     "message": "Solo stdlib de Python"
@@ -85,5 +82,14 @@
   },
   "landing.close.docs": {
     "message": "Leer los docs"
+  },
+  "landing.problem.lead": {
+    "message": "Cuando empieza la siguiente, tu agente recibe un briefing corto, con cada punto marcado como cita exacta o como inferencia."
+  },
+  "landing.install.title": {
+    "message": "Lo instalas una vez y los hooks hacen el resto"
+  },
+  "landing.install.lead": {
+    "message": "En el uso normal no hay comandos que correr."
   }
 }
