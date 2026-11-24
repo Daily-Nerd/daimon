@@ -2028,6 +2028,26 @@ def _pointer_stems(d: Path) -> set[str] | None:
     return stems
 
 
+# A bucket directory that `buckets._retire` moved aside to remove. It lives in
+# `.birth` (a registered internal directory, so no bucket listing walks it) and
+# is removed by `_retire` itself. One that is still here is a removal that
+# failed on a file a fail-open writer appended late: data, never an orphan, so
+# the reaper leaves it for a person.
+RETIRED_PREFIX = "retired-"
+
+
+def move_aside(bucket: Path) -> Path:
+    """Rename the bucket directory `bucket` to a fresh tombstone beside the
+    store's other internal directories (`.birth/retired-<name>-<hex>`) and
+    return it. Atomic, same filesystem: an opener of the old path gets ENOENT
+    from then on. The one place a removed bucket's directory is made, like
+    every other directory under the checkpoint root. Raises OSError."""
+    parent = bucket.parent / scope.BIRTH
+    parent.mkdir(parents=True, exist_ok=True)
+    tomb = parent / f"{RETIRED_PREFIX}{bucket.name}-{secrets.token_hex(4)}"
+    os.rename(bucket, tomb)
+    return tomb
+
 _TMP_REAP_SECONDS = 3600   # a *.tmp older than this is a kill-9 orphan, not an
                            # in-flight _atomic_write (#31 item 3)
 
@@ -2070,6 +2090,8 @@ def _reap_stale_births(d: Path) -> None:
     except OSError:
         return
     for stage in stages:
+        if stage.name.startswith(RETIRED_PREFIX):
+            continue
         try:
             newest = max([stage.stat().st_mtime]
                          + [p.stat().st_mtime for p in stage.iterdir()])

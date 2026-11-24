@@ -161,7 +161,7 @@ def test_the_merge_path_stamps_the_target_with_the_resolved_folder(
     real_rename = os.rename
 
     def exdev(src, dst, *a, **k):
-        if ".birth" in str(src):
+        if ".birth" in str(src) or ".birth" in str(dst):
             return real_rename(src, dst, *a, **k)
         raise OSError(18, "Invalid cross-device link")
 

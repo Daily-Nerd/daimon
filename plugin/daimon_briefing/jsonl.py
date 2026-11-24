@@ -26,7 +26,7 @@ import stat
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextvars import ContextVar
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, suppress
 from pathlib import Path
 from types import ModuleType
 from typing import NamedTuple, Union
@@ -117,6 +117,15 @@ _LOCK_TRIES = 50              # x 20ms = ~1s bounded wait, then fail open
 _LOCK_INTERVAL = 0.02
 
 
+def locking_available() -> bool:
+    """Whether this platform has directory locks at all. `dir_lock` yields
+    False on one that has none; a caller that must tell "no lock exists here"
+    from "the lock was not granted" asks this (the second is a refusal for a
+    verb that deletes, the first can only proceed unguarded, as it always
+    did)."""
+    return _fcntl is not None
+
+
 @contextmanager
 def dir_lock(d: Path) -> Iterator[bool]:
     """Serialize a critical section over the files of directory `d` (#31).
@@ -124,7 +133,11 @@ def dir_lock(d: Path) -> Iterator[bool]:
     flock on a sidecar dotfile with a bounded wait; yields whether the lock
     was actually acquired. Fail-open everywhere (no fcntl, unwritable or
     missing dir, contention past the wait): the caller proceeds unguarded,
-    which is exactly the pre-lock behavior. The sidecar is opened with the
+    which is exactly the pre-lock behavior. A lock that is yielded as held is
+    a lock on the sidecar the path names AT THAT MOMENT: a flock granted on an
+    inode a fold has since unlinked is dropped and the live sidecar opened
+    instead, and a directory that is gone is "not held", never held on a ghost
+    (#1411). The sidecar is opened with the
     builtin `open`, never `Path.open`: it carries no content, and the
     write-audit guard must not record it as a write.
 
@@ -136,17 +149,28 @@ def dir_lock(d: Path) -> Iterator[bool]:
         return
     fh = None
     held = False
-    try:
-        fh = open(d / LOCK_NAME, "a+")
-        for _ in range(_LOCK_TRIES):
+    for _ in range(_LOCK_TRIES):
+        if fh is None:
             try:
-                _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
-                held = True
-                break
+                fh = open(d / LOCK_NAME, "a+")
             except OSError:
-                time.sleep(_LOCK_INTERVAL)
-    except OSError:
-        pass
+                # Missing (a fold removed the directory while this waited) or
+                # unwritable directory: fail open, as before.
+                break
+        try:
+            _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except OSError:
+            time.sleep(_LOCK_INTERVAL)
+            continue
+        if _names_this_inode(fh, d / LOCK_NAME):
+            held = True
+            break
+        # Granted, but on an inode the path no longer names: whoever held it
+        # unlinked it (a fold), and a writer that came after locks the NEW
+        # sidecar. A lock on the old inode excludes nobody. Let it go and
+        # open the live one (or find the directory gone).
+        _drop(fh)
+        fh = None
     try:
         yield held
     finally:
@@ -157,6 +181,20 @@ def dir_lock(d: Path) -> Iterator[bool]:
                 fh.close()
             except OSError:
                 pass
+
+
+def _names_this_inode(fh, path: Path) -> bool:
+    """True when `path` still names the file `fh` is open on."""
+    try:
+        return os.path.samestat(os.fstat(fh.fileno()), os.stat(path))
+    except OSError:
+        return False
+
+
+def _drop(fh) -> None:
+    """Closing the descriptor releases its flock."""
+    with suppress(OSError):
+        fh.close()
 
 
 def ledger_lock(path: Path):
