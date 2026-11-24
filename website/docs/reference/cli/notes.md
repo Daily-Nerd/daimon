@@ -262,7 +262,7 @@ List every project daimon holds a checkpoint for, with topic teasers. A topic th
 
 ### `daimon slug <path>`
 
-Print the checkpoint directory name daimon derives from a project path. No store, config, or ledger access, so it answers even for a path daimon has never written to.
+Takes the input literally and prints the checkpoint directory name daimon derives from that exact string. For the bucket a directory actually uses, run `daimon status --project <path> --json` and read `identity`. No store, config, or ledger access, so it answers even for a path daimon has never written to. When the input looks like a path but is not absolute and normalized (`.`, `dir/`, `a/b`), one warning line on stderr says so and names that command; stdout and the exit code do not change.
 
 ### `daimon bucket migrate`
 

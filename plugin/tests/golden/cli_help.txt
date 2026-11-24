@@ -125,8 +125,8 @@ checkpoints of this project (#975): added, restated, re-tagged, and every item t
 carrying, with the reason the record gives blame how one item got here (#975): the session that
 first stated it, every carry since, and every event that changed its state, in order serve serve the
 read-only local viewer (localhost only) projects list every project daimon has a checkpoint for
-bucket maintain the checkpoint bucket this project reads and writes slug print the checkpoint
-directory name daimon derives from a project path resolve mark a checkpoint item resolved:
+bucket maintain the checkpoint bucket this project reads and writes slug take the path literally and
+print the checkpoint directory name daimon derives from it resolve mark a checkpoint item resolved:
 append-only event, folds at read so the item stops carrying (#102) forget remove ONE item from the
 live checkpoint and record a signed-state tombstone: content leaves disk and index; the event
 carries only a hash (#321) unforget lift a forget on this machine, from a terminal: the value is not
@@ -358,10 +358,12 @@ still exists on disk --json machine-readable output Examples: daimon bucket rema
 /Users/alice --to /Users/bob daimon bucket remap --from C:\Users\a --to C:\Users\b --apply
 
 === slug ===
-usage: daimon slug [-h] path Print the checkpoint directory name daimon derives from a project path.
-Read-only: no store, config, or ledger access. positional arguments: path project directory path to
-slug options: -h, --help show this help message and exit Examples: daimon slug /Users/x/my.proj
-daimon slug -- -Users-x # '--' escapes a path starting with '-'
+usage: daimon slug [-h] path Takes the input literally and prints the checkpoint directory name
+daimon derives from that exact string; for the bucket a directory uses, run `daimon status --project
+<path> --json` and read `identity`. Read-only: no store, config, or ledger access. positional
+arguments: path project path, taken literally (not resolved) options: -h, --help show this help
+message and exit Examples: daimon slug /Users/x/my.proj daimon slug -- -Users-x # '--' escapes a
+path starting with '-'
 
 === resolve ===
 usage: daimon resolve [-h] [--status STATUS] [--note NOTE] [--by {agent}] [--evidence EVIDENCE]
