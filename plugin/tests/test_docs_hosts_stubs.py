@@ -21,16 +21,16 @@ that cited them by relative path cite the site URL instead.
 import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from tests._tracked import REPO, tracked_files
+
 HOSTS_DIR = REPO / "docs" / "hosts"
 WEBSITE_HOSTS_DIR = REPO / "website" / "docs" / "hosts"
 
-# Directories this repo can contain that are never worth walking, plus the
+# Files come from `git ls-files`, so untracked directories never appear. The
 # two trees that are allowed to reference docs/hosts/ by relative path
 # (docs/hosts/ itself, and the website tree which has its own hosts/ folder
 # one level down). CHANGELOG.md and .scars/ are historical record, not live
 # documentation, so a stale relative link there is not a defect to fix.
-_SKIP_DIRS = {REPO / d for d in (".git", ".venv", "node_modules")}
 _SKIP_TREES = {HOSTS_DIR, REPO / "website", REPO / ".scars"}
 _SKIP_FILES = {REPO / "CHANGELOG.md", Path(__file__).resolve()}
 _TEXT_SUFFIXES = {".md", ".py", ".yml", ".yaml", ".json", ".toml", ".txt"}
@@ -158,10 +158,10 @@ def test_docs_hosts_pages_omit_website_section_headings():
 
 def test_nothing_outside_docs_hosts_and_website_links_to_it_by_relative_path():
     offenders = []
-    for path in REPO.rglob("*"):
-        if not path.is_file() or path.suffix not in _TEXT_SUFFIXES:
+    for path in tracked_files():
+        if path.suffix not in _TEXT_SUFFIXES:
             continue
-        if _under_any(path, _SKIP_DIRS) or _under_any(path, _SKIP_TREES):
+        if _under_any(path, _SKIP_TREES):
             continue
         if path in _SKIP_FILES:
             continue
@@ -184,10 +184,10 @@ def test_nothing_outside_docs_hosts_and_website_links_to_it_by_relative_path():
 def test_nothing_links_to_the_top_level_doc_pages_by_relative_path():
     offenders = []
     skip_trees = {REPO / "website", REPO / ".scars"}
-    for path in REPO.rglob("*"):
-        if not path.is_file() or path.suffix not in _TEXT_SUFFIXES:
+    for path in tracked_files():
+        if path.suffix not in _TEXT_SUFFIXES:
             continue
-        if _under_any(path, _SKIP_DIRS) or _under_any(path, skip_trees):
+        if _under_any(path, skip_trees):
             continue
         if path in _SKIP_FILES:
             continue
