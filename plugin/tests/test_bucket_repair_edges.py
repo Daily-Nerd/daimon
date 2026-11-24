@@ -195,6 +195,28 @@ def test_a_root_put_back_when_the_directory_cannot_be_removed(
         "a bucket that survives is never left unstamped"
 
 
+def test_a_bucket_that_cannot_be_moved_aside_stays_whole_at_its_path(
+        pair, monkeypatch):  # noqa: F811
+    main, wt, b, g = pair
+    _write(main, "b1", "2026-11-01T00:00:00Z")
+    _write(wt, "g1", "2026-11-10T00:00:00Z")
+    held = (_dir(g) / "root").read_text(encoding="utf-8")
+    shutil.rmtree(wt)
+
+    def refuse(bucket):
+        raise OSError("read-only parent")
+
+    monkeypatch.setattr(store, "move_aside", refuse)
+    record = buckets.merge(g, b, apply=True)
+    assert record["complete"] is False, "it is not gone, so it is not complete"
+    assert (_dir(g) / "root").read_text(encoding="utf-8") == held, \
+        "a bucket that was never moved keeps its root"
+    assert not (_dir(g).parent / scope.BIRTH).exists() or not any(
+        p.name.startswith(store.RETIRED_PREFIX)
+        for p in (_dir(g).parent / scope.BIRTH).iterdir()), \
+        "nothing was moved, so no tombstone exists"
+
+
 def test_a_merge_finds_leftovers_a_writer_added_during_the_run(
         pair, monkeypatch):  # noqa: F811
     main, wt, b, g = pair
