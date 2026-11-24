@@ -5,6 +5,26 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.0](https://github.com/Daily-Nerd/daimon/compare/v0.74.0...v0.75.0) (2026-11-24)
+
+
+### Features
+
+* **authority:** give every enrolled reason code an explicit machine status, with a stale status for stale_view ([072622d](https://github.com/Daily-Nerd/daimon/commit/072622dc68a9211151fc2b172e9d92f40f950c9b)), closes [#1412](https://github.com/Daily-Nerd/daimon/issues/1412)
+* **website:** move the docs site to the mark E brand ([cdb86e1](https://github.com/Daily-Nerd/daimon/commit/cdb86e1cf06de3f83fbd5ef0ae94e24961799019)), closes [#1415](https://github.com/Daily-Nerd/daimon/issues/1415)
+
+
+### Bug Fixes
+
+* **buckets:** a merge never writes into a bucket another merge already folded away ([59b338d](https://github.com/Daily-Nerd/daimon/commit/59b338d2ae5959c426717bb819f3e439bf56a627)), closes [#1411](https://github.com/Daily-Nerd/daimon/issues/1411)
+* **cli:** say that daimon slug takes its input literally, and warn when a path is not normalized ([0063fc1](https://github.com/Daily-Nerd/daimon/commit/0063fc10d64a77153acdbbd840c75561c5a03fb2)), closes [#1417](https://github.com/Daily-Nerd/daimon/issues/1417)
+* read loop text through the read-only id lookup so a queue read never rebuilds the recall index ([c813e73](https://github.com/Daily-Nerd/daimon/commit/c813e736b35f100a83b86f141a3fcbddb07b7811)), closes [#1407](https://github.com/Daily-Nerd/daimon/issues/1407)
+
+
+### Documentation
+
+* **scars:** candidate that keeps every by-id recall read on the read-only lookup ([5d78ae3](https://github.com/Daily-Nerd/daimon/commit/5d78ae3b3800335a5f1f9fd6a6c3ba6bdb3aa444)), closes [#1407](https://github.com/Daily-Nerd/daimon/issues/1407)
+
 ## [0.74.0](https://github.com/Daily-Nerd/daimon/compare/v0.73.0...v0.74.0) (2026-11-23)
 
 
