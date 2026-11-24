@@ -71,10 +71,28 @@ def test_the_classes_in_the_table_are_exactly_the_classes_daimon_maps():
     assert used <= set(authority.MAPPED_CLASSES)
 
 
-def test_every_machine_status_code_exists_in_the_table():
+def _enrolled_codes(table):
+    """Every code an `enrolled` run can resolve: the command's own entry
+    (the table has none today) over the default."""
+    return set(table["default"]) | set(table["by_command"].get("enrolled", {}))
+
+
+def test_every_code_enrolled_can_return_has_an_explicit_machine_status():
     table = json.loads(authority.reason_classes_bytes())
-    for code in authority.NOT_SET_UP_CODES:
-        assert code in table["default"], code
+    missing = _enrolled_codes(table) - set(authority.ENROLLED_STATUS)
+    assert not missing, sorted(missing)
+    # and nothing is mapped that the table does not hold
+    assert set(authority.ENROLLED_STATUS) <= _enrolled_codes(table)
+
+
+def test_the_pinned_table_still_classes_stale_view_as_freshness_for_enrolled():
+    assert authority._class_of("stale_view", "enrolled") == "freshness"
+
+
+def test_stale_is_the_status_of_stale_view_alone():
+    stale = [c for c, s in authority.ENROLLED_STATUS.items()
+             if s is MachineStatus.STALE]
+    assert stale == ["stale_view"]
 
 
 def _pairs(table):
@@ -257,14 +275,18 @@ def test_only_a_proven_outcome_is_proven():
 
 # ---- enrolled: machine status -----------------------------------------------
 
+def _status(result):
+    return authority.machine_state(result).status
+
+
 def test_enrolled_true_is_enrolled():
-    assert authority.machine_status({"enrolled": True, "reason": "ok"}) is \
+    assert _status({"enrolled": True, "reason": "ok"}) is \
         MachineStatus.ENROLLED
 
 
 @pytest.mark.parametrize("flag", [1, "true", None])
 def test_enrolled_must_be_exactly_true(flag):
-    assert authority.machine_status({"enrolled": flag, "reason": "ok"}) is \
+    assert _status({"enrolled": flag, "reason": "ok"}) is \
         MachineStatus.BROKEN
 
 
@@ -272,7 +294,7 @@ def test_enrolled_must_be_exactly_true(flag):
     "pin_missing", "pin_probe_unavailable", "pin_probe_unprotected",
     "store_missing"]))
 def test_the_not_set_up_codes(code):
-    assert authority.machine_status({"enrolled": False, "reason": code}) is \
+    assert _status({"enrolled": False, "reason": code}) is \
         MachineStatus.NOT_SET_UP
 
 
@@ -288,22 +310,70 @@ def test_the_not_set_up_codes(code):
     None,
 ])
 def test_everything_else_is_broken(answer):
-    assert authority.machine_status(answer) is MachineStatus.BROKEN
+    assert _status(answer) is MachineStatus.BROKEN
 
 
 def test_a_missing_binary_is_not_set_up_and_other_failures_are_broken():
-    assert authority.machine_status(CheckerFailure.BINARY_MISSING) is \
+    assert _status(CheckerFailure.BINARY_MISSING) is \
         MachineStatus.NOT_SET_UP
-    assert authority.machine_status(CheckerFailure.NONZERO_EXIT) is \
+    assert _status(CheckerFailure.NONZERO_EXIT) is \
         MachineStatus.BROKEN
-    assert authority.machine_status(CheckerFailure.UNPARSEABLE) is \
+    assert _status(CheckerFailure.UNPARSEABLE) is \
         MachineStatus.BROKEN
 
 
 def test_the_not_set_up_codes_are_the_issue_list_and_no_more():
-    assert authority.NOT_SET_UP_CODES == frozenset({
+    assert {c for c, s in authority.ENROLLED_STATUS.items()
+            if s is MachineStatus.NOT_SET_UP} == {
         "pin_missing", "pin_probe_unavailable", "pin_probe_unprotected",
-        "store_missing"})
+        "store_missing"}
+
+
+def test_a_stale_view_is_stale_and_carries_its_reason():
+    state = authority.machine_state(
+        {"enrolled": False, "reason": "stale_view"})
+    assert state == authority.MachineState(MachineStatus.STALE, "stale_view")
+    assert _status(
+        {"enrolled": False, "reason": "stale_view"}) is MachineStatus.STALE
+
+
+@pytest.mark.parametrize("code", [
+    "epoch_superseded", "view_in_future", "witness_bad_signature",
+    "witness_key_mismatch", "witness_missing", "stale_witness"])
+def test_other_freshness_codes_are_broken_with_their_own_reason(code):
+    state = authority.machine_state({"enrolled": False, "reason": code})
+    assert state == authority.MachineState(MachineStatus.BROKEN, code)
+
+
+@pytest.mark.parametrize("answer,reason", [
+    ({"enrolled": False, "reason": "a_code_from_a_newer_handsal"},
+     "a_code_from_a_newer_handsal"),
+    ({"enrolled": False, "reason": "ok"}, "ok"),
+    ({"enrolled": False, "reason": 5}, "no_reason"),
+    ({"enrolled": False}, "no_reason"),
+    ({"error": "stale_view"}, "stale_view"),
+    ({"enrolled": False, "reason": "stale_view", "error": "internal"},
+     "internal"),
+    ({}, "no_reason"),
+    ([], "not_an_object"),
+    (None, "not_an_object"),
+    ({"enrolled": 1, "reason": "ok"}, "ok"),
+])
+def test_broken_answers_say_why(answer, reason):
+    assert authority.machine_state(answer) == authority.MachineState(
+        MachineStatus.BROKEN, reason)
+
+
+def test_failed_runs_carry_the_failure_as_reason():
+    assert authority.machine_state(CheckerFailure.BINARY_MISSING) == \
+        authority.MachineState(MachineStatus.NOT_SET_UP, "binary_missing")
+    assert authority.machine_state(CheckerFailure.NONZERO_EXIT) == \
+        authority.MachineState(MachineStatus.BROKEN, "nonzero_exit")
+
+
+def test_an_enrolled_machine_carries_ok():
+    assert authority.machine_state({"enrolled": True, "reason": "ok"}) == \
+        authority.MachineState(MachineStatus.ENROLLED, "ok")
 
 
 # ---- who signed -------------------------------------------------------------
@@ -444,3 +514,35 @@ def test_a_claimed_time_that_is_not_a_non_empty_string_raises(value):
     jws = _jws_with_payload(_canonical({**_payload(ACT), "ts": value}))
     with pytest.raises(ProvenActError):
         authority.claimed_signing_time(Proven(act=jws))
+
+
+# ---- enrolled: the two fields must agree ------------------------------------
+
+@pytest.mark.parametrize("answer,reason", [
+    ({"enrolled": True, "reason": "bad_signature"}, "bad_signature"),
+    ({"enrolled": True, "reason": "stale_view"}, "stale_view"),
+    ({"enrolled": True, "reason": "pin_missing"}, "pin_missing"),
+    ({"enrolled": True}, "no_reason"),
+    ({"enrolled": True, "reason": "ok", "error": "internal"}, "internal"),
+    ({"reason": "ok"}, "ok"),
+    ({"reason": "stale_view"}, "stale_view"),
+    ({"enrolled": "true", "reason": "ok"}, "ok"),
+])
+def test_enrolled_and_reason_must_agree_or_the_machine_is_broken(
+        answer, reason):
+    assert authority.machine_state(answer) == authority.MachineState(
+        MachineStatus.BROKEN, reason)
+
+
+def test_the_status_groups_do_not_overlap():
+    groups = [set(authority._NOT_SET_UP), set(authority._STALE),
+              set(authority._BROKEN)]
+    for i, a in enumerate(groups):
+        for b in groups[i + 1:]:
+            assert not a & b, sorted(a & b)
+    assert len(authority._BROKEN) == len(set(authority._BROKEN))
+    assert "ok" not in set().union(*groups)
+
+
+def test_machine_status_wrapper_is_gone():
+    assert not hasattr(authority, "machine_status")

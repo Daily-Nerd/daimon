@@ -21,7 +21,7 @@ A later change that alters what counts as human alters it in this file only.
 
 The same file also owns what a handsal checker answer means (#1374). It holds
 the checker's reason class table, a vendored copy, and maps an answer to an
-outcome (`recheck_outcome`, `machine_status`). It reads who signed an act the
+outcome (`recheck_outcome`, `machine_state`). It reads who signed an act the
 checker proved (`performer_of`). Both are pure: nothing here runs the checker
 or stores anything. The file stays one module because the table, the outcome
 and the signer are read by the same future caller and change with the same
@@ -137,11 +137,65 @@ HANDSAL_PIN = HandsalPin(
 # is read before the default one.
 _RECHECK_COMMAND = "recheck-act"
 
-# `machine_status` for an `enrolled` answer: these reasons mean "this machine
-# is not set up yet". Every other reason, an unknown one included, is damage.
-NOT_SET_UP_CODES = frozenset({
-    "pin_missing", "pin_probe_unavailable", "pin_probe_unprotected",
-    "store_missing"})
+class MachineStatus(enum.Enum):
+    ENROLLED = "enrolled"
+    NOT_SET_UP = "not_set_up"
+    STALE = "stale"
+    BROKEN = "broken"
+
+
+# `machine_state` for an `enrolled` answer: the machine status of every
+# reason code that run can return, decided one code at a time. The reason
+# class cannot decide it: for `enrolled`, `freshness` holds `stale_view` (the
+# view is only out of date) next to `witness_bad_signature`,
+# `witness_key_mismatch` and the other witness codes (damage), and
+# `environment` holds "not set up yet" next to damaged codes. The handsal
+# table lists no codes of its own for `enrolled`, so the codes are its
+# `default` ones. `tests/test_authority_checker.py` fails when the pinned table
+# holds a code this mapping does not, so a code handsal adds later gets a
+# decision here instead of landing in BROKEN unseen.
+_NOT_SET_UP = ("pin_missing", "pin_probe_unavailable", "pin_probe_unprotected",
+               "store_missing")
+_STALE = ("stale_view",)
+_BROKEN = (
+    "unsupported_command", "unparseable_input", "malformed_input",
+    "jws_shape", "payload_not_canonical_subset", "payload_too_large",
+    "schema", "method_unknown", "chain_method", "body_schema",
+    "pin_org_mismatch", "pin_owner", "pin_malformed", "profile_mismatch",
+    "fixture_profile", "genesis_pin_mismatch", "pin_spec_mismatch",
+    "lineage_broken", "org_mismatch", "relay_mismatch", "unknown_key",
+    "revoked_key", "bad_signature", "context_mismatch",
+    "verifier_unavailable", "verifier_unexpected", "high_s",
+    "identity_mismatch", "request_mismatch", "consumer_mismatch",
+    "inputs_mismatch", "outputs_mismatch", "ts_in_future", "bad_expiry",
+    "validity_too_long", "expired", "view_in_future", "epoch_superseded",
+    "witness_unexpected", "witness_missing", "witness_malformed",
+    "witness_key_mismatch", "witness_bad_signature", "witness_org_mismatch",
+    "witness_epoch_mismatch", "witness_superseded", "witness_in_future",
+    "stale_witness", "behind_witness", "duplicate_receipt",
+    "unproven_class", "store_owner", "store_malformed", "store_unavailable",
+    "store_full", "parent_unknown", "already_stored", "act_not_valid",
+    "not_chain_act", "epoch_closed", "kid_repeated", "not_in_pool",
+    "local_key_unknown", "local_key_not_active", "local_class_not_accepted",
+    "attachment_missing", "attachment_mismatch", "render_refused",
+    "pin_invalid", "pin_rollback", "internal", "user_cancel",
+    "schema_refused", "unsupported_method", "profile_not_current",
+    "key_exists", "key_unavailable", "no_display", "prompt_refused",
+    "biometric_unavailable", "genesis_schema", "doc_not_sorted",
+    "genesis_key_invalid", "duplicate_key", "profile_downgrade",
+    "policy_invalid", "policy_out_of_bounds", "policy_unreachable",
+    "class_unknown", "class_pending", "class_test_only",
+    "class_policy_mismatch", "role_key_class", "fixture_key",
+    "genesis_render_too_large", "genesis_unsigned", "genesis_head_unknown",
+    "genesis_change_unauthorized", "genesis_device_revoked",
+    "genesis_device_changed", "fork", "at_beyond_tip",
+)
+ENROLLED_STATUS: dict[str, MachineStatus] = {
+    "ok": MachineStatus.ENROLLED,
+    **dict.fromkeys(_NOT_SET_UP, MachineStatus.NOT_SET_UP),
+    **dict.fromkeys(_STALE, MachineStatus.STALE),
+    **dict.fromkeys(_BROKEN, MachineStatus.BROKEN),
+}
 
 
 class CheckerFailure(enum.Enum):
@@ -165,10 +219,13 @@ class Fault(enum.Enum):
     BINARY_MISSING = "binary_missing"
 
 
-class MachineStatus(enum.Enum):
-    ENROLLED = "enrolled"
-    NOT_SET_UP = "not_set_up"
-    BROKEN = "broken"
+@dataclasses.dataclass(frozen=True)
+class MachineState:
+    """A machine status and the reason code behind it, so two BROKEN
+    machines stay told apart. `reason` is the answer's own reason code, or
+    what stopped the run (`nonzero_exit`, `not_an_object`, `no_reason`)."""
+    status: MachineStatus
+    reason: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -282,19 +339,35 @@ def recheck_outcome(result: CheckerResult, act: str) -> Outcome:
     return Undetermined(code, fault)
 
 
-def machine_status(result: CheckerResult) -> MachineStatus:
-    """What an `enrolled` run says about this machine. One class holds both
-    "not set up yet" and "damaged", so this goes by code, not class."""
-    if result is CheckerFailure.BINARY_MISSING:
-        return MachineStatus.NOT_SET_UP
+def machine_state(result: CheckerResult) -> MachineState:
+    """What an `enrolled` run says about this machine, and why.
+
+    The status comes from one place: the reason code through
+    `ENROLLED_STATUS`, never from the class. The answer's `enrolled` flag
+    must agree with it: handsal answers exactly `{"enrolled", "reason"}`, and
+    `enrolled: true` always comes with reason `ok` (handsal checker
+    `enrolled.py`, its `Positive` tests). ENROLLED needs `enrolled is True`
+    and a code mapped to ENROLLED. Any disagreement (true with another code,
+    false with `ok`, a flag that is absent or not a bool), a code the mapping
+    does not hold, an `error` key, a missing reason and a failed run other
+    than a missing binary are BROKEN, carrying the answer's own code (or
+    what stopped the run) so each stays diagnosable."""
+    if isinstance(result, CheckerFailure):
+        status = (MachineStatus.NOT_SET_UP
+                  if result is CheckerFailure.BINARY_MISSING
+                  else MachineStatus.BROKEN)
+        return MachineState(status, result.value)
     if not isinstance(result, Mapping):
-        return MachineStatus.BROKEN
-    if result.get("enrolled") is True:
-        return MachineStatus.ENROLLED
-    if result.get("enrolled") is False and "error" not in result \
-            and result.get("reason") in NOT_SET_UP_CODES:
-        return MachineStatus.NOT_SET_UP
-    return MachineStatus.BROKEN
+        return MachineState(MachineStatus.BROKEN, "not_an_object")
+    code = _reason_of(result)
+    if code is None:
+        return MachineState(MachineStatus.BROKEN, "no_reason")
+    status = ENROLLED_STATUS.get(code, MachineStatus.BROKEN)
+    flag = result.get("enrolled")
+    if "error" in result or not isinstance(flag, bool) \
+            or flag is not (status is MachineStatus.ENROLLED):
+        status = MachineStatus.BROKEN
+    return MachineState(status, code)
 
 
 # ---- who signed (#1374) ------------------------------------------------------
