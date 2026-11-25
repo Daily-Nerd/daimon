@@ -110,6 +110,16 @@ EVENTS = frozenset({
     "needs_info", "accepted", "rejected", "done",
     "suppressed", "done_verified", "replied", "withdrawn",
 })
+# #1424: the events a surface writes on the `mechanical` channel when it
+# SHOWED a request to a session (the brief or the live prompt hook). Said once
+# here so a reader asking "was a session shown anything" cannot keep its own
+# list. `done_verified` is also mechanical but is a byte-check of an agent's
+# evidence quote, not attention. `test_the_attention_set_names_every_mechanical_
+# stamp_requests_writes` fails when a new mechanical stamp is not classified.
+ATTENTION_STAMPS = frozenset({
+    "surfaced", "delivered", "owed_delivered", "withdrawn_delivered",
+    "verdict_surfaced", "verdict_delivered",
+})
 # #1346: who may write each event, said ONCE. The fold applies an act only
 # when its row sits in its role's bucket (`row_holds_role`), and the write
 # path refuses the wrong side from the same table, so the two cannot drift.

@@ -76,6 +76,7 @@ LAYER: dict[str, str] = {
     "daimon_briefing/heal_host.py": "read",  # the host heal verbs: plans over heal.plan_all, launches through heal.launch, folds outcomes through serialize_liveness (api.heal_plan, api.heal_all)
     "daimon_briefing/serialize_log_window.py": "write",  # the one definition of the part of serialize.log that is read; stdlib only, mirrored into the hooks
     "daimon_briefing/serialize_liveness.py": "read",  # read-only liveness rows over serialize.log, heartbeats and checkpoints (api.serializes)
+    "daimon_briefing/recipient_hint.py": "read",  # advisory note for `request open`: a quiet recipient with an active sibling bucket; tenant rule via view.buckets
     "daimon_briefing/receipts.py": "read",  # verifies and reports provenance receipts of checkpoints
     "daimon_briefing/refutation_guard.py": "read",  # `refute guard` and `refute search`: match a query over the refutation rows a reader may see
     "daimon_briefing/render.py": "read",  # every human and rich renderer
