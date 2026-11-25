@@ -795,6 +795,28 @@ def test_propose_ratify_ceremony_skips_overcap_check_on_invalid_identity(
     assert "is too long" in out
 
 
+def test_propose_ratify_warning_previews_the_id_that_is_minted(
+        tmp_path, monkeypatch, capsys, _tty):
+    # #1380: the over-cap warning is keyed by the prospective id, which must
+    # derive from the stored form so a secret-bearing subject previews the
+    # id the write mints, not a hash of the raw text.
+    tmp_home, work, repo = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    seen = []
+    monkeypatch.setattr(
+        "daimon_briefing.cli.ruling._layer_overcap_warning",
+        lambda project, ruling_id: seen.append(ruling_id) or "")
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    rc = cli.main([
+        "ruling", "propose", "--subject", f"key  {secret}",
+        "--verdict", "verdict", "--scope", "scope",
+        "--evidence", "issue:1380", "--ratify", "--project", str(repo)])
+    assert rc == 0
+    minted = list(refutations.records(str(repo)))
+    assert seen == minted and len(seen) == 1
+    assert seen[0] != refutations.make_id(f"key  {secret}", "scope")
+
+
 # ---- #1102: the shared "own wins" set ------------------------------------
 
 
