@@ -27,6 +27,18 @@ jobs:
           enable-cache: true
           cache-dependency-glob: plugin/uv.lock
 
+      - name: Fetch the handsal verifier
+        # #1379: the contract test (tests/test_handsal_contract.py) runs
+        # daimon's code against the pinned handsal checker and a real
+        # vitni-verify. 3.13 only: the checker needs Python 3.11. The step
+        # downloads the release tar, refuses it unless its sha256 is the
+        # recorded one, extracts the verifier and writes the two variables
+        # the test reads to $GITHUB_ENV. The pin, the tar and its hash live
+        # in tests/_handsal_contract.py and authority.HANDSAL_PIN, never
+        # here. No cache: the repo uses no cache action beyond setup-uv.
+        if: ${{ matrix.python-version == '3.13' }}
+        run: uv run --extra dev python tests/_handsal_contract.py env "$RUNNER_TEMP/handsal" >> "$GITHUB_ENV"
+
       - name: Run tests
         # --extra pretty: the rich-path smoke tests in test_render.py import
         # rich unconditionally, and the --help formatter tests in test_cli.py
