@@ -106,7 +106,7 @@ def _cmd_ruling_propose(args) -> int:
         # malformed subject/scope degrades to no warning rather than a
         # crash; `assert_ruling` below is the real validator.
         try:
-            prospective_id = refutations.make_id(args.subject, args.scope)
+            prospective_id = refutations.prospective_id(args.subject, args.scope)
         except refutations.RefutationError:
             prospective_id = ""
         if prospective_id:

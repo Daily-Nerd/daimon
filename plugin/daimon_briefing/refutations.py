@@ -374,6 +374,20 @@ def _text(name: str, value, *, required: bool = True) -> str:
     return out
 
 
+def _stored_form(value) -> str:
+    """The bytes a ruling's `subject`, `verdict` or `scope` is stored as:
+    whitespace collapsed, then secret-shaped text redacted. The one place that
+    states the rule, so the write paths and the size guard (which measures
+    "the text as stored", and what a person later signs) cannot drift apart.
+
+    Pure: no validation and no field name. Write paths call it on the output
+    of `_text` (collapse is idempotent, so the bytes are the same); the guard
+    calls it on the raw value, before the write path's own checks run. It is
+    a fixed point: applying it to its own output changes nothing."""
+    stored, _ = redact.redact_text(_SPACE_RE.sub(" ", str(value)).strip())
+    return stored
+
+
 def canonical_anchor(value) -> str:
     """Canonical, display-safe anchor used by exact proactive matching."""
     anchor = _text("anchor", value).casefold()
@@ -616,6 +630,15 @@ def make_id(subject: str, scope: str) -> str:
     """Stable logical id from the redacted subject+scope identity."""
     raw = f"{_text('subject', subject).casefold()}\0{_text('scope', scope).casefold()}"
     return "r-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def prospective_id(subject: str, scope: str) -> str:
+    """The id a ruling or refutation with this raw subject and scope is minted
+    under. Identity derives from the stored form, never the raw text, so the
+    write paths and any caller that previews an id (a warning before the
+    write) get the same answer, secret-bearing text included."""
+    return make_id(_stored_form(_text("subject", subject)),
+                   _stored_form(_text("scope", scope)))
 
 
 def _identity_id(record: dict) -> str:
@@ -1537,23 +1560,20 @@ def request_policy_history(project_dir=None, *, rows=None,
 def assert_refutation(*, subject: str, verdict: str, scope: str,
                       evidence, channel: str, anchors=(), revisit_when: str = "",
                       ratified: bool = False, project_dir=None) -> str:
-    subject = _text("subject", subject)
-    verdict = _text("verdict", verdict)
-    scope = _text("scope", scope)
-    revisit_when = _text("revisit_when", revisit_when, required=False)
-    evidence = _evidence(evidence)
-    anchors = _anchors(anchors)
     # Identity derives from the bytes that can actually persist.  Computing
     # the id before redaction would leave a stable hash of secret-bearing raw
     # text and make a later revision/search over the redacted record disagree.
-    subject, _ = redact.redact_text(subject)
-    verdict, _ = redact.redact_text(verdict)
-    scope, _ = redact.redact_text(scope)
+    subject = _stored_form(_text("subject", subject))
+    verdict = _stored_form(_text("verdict", verdict))
+    scope = _stored_form(_text("scope", scope))
+    revisit_when = _text("revisit_when", revisit_when, required=False)
+    evidence = _evidence(evidence)
+    anchors = _anchors(anchors)
     if ratified and of_channel("refutations", channel) != "human":
         raise RefutationError(
             "activating with --ratify requires a human channel; this call "
             f"arrived through {channel!r}")
-    ref_id = make_id(subject, scope)
+    ref_id = prospective_id(subject, scope)
     holder = _identity_holder(ref_id, project_dir=project_dir)
     if holder is not None:
         held = holder.get("refutation_id") or ref_id
@@ -1820,8 +1840,7 @@ def _guard_ruling_text(subject, verdict) -> None:
     for name, value in (("subject", subject), ("verdict", verdict)):
         if value is None:
             continue
-        stored[name], _ = redact.redact_text(
-            _SPACE_RE.sub(" ", str(value)).strip())
+        stored[name] = _stored_form(value)
         if len(stored[name]) > _MAX_RULING_TEXT:
             raise RefutationError(
                 f"ruling {name} exceeds {_MAX_RULING_TEXT} chars — a "
@@ -1854,24 +1873,21 @@ def assert_ruling(*, subject: str, verdict: str, scope: str,
     nothing until the ruling activates.
     """
     _guard_ruling_text(subject, verdict)
-    subject = _text("subject", subject)
-    verdict = _text("verdict", verdict)
-    scope = _text("scope", scope)
+    subject = _stored_form(_text("subject", subject))
+    verdict = _stored_form(_text("verdict", verdict))
+    scope = _stored_form(_text("scope", scope))
     revisit_when = _text("revisit_when", revisit_when, required=False)
     evidence = _evidence(evidence)
     anchors = _anchors(anchors)
     check = _check(check)  # #943
     request_policy = _policy(request_policy)  # #961 slice 4
-    subject, _ = redact.redact_text(subject)
-    verdict, _ = redact.redact_text(verdict)
-    scope, _ = redact.redact_text(scope)
     if ratified and of_channel("refutations", channel) != "human":
         raise RefutationError(
             "activating with --ratify requires a human channel; this call "
             f"arrived through {channel!r}")
     if ratified:
         _guard_ruling_cap(project_dir=project_dir)
-    ref_id = make_id(subject, scope)
+    ref_id = prospective_id(subject, scope)
     holder = _identity_holder(ref_id, project_dir=project_dir)
     if holder is not None:
         held = holder.get("refutation_id") or ref_id
@@ -2173,11 +2189,11 @@ def revise(refutation_id: str, *, channel: str, evidence,
     row = _stamp(event, refutation_id, channel)
     row["evidence"] = _evidence(evidence)
     if subject is not None:
-        row["subject"] = _text("subject", subject)
+        row["subject"] = _stored_form(_text("subject", subject))
     if verdict is not None:
-        row["verdict"] = _text("verdict", verdict)
+        row["verdict"] = _stored_form(_text("verdict", verdict))
     if scope is not None:
-        row["scope"] = _text("scope", scope)
+        row["scope"] = _stored_form(_text("scope", scope))
     if anchors is not None:
         row["anchors"] = _anchors(anchors)
     if revisit_when is not None:
@@ -2207,11 +2223,10 @@ def revise(refutation_id: str, *, channel: str, evidence,
     # Redacted first, because that is what will be stored and therefore what a
     # later assertion's identity is computed from.
     if "subject" in row or "scope" in row:
-        new_subject, _ = redact.redact_text(
-            row.get("subject", current.get("subject") or ""))
-        new_scope, _ = redact.redact_text(
+        new_id = prospective_id(
+            row.get("subject", current.get("subject") or ""),
             row.get("scope", current.get("scope") or ""))
-        holder = _identity_holder(make_id(new_subject, new_scope),
+        holder = _identity_holder(new_id,
                                   exclude=refutation_id,
                                   project_dir=project_dir)
         if holder is not None:
@@ -2226,7 +2241,7 @@ def revise(refutation_id: str, *, channel: str, evidence,
             # never touches the active text, but it still names an
             # identity, and that identity still cannot be a layer's).
             _guard_layer_active_collision(
-                make_id(new_subject, new_scope), project_dir)
+                new_id, project_dir)
     if ratified:
         row["ratified"] = True
     if not append(row, project_dir=project_dir,
