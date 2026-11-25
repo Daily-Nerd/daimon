@@ -42,6 +42,20 @@ cambia cuáles tres. `request inbox --min-severity high` (y el argumento
 puede fijarla, porque no baja ninguna barra de aprobación. Un pedido que
 reemplaza a otro con `--supersedes` no hereda la severidad.
 
+Después de registrar el ask, `request open` puede imprimir una nota más.
+Aparece cuando en el bucket del destinatario no se guardó ni se mostró nada
+durante 14 días o más antes de que un bucket vecino estuviera activo: las dos
+carpetas cuelgan del mismo padre y tienen nombres con prefijo en común, como
+`Acme` y `AcmeV2`. Un bucket cuenta como visto cuando una sesión guardó un
+checkpoint ahí o el brief o el hook de prompt le mostró un pedido. Las
+decisiones tomadas desde esa carpeta no cuentan. La nota da los dos slugs y las
+dos fechas y pregunta si son un mismo proyecto. Si lo son, pedile al dueño que
+corra `daimon bucket merge`, que es lo que hace que los pedidos lleguen a una
+sola bandeja. Si no lo son, ignorala. Nunca bloquea: el ask se escribe igual
+que antes, y puede equivocarse cuando dos repos distintos tienen nombres
+parecidos. Nunca se consideran los buckets sin carpeta registrada, los pares ya
+fusionados ni los buckets de otros tenants.
+
 ## Como remitente
 
 - **`revise`** responde un needs-info, o afina el pedido, hasta tres veces

@@ -18,7 +18,8 @@ import sys
 
 import daimon_briefing.cli as _cli
 
-from .. import clock, config, render, requests, scope, store, view
+from .. import (clock, config, recipient_hint, render, requests, scope, store,
+                view)
 from . import _observe
 from ._ledger import _snap
 
@@ -641,6 +642,18 @@ def _cmd_request_open(args) -> int:
         _request_lines(_masked(project, [record], snap=snap)[0],
                        project_dir=project) if record else
         [f"request {q_id} recorded"])
+    # #1424: advisory only, after the ask is written; the ask's own output and
+    # exit code are unchanged. The rule lives in recipient_hint so a future
+    # open verb on another surface calls the same function.
+    try:
+        found = recipient_hint.hint(to, store.bucket_of(project) or "")
+        if found:
+            render.render_ledger_lines(recipient_hint.note_lines(found))
+    except Exception:  # noqa: BLE001
+        # The ask is already written. A hint is advisory, so a failure in it
+        # must not become `guarded`'s exit 2 after a durable write. The only
+        # trace is a local usage.log counter, the CLI's one diagnostic line.
+        _cli._note_usage("request:open:hint-error")
     return 0
 
 

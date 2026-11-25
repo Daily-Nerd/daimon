@@ -40,6 +40,19 @@ high` (and the MCP `min_severity` argument) shows that level and anything
 more severe. Either channel may set it, because it lowers no approval bar. A
 request that replaces another with `--supersedes` carries no severity over.
 
+After the ask is recorded, `request open` can print one more note. It appears
+when nothing has been saved or shown in the recipient's bucket for 14 days or
+more before a bucket next to it was active: both folders sit under the same
+parent and have prefix-related names, such as `Acme` and `AcmeV2`. A bucket
+counts as seen when a session saved a checkpoint there or was shown a request
+by the brief or the prompt hook. Decisions made from that folder do not count.
+The note gives both slugs and dates and asks whether they are one project. If
+they are, ask the owner to run `daimon bucket merge`, which is what makes asks
+reach one inbox. If they are not, ignore it. It never blocks, the ask is
+written exactly as before, and it can be wrong when two separate repos happen
+to have similar names. Buckets with no recorded folder, pairs already merged and
+other tenants' buckets are never considered.
+
 ## As the sender
 
 - **`revise`** answers a needs-info reply, or sharpens the ask, up to three
