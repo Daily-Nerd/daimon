@@ -504,8 +504,8 @@ def _pointer_lock(d: Path):
     """Serialize the check-rotate-write pointer sequence in dir `d` (#31):
     two sessions ending together interleave _pointer_regresses / rotation /
     the latest write (multi-step TOCTOU) — one can clobber the prev-N chain
-    or let an older checkpoint win `latest`. The mechanics (flock on a
-    sidecar dotfile, bounded wait, fail-open, yields whether the lock was
+    or let an older checkpoint win `latest`. The mechanics (a platform lock
+    on a sidecar dotfile, bounded wait, fail-open, yields whether the lock was
     acquired) live in `jsonl.dir_lock`, which every ledger append and
     rewrite shares."""
     return jsonl.dir_lock(d)
@@ -551,7 +551,7 @@ def _advance_pointers(d: Path, blob: str, new_epoch: float | None,
 def _advance_pointers_held(d: Path, blob: str, new_epoch: float | None,
                            rotate: bool, history: int) -> bool:
     """`_advance_pointers` for a caller that ALREADY holds `_pointer_lock(d)`
-    (the lock is a flock on a sidecar, so taking it again from the same
+    (the lock is on a sidecar, so taking it again from the same
     process would wait on itself). `bucket merge` plans and changes a live
     bucket's chain in one critical section and promotes through this."""
     if _pointer_regresses(d, new_epoch):

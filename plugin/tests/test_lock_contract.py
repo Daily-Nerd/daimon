@@ -91,6 +91,20 @@ def test_the_windows_primitive_reports_contention_as_blocking(tmp_path):
             prim.acquire(b.fileno())
 
 
+def test_the_fake_ties_a_lock_to_its_open_file_not_to_the_fd_number(tmp_path):
+    """The stand-in must not read a dead owner as alive when the OS hands its
+    fd number to a new handle on the same file."""
+    prim, _ = windows_lock()
+    path = tmp_path / "f"
+    a = open(path, "a+")
+    prim.acquire(a.fileno())
+    a.close()                       # its lock dies with it
+    with open(path, "a+") as b, open(path, "a+") as c:   # b reuses a's fd
+        prim.acquire(c.fileno())    # nobody holds it: granted
+        with pytest.raises(BlockingIOError):
+            prim.acquire(b.fileno())
+
+
 def test_the_windows_primitive_does_not_call_other_errors_contention(
         tmp_path):
     class Broken(FakeMsvcrt):

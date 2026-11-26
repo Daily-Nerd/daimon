@@ -6,7 +6,10 @@ platform module, so the same contract runs on POSIX and on Windows.
 """
 
 import errno
+import gc
+import io
 import os
+import weakref
 
 from daimon_briefing import jsonl
 
@@ -45,22 +48,39 @@ class FakeMsvcrt:
 
     def __init__(self):
         self.calls = []
-        self._held = {}   # (file key, start, length) -> fd
+        self._held = {}   # (file key, start, length) -> (fd, open file | None)
 
     @staticmethod
     def _key(fd):
         st = os.fstat(fd)
         return (st.st_dev, st.st_ino)
 
+    @staticmethod
+    def _open_file(fd):
+        """The open file object behind `fd` (a weak reference), so a lock is
+        tied to THAT handle and not to a number the OS may hand out again."""
+        for obj in gc.get_objects():
+            if isinstance(obj, io.FileIO) and not obj.closed \
+                    and obj.fileno() == fd:
+                return weakref.ref(obj)
+        return None
+
     def _live(self, rng):
-        fd = self._held.get(rng)
-        if fd is None:
+        """The fd that holds `rng`, or None when its handle is gone."""
+        held = self._held.get(rng)
+        if held is None:
             return None
-        try:
-            if self._key(fd) == rng[0]:
+        fd, ref = held
+        if ref is not None:
+            obj = ref()
+            if obj is not None and not obj.closed:
                 return fd
-        except OSError:
-            pass
+        else:
+            try:
+                if self._key(fd) == rng[0]:
+                    return fd
+            except OSError:
+                pass
         del self._held[rng]   # its handle is gone: so is its lock
         return None
 
@@ -76,7 +96,7 @@ class FakeMsvcrt:
             return
         if owner is not None and owner != fd:
             raise OSError(errno.EACCES, "locked by another handle")
-        self._held[rng] = fd
+        self._held[rng] = (fd, self._open_file(fd))
 
 
 def windows_lock():

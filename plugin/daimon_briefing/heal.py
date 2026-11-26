@@ -160,9 +160,9 @@ def plan_all(text: str, now: float, *, force: bool = False,
 def try_lock() -> Iterator[bool]:
     """The machine-wide heal lock (D12): one non-blocking lock on
     `<log dir>/.heal.lock`, taken through `jsonl`'s one platform primitive
-    (flock on POSIX, msvcrt on Windows). Yields True when this process may heal and False
-    when another heal holds it, so the caller exits 0 instead of piling a second
-    runner onto the same backend. Released on every exit, including a raise,
+    (flock on POSIX, msvcrt on Windows). Yields True when this process may
+    heal and False when another heal holds it, so the caller exits 0 instead
+    of piling a second runner onto the same backend. Released on every exit, including a raise,
     and by the OS if the holder dies.
 
     Fail-open like `jsonl.dir_lock`: no lock primitive, an unwritable log

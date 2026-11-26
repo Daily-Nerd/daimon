@@ -261,15 +261,14 @@ def dir_lock(d: Path) -> Iterator[bool]:
 
     A lock on a sidecar dotfile (the platform primitive, `_lock`) with a
     bounded wait; yields whether the lock was actually acquired. Fail-open
-    everywhere (no lock primitive, unwritable or
-    missing dir, contention past the wait): the caller proceeds unguarded,
-    which is exactly the pre-lock behavior. A lock that is yielded as held is
-    a lock on the sidecar the path names AT THAT MOMENT: a lock granted on an
-    inode a fold has since unlinked is dropped and the live sidecar opened
-    instead, and a directory that is gone is "not held", never held on a ghost
-    (#1411). The sidecar is opened with the
-    builtin `open`, never `Path.open`: it carries no content, and the
-    write-audit guard must not record it as a write.
+    everywhere (no lock primitive, unwritable or missing dir, contention
+    past the wait): the caller proceeds unguarded, which is exactly the
+    pre-lock behavior. A lock that is yielded as held is a lock on the
+    sidecar the path names AT THAT MOMENT: a lock granted on an inode a fold
+    has since unlinked is dropped and the live sidecar opened instead, and a
+    directory that is gone is "not held", never held on a ghost (#1411). The
+    sidecar is opened with the builtin `open`, never `Path.open`: it carries
+    no content, and the write-audit guard must not record it as a write.
 
     It is a sidecar, not a lock on the ledger's own fd, because `rewrite`
     swaps the inode with os.replace and a lock on the old inode would not
@@ -329,7 +328,7 @@ def _names_this_inode(fh, path: Path) -> bool:
 
 
 def _drop(fh) -> None:
-    """Closing the descriptor releases its flock."""
+    """Closing the descriptor releases its lock."""
     with suppress(OSError):
         fh.close()
 
@@ -884,7 +883,7 @@ def replace(path: Path, text: str, *,
     way. Raises OSError when the swap fails, the ledger untouched.
 
     `lock=False` is for a caller that already holds `ledger_lock(path)` across
-    a larger read-then-swap: flock on a second fd of the same process would
+    a larger read-then-swap: a lock on a second fd of the same process would
     not nest, it would stall about a second and then proceed unguarded."""
     with ledger_lock(path) if lock else nullcontext():
         (write or _stage)(path, text)
