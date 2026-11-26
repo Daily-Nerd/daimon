@@ -1254,14 +1254,14 @@ def withheld_trailer(own, team=None) -> list:
         # #981: the count covers the Teammates section too, and says how
         # many were a teammate's, since `status --suppressed` lists only the
         # reader's own checkpoint.
-        note = f"{resolved} resolved item(s) withheld"
+        note = f"{resolved} {marks.WITHHELD_RESOLVED}"
         if team and team.resolved:
-            note += f" ({team.resolved} a teammate's)"
+            note += marks.WITHHELD_TEAM.format(n=team.resolved)
         trailer.append(note + " — `daimon status --suppressed` to list")
     if quarantined:
-        note = f"{quarantined} quarantined item(s) withheld"
+        note = f"{quarantined} {marks.WITHHELD_QUARANTINED}"
         if team and team.quarantined:
-            note += f" ({team.quarantined} a teammate's)"
+            note += marks.WITHHELD_TEAM.format(n=team.quarantined)
         trailer.append(note + " — `daimon trust list` shows them")
     return trailer
 
@@ -1354,7 +1354,7 @@ def truncate_preserving_sections(text: str, max_len: int, *, measure=len) -> str
 # never silently drop the one section whose whole point is that it cannot
 # fade. Worst case (a full cap of maximum-length rulings) costs ~17-20% of
 # the default 3000-token budget — pinned by test.
-_RULING_HEADER = "Standing rulings (human-ratified — honor these):"
+_RULING_HEADER = marks.RULINGS_HEADER
 
 
 class RulingsRead(NamedTuple):
@@ -1896,10 +1896,8 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
 # `foreign_queues` (the text path scar 0055 forbids on this surface). Frozen
 # tokens: "decisions waiting on you", "here", "elsewhere", "- daimon decide".
 
-_DECISION_COUNT_LINE_PLURAL = \
-    "{n} decisions waiting on you here{elsewhere} - daimon decide"
-_DECISION_COUNT_LINE_SINGULAR = \
-    "1 decision waiting on you here{elsewhere} - daimon decide"
+_DECISION_COUNT_LINE_PLURAL = marks.DECISION_COUNT_PLURAL
+_DECISION_COUNT_LINE_SINGULAR = marks.DECISION_COUNT_SINGULAR
 
 
 def decision_count_line(project_dir=None) -> str | None:
@@ -1947,7 +1945,8 @@ def decision_count_line(project_dir=None) -> str | None:
         # #1132 PR 10a: other projects left out are said even when nothing
         # was counted (the note stands alone).
         return "\n".join(notes) or None
-    suffix = f" ({elsewhere} elsewhere)" if elsewhere else ""
+    suffix = (marks.DECISION_ELSEWHERE.format(n=elsewhere)
+              if elsewhere else "")
     template = (_DECISION_COUNT_LINE_SINGULAR if here == 1
                 else _DECISION_COUNT_LINE_PLURAL)
     return "\n".join([template.format(n=here, elsewhere=suffix), *notes])
@@ -1957,7 +1956,7 @@ def decision_count_line(project_dir=None) -> str | None:
 
 # Ruling-shaped (D2): always-present, skeleton furniture, capped and loud on
 # overflow — never a section budget pressure is allowed to quietly thin out.
-_REQUEST_PANEL_HEADER = "Requests waiting on you (from other projects):"
+_REQUEST_PANEL_HEADER = marks.REQUEST_PANEL_HEADER
 
 # An `ask` can be up to `requests.MAX_TEXT_CHARS` (2000 chars); the panel line is
 # meant to be skimmable, not the full record — `daimon request inbox` has the
@@ -2066,7 +2065,7 @@ def request_panel(project_dir=None, *, snap=None):
 # Registered and frozen the same way the two headings above are (§3 amendment
 # 2026-08-27). The wording says OWE deliberately: an item here is not a
 # decision waiting on the human, it is work this project already agreed to.
-_OWED_PANEL_HEADER = "Requests you accepted and still owe:"
+_OWED_PANEL_HEADER = marks.OWED_PANEL_HEADER
 
 
 def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
@@ -2122,7 +2121,7 @@ def owed_panel(project_dir=None, *, snap=None):
 
 # ---- #694 PR 3: the sender-side verdict panel -------------------------------
 
-_VERDICT_PANEL_HEADER = "Decisions on requests you sent:"
+_VERDICT_PANEL_HEADER = marks.VERDICT_PANEL_HEADER
 
 # Mirrors cli/request.py's _MARKS glyph-per-state — a separate small table
 # rather than an import, because briefing.py must not depend on the cli
@@ -2209,7 +2208,7 @@ def verdict_panel(project_dir=None, *, snap=None):
 
 # ---- #1281: the sender-side overdue panel ----------------------------------
 
-_OVERDUE_PANEL_HEADER = "Requests you sent that nobody is moving:"
+_OVERDUE_PANEL_HEADER = marks.OVERDUE_PANEL_HEADER
 
 
 def overdue_panel_lines(project_dir=None, *, snap=None,

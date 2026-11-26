@@ -130,8 +130,11 @@ def test_a_tenant_scoped_host_brief_shows_the_baton_written_for_the_project(
 
 # ---- the format-3 contract ---------------------------------------------------
 
-def test_the_format_version_is_three():
-    assert marks.FORMAT_VERSION == 3 == api.BRIEFING_FORMAT
+def test_the_baton_field_is_part_of_the_format_since_three():
+    # The baton came with format 3 and every later format keeps it; the
+    # version itself moves with each change to what `parse_briefing` reads.
+    assert marks.FORMAT_VERSION >= 3
+    assert api.BRIEFING_FORMAT == marks.FORMAT_VERSION
 
 
 @pytest.mark.parametrize("make,tier", [(lambda: api.write_handoff(PROJECT, BATON),

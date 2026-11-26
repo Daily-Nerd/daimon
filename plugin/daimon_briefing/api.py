@@ -123,9 +123,16 @@ Round trip: for `briefing` and `closed`, `parse_briefing(text).header` is
 `marks.GREETING`, every `standing_rulings` entry starts with `marks.RULING_MARK`,
 every `items` entry starts with a mark in `marks.ITEM_MARKS`, and every note is
 in `warnings`. For `no-checkpoint` and `empty` the header is the orientation
-line and the notes are still `warnings`. The withheld trailer is dropped by the
-parser. `BRIEFING_FORMAT` is an integer that changes only when what
-`parse_briefing` extracts changes; it is never printed into a briefing.
+line (also when standing rulings lead the text: their title is never the
+header) and the notes are still `warnings`. The request panels, the decision
+count and the withheld trailer are fields of their own (format 4): `requests`,
+`verdicts`, `owed` and `overdue` (a `Panel` each), `decisions` and `withheld`,
+each None when the text has no such section. A panel is a block from its
+frozen header to the next blank line, read by its header and never by a mark
+(the baton and a request card both start with an arrow); the first block of a
+name wins and a repeat is swallowed whole. `BRIEFING_FORMAT` is an integer that
+changes only when what `parse_briefing` extracts changes; it is never printed
+into a briefing.
 
 `parse_briefing` is stdlib only and is built from `marks`, the constants the
 renderers write with, so the format and its reader cannot drift apart.
@@ -167,8 +174,9 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "RenderedBriefing", "render_briefing", "briefing_text",
            "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
            "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
-           "HandoffNotRecorded", "write_handoff", "Handoff",
-           "Briefing", "parse_briefing")
+           "HandoffNotRecorded", "write_handoff", "Handoff", "PanelCard",
+           "Panel", "DecisionCount", "Withheld", "Briefing",
+           "parse_briefing")
 
 
 @dataclass(frozen=True)
@@ -184,14 +192,65 @@ class Handoff:
 
 
 @dataclass(frozen=True)
+class PanelCard:
+    """One card of a request panel: the `request_id` (the first id on the
+    line, which daimon wrote before any foreign text), the card `line` as
+    printed with its mark, and its indented `detail` lines in order with the
+    indent removed."""
+
+    request_id: str
+    line: str
+    detail: tuple = ()
+
+
+@dataclass(frozen=True)
+class Panel:
+    """A request panel as printed. `cards` are in print order; `more` is the
+    `(+N more ...)` overflow count; `cut` the cards a collapsed panel lost to
+    the budget (0 when it printed whole); `lines` is every line of the block
+    after its header, as printed, so a consumer that wants the text has it."""
+
+    cards: tuple = ()
+    more: int = 0
+    cut: int = 0
+    lines: tuple = ()
+
+
+@dataclass(frozen=True)
+class DecisionCount:
+    """The decision count line: `here` waiting on this project, `elsewhere`
+    waiting in other projects (0 when the line names none)."""
+
+    here: int
+    elsewhere: int = 0
+
+
+@dataclass(frozen=True)
+class Withheld:
+    """The withheld trailer: how many resolved and quarantined items the
+    briefing left out. A count a teammate's checkpoint added is included."""
+
+    resolved: int = 0
+    quarantined: int = 0
+
+
+@dataclass(frozen=True)
 class Briefing:
     """A briefing split by line kind. `header` is the first line that is not
     a warning, `standing_rulings` start with the ruling mark, `items` with an
     item mark, and `warnings` carry a warning marker anywhere. Any other line
-    is not kept. `handoff` is the baton block that leads a briefing (format
-    3), or None; its lines are only ever the baton's text, so what a baton
-    says can never read as a header, a ruling, an item or a warning. `raw` is
-    the text as given."""
+    outside the blocks below is not kept. `handoff` is the baton block that
+    leads a briefing (format 3), or None; its lines are only ever the baton's
+    text, so what a baton says can never read as a header, a ruling, an item
+    or a warning. `raw` is the text as given.
+
+    Format 4 adds the request furniture, each None when the section was not
+    in the text: `requests`, `verdicts`, `owed` and `overdue` (a `Panel`
+    each), `decisions` (the count line) and `withheld` (the trailer). A panel
+    is a block that opens at its frozen header and closes at the next blank
+    line; everything inside it lands in that panel and nowhere else (a
+    column-0 warning line also lands in `warnings`, which only daimon can
+    write there)."""
 
     header: str = ""
     standing_rulings: tuple = ()
@@ -199,25 +258,107 @@ class Briefing:
     warnings: tuple = ()
     raw: str = ""
     handoff: Handoff | None = None
+    requests: Panel | None = None
+    verdicts: Panel | None = None
+    owed: Panel | None = None
+    overdue: Panel | None = None
+    decisions: DecisionCount | None = None
+    withheld: Withheld | None = None
 
 
 _HANDOFF_TITLE = _re.compile(
     "^" + _re.escape(_marks.HANDOFF_LEAD) + "(" + _re.escape(_marks.HANDOFF_BY_HUMAN) + "|"
     + _re.escape(_marks.HANDOFF_BY_AGENT) + r"), (.*)\):$")
 _ARROW = _marks.HANDOFF_LINE_MARK + " "
+_REQUEST_ID = _re.compile(_marks.REQUEST_ID_PATTERN)
+_MORE = _re.compile(r"^\(\+(\d+) more ")
+_CUT = _re.compile(r"^\((\d+) cut for budget, see: ")
+
+
+def _template(template: str, **groups: str) -> str:
+    """`template` as a regex source: its literal text escaped and each
+    `{name}` replaced by the group source in `groups`."""
+    source = _re.escape(template)
+    for name, group in groups.items():
+        source = source.replace(_re.escape("{" + name + "}"), group)
+    return source
+
+
+_ELSEWHERE = "(?:" + _template(_marks.DECISION_ELSEWHERE,
+                               n=r"(?P<e>\d+)") + ")?"
+_COUNT = [_re.compile("^" + _template(t, n=r"(?P<n>\d+)",
+                                      elsewhere=_ELSEWHERE) + "$")
+          for t in (_marks.DECISION_COUNT_PLURAL,
+                    _marks.DECISION_COUNT_SINGULAR)]
+_RESOLVED = _re.compile(r"^(\d+) " + _re.escape(_marks.WITHHELD_RESOLVED))
+_QUARANTINED = _re.compile(r"^(\d+) " + _re.escape(_marks.WITHHELD_QUARANTINED))
+_PANEL_FIELDS = {"request": "requests", "verdict": "verdicts", "owed": "owed",
+                 "overdue": "overdue"}
+
+
+class _Block:
+    """The panel being read: its fields so far. `discard` swallows a repeat."""
+
+    def __init__(self, name: str, discard: bool):
+        self.name, self.discard = name, discard
+        self.cards: list = []        # [request_id, line, [detail...]]
+        self.more = self.cut = 0
+        self.lines: list = []
+
+    def take(self, raw: str, stripped: str, warnings: list) -> None:
+        """One non-blank line of the block, whatever it says."""
+        if self.discard:
+            return
+        self.lines.append(raw)
+        if raw.startswith(_marks.WARNING_MARK):
+            warnings.append(stripped)
+        elif not raw.startswith(_marks.PANEL_INDENT):
+            found = _REQUEST_ID.search(raw)
+            if found:
+                self.cards.append([found.group(0), raw, []])
+        else:
+            text = raw[len(_marks.PANEL_INDENT):].strip()
+            if (more := _MORE.match(text)):
+                self.more = int(more.group(1))
+            elif (cut := _CUT.match(text)):
+                self.cut = int(cut.group(1))
+            elif text != _marks.OWED_CLOSE_LINE and self.cards:
+                self.cards[-1][2].append(text)
+
+    def panel(self) -> Panel:
+        return Panel(tuple(PanelCard(i, line, tuple(d))
+                           for i, line, d in self.cards),
+                     self.more, self.cut, tuple(self.lines))
 
 
 def parse_briefing(text: str) -> Briefing:
-    """Split `daimon brief` text into header, standing rulings, items and
-    warnings. Tolerant: a line of none of those kinds is dropped, never an
-    error. The warning markers are checked first for every line, so a note
-    above the greeting never becomes the header."""
+    """Split `daimon brief` text into header, standing rulings, items,
+    warnings, the baton and, from format 4, the request furniture. Tolerant:
+    a line of none of those kinds is dropped, never an error. The warning
+    markers are checked first for every line, so a note above the greeting
+    never becomes the header.
+
+    Block state is by header, never by mark: `→` is both the baton's line
+    mark and the request card mark, and `✓` both an owed card and an
+    accepted verdict, so only the block says which. A panel header opens a
+    block only before the first item (daimon prints the panels above the
+    sections), and only the first block of each name is kept: a repeat is
+    swallowed whole, so text a peer got into the briefing can neither replace
+    a real panel nor leak lines into the rulings or the items. This is sound
+    because every foreign field a panel prints is one physical line, so a
+    blank line or a line start inside a block is always daimon's."""
     header = ""
     rulings: list = []
     items: list = []
     warnings: list = []
     handoff = None
     open_baton: tuple | None = None    # (tier, ts, lines) while in the block
+    block: _Block | None = None
+    panels: dict = {}
+    seen_panels: set = set()
+    decisions = None
+    resolved = quarantined = None
+    item_seen = False
     for line in text.splitlines():
         stripped = line.strip()
         if open_baton is not None:
@@ -227,6 +368,14 @@ def parse_briefing(text: str) -> Briefing:
             handoff = Handoff("\n".join(open_baton[2]), open_baton[1],
                               open_baton[0])
             open_baton = None
+        if block is not None:
+            if stripped:
+                block.take(line, stripped, warnings)
+                continue
+            if not block.discard:
+                panels[_PANEL_FIELDS[block.name]] = block.panel()
+            block = None
+            continue
         if not stripped:
             continue
         titled = (_HANDOFF_TITLE.match(stripped)
@@ -235,18 +384,48 @@ def parse_briefing(text: str) -> Briefing:
             tier = "human" if titled[1] == _marks.HANDOFF_BY_HUMAN else "agent"
             open_baton = (tier, titled[2], [])
             continue
+        name = _marks.PANEL_HEADERS.get(stripped) if line == stripped else None
+        if name and not item_seen:
+            block = _Block(name, name in seen_panels)
+            seen_panels.add(name)
+            continue
+        if stripped == _marks.RULINGS_HEADER:
+            continue
+        if decisions is None and not item_seen:
+            for rx in _COUNT:
+                counted = rx.match(stripped)
+                if counted:
+                    found = counted.groupdict()
+                    decisions = DecisionCount(int(found.get("n") or 1),
+                                              int(found.get("e") or 0))
+                    break
+            if decisions is not None:
+                continue
+        if resolved is None and (m := _RESOLVED.match(stripped)):
+            resolved = int(m.group(1))
+            continue
+        if quarantined is None and (m := _QUARANTINED.match(stripped)):
+            quarantined = int(m.group(1))
+            continue
         if any(marker in stripped for marker in WARNING_MARKERS):
             warnings.append(stripped)
+            continue
+        if stripped.startswith(RULING_MARK):
+            rulings.append(stripped)
             continue
         if not header:
             header = stripped
             continue
-        if stripped.startswith(RULING_MARK):
-            rulings.append(stripped)
-        elif stripped.startswith(ITEM_MARKS):
+        if stripped.startswith(ITEM_MARKS):
             items.append(stripped)
+            item_seen = True
     if open_baton is not None:
         handoff = Handoff("\n".join(open_baton[2]), open_baton[1],
                           open_baton[0])
+    if block is not None and not block.discard:
+        panels[_PANEL_FIELDS[block.name]] = block.panel()
+    withheld = (Withheld(resolved or 0, quarantined or 0)
+                if resolved is not None or quarantined is not None else None)
     return Briefing(header, tuple(rulings), tuple(items), tuple(warnings),
-                    text, handoff)
+                    text, handoff, decisions=decisions, withheld=withheld,
+                    **panels)

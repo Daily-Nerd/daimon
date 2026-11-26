@@ -187,7 +187,8 @@ def test_the_withheld_trailer_is_neither_header_item_nor_warning(
     assert got.header == briefing.GREETING
     blob = "\n".join([got.header, *got.standing_rulings, *got.items,
                       *got.warnings])
-    assert "withheld" not in blob          # dropped, by design: pinned here
+    assert "withheld" not in blob          # a field of its own since format 4
+    assert got.withheld == api.Withheld(resolved=0, quarantined=1)
 
 
 def test_the_no_briefing_line_is_plain_and_not_a_warning(

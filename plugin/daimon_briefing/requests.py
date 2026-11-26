@@ -47,8 +47,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping, NamedTuple
 
-from . import (buckets, clock, config, display, identity, jsonl, normalize,
-               policy, redact, refutations, scope, store, surfaces)
+from . import (buckets, clock, config, display, identity, jsonl, marks,
+               normalize, policy, redact, refutations, scope, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. `authority.py` owns the tier a
 # channel carries, so a future channel tier ("ui", "signed") stays consistent
@@ -410,8 +410,7 @@ CLOSE_RULE = (
     "ruling; reject and needs-info are a person's. On an ask nobody "
     "accepted, an agent `done` is only a pending claim that lands when a "
     "person accepts.")
-CLOSE_RULE_SHORT = ("Accepted and owed. Close one now, no human needed: "
-                    "`daimon request done <id> --evidence …`")
+CLOSE_RULE_SHORT = marks.OWED_CLOSE_LINE
 CLOSE_RULE_HELP = ("An agent may run this on an accepted ask without asking "
                    "the human.")
 # Per-brief render budget (D2). Over-cap renders a loud "+N more waiting"
