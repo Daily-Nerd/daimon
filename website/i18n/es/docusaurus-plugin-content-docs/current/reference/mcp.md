@@ -28,6 +28,8 @@ daimon mcp serve   # bloquea y sirve JSON-RPC por stdio hasta EOF
 
 {/* end generated:mcp-tools */}
 
+`daimon_brief` lleva el mismo contenido que imprime `daimon brief` (mira [Formato del briefing](./briefing-format.md)): el batón, las reglas vigentes, el conteo de decisiones, los cuatro paneles de pedidos, una advertencia de formato de versión y el pie de lo retenido. Eso la convierte en la vía de briefing para un host sin hook de briefing, como Windsurf. Los paneles leen solo el proyecto propio de quien llama; `slug`, o un `project` bajo `DAIMON_MODEL_CROSS_PROJECT`, no muestra ninguno. Una vez escrita la respuesta, cada tarjeta de pedido o de decisión que imprimió completa se marca como vista por quien la envió (una fila `surfaced` en el ledger de este proyecto), una vez por tarjeta. Esa marca es registro de entrega, como el conteo de uso, no memoria: nunca cambia lo que devuelve una lectura. `requests_inbox` es el listado completo de los mismos pedidos.
+
 Las filas de `requests_inbox` llevan `severity` y `severity_reason` (una fila `normal` tiene la razón vacía), y el texto en cuarentena u olvidado vuelve como marcador o en blanco. La tabla de arriba lista los argumentos de las herramientas tal como el servidor se los envía a un cliente.
 
 Las cinco llevan `readOnlyHint`. Los verbos por id de item existen en la CLI,
@@ -144,5 +146,5 @@ omitir `DAIMON_PROJECT_DIR` — el directorio de trabajo resuelve igual.
 
 Nota: en hosts donde los hooks de daimon ya corren, el briefing por hook es
 la integración más rica — el servidor MCP es para lecturas a demanda y para
-hosts sin hooks. Correr ambos está bien; las herramientas son de solo
-lectura.
+hosts sin hooks. Correr ambos está bien; ninguna herramienta cambia tu
+memoria.

@@ -26,6 +26,26 @@ goes in by `--transcript`, because nothing in its file names the project. An
 it neither way; Hermes, which has no page here, sits on that side with Gemini
 CLI.
 
+## What every briefing carries
+
+Whatever route delivers it, a briefing carries the same furniture around the
+body: the baton, the standing rulings, the decision count, the four request
+panels (requests waiting on you, decisions on requests you sent, requests you
+owe, requests nobody is moving), a format-version warning and the withheld
+trailer. One composer writes it, so the bytes match; see
+[Briefing format](../reference/briefing-format.md).
+
+| Route | Hosts | Request furniture |
+|---|---|---|
+| `daimon brief` run by a hook | Claude Code, Codex, Gemini CLI (session start), Kimi Code (first prompt) | Supported. Anchor drift and `--team` are also CLI-only extras. |
+| MCP `daimon_brief` | Windsurf (no briefing hook, the agent calls the tool), and any other MCP host | Supported. Marked as seen once the response is written. |
+| Hermes in-process hook | Hermes | Supported. |
+| Python API `render_briefing` | Embedding hosts | Supported. Marked as seen on return; `preview_briefing` marks nothing. |
+
+The panels belong to a project's own briefing. A read of another project (a
+slug, or a path under the cross-project grant) shows none of them and marks
+nothing as seen for that project.
+
 ## Three moving parts
 
 Every host setup combines up to three pieces, installed independently:

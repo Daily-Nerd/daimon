@@ -26,6 +26,27 @@ proyecto. Uno marcado «no soportada» no tiene una raíz de transcripciones que
 daimon registre, así que la importación no llega por ninguna vía; Hermes, que
 no tiene página acá, está de ese lado junto con Gemini CLI.
 
+## Qué lleva todo briefing
+
+Por la vía que llegue, un briefing lleva lo mismo alrededor del cuerpo: el
+batón, las reglas vigentes, el conteo de decisiones, los cuatro paneles de
+pedidos (pedidos que esperan tu respuesta, decisiones sobre pedidos que
+enviaste, pedidos que debes, pedidos que nadie mueve), una advertencia de
+formato de versión y el pie de lo retenido. Lo escribe un único compositor,
+así que los bytes coinciden; mira
+[Formato del briefing](../reference/briefing-format.md).
+
+| Vía | Hosts | Pedidos y paneles |
+|---|---|---|
+| `daimon brief` ejecutado por un hook | Claude Code, Codex, Gemini CLI (inicio de sesión), Kimi Code (primer prompt) | Soportado. La deriva de anclas y `--team` también son extras solo de la CLI. |
+| MCP `daimon_brief` | Windsurf (sin hook de briefing, el agente llama la herramienta) y cualquier otro host MCP | Soportado. Se marca como visto cuando la respuesta ya se escribió. |
+| Hook en proceso de Hermes | Hermes | Soportado. |
+| API de Python `render_briefing` | Hosts que embeben daimon | Soportado. Se marca como visto al volver; `preview_briefing` no marca nada. |
+
+Los paneles pertenecen al briefing del propio proyecto. Una lectura de otro
+proyecto (un slug, o una ruta bajo el permiso entre proyectos) no muestra
+ninguno y no marca nada como visto para ese proyecto.
+
 ## Tres piezas móviles
 
 Cada configuración de host combina hasta tres piezas, instaladas de forma

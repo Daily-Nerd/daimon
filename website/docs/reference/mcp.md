@@ -27,6 +27,8 @@ daimon mcp serve   # blocks, serves JSON-RPC on stdio until EOF
 
 {/* end generated:mcp-tools */}
 
+`daimon_brief` carries the same briefing furniture `daimon brief` prints (see [Briefing format](./briefing-format.md)): the baton, the standing rulings, the decision count, the four request panels, a format-version warning and the withheld trailer. That makes it the briefing route for a host with no briefing hook, such as Windsurf. The panels read the caller's own project only; `slug`, or a `project` path under `DAIMON_MODEL_CROSS_PROJECT`, shows none. Once the response has been written, each request or decision card it printed whole is marked as seen by its sender (a `surfaced` row in this project's own ledger), once per card. That mark is delivery bookkeeping like the usage count, not memory: it never changes what any read returns. `requests_inbox` is the full listing of the same requests.
+
 `requests_inbox` rows carry `severity` and `severity_reason` (a `normal` row has an empty reason), and quarantined or forgotten text in them comes back as a marker or blank. The table above lists the arguments of the tools as the server sends them to a client.
 
 All five carry `readOnlyHint`. Item-id verbs exist on the CLI, the viewer and
