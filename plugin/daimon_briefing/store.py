@@ -402,6 +402,15 @@ def bucket_root(project_dir_or_slug) -> str | None:
     return text or None
 
 
+def root_below(child, parent) -> bool:
+    """Whether `child` is `parent` or lies below it, separator-bounded and
+    `normcase`-compared like `root_eq`. One implementation (`hostgit.below`,
+    which `store` cannot be imported by); the only containment test for live
+    realpath'd roots, so layer containment and the sealed-git ceiling cannot
+    disagree about case."""
+    return hostgit.below(str(child), str(parent))
+
+
 def root_eq(a, b) -> bool:
     """Whether two recorded or resolved locations name the same directory.
 
@@ -448,7 +457,6 @@ def buckets_under(layer_dir) -> list:
         if not base.is_dir():
             return []
         layer_root = os.path.realpath(str(layer_dir))
-        bounded = layer_root if layer_root.endswith(os.sep) else layer_root + os.sep
         out = []
         for entry in bucket_dirs().buckets:
             recorded = bucket_root(entry.name)
@@ -458,7 +466,8 @@ def buckets_under(layer_dir) -> list:
                 recorded_real = os.path.realpath(recorded)
             except (OSError, ValueError):
                 continue
-            if recorded_real.startswith(bounded):
+            if (root_below(recorded_real, layer_root)
+                    and not root_eq(recorded_real, layer_root)):
                 out.append((entry.name, recorded_real))
         return out
     except OSError:
@@ -495,8 +504,8 @@ def _pointer_lock(d: Path):
     """Serialize the check-rotate-write pointer sequence in dir `d` (#31):
     two sessions ending together interleave _pointer_regresses / rotation /
     the latest write (multi-step TOCTOU) — one can clobber the prev-N chain
-    or let an older checkpoint win `latest`. The mechanics (flock on a
-    sidecar dotfile, bounded wait, fail-open, yields whether the lock was
+    or let an older checkpoint win `latest`. The mechanics (a platform lock
+    on a sidecar dotfile, bounded wait, fail-open, yields whether the lock was
     acquired) live in `jsonl.dir_lock`, which every ledger append and
     rewrite shares."""
     return jsonl.dir_lock(d)
@@ -542,7 +551,7 @@ def _advance_pointers(d: Path, blob: str, new_epoch: float | None,
 def _advance_pointers_held(d: Path, blob: str, new_epoch: float | None,
                            rotate: bool, history: int) -> bool:
     """`_advance_pointers` for a caller that ALREADY holds `_pointer_lock(d)`
-    (the lock is a flock on a sidecar, so taking it again from the same
+    (the lock is on a sidecar, so taking it again from the same
     process would wait on itself). `bucket merge` plans and changes a live
     bucket's chain in one critical section and promotes through this."""
     if _pointer_regresses(d, new_epoch):

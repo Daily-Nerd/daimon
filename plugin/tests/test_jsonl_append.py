@@ -4,7 +4,6 @@ Fixtures are plain bytes; reads go back through `jsonl.read`, the judge of
 what a ledger file is, never through the appenders under test.
 """
 
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -139,7 +138,7 @@ def test_a_contended_lock_fails_open_after_the_retry_budget(
     monkeypatch.setattr(jsonl, "_LOCK_TRIES", 4)
     monkeypatch.setattr(jsonl.time, "sleep", sleeps.append)
     holder = open(tmp_path / ".pointer.lock", "a+")
-    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    jsonl.lock_fd(holder.fileno())
     try:
         assert jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED) == 1
     finally:
@@ -155,7 +154,7 @@ def test_ledger_lock_excludes_a_second_holder(tmp_path):
         probe = open(tmp_path / ".pointer.lock", "a+")
         try:
             try:
-                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                jsonl.lock_fd(probe.fileno())
                 got = True
             except OSError:
                 got = False
@@ -252,9 +251,9 @@ def test_replace_and_rewrite_with_lock_false_leave_no_sidecar(tmp_path):
     assert not (tmp_path / ".pointer.lock").exists()
 
 
-def test_without_fcntl_the_lock_yields_not_held_and_append_still_lands(
+def test_without_a_lock_primitive_the_lock_yields_not_held_and_append_still_lands(
         tmp_path, monkeypatch):
-    monkeypatch.setattr(jsonl, "_fcntl", None)
+    monkeypatch.setattr(jsonl, "_lock", None)
     with jsonl.dir_lock(tmp_path) as held:
         assert held is False
     path = tmp_path / "l.jsonl"
@@ -265,17 +264,17 @@ def test_without_fcntl_the_lock_yields_not_held_and_append_still_lands(
 
 def test_a_failed_unlock_exits_cleanly_and_the_append_landed(
         tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    real = fcntl
+    real = jsonl._lock
 
-    def flock(fd, op):
-        if op == real.LOCK_UN:
+    class FailingUnlock:
+        pins_files = real.pins_files
+        acquire = staticmethod(real.acquire)
+
+        @staticmethod
+        def release(fd):
             raise OSError("unlock failed")
-        return real.flock(fd, op)
 
-    monkeypatch.setattr(jsonl, "_fcntl", SimpleNamespace(
-        LOCK_EX=real.LOCK_EX, LOCK_NB=real.LOCK_NB, LOCK_UN=real.LOCK_UN,
-        flock=flock))
+    monkeypatch.setattr(jsonl, "_lock", FailingUnlock)
     path = tmp_path / "l.jsonl"
     assert jsonl.append_lines(path, ['{"a": 1}'], posture=WritePosture.PROCEED) == 1
     assert path.read_bytes() == b'{"a": 1}\n'

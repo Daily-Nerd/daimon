@@ -6,7 +6,6 @@ agree with them.
 """
 
 import errno
-import fcntl
 
 import pytest
 
@@ -205,7 +204,7 @@ def test_a_lazy_posture_is_judged_under_the_ledger_lock(tmp_path):
         fh = open(path.parent / jsonl.LOCK_NAME, "a+")
         try:
             try:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                jsonl.lock_fd(fh.fileno())
                 seen.append("free")
             except OSError:
                 seen.append("held")

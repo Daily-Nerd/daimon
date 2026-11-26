@@ -593,7 +593,7 @@ SURFACES: tuple[Surface, ...] = (
     #    copy them (receipts._sidecar_path). The suffix exemption. --
     Surface("checkpoints/**/*.receipt", "receipts._atomic_write_text",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
-    # jsonl.dir_lock (store._pointer_lock delegates): empty flock sidecar,
+    # jsonl.dir_lock (store._pointer_lock delegates): empty lock sidecar,
     # opened a+, never written; every bucket ledger append and rewrite takes it.
     Surface("checkpoints/**/.pointer.lock", "jsonl.dir_lock",
             False, "exempt-no-plaintext", "none", audit_exempt=True),
@@ -705,7 +705,7 @@ SURFACES: tuple[Surface, ...] = (
                         "stderr, not keyed by project)"),)),
     Surface("logs/heartbeats/*", "ledger.touch_heartbeat",
             False, "exempt-no-plaintext", "none"),
-    # heal.try_lock: the machine-wide heal flock (#1179). An empty sidecar,
+    # heal.try_lock: the machine-wide heal lock (#1179). An empty sidecar,
     # opened a+ and never written, modelled on `.pointer.lock` above.
     Surface("logs/.heal.lock", "heal.try_lock",
             False, "exempt-no-plaintext", "none", audit_exempt=True),

@@ -267,8 +267,11 @@ def armed_for(cwd, manifest) -> list:
         root = entry.get("project_dir")
         if not isinstance(root, str) or not root:
             continue
-        bounded = root if root.endswith(os.sep) else root + os.sep
-        if here == root or here.startswith(bounded):
+        # normcase on both sides, like every root comparison: on a
+        # case-insensitive volume the same folder in another case is armed.
+        nroot, nhere = os.path.normcase(root), os.path.normcase(here)
+        bounded = nroot if nroot.endswith(os.sep) else nroot + os.sep
+        if nhere == nroot or nhere.startswith(bounded):
             out.append(entry)
     return out
 

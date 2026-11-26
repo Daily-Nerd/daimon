@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from daimon_briefing import config, normalize, serializer, store
+from daimon_briefing import config, jsonl, normalize, serializer, store
 from daimon_briefing.surfaces import Writer
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -1274,7 +1274,6 @@ def test_pointer_lock_excludes_second_holder(tmp_checkpoint_dir):
     # sessions end together. The critical section is now flock-guarded; a
     # second would-be holder cannot acquire while the first holds it.
     import pytest
-    fcntl = pytest.importorskip("fcntl")
     d = tmp_checkpoint_dir
     d.mkdir(parents=True, exist_ok=True)
     with store._pointer_lock(d) as held:
@@ -1282,7 +1281,7 @@ def test_pointer_lock_excludes_second_holder(tmp_checkpoint_dir):
         probe = open(d / store._LOCK_NAME, "a+")
         try:
             with pytest.raises(OSError):
-                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                jsonl.lock_fd(probe.fileno())
         finally:
             probe.close()
 

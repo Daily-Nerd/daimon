@@ -18,7 +18,7 @@ import pytest
 
 from daimon_briefing import buckets, config, jsonl, scope, store
 from tests.test_bucket_merge import _dir, _snapshot
-from tests._lockhooks import FirstFlockHook
+from tests._lockhooks import FirstLockHook
 from tests.test_bucket_migration import _row
 
 
@@ -88,7 +88,7 @@ def _other_merge_wins_first(monkeypatch, src, dst):
     first sidecar and is about to be granted the flock when another merge
     `src -> dst` runs to completion and folds its source away. The grant then
     lands on an inode that merge unlinked."""
-    monkeypatch.setattr(jsonl, "_fcntl", FirstFlockHook(
+    monkeypatch.setattr(jsonl, "_lock", FirstLockHook(
         lambda: buckets.merge(src, dst, apply=True, force=True)))
 
 
@@ -365,7 +365,7 @@ def test_a_migrate_rename_never_replaces_a_target_born_after_its_check(
     legacy = _populate_legacy(link, [("S1", "2026-09-01T00:00:00Z")])
     _plant(legacy, {"events.jsonl": _row("e1")})
     target = tmp_checkpoint_dir / store.project_bucket(real)
-    monkeypatch.setattr(jsonl, "_fcntl", FirstFlockHook(target.mkdir))
+    monkeypatch.setattr(jsonl, "_lock", FirstLockHook(target.mkdir))
     record = buckets.migrate(link)
     assert record["mode"] == "merge"
     assert json.loads((target / "events.jsonl").read_text().splitlines()[0])[
@@ -459,7 +459,7 @@ def test_migrate_renames_on_a_platform_without_locks(tmp_checkpoint_dir,
     link = tmp_path / "ln"
     legacy = _populate_legacy(link, [("S1", "2026-09-01T00:00:00Z")])
     _plant(legacy, {"events.jsonl": _row("e1")})
-    monkeypatch.setattr(jsonl, "_fcntl", None)
+    monkeypatch.setattr(jsonl, "_lock", None)
     assert jsonl.locking_available() is False
     record = buckets.migrate(link)
     assert record["mode"] == "rename"

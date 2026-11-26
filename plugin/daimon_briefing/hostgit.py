@@ -187,7 +187,14 @@ class Declaration:
     origin_url: str | None = None
 
 
-_declared: dict[str, Declaration] = {}
+def _key(path) -> str:
+    """The one key a root is compared by: `normcase(realpath)`, the way
+    recorded roots are (`store.root_eq`). Case-sensitive where the platform
+    is, so POSIX is unchanged."""
+    return os.path.normcase(os.path.realpath(path))
+
+
+_declared: dict[str, Declaration] = {}  # keyed by `_key(root)`
 
 _configured: Posture | None = None
 _ceiling: str | None = None
@@ -369,7 +376,16 @@ def _refuse(path, code: str) -> Refused:
     return Refused(code)
 
 
-def _below(child: str, parent: str) -> bool:
+def below(child: str, parent: str) -> bool:
+    """`child` is `parent` or lies below it, separator-bounded. Compared the
+    way recorded roots are (`store.root_eq`): `normcase` on both sides, so a
+    path in another case on a case-insensitive volume is still below.
+
+    The one containment test for live (realpath'd) roots. It is defined here,
+    not beside `root_eq`, because `store` imports this module and this module
+    imports nothing from the package; `store.root_below` is the same function
+    under the name the rest of the package uses."""
+    child, parent = os.path.normcase(child), os.path.normcase(parent)
     return child == parent or child.startswith(parent.rstrip(os.sep) + os.sep)
 
 
@@ -422,7 +438,7 @@ def _seal(path) -> Checkout | Refused:
         return _refuse(raw, "not-a-dir")
     real = os.path.realpath(raw)
     top = ceiling()
-    if not _below(real, top):
+    if not below(real, top):
         return _refuse(raw, "outside-ceiling")
     dec = _declaration_covering(real)
     if dec is not None:
@@ -618,7 +634,7 @@ def origin_url(path, timeout: float = ORIGIN_TIMEOUT) -> str | None:
         co = project(path)
         if isinstance(co, Refused):
             return None
-        stated = _declared.get(co.root)
+        stated = _declared.get(_key(co.root))
         if stated is not None and stated.origin_url is not None:
             return stated.origin_url
         done = _sealed_config(co, "--get", "remote.origin.url")
@@ -877,8 +893,8 @@ def declare(root, *, slug: str, origin_url: str | None = None) -> Declaration:
     if origin_url is not None and not isinstance(origin_url, str):
         raise ValueError("origin_url must be a string or None")
     new = Declaration(os.path.realpath(root), slug, origin_url)
-    old = _declared.setdefault(new.root, new)
-    if old != new:
+    old = _declared.setdefault(_key(new.root), new)
+    if (old.slug, old.origin_url) != (new.slug, new.origin_url):
         raise ValueError(f"{new.root} is already declared as {old}, "
                          f"cannot redeclare it as {new}")
     return old
@@ -886,7 +902,7 @@ def declare(root, *, slug: str, origin_url: str | None = None) -> Declaration:
 
 def declared(root) -> Declaration | None:
     """The declaration for exactly this root (symlinks resolved), or None."""
-    return _declared.get(os.path.realpath(root))
+    return _declared.get(_key(root))
 
 
 def declared_slug(path) -> str | None:
@@ -898,15 +914,16 @@ def declared_slug(path) -> str | None:
     text = os.fspath(path) if not isinstance(path, str) else path
     if not os.path.isabs(text) or not _sealed():
         return None
-    found = _declared.get(os.path.realpath(text))
+    found = _declared.get(_key(text))
     return None if found is None else found.slug
 
 
 def _declaration_covering(real: str) -> Declaration | None:
     """The deepest declared root that `real` is, or is below."""
     best = None
-    for root, dec in _declared.items():
-        if _below(real, root) and (best is None or len(root) > len(best.root)):
+    for dec in _declared.values():
+        if below(real, dec.root) and (best is None
+                                       or len(dec.root) > len(best.root)):
             best = dec
     return best
 
@@ -1068,7 +1085,8 @@ def fetch_local(lead: Checkout, member: Checkout, branch: str,
     refusal is rc 125, a hang rc 124; TypeError / RuntimeError as `run()`."""
     _need_sealed_checkout(lead)
     _need_sealed_checkout(member)
-    if lead.root == member.root or lead.gitdir == member.gitdir:
+    if (_key(lead.root) == _key(member.root)
+            or _key(lead.gitdir) == _key(member.gitdir)):
         raise ValueError("lead and member are the same repository")
     for label, text in (("branch", branch), ("member_name", member_name)):
         problem = valid_ref_component(text)
@@ -1108,7 +1126,7 @@ def init(path, *, timeout: float = SIDECAR_TIMEOUT) -> Checkout | Refused:
         return _refuse(raw, "not-a-dir")
     real = os.path.realpath(raw)
     top = ceiling()
-    if real == top or not _below(real, top):
+    if os.path.normcase(real) == os.path.normcase(top) or not below(real, top):
         return _refuse(raw, "outside-ceiling")
     no_entry = _lstat(os.path.join(real, ".git")) is None
     if no_entry:

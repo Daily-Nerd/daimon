@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from daimon_briefing import heal, ledger
+from daimon_briefing import heal, jsonl, ledger
 
 NOW = 1_800_000_000.0
 
@@ -330,8 +330,8 @@ def test_the_lock_is_released_when_the_body_raises(log_dir):
         assert again is True
 
 
-def test_the_lock_fails_open_without_fcntl(log_dir, monkeypatch):
-    monkeypatch.setattr(heal, "_fcntl", None)
+def test_the_lock_fails_open_without_a_primitive(log_dir, monkeypatch):
+    monkeypatch.setattr(jsonl, "_lock", None)
     with heal.try_lock() as a, heal.try_lock() as b:
         assert a is True and b is True
 
@@ -345,15 +345,17 @@ def test_the_lock_fails_open_when_the_dir_is_unwritable(tmp_path, monkeypatch):
 
 
 def test_a_failing_unlock_never_breaks_the_caller(log_dir, monkeypatch):
+    real = jsonl._lock
+
     class Stub:
-        LOCK_EX, LOCK_NB, LOCK_UN = 1, 2, 8
+        pins_files = real.pins_files
+        acquire = staticmethod(real.acquire)
 
         @staticmethod
-        def flock(fd, op):
-            if op == Stub.LOCK_UN:
-                raise OSError("unlock failed")
+        def release(fd):
+            raise OSError("unlock failed")
 
-    monkeypatch.setattr(heal, "_fcntl", Stub)
+    monkeypatch.setattr(jsonl, "_lock", Stub)
     with heal.try_lock() as got:
         assert got is True
 
