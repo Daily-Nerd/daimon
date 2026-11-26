@@ -245,3 +245,62 @@ def test_daimon_loops_builds_none_of_the_briefing_furniture(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", seed.PROJECT)
     assert cli.main(["loops"]) == 0
     capsys.readouterr()
+
+
+# ---- the edges of the composer, the preview and the parser -----------------
+
+def test_a_block_with_no_card_is_only_notes_and_a_collapse_leaves_it_alone():
+    notes = briefing.PanelBlock("request", ("⚠ a sender was left out",), ())
+    assert briefing._collapse_panel(notes, "daimon request inbox") == [
+        "⚠ a sender was left out"]
+
+
+def test_a_warning_inside_a_panel_block_is_also_a_warning(tmp_checkpoint_dir):
+    from daimon_briefing import api
+    text = "\n".join([briefing._REQUEST_PANEL_HEADER,
+                      "→ q-aaaaaaaaaaaa  one", "  From: x",
+                      "⚠ a sender was left out", ""])
+    got = api.parse_briefing(text)
+    assert got.warnings == ("⚠ a sender was left out",)
+    assert got.requests.lines[-1] == "⚠ a sender was left out"
+    assert [c.request_id for c in got.requests.cards] == ["q-aaaaaaaaaaaa"]
+
+
+def test_the_preview_never_raises(tmp_checkpoint_dir, monkeypatch):
+    from daimon_briefing import api
+
+    def boom(*a, **k):
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(briefing, "compose", boom)
+    got = api.preview_briefing(seed.PROJECT)
+    assert got.state == "unavailable" and got.text == ""
+    assert "secret detail" not in repr(got)
+
+
+def test_the_teammates_follow_a_briefing_that_has_no_body():
+    from tests import _prepared as prep
+    annotated = prep.annotated_of(None, snap=prep.synthetic())
+    composed = briefing.compose(
+        annotated, orientation=briefing.Orientation(no_checkpoint="no body"),
+        teammate_blocks=("\n[mate]",), teammate_header="Teammates:")
+    assert composed.text == "no body\n\nTeammates:\n[mate]\n"
+
+
+def test_a_closed_checkpoint_in_hand_renders_the_greeting_and_the_closed_line():
+    from tests import _prepared as prep
+    text = briefing.render(None, snap=prep.synthetic(closed=True))
+    assert text == f"{briefing.GREETING}\n\n{briefing.CLOSED_LINE}"
+
+
+def test_the_rich_brief_prints_the_format_version_note(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    pytest.importorskip("rich")
+    from daimon_briefing import render
+    from tests import _prepared as prep
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    cp = {"session_id": "S", "format_version": "0.0.1",
+          "working_context": {"recent_decisions": [
+              {"text": "x", "trust": "inferred"}]}}
+    prep.render_brief(cp, snap=prep.synthetic())
+    assert "checkpoint format 0.0.1" in capsys.readouterr().out
