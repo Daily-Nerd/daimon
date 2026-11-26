@@ -376,10 +376,15 @@ def _refuse(path, code: str) -> Refused:
     return Refused(code)
 
 
-def _below(child: str, parent: str) -> bool:
+def below(child: str, parent: str) -> bool:
     """`child` is `parent` or lies below it, separator-bounded. Compared the
     way recorded roots are (`store.root_eq`): `normcase` on both sides, so a
-    path in another case on a case-insensitive volume is still below."""
+    path in another case on a case-insensitive volume is still below.
+
+    The one containment test for live (realpath'd) roots. It is defined here,
+    not beside `root_eq`, because `store` imports this module and this module
+    imports nothing from the package; `store.root_below` is the same function
+    under the name the rest of the package uses."""
     child, parent = os.path.normcase(child), os.path.normcase(parent)
     return child == parent or child.startswith(parent.rstrip(os.sep) + os.sep)
 
@@ -433,7 +438,7 @@ def _seal(path) -> Checkout | Refused:
         return _refuse(raw, "not-a-dir")
     real = os.path.realpath(raw)
     top = ceiling()
-    if not _below(real, top):
+    if not below(real, top):
         return _refuse(raw, "outside-ceiling")
     dec = _declaration_covering(real)
     if dec is not None:
@@ -917,7 +922,7 @@ def _declaration_covering(real: str) -> Declaration | None:
     """The deepest declared root that `real` is, or is below."""
     best = None
     for dec in _declared.values():
-        if _below(real, dec.root) and (best is None
+        if below(real, dec.root) and (best is None
                                        or len(dec.root) > len(best.root)):
             best = dec
     return best
@@ -1121,7 +1126,7 @@ def init(path, *, timeout: float = SIDECAR_TIMEOUT) -> Checkout | Refused:
         return _refuse(raw, "not-a-dir")
     real = os.path.realpath(raw)
     top = ceiling()
-    if os.path.normcase(real) == os.path.normcase(top) or not _below(real, top):
+    if os.path.normcase(real) == os.path.normcase(top) or not below(real, top):
         return _refuse(raw, "outside-ceiling")
     no_entry = _lstat(os.path.join(real, ".git")) is None
     if no_entry:

@@ -19,7 +19,8 @@ import os
 
 import pytest
 
-from daimon_briefing import bucket_tools, hostgit, identity, store
+from daimon_briefing import (bucket_tools, checks_runtime, config, hostgit,
+                             identity, store)
 
 
 @pytest.fixture
@@ -150,11 +151,11 @@ def test_hostgit_below_is_separator_bounded_and_case_blind_on_windows(
     separator, and a different CASING of the same folder, which a
     case-insensitive volume treats as the same folder, is below it."""
     monkeypatch.setattr(os, "sep", "\\")
-    assert hostgit._below("C:\\r\\sub", "C:\\r")
-    assert not hostgit._below("C:\\rr", "C:\\r")
-    assert hostgit._below("c:\\r\\sub", "C:\\r")
-    assert hostgit._below("C:\\R", "c:\\r")
-    assert hostgit._below("C:/r/sub", "C:\\r")
+    assert hostgit.below("C:\\r\\sub", "C:\\r")
+    assert not hostgit.below("C:\\rr", "C:\\r")
+    assert hostgit.below("c:\\r\\sub", "C:\\r")
+    assert hostgit.below("C:\\R", "c:\\r")
+    assert hostgit.below("C:/r/sub", "C:\\r")
 
 
 def test_hostgit_declarations_are_found_in_any_casing_on_windows(
@@ -176,7 +177,9 @@ def test_hostgit_declarations_are_found_in_any_casing_on_windows(
         hostgit.configure(posture=hostgit.Posture.AMBIENT)
 
 
-def test_hostgit_declarations_stay_case_sensitive_on_posix(tmp_path):
+def test_hostgit_declarations_stay_case_sensitive_on_posix(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(os.path, "normcase", os.fspath)
     hostgit.configure(posture=hostgit.Posture.SEALED, ceiling=tmp_path)
     try:
         hostgit.declare(tmp_path / "Repo", slug="acme-widget")
@@ -185,6 +188,49 @@ def test_hostgit_declarations_stay_case_sensitive_on_posix(tmp_path):
         hostgit.configure(posture=hostgit.Posture.AMBIENT)
 
 
+def test_layer_containment_is_case_blind_on_windows(
+        tmp_path, monkeypatch, ntcase):
+    """`buckets_under` decides containment of recorded roots with the one
+    root comparison (#1401): a bucket stamped under `...\\Work\\repo` is
+    below a layer the caller names `...\\work`, and the layer itself is not
+    below itself."""
+    monkeypatch.setattr(os, "sep", "\\")
+    bucket = config.checkpoint_dir() / "-x"
+    bucket.mkdir(parents=True)
+    (bucket / "root").write_text(str(tmp_path / "Work" / "repo") + "\n",
+                                 encoding="utf-8")
+    below = store.buckets_under(str(tmp_path / "work"))
+    assert [slug for slug, _root in below] == ["-x"]
+    assert store.buckets_under(str(tmp_path / "WORK" / "repo")) == []
+
+
+def test_layer_containment_stays_case_sensitive_on_posix(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(os.path, "normcase", os.fspath)
+    monkeypatch.setattr(os, "sep", "/")
+    bucket = config.checkpoint_dir() / "-x"
+    bucket.mkdir(parents=True)
+    (bucket / "root").write_text(str(tmp_path / "Work" / "repo") + "\n",
+                                 encoding="utf-8")
+    assert store.buckets_under(str(tmp_path / "work")) == []
+    assert [s for s, _r in store.buckets_under(str(tmp_path / "Work"))] == ["-x"]
+
+
+def test_a_ruling_is_armed_from_a_directory_in_another_case_on_windows(
+        tmp_path, monkeypatch, ntcase):
+    """The standalone hook's own containment test follows the same rule."""
+    monkeypatch.setattr(os, "sep", "\\")
+    root = os.path.realpath(str(tmp_path / "Proj"))
+    manifest = checks_runtime.Manifest(
+        [{"ruling_id": "r-1", "project_dir": root, "match": "x",
+          "intent": "warn", "sha256": "a" * 64, "armed_at": "t"}], "")
+    here = os.path.realpath(str(tmp_path / "proj" / "src"))
+    assert len(checks_runtime.armed_for(here, manifest)) == 1
+    assert checks_runtime.armed_for(
+        os.path.realpath(str(tmp_path / "projx")), manifest) == []
+
+
 def test_hostgit_below_stays_case_sensitive_on_posix(monkeypatch):
     monkeypatch.setattr(os.path, "normcase", os.fspath)
-    assert not hostgit._below("/Users/a/sub", "/users/a")
+    monkeypatch.setattr(os, "sep", "/")
+    assert not hostgit.below("/Users/a/sub", "/users/a")

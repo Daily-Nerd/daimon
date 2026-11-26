@@ -82,9 +82,10 @@ def test_the_windows_primitive_locks_one_byte_from_offset_zero():
                           (FakeMsvcrt.LK_UNLCK, 0, 1)]
 
 
-def test_the_windows_primitive_reports_contention_as_blocking():
+def test_the_windows_primitive_reports_contention_as_blocking(tmp_path):
     prim, _ = windows_lock()
-    with tempfile.NamedTemporaryFile() as a, open(a.name, "rb") as b:
+    path = tmp_path / "f"
+    with open(path, "a+") as a, open(path, "a+") as b:
         prim.acquire(a.fileno())
         with pytest.raises(BlockingIOError):
             prim.acquire(b.fileno())

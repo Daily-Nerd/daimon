@@ -402,6 +402,15 @@ def bucket_root(project_dir_or_slug) -> str | None:
     return text or None
 
 
+def root_below(child, parent) -> bool:
+    """Whether `child` is `parent` or lies below it, separator-bounded and
+    `normcase`-compared like `root_eq`. One implementation (`hostgit.below`,
+    which `store` cannot be imported by); the only containment test for live
+    realpath'd roots, so layer containment and the sealed-git ceiling cannot
+    disagree about case."""
+    return hostgit.below(str(child), str(parent))
+
+
 def root_eq(a, b) -> bool:
     """Whether two recorded or resolved locations name the same directory.
 
@@ -448,7 +457,6 @@ def buckets_under(layer_dir) -> list:
         if not base.is_dir():
             return []
         layer_root = os.path.realpath(str(layer_dir))
-        bounded = layer_root if layer_root.endswith(os.sep) else layer_root + os.sep
         out = []
         for entry in bucket_dirs().buckets:
             recorded = bucket_root(entry.name)
@@ -458,7 +466,8 @@ def buckets_under(layer_dir) -> list:
                 recorded_real = os.path.realpath(recorded)
             except (OSError, ValueError):
                 continue
-            if recorded_real.startswith(bounded):
+            if (root_below(recorded_real, layer_root)
+                    and not root_eq(recorded_real, layer_root)):
                 out.append((entry.name, recorded_real))
         return out
     except OSError:

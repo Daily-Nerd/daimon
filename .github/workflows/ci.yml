@@ -143,6 +143,9 @@ jobs:
           "tests/test_identity_windows_semantics.py::test_hostgit_below_stays_case_sensitive_on_posix"
           "tests/test_identity_windows_semantics.py::test_hostgit_declarations_are_found_in_any_casing_on_windows"
           "tests/test_identity_windows_semantics.py::test_hostgit_declarations_stay_case_sensitive_on_posix"
+          "tests/test_identity_windows_semantics.py::test_layer_containment_is_case_blind_on_windows"
+          "tests/test_identity_windows_semantics.py::test_layer_containment_stays_case_sensitive_on_posix"
+          "tests/test_identity_windows_semantics.py::test_a_ruling_is_armed_from_a_directory_in_another_case_on_windows"
 
   scar-lint:
     name: scar lint
