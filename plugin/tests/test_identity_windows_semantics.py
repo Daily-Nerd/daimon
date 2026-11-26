@@ -157,6 +157,34 @@ def test_hostgit_below_is_separator_bounded_and_case_blind_on_windows(
     assert hostgit._below("C:/r/sub", "C:\\r")
 
 
+def test_hostgit_declarations_are_found_in_any_casing_on_windows(
+        tmp_path, ntcase):
+    """`_declared` is keyed like every other root comparison (#1401): a host
+    that declared `C:\\Repo` and a caller that names `c:\\repo` mean one
+    folder, so the declaration is found, redeclaring it in the other casing
+    is the same declaration, and it still covers a path below it."""
+    hostgit.configure(posture=hostgit.Posture.SEALED, ceiling=tmp_path)
+    try:
+        hostgit.declare(tmp_path / "Repo", slug="acme-widget")
+        assert hostgit.declared(tmp_path / "REPO").slug == "acme-widget"
+        assert hostgit.declared_slug(str(tmp_path / "repo")) == "acme-widget"
+        again = hostgit.declare(tmp_path / "repo", slug="acme-widget")
+        assert again.slug == "acme-widget"
+        with pytest.raises(ValueError):
+            hostgit.declare(tmp_path / "rEPO", slug="other")
+    finally:
+        hostgit.configure(posture=hostgit.Posture.AMBIENT)
+
+
+def test_hostgit_declarations_stay_case_sensitive_on_posix(tmp_path):
+    hostgit.configure(posture=hostgit.Posture.SEALED, ceiling=tmp_path)
+    try:
+        hostgit.declare(tmp_path / "Repo", slug="acme-widget")
+        assert hostgit.declared(tmp_path / "repo") is None
+    finally:
+        hostgit.configure(posture=hostgit.Posture.AMBIENT)
+
+
 def test_hostgit_below_stays_case_sensitive_on_posix(monkeypatch):
     monkeypatch.setattr(os.path, "normcase", os.fspath)
     assert not hostgit._below("/Users/a/sub", "/users/a")

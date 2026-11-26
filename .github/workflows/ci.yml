@@ -141,6 +141,8 @@ jobs:
           tests/test_dir_lock_identity.py
           "tests/test_identity_windows_semantics.py::test_hostgit_below_is_separator_bounded_and_case_blind_on_windows"
           "tests/test_identity_windows_semantics.py::test_hostgit_below_stays_case_sensitive_on_posix"
+          "tests/test_identity_windows_semantics.py::test_hostgit_declarations_are_found_in_any_casing_on_windows"
+          "tests/test_identity_windows_semantics.py::test_hostgit_declarations_stay_case_sensitive_on_posix"
 
   scar-lint:
     name: scar lint
