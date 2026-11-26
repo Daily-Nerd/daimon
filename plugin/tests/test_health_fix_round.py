@@ -521,9 +521,12 @@ def test_the_owed_and_verdict_panels_print_the_notes(tmp_checkpoint_dir):
     assert note in verdict_lines
 
 
-def test_a_brief_says_the_sender_note_once(tmp_checkpoint_dir, capsys):
+def test_a_brief_says_the_sender_note_once(tmp_checkpoint_dir, monkeypatch,
+                                           capsys):
     _owed_world()
     _write(OWN, ["our own decision"])
+    # the panels are the caller's own project's (#1402): OWN is the caller
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", OWN)
     assert cli.main(["brief", "--project", OWN]) == 0
     out = capsys.readouterr().out
     assert out.count("sender(s) skipped") == 1
@@ -618,6 +621,7 @@ def test_a_brief_caps_all_of_its_notes_once(tmp_checkpoint_dir, monkeypatch,
     _plant(SENDER, "requests.jsonl", b"<<<<<<< HEAD\n")
     adir = _teammate(monkeypatch)
     (adir / "tombstones.jsonl").write_bytes(b"<<<<<<< HEAD\n")
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", OWN)
     assert cli.main(["brief", "--project", OWN, "--team"]) == 0
     warnings = [ln for ln in capsys.readouterr().out.splitlines()
                 if ln.startswith("⚠") and "other project(s)" not in ln]
@@ -628,8 +632,10 @@ def test_a_brief_caps_all_of_its_notes_once(tmp_checkpoint_dir, monkeypatch,
     assert warnings[-1] == "⚠ and 6 more notes; run: daimon status"
 
 
-def test_a_brief_with_few_notes_is_not_capped(tmp_checkpoint_dir, capsys):
+def test_a_brief_with_few_notes_is_not_capped(tmp_checkpoint_dir,
+                                              monkeypatch, capsys):
     _write(OWN, ["our own decision"])
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", OWN)
     _ask()
     _plant(SENDER, "requests.jsonl", b"<<<<<<< HEAD\n")
     assert cli.main(["brief", "--project", OWN]) == 0
