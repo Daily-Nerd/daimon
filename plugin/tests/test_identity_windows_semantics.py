@@ -204,6 +204,10 @@ def test_layer_containment_is_case_blind_on_windows(
     assert store.buckets_under(str(tmp_path / "WORK" / "repo")) == []
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="real realpath'd tmp paths use backslashes on Windows, so a POSIX "
+           "separator cannot be faked here; the Windows twin covers this")
 def test_layer_containment_stays_case_sensitive_on_posix(
         tmp_path, monkeypatch):
     monkeypatch.setattr(os.path, "normcase", os.fspath)
