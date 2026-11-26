@@ -562,12 +562,12 @@ def test_brief_tool_no_checkpoint_gives_orientation_never_foreign_content(
     assert "S-other" not in text        # foreign content never leaks
 
 
-def test_brief_tool_never_carries_the_request_panel(tmp_checkpoint_dir,
-                                                     sample_checkpoint,
-                                                     monkeypatch):
-    # #694 PR 2 (D2): daimon_brief is untouched — the panel injects ONLY on
-    # the CLI same-project brief path. Without a gate, every MCP client
-    # would auto-receive foreign ask/why/from_label prose (#94/#96).
+def test_brief_tool_carries_the_request_panel_and_stamps_it_once_delivered(
+        tmp_checkpoint_dir, sample_checkpoint, monkeypatch):
+    # #1402 reverses #694 PR 2's D2 for this tool: a request addressed to the
+    # caller's own project reaches an agent briefed over MCP (Windsurf has no
+    # other briefing path), and the sender's "seen" is stamped once the
+    # response is written.
     from daimon_briefing import requests, store
     store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("S-mcp-sender", {
@@ -583,21 +583,18 @@ def test_brief_tool_never_carries_the_request_panel(tmp_checkpoint_dir,
     _, out = rpc(_init(), _call("daimon_brief", {}))
     text, is_err = _result(out)
     assert is_err is False
-    assert "publish the schema" not in text
-    assert "Requests waiting on you" not in text
-    # And the tool never stamped a surfaced row either — no side effect from
-    # a read-only MCP call.
-    assert requests.needs_surfaced_stamp(
+    assert "publish the schema" in text
+    assert "Requests waiting on you" in text
+    assert not requests.needs_surfaced_stamp(
         next(iter(requests.recipient_join(project_dir="/p/A").values())))
 
 
-def test_brief_tool_never_carries_the_decision_count_line(tmp_checkpoint_dir,
-                                                           sample_checkpoint,
-                                                           monkeypatch):
-    # #766 slice 5: no MCP exposure — the count line joins the same excluded
-    # family as the request/verdict/owed panels above. A decision IS
-    # actually waiting here, so this is a meaningful negative, not a vacuous
-    # one: the line would render on the CLI same-project path.
+def test_brief_tool_carries_the_decision_count_line(tmp_checkpoint_dir,
+                                                    sample_checkpoint,
+                                                    monkeypatch):
+    # #766 slice 5, #1402: the count line is part of the furniture every
+    # briefing host prints. A decision IS actually waiting here, so this is
+    # a meaningful positive, not a vacuous one.
     from daimon_briefing import pending, requests, store
     store.write_checkpoint("S-a", sample_checkpoint, project_dir="/p/A", writer=Writer.HUMAN)
     store.write_checkpoint("S-mcp-sender-2", {
@@ -609,16 +606,12 @@ def test_brief_tool_never_carries_the_decision_count_line(tmp_checkpoint_dir,
                           ask="publish the schema", why="because",
                           channel="cli-agent",
                           project_dir="/p/mcp-brief-sender-2")
-    # Proof the negative below is not vacuous: /p/A's OWN decide queue
-    # genuinely has something waiting, mirroring the request-panel test
-    # neighbor's needs_surfaced_stamp proof above.
     assert pending.queue(project_dir="/p/A")["rows"]
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/A")
     _, out = rpc(_init(), _call("daimon_brief", {}))
     text, is_err = _result(out)
     assert is_err is False
-    assert "decisions waiting on you" not in text
-    assert "decision waiting on you" not in text
+    assert "1 decision waiting on you here" in text
 
 
 def test_brief_tool_slug_and_project_conflict_is_tool_error(tmp_checkpoint_dir):

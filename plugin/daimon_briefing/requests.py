@@ -453,7 +453,7 @@ _EVENT_RANK = {
     "done_verified": 10,
     "withdrawn_delivered": 2,
 }
-_REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
+_REQUEST_ID_RE = re.compile(marks.REQUEST_ID_PATTERN)
 
 
 def is_request_id(value) -> bool:

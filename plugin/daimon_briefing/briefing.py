@@ -1001,29 +1001,22 @@ def coverage_note(checkpoint) -> str | None:
     return marks.warning(" ".join(sentences))
 
 
-def prepare(project, now, *, live: bool = True, worldcheck_project=None,
-            route=None, stamps: bool = True, opened=None,
-            own_ledger: bool = True) -> Annotated:
-    """#1132 PR 7a: the one preparation every briefing host shares (the CLI
-    brief, the MCP tool, the Hermes hook, `daimon loops` and the teammates):
-    `view.open` (what the reader may see), then `stamp` (the transient marks
-    the renderers read), then the optional worldcheck.
+def prepare_view(project, now, *, live: bool = True, worldcheck_project=None,
+                 route=None, stamps: bool = True, opened=None) -> Annotated:
+    """#1132 PR 7a: the preparation every reader of a checkpoint shares (the
+    CLI brief, the MCP tool, the Hermes hook, `daimon loops` and the
+    teammates): `view.open` (what the reader may see), then `stamp` (the
+    transient marks the renderers read), then the optional worldcheck. It
+    returns no furniture: `prepare` adds that for the hosts that print a
+    briefing, and a reader that lists items (`daimon loops`) stops here, so it
+    pays for no ledger it does not show.
 
     `route` is the store route (default `Route.OWN`; the CLI brief asks for
     OWN_ELSE_GLOBAL and reads `fell_back` off the result). `live=False`
     keeps loops a resolution closed. `stamps=False` skips the stamps (the
     teammate blocks never carried them). `opened` hands in an `Opened` the
     caller already has (`view.team`) instead of opening `project`.
-
-    #1402: the furniture every host prints (`Annotated.furniture`: rulings,
-    the decision count, the four request panels) is built here, once. Its
-    gate (I2) is "a briefing read (`stamps`) of a project PATH that is the
-    caller's own bucket", whatever body was served: a fallback changes which
-    BODY prints, never whose LEDGER the panels read. A slug names another
-    bucket and `own_ledger=False` is the model-surface read of a foreign path
-    (`view.model_read` decides, `ModelRead.own`); neither shows or stamps
-    another project's panels. `worldcheck_project` keeps one meaning: run
-    world evidence.
+    `worldcheck_project` means one thing: run world evidence.
 
     No try blocks: a ledger that cannot be read is a health value in the
     snapshot (an unreadable trust ledger CLOSES the view), and a raise from
@@ -1131,18 +1124,6 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         gap = coverage_note(checkpoint)
         if gap:
             notes = display.merge_notes(notes, (gap,))
-    gate = (project if stamps and own_ledger and project
-            and not _is_slug_input(project) else None)
-    if gate is not None:
-        # The request panels of this brief read the same joins; their notes
-        # (a sender left out, or read around) join the snapshot's here, so
-        # the brief caps its notes once. Fail-open like the panels.
-        try:
-            notes = display.merge_notes(
-                notes, (*requests.join(gate).notes,
-                        *requests.sent(gate).notes))
-        except Exception:  # noqa: BLE001
-            pass
     # Query this response's checkout, never the process-wide refusal history.
     # The requested project owns this diagnostic even when its memory body
     # falls back to another project. Named buckets have no checkout to query.
@@ -1170,14 +1151,50 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             handoff = store.active_handoff(project)
         except Exception:  # noqa: BLE001 - the baton is advisory, never the briefing
             handoff = None
-    furniture = (_furniture(project, gate, snap, notes, now)
-                 if stamps else Furniture())
     return Annotated(
         checkpoint, opened.withheld, snap.resolutions, stale_items, wc_stats,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
-        notes, opened.fell_back, tuple(skips), note, handoff, furniture,
-        version_note(checkpoint) if stamps else "")
+        notes, opened.fell_back, tuple(skips), note, handoff)
+
+
+def prepare(project, now, *, live: bool = True, worldcheck_project=None,
+            route=None, stamps: bool = True, opened=None,
+            own_ledger: bool = True) -> Annotated:
+    """The one preparation every briefing host shares (the CLI brief, the MCP
+    tool, the Hermes hook, `api.render_briefing`): `prepare_view`, plus the
+    furniture every plain host prints.
+
+    #1402: `Annotated.furniture` (rulings, the decision count, the four
+    request panels) and `version_note` are built here, once. The panels' gate
+    (I2) is "a briefing read (`stamps`) of a project PATH that is the caller's
+    own bucket", whatever body was served: a fallback changes which BODY
+    prints, never whose LEDGER the panels read. A slug names another bucket
+    and `own_ledger=False` is the model-surface read of a foreign path
+    (`view.model_read` decides, `ModelRead.own`); neither shows or stamps
+    another project's panels. A teammate block (`stamps=False`) has none. The
+    panels read the same joins, and a sender left out or read around is a note
+    of the brief: it joins the notes here, so the brief caps them once."""
+    annotated = prepare_view(project, now, live=live,
+                             worldcheck_project=worldcheck_project,
+                             route=route, stamps=stamps, opened=opened)
+    if not stamps:
+        return annotated
+    gate = (project if own_ledger and project
+            and not _is_slug_input(project) else None)
+    notes = annotated.notes
+    if gate is not None:
+        # Fail-open like the panels.
+        try:
+            notes = display.merge_notes(
+                notes, (*requests.join(gate).notes,
+                        *requests.sent(gate).notes))
+        except Exception:  # noqa: BLE001
+            pass
+    return annotated._replace(
+        notes=notes,
+        furniture=_furniture(project, gate, annotated.snapshot, notes, now),
+        version_note=version_note(annotated.checkpoint))
 
 
 def _furniture(project, gate, snap, notes, now) -> Furniture:
@@ -2333,13 +2350,19 @@ class RenderedBriefing(NamedTuple):
     `prepare` returned when the caller asked for world evidence (None, () and
     () when it did not run). They are the CALLER's to record: `check` writes
     nothing, so a host that wants the ledger rows commits them through
-    `effects_commit.rendered_worldcheck_effects`."""
+    `effects_commit.rendered_worldcheck_effects`.
+
+    #1402: `printed` is the manifest of request cards the text printed whole
+    (`Printed`), the CALLER's to commit as `surfaced` stamps once the text has
+    been delivered (`effects_commit.surfaced_effects`). Nothing is stamped by
+    building the text."""
     text: str
     state: str
     notes: tuple
     worldcheck: dict | None = None
     ledger_rows: tuple = ()
     worldcheck_skips: tuple = ()
+    printed: Printed = Printed()
 
 
 def _unavailable(exc: BaseException) -> RenderedBriefing:
@@ -2382,8 +2405,42 @@ def handoff_block(handoff) -> str:
     return "\n".join(parts) + "\n\n"
 
 
+# #1402: which entry prints which section of a briefing, one row per section.
+# The CLI is `daimon brief` (and so the Claude Code, Codex, Kimi and Gemini
+# hooks, which run it), `mcp` the `daimon_brief` tool, `api` the host API's
+# `render_briefing` and `hermes` the Hermes hook. A cell says `supported`,
+# `opt-in (...)` or `unsupported (...)` with the reason, the way
+# `host_mcp_caps.MCP_HOST_CAPS` does for hosts: the explicit row a host-facing
+# change owes every entry. A parity test reads both tables, so a section added
+# without a row fails.
+_ALL = {"cli": "supported", "mcp": "supported", "api": "supported",
+        "hermes": "supported"}
+_STAGE_2 = "unsupported (#1402 stage 2)"
+_CLI_ONLY = "unsupported (opt-in, CLI only)"
+SECTION_CAPS: dict[str, dict[str, str]] = {
+    "baton": dict(_ALL),
+    "rulings": dict(_ALL),
+    "decision_count": dict(_ALL),
+    "request": dict(_ALL),
+    "verdict": dict(_ALL),
+    "owed": dict(_ALL),
+    "overdue": dict(_ALL),
+    "version_note": dict(_ALL),
+    "withheld": dict(_ALL),
+    "surfaced_stamps": {
+        "cli": "supported", "mcp": "supported (after the response is written)",
+        "api": "supported (at return; preview_briefing writes none)",
+        "hermes": "supported"},
+    "anchor_drift": {"cli": "supported", "mcp": _STAGE_2, "api": _STAGE_2,
+                     "hermes": _STAGE_2},
+    "teammates": {"cli": "opt-in (--team)", "mcp": _CLI_ONLY,
+                  "api": _CLI_ONLY, "hermes": _CLI_ONLY},
+}
+
+
 def machine_brief(target, now, *, loops_pointer: bool,
-                  worldcheck_project=None) -> RenderedBriefing:
+                  worldcheck_project=None,
+                  own_ledger: bool = True) -> RenderedBriefing:
     """The briefing a machine consumer reads (the MCP tool, `render_briefing`):
     the strictly scoped read of `target`, always the deterministic render,
     never the LLM one and never anything a terminal changes.
@@ -2401,31 +2458,38 @@ def machine_brief(target, now, *, loops_pointer: bool,
     cannot be built is `unavailable`, never an unfiltered briefing; any later
     failure propagates to the caller.
 
+    #1402: the text is `compose`, the layout every plain host shares, so the
+    request panels, the decision count, the version note and the withheld
+    trailer ride every state. They read `target`'s own ledgers only when it is
+    a project path and `own_ledger` (a model-surface read of a foreign path
+    is not: `view.model_read` decides). This commits nothing: `printed` names
+    the cards the text showed whole, for the caller to stamp once the text has
+    been delivered.
+
     `loops_pointer` adds the note's `daimon loops` pointer, honest only when
     that command would list this same project: never for a named slug or a
     foreign project."""
     try:
         annotated = prepare(target, now, route=store.Route.OWN,
-                            worldcheck_project=worldcheck_project)
+                            worldcheck_project=worldcheck_project,
+                            own_ledger=own_ledger)
     except Exception as exc:
         return _unavailable(exc)
-    world = _world(annotated)
-    notes = annotated.notes
+    checkpoint = annotated.checkpoint
     snap = annotated.snapshot
-    # #523: the baton leads every state, charged to the same budget as the body.
-    baton = handoff_block(annotated.handoff)
-    # #693: standing rulings exist before the first checkpoint does; `prepare`
-    # read them once for every return below.
-    rulings = annotated.furniture.rulings
-    ruling_text = "\n".join([*notes, *rulings])
-    ruling_text = ruling_text + "\n\n" if ruling_text else ""
-    filtered = annotated.checkpoint
-    if filtered is None:
-        # Orientation without content: name the explicit path, leak nothing
-        # (#96, machine edition). #899, #1223: the count and the remedy the
-        # hint names (daimon_projects, then a slug) are cross-project
-        # reads, offered only when the host granted them; otherwise the hint
-        # says nothing of other projects.
+    if checkpoint is None:
+        state = "no-checkpoint"
+    elif build(checkpoint) is not None:
+        state = "briefing"
+    else:
+        state = "closed" if snap.closed else "empty"
+    # Orientation without content: name the explicit path, leak nothing (#96,
+    # machine edition). #899, #1223: the count and the remedy the hint names
+    # (daimon_projects, then a slug) are cross-project reads, offered only
+    # when the host granted them; otherwise the hint says nothing of other
+    # projects.
+    orientation = Orientation()
+    if state == "no-checkpoint":
         cross = config.model_cross_project()
         others = len(store.list_buckets()) if cross else 0
         hint = (f"daimon knows {others} project(s) — call daimon_projects "
@@ -2434,30 +2498,27 @@ def machine_brief(target, now, *, loops_pointer: bool,
                 "no projects have checkpoints yet — the first serialized "
                 "session creates one." if cross else
                 "the first serialized session creates one.")
-        return RenderedBriefing(
-            f"{baton}{ruling_text}no checkpoint for this project. {hint}",
-            "no-checkpoint", notes, **world)
-    b = build(filtered)
-    if b is None:
-        if snap.closed:
-            return RenderedBriefing(
-                f"{baton}{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed",
-                notes,
-                **world)
-        return RenderedBriefing(
-            f"{baton}{ruling_text}checkpoint exists but has nothing worth "
-            "surfacing.",
-            "empty", notes, **world)
-    # #1236: the body renders, so its import note leads the notes; the
-    # returns above print no body and keep the reader's notes alone.
-    notes = annotated.body_notes
-    return RenderedBriefing(
-        baton + render_plain(
-            b, receipt_degraded(filtered),
-            Furniture(rulings=annotated.furniture.rulings),
-            loops_pointer=loops_pointer, notes=notes,
-            reserved=_byte_len(baton)),
-        "briefing", notes, **world)
+        orientation = Orientation(
+            no_checkpoint=f"no checkpoint for this project. {hint}")
+    elif state == "empty":
+        orientation = Orientation(
+            empty="checkpoint exists but has nothing worth surfacing.")
+    composed = compose(annotated, orientation=orientation,
+                       loops_pointer=loops_pointer)
+    return RenderedBriefing(composed.text, state, annotated.body_notes,
+                            printed=composed.printed, **_world(annotated))
+
+
+def _read_briefing(project_dir, now, loops_pointer):
+    """The shared read of `render_briefing` and `preview_briefing`: the
+    resolved target and the machine briefing, never raising."""
+    target = config.resolve_read_project(
+        None if project_dir is None else str(project_dir))
+    with identity.operation():  # one scan of the recorded roots per read
+        got = machine_brief(target, time.time() if now is None else now,
+                            loops_pointer=loops_pointer,
+                            worldcheck_project=target)
+    return target, got
 
 
 def render_briefing(project_dir=None, *, now=None,
@@ -2467,32 +2528,43 @@ def render_briefing(project_dir=None, *, now=None,
     every failure becomes `unavailable` with a note naming the exception type.
     `project_dir=None` means DAIMON_PROJECT_DIR, else the working directory.
 
-    #1279: with DAIMON_WORLDCHECK on this read runs world evidence on the
-    resolved project. A host API has no post-write seam, so the verification
-    ledger rows and usage counters are committed here, best effort, after the
-    text is built.
+    This read RECORDS DELIVERY: a host API has no post-write seam, so the
+    return is its delivery boundary and the bookkeeping is committed here,
+    best effort, after the text is built. With DAIMON_WORLDCHECK on it runs
+    world evidence on the resolved project (#1279) and writes the verification
+    ledger rows and usage counters; and it stamps `surfaced` on the request and
+    verdict cards the text printed whole (#1402), so the sender sees that the
+    card reached an agent. A caller that only looks, and will not hand the text
+    to an agent, uses `preview_briefing`.
 
     The bytes are stable under the conditions `api.render_briefing` lists."""
     try:
-        target = config.resolve_read_project(
-            None if project_dir is None else str(project_dir))
-        with identity.operation():  # one scan of the recorded roots per read
-            got = machine_brief(target, time.time() if now is None else now,
-                                loops_pointer=loops_pointer,
-                                worldcheck_project=target)
+        target, got = _read_briefing(project_dir, now, loops_pointer)
     except Exception as exc:  # noqa: BLE001 — host reads never raise: the failure is the `unavailable` state
         return _unavailable(exc)
     try:
         from . import effects_commit
-        effects_commit.commit(
-            effects_commit.rendered_worldcheck_effects(target, got))
+        effects_commit.commit(effects_commit.rendered_effects(target, got))
     except Exception:  # noqa: BLE001 — the commit is bookkeeping, never the answer
         pass
     return got
 
 
+def preview_briefing(project_dir=None, *, now=None,
+                     loops_pointer: bool = False) -> RenderedBriefing:
+    """`render_briefing` that writes nothing: the same text, the same state
+    and the same `printed` manifest, but no `surfaced` stamp and no world
+    evidence rows. For a caller that reads a briefing without delivering it to
+    an agent. Never raises."""
+    try:
+        return _read_briefing(project_dir, now, loops_pointer)[1]
+    except Exception as exc:  # noqa: BLE001 — host reads never raise
+        return _unavailable(exc)
+
+
 def briefing_text(project_dir=None, *, now=None) -> str:
-    """The text of `render_briefing(project_dir, now=now)`."""
+    """The text of `render_briefing(project_dir, now=now)`, so it records
+    delivery too (see there)."""
     return render_briefing(project_dir, now=now).text
 
 
@@ -3248,14 +3320,16 @@ def _lines_text(lines) -> str:
 
 def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
             lead: str = "", drift: str = "", teammate_blocks=(),
-            teammate_header: str = "", trailer=(), extra_notes=(),
+            teammate_header: str = "", trailer=None, extra_notes=(),
             loops_pointer: bool = True) -> Composed:
     """The plain text of a briefing and the cards it printed whole (I3): the
     one layout every plain host prints, so the panels and the furniture around
     them are the same bytes on each by construction. Layout, in order: `lead`
     (the CLI's label and warnings), the baton, the format-version note, the
     body (or, with none, the skeleton and the entry `orientation`), the
-    `drift` block, the teammates and the withheld `trailer`.
+    `drift` block, the teammates and the withheld `trailer` (None: the lines
+    `withheld_trailer` words for this briefing alone; the CLI passes its own,
+    which add the teammates' counts).
 
     The fixed text is `reserved` against the one budget and is never cut; the
     body and the teammates share what is left. `extra_notes` are notes only
@@ -3267,7 +3341,8 @@ def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
     snap = annotated.snapshot
     notes = display.merge_notes(annotated.body_notes, extra_notes)
     baton = handoff_block(annotated.handoff)
-    trailer_text = _lines_text(trailer)
+    trailer_text = _lines_text(withheld_trailer(annotated)
+                               if trailer is None else trailer)
     b = build(checkpoint) if checkpoint is not None else None
     if b is None:
         blocks = skeleton_blocks(snap, notes, furniture)

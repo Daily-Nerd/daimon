@@ -1076,7 +1076,7 @@ def test_llm_briefing_is_an_exemption_not_an_axis_we_drive():
 # The MCP projects tool reaches `projects` through `cli.projects_rows`, so the
 # module that calls it is cli/projects.py; the viewer's routes reach theirs
 # through `daimon_ui/reader.py`.
-PREPARE = frozenset({"prepare", "_prepared"})
+PREPARE = frozenset({"prepare", "prepare_view", "_prepared"})
 PEEK = frozenset({"projects", "peek"})
 VIEWER = "../daimon_ui/reader.py"
 CONVERTED = {

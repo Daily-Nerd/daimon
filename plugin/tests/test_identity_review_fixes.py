@@ -300,12 +300,14 @@ def test_adopt_and_remap_are_refused_under_sealed(
 
 def test_an_mcp_tool_call_runs_inside_one_identity_operation(monkeypatch):
     from daimon_briefing import mcp_server, mcp_tools
+    from daimon_briefing.effects import Effects
 
     seen = []
 
     class Result:
         text = "ok"
         notes = ()
+        delivered = Effects.none()
 
     monkeypatch.setitem(
         mcp_tools.HANDLERS, "daimon_probe",

@@ -64,7 +64,8 @@ def test_a_closed_view_renders_the_greeting_and_the_closed_line(project):
     _plant(project, "trust.jsonl", b"<<<<<<< HEAD\n")
     got = api.render_briefing(project)
     assert got.state == "closed"
-    assert got.text.endswith(briefing.CLOSED_LINE) and KEPT not in got.text
+    assert got.text.endswith(briefing.CLOSED_LINE + "\n")
+    assert KEPT not in got.text
     assert any("trust.jsonl is unreadable" in n for n in got.notes)
 
 
@@ -93,7 +94,7 @@ def test_a_prepare_that_raises_is_unavailable_with_the_exception_type(
     assert "secret detail" not in repr(got)
 
 
-@pytest.mark.parametrize("name", ["ruling_lines", "build", "render_plain"])
+@pytest.mark.parametrize("name", ["ruling_lines", "build", "render_selection"])
 def test_any_later_failure_is_unavailable_too(project, monkeypatch, name):
     _seed(project, KEPT)
 

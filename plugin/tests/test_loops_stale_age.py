@@ -92,12 +92,12 @@ def test_loops_keeps_route_own(tmp_checkpoint_dir, capsys):
 def test_loops_calls_the_shared_preparation(tmp_checkpoint_dir, monkeypatch, capsys):
     _write()
     seen = []
-    real = briefing.prepare
+    real = briefing.prepare_view
 
     def _spy(project, now, **kw):
         seen.append(project)
         return real(project, now, **kw)
-    monkeypatch.setattr(briefing, "prepare", _spy)
+    monkeypatch.setattr(briefing, "prepare_view", _spy)
     assert cli.main(["loops", "--project", PROJECT]) == 0
     assert seen == [PROJECT]
 

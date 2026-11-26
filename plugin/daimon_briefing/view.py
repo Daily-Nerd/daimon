@@ -450,6 +450,10 @@ class ModelRead:
     scope: Scope
     project: str
     project_arg: str | None = None
+    # True when the request stayed inside the own bucket (the very comparison
+    # `_decide` refuses or grants on): a briefing shows and stamps a project's
+    # request panels only for such a read.
+    own: bool = True
 
     @property
     def slug(self) -> str | None:
@@ -477,7 +481,7 @@ def _decide(*, slug: str | None, all_projects: bool, project: str | None,
         raise ScopeRefused(refusal)
     return ModelRead(read_scope(target, slug=slug or None,
                                 all_projects=bool(all_projects)), target,
-                     project or None)
+                     project or None, own=not leaves)
 
 
 def model_read(*, slug: str | None = None, all_projects: bool = False,

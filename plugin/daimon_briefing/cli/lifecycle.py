@@ -1114,7 +1114,7 @@ def _cmd_loops(args, fx) -> int:
 
     Reuses the SAME item walk `_cmd_resolve` builds (schema.ITEM_LISTS over
     the latest checkpoint) and the SAME preparation the briefing runs
-    (briefing.prepare: the view's withheld and closed items, then the stamps)
+    (briefing.prepare_view: the view's withheld and closed items, then the stamps)
     — the resolved/live split must stay in exactly one place, or this listing
     could show an item the briefing itself would withhold (an agent would
     then "resolve" a ghost).
@@ -1137,7 +1137,8 @@ def _cmd_loops(args, fx) -> int:
     # and the briefing cannot disagree about which items are open or stale.
     now = time.time()
     try:
-        annotated = briefing.prepare(project, now, route=store.Route.OWN)
+        annotated = briefing.prepare_view(project, now,
+                                         route=store.Route.OWN)
     except Exception as exc:  # noqa: BLE001 — reported, never listed around
         print("error: the loops could not be listed "
               f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)

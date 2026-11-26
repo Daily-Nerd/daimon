@@ -228,3 +228,20 @@ def test_every_panel_block_starts_with_its_frozen_header(
         "Requests you accepted and still owe:",
         "Requests you sent that nobody is moving:")
     assert len(block.cards) >= 1
+
+
+def test_daimon_loops_builds_none_of_the_briefing_furniture(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """`daimon loops` lists open items and prints no panel, so it stops at
+    `prepare_view` and reads no request ledger, no ruling layer and no other
+    bucket on the way: a command that never shows the furniture must not pay
+    for it (it measured 3x slower on a store with many buckets)."""
+    seed.seed()
+
+    def boom(*a, **k):
+        raise AssertionError("loops built the briefing furniture")
+
+    monkeypatch.setattr(briefing, "_furniture", boom)
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", seed.PROJECT)
+    assert cli.main(["loops"]) == 0
+    capsys.readouterr()

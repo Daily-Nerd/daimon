@@ -176,6 +176,9 @@ CONDITIONS = {
 # UNREADABLE trust ledger today. `blame` prints the judged events of one id,
 # and an event note is human prose with the same policy (`view.events`), so
 # a note that equals a quarantined value shows while the ledger is closed.
+# The briefing hosts that carry the request panels since #1402 (the MCP tool
+# and the Hermes hook) show the same ask lines under the same policy, so they
+# join `cli:brief` here for the sentinels a request ask can equal.
 ALLOWED = {
     "trust-transient": {
         ("cli:amend list", "contradiction"),
@@ -252,13 +255,17 @@ ALLOWED = {
         ("cli:ruling show", "contradiction"),
         ("cli:ruling show", "question"),
         ("cli:ruling show", "topic"),
+        ("hook:pre_llm_call", "contradiction"),
         ("hook:pre_llm_call", "question"),
+        ("hook:pre_llm_call", "topic"),
         ("http:/api/activity", "contradiction"),
         ("http:/api/activity", "topic"),
         ("http:/api/refutations", "contradiction"),
         ("http:/api/refutations", "question"),
         ("http:/api/refutations", "topic"),
+        ("mcp:daimon_brief", "contradiction"),
         ("mcp:daimon_brief", "question"),
+        ("mcp:daimon_brief", "topic"),
         ("mcp:requests_inbox", "contradiction"),
         ("mcp:requests_inbox", "question"),
         ("mcp:requests_inbox", "topic")},

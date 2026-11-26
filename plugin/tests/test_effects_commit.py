@@ -277,7 +277,7 @@ def test_brief_records_usage_when_the_view_cannot_be_built(
     def boom(*a, **k):
         raise RuntimeError("view")
 
-    monkeypatch.setattr(briefing, "prepare", boom)
+    monkeypatch.setattr(briefing, "prepare_view", boom)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/ec-y")
     assert cli.main(["brief"]) == 2
     assert cli.main(["loops"]) == 2
@@ -327,8 +327,8 @@ def test_every_mcp_handler_records_usage_after_its_response_is_built(
     _checkpoint("/p/ec-mcp")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/ec-mcp")
     built = []
-    real_render = briefing.render_plain
-    monkeypatch.setattr(briefing, "render_plain",
+    real_render = briefing.render_selection
+    monkeypatch.setattr(briefing, "render_selection",
                         lambda *a, **k: built.append(1) or real_render(*a, **k))
     mcp_tools.HANDLERS["daimon_brief"]({})
     assert built and events == ["flush", ("usage", "mcp:brief")]

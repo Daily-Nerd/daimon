@@ -16,7 +16,8 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "serializes", "serialize_rows", "SerializeRow", "Serializes",
              "SERIALIZE_STATES", "LIVE_STATES", "HealPlan", "HealReport",
              "HealTarget", "HealSkip", "heal_plan", "heal_all",
-             "RenderedBriefing", "render_briefing", "briefing_text",
+             "RenderedBriefing", "render_briefing", "preview_briefing",
+             "briefing_text",
              "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
              "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
              "HandoffNotRecorded", "write_handoff")

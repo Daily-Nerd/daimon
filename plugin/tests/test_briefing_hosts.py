@@ -330,7 +330,7 @@ def test_loops_reports_a_preparation_failure_and_lists_nothing(
 
     def boom(*_a, **_k):
         raise RuntimeError("x")
-    monkeypatch.setattr(briefing, "prepare", boom)
+    monkeypatch.setattr(briefing, "prepare_view", boom)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["loops"]) == 2
     err = capsys.readouterr()

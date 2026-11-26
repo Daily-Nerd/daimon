@@ -290,11 +290,12 @@ def test_every_prepare_caller_is_a_known_entrance():
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call)
                     and ((isinstance(node.func, ast.Attribute)
-                          and node.func.attr == "prepare"
+                          and node.func.attr in ("prepare", "prepare_view")
                           and isinstance(node.func.value, ast.Name)
                           and node.func.value.id == "briefing")
                          or (isinstance(node.func, ast.Name)
-                             and node.func.id == "prepare"))):
+                             and node.func.id in ("prepare",
+                                                  "prepare_view")))):
                 callers.add(str(path.relative_to(root)))
     assert callers == {"briefing.py", "hooks.py", "cli/brief.py",
                        "cli/lifecycle.py"}

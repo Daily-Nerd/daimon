@@ -8,7 +8,7 @@ registers with, in one place, so a new host cannot be wired without adding a
 row here (tests/test_mcp_host_caps.py ties the key set to the union of the
 packaged `hooks install` table and the two hosts that register another way).
 
-Two independent columns, because they answer different questions:
+Three independent columns, because they answer different questions:
   - "mcp": does `daimon hooks install <host>` (or the plugin manifest, or the
     standalone gemini-hooks.py) register the read-only MCP server for this
     host? Every shipped host does, as of #1036.
@@ -20,16 +20,28 @@ Two independent columns, because they answer different questions:
     briefing-only or action-only hosts; registering the MCP server there is
     still worthwhile (a host's own agent can call the tool directly), but
     there is no hint text to swap forms on.
+  - "brief" (#1402): how does this host get its briefing? Four hosts run
+    `daimon brief` from a session-start (or first-prompt) hook, so they print
+    the same request panels, decision count, version note and withheld
+    trailer the CLI prints. Windsurf has no briefing hook: its agent calls the
+    `daimon_brief` MCP tool, which prints the same furniture through the same
+    composer (`briefing.SECTION_CAPS` is the per-section table).
 """
 
 MCP_HOST_CAPS: dict[str, dict[str, str]] = {
-    "claude-code": {"mcp": "supported", "hint": "supported"},
-    "kimi": {"mcp": "supported", "hint": "supported"},
-    "codex": {"mcp": "supported", "hint": "supported"},
+    "claude-code": {"mcp": "supported", "hint": "supported",
+                    "brief": "supported (SessionStart hook runs daimon brief)"},
+    "kimi": {"mcp": "supported", "hint": "supported",
+             "brief": "supported (first UserPromptSubmit runs daimon brief)"},
+    "codex": {"mcp": "supported", "hint": "supported",
+              "brief": "supported (SessionStart hook runs daimon brief)"},
     "windsurf": {"mcp": "supported",
-                "hint": "unsupported (no prompt-time recall hook)"},
+                 "hint": "unsupported (no prompt-time recall hook)",
+                 "brief": "unsupported (no briefing hook; the agent calls "
+                          "daimon_brief over MCP)"},
     "gemini": {"mcp": "supported",
-              "hint": "unsupported (no prompt-time recall hook)"},
+               "hint": "unsupported (no prompt-time recall hook)",
+               "brief": "supported (SessionStart hook runs daimon brief)"},
 }
 
 

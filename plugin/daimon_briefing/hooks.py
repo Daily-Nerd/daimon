@@ -250,8 +250,9 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
 
     Returns {"context": briefing} to append to the user message, or None. Never raises.
     """
-    # The one effect this host records is the worldcheck bookkeeping (#1279,
-    # only with DAIMON_WORLDCHECK on); it commits through the same seam as
+    # The effects this host records are the worldcheck bookkeeping (#1279,
+    # only with DAIMON_WORLDCHECK on) and the `surfaced` stamps of the cards
+    # the briefing printed whole (#1402); they commit through the same seam as
     # every other host so an effect added here later cannot be dropped.
     fx = effects_commit.Pending()
     try:
@@ -292,31 +293,28 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
             fx.add(effects_commit.worldcheck_effects(
                 project, project, annotated.worldcheck,
                 annotated.ledger_rows, annotated.worldcheck_skips))
-        if annotated.checkpoint is None:
-            # #693: standing rulings exist before the first checkpoint does —
-            # a day-one ratification must reach the very next session.
-            rulings = annotated.furniture.rulings
-            lines = [*annotated.notes, *rulings]
-            baton = briefing.handoff_block(annotated.handoff)
-            context = baton + "\n".join(lines)
-            return {"context": context} if context else None
-        # #693: rulings are scoped to the RESOLVED project (never the raw
-        # process cwd). With the operator's global fallback on, the
-        # checkpoint may be another project's — the rulings are still
-        # this project's own.
-        # OWN_ELSE_GLOBAL may have served another project's checkpoint (the
-        # body read does not say), so `daimon loops` is only pointed at when
-        # the read was strictly this project's own.
-        # #1236: the body renders here, so its import note leads the notes.
-        text = briefing.render(
-            annotated.checkpoint, project_dir=project,
+        # #1402: one composer for every plain host: the baton, the version
+        # note, the rulings, the decision count and the request panels, the
+        # body (or the skeleton when there is none) and the withheld trailer.
+        # #693: standing rulings exist before the first checkpoint does, a
+        # day-one ratification must reach the very next session; they are
+        # scoped to the RESOLVED project (never the raw process cwd), and
+        # with the operator's global fallback on, the checkpoint may be
+        # another project's while the rulings and the panels are still this
+        # project's own. OWN_ELSE_GLOBAL may have served another project's
+        # checkpoint (the body read does not say), so `daimon loops` is only
+        # pointed at when the read was strictly this project's own. #1236:
+        # the body renders here, so its import note leads the notes. The hook
+        # returning is the delivery boundary: the cards it printed whole are
+        # stamped in the `finally` below.
+        composed = briefing.compose(
+            annotated,
             loops_pointer=(briefing.injection_read_route(project)
-                           is store.Route.OWN),
-            snap=annotated.snapshot, notes=annotated.body_notes,
-            handoff=annotated.handoff)
-        if not text:
+                           is store.Route.OWN))
+        fx.add(effects_commit.surfaced_effects(composed.printed))
+        if not composed.text:
             return None
-        return {"context": text}
+        return {"context": composed.text}
     except Exception:
         log.exception("daimon: pre_llm_call failed (no briefing injected)")
         return None

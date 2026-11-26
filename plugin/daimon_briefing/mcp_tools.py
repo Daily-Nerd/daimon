@@ -12,7 +12,14 @@ distinguishably or the gate they measure goes blind. The line is an effect,
 committed by `effects_commit` once the response is built, also when the
 handler raises a ToolError (every attempt counts); a handler's own effects
 (the recall telemetry row) commit the same way.
+
+Delivery effects (#1402) are the other kind: a `surfaced` stamp says a card
+reached an agent, so it is not committed when the response is built but
+returned on `ToolResult.delivered` for `mcp_server.serve` to commit once the
+response has been written. A handler called directly (a test) delivered
+nothing and so stamps nothing.
 """
+import dataclasses
 import functools
 import json
 import time
@@ -38,6 +45,7 @@ class ToolResult:
 
     text: str
     notes: tuple[str, ...] = ()
+    delivered: Effects = Effects.none()
 
 
 def _tool(name: str):
@@ -50,7 +58,8 @@ def _tool(name: str):
             fx = effects_commit.Pending(f"mcp:{name}")
             try:
                 got = fn(arguments, fx)
-                return got if isinstance(got, ToolResult) else ToolResult(got)
+                got = got if isinstance(got, ToolResult) else ToolResult(got)
+                return dataclasses.replace(got, delivered=fx.delivery)
             finally:
                 effects_commit.commit(fx.effects)
         return run
@@ -147,13 +156,21 @@ def _brief(arguments: dict, fx) -> str:
     # #1279: world evidence (opt in with DAIMON_WORLDCHECK) only for a project
     # PATH. A slug names a bucket, and `gh` would answer for the server's
     # working directory repo, so a slug read never probes.
+    #
+    # #1402: the briefing carries the request panels of the caller's OWN
+    # project. A read that leaves it (a slug, or a foreign `project` the host
+    # granted) shows and stamps none: `read.own` is `view.model_read`'s own
+    # answer. The stamps ride as delivery effects, committed once the response
+    # is written.
     got = briefing.machine_brief(
         target, time.time(),
         loops_pointer=not read.slug and cli.loops_lists_project(target),
-        worldcheck_project=None if read.slug else read.project)
+        worldcheck_project=None if read.slug else read.project,
+        own_ledger=read.own)
     if got.state == "unavailable":
         raise ToolError(got.notes[0])
     fx.add(effects_commit.rendered_worldcheck_effects(read.project, got))
+    fx.on_delivery(effects_commit.surfaced_effects(got.printed))
     return got.text
 
 
@@ -183,9 +200,9 @@ def _status(arguments: dict, fx) -> str:
 @_tool("requests_inbox")
 def _requests_inbox(arguments: dict, fx) -> ToolResult:
     """Read-only pull (#694 PR 2): requests other projects have addressed to
-    this one. Deliberate — daimon_brief does NOT carry this content (D2's
-    CLI-only gate); an MCP client that wants it calls this tool explicitly.
-    Every write verb (open/revise/withdraw/accept/reject/needs-info/suppress/
+    this one, the full listing. `daimon_brief` carries the capped panel of the
+    same requests (#1402); this tool is how a client reads all of them, with
+    the severity filter. Every write verb (open/revise/withdraw/accept/reject/needs-info/suppress/
     reply/done) stays CLI-only — no tool here mutates the ledger."""
     project = _read(arguments).project
     # #1348: the filter is the requests function's own keyword, the one the

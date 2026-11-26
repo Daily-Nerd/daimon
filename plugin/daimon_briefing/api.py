@@ -69,9 +69,13 @@ host, and the assertion would heal a serialize that is still running. Without
 it, a killed run frees itself after `hung_after_seconds`. It is ignored with a
 note under `everywhere=True`.
 
-`api` is read-side with two named exceptions. `heal_all` (design D23) is a
+`api` is read-side with three named exceptions. `heal_all` (design D23) is a
 launcher: it starts daimon's own serialize repair and writes no cognitive
-content; nothing else here starts a process. `write_handoff` is the one write.
+content; nothing else here starts a process. `write_handoff` is the one
+content write. `render_briefing` records delivery: it stamps `surfaced` on the
+request and verdict cards its text printed whole, and writes the world-evidence
+rows it ran (see Render below); `preview_briefing` is the read that writes
+nothing.
 
 Handoff (`write_handoff`). `write_handoff(project, text)` leaves the baton the
 next briefing leads with, for a project given as a path. It is ALWAYS agent
@@ -107,6 +111,20 @@ harmless; `heal_all` plans nothing without a scope, because a machine-wide
 repair is not). `loops_pointer` defaults off: the MCP tool turns it on when
 the project is the caller's own, so pass `True` to match it byte for byte.
 
+The text carries what `daimon brief` prints beside the body, from the same
+composer (#1402): the baton, the format-version note (a warning line), the
+standing rulings, the decision count, the four request panels (requests
+waiting on you, decisions on requests you sent, requests you owe, requests you
+sent that nobody is moving) and the withheld trailer. They read the
+requested project's own ledgers only: a named bucket or another project's
+path shows none. `RenderedBriefing.printed` is the cards printed whole.
+`render_briefing` commits their `surfaced` stamps at its return, because this
+API has no later seam and the return is its delivery boundary: the sender's
+"seen" means the text reached the caller. A collapsed panel (the budget cut it
+to a count) stamps nothing. `preview_briefing` takes the same arguments,
+returns the same text and writes no stamp and no world-evidence row, for a
+caller that reads a briefing without handing it to an agent.
+
 The bytes are stable only under these conditions, which `testing.sandbox`
 enforces for a host test:
   - pass `project_dir` (None reads the environment and the cwd);
@@ -117,7 +135,11 @@ enforces for a host test:
   - the settings (budgets, caps, tenant flags, capture host, the check dir)
     come from the sandbox mapping, not the process environment.
   - DAIMON_WORLDCHECK is off (with it on, a carried claim the world has
-    contradicted is marked, and the ledger rows are written, #1279).
+    contradicted is marked, and the ledger rows are written, #1279);
+  - the requests ledgers of this project and of the projects it exchanges
+    requests with are part of the input (the panels read them), and `now`
+    also sets the overdue ages. A `surfaced` stamp does not change the panel
+    bytes of the next read.
 
 Round trip: for `briefing` and `closed`, `parse_briefing(text).header` is
 `marks.GREETING`, every `standing_rulings` entry starts with `marks.RULING_MARK`,
@@ -141,7 +163,8 @@ renderers write with, so the format and its reader cannot drift apart.
 import re as _re
 from dataclasses import dataclass
 
-from .briefing import RenderedBriefing, briefing_text, render_briefing
+from .briefing import (RenderedBriefing, briefing_text, preview_briefing,
+                       render_briefing)
 from .display import withheld_json, withheld_marker
 from .heal import HealPlan, HealReport, HealSkip, HealTarget
 from .handoff import MAX_BYTES as HANDOFF_MAX_BYTES
@@ -171,7 +194,8 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "admitted_messages", "serializes", "serialize_rows", "SerializeRow",
            "Serializes", "SERIALIZE_STATES", "LIVE_STATES", "HealPlan",
            "HealReport", "HealTarget", "HealSkip", "heal_plan", "heal_all",
-           "RenderedBriefing", "render_briefing", "briefing_text",
+           "RenderedBriefing", "render_briefing", "preview_briefing",
+           "briefing_text",
            "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
            "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
            "HandoffNotRecorded", "write_handoff", "Handoff", "PanelCard",
