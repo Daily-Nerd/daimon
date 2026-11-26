@@ -18,17 +18,9 @@ import os
 import subprocess
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from types import ModuleType
 from typing import NamedTuple
 
-from . import config, ledger
-
-# Annotated before the import, like jsonl's: every use honors the None guard.
-_fcntl: ModuleType | None
-try:
-    import fcntl as _fcntl
-except ImportError:  # pragma: no cover - non-POSIX: the lock degrades to a no-op
-    _fcntl = None
+from . import config, jsonl, ledger
 
 LOCK_NAME = ".heal.lock"
 
@@ -166,18 +158,19 @@ def plan_all(text: str, now: float, *, force: bool = False,
 
 @contextmanager
 def try_lock() -> Iterator[bool]:
-    """The machine-wide heal lock (D12): one non-blocking flock on
-    `<log dir>/.heal.lock`. Yields True when this process may heal and False
+    """The machine-wide heal lock (D12): one non-blocking lock on
+    `<log dir>/.heal.lock`, taken through `jsonl`'s one platform primitive
+    (flock on POSIX, msvcrt on Windows). Yields True when this process may heal and False
     when another heal holds it, so the caller exits 0 instead of piling a second
     runner onto the same backend. Released on every exit, including a raise,
     and by the OS if the holder dies.
 
-    Fail-open like `jsonl.dir_lock`: no fcntl (non-POSIX), an unwritable log
+    Fail-open like `jsonl.dir_lock`: no lock primitive, an unwritable log
     dir or any lock error other than contention yields True, which is exactly
     the pre-lock behavior (the per-session `repairing` guard still stops one
     session healing twice). The sidecar is opened with the builtin `open`,
     never `Path.open`: it carries no content."""
-    if _fcntl is None:
+    if not jsonl.locking_available():
         yield True
         return
     fh = None
@@ -187,7 +180,7 @@ def try_lock() -> Iterator[bool]:
         d.mkdir(parents=True, exist_ok=True)
         fh = open(d / LOCK_NAME, "a+")
         try:
-            _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            jsonl.lock_fd(fh.fileno())
         except BlockingIOError:
             held = False
     except OSError:
@@ -198,7 +191,7 @@ def try_lock() -> Iterator[bool]:
         if fh is not None:
             try:
                 if held:
-                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+                    jsonl.unlock_fd(fh.fileno())
                 fh.close()
             except OSError:
                 pass

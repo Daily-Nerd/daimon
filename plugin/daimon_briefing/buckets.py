@@ -873,6 +873,9 @@ def migrate(project_dir, *, dry_run: bool = False, by: str = "cli") -> dict:
         with jsonl.dir_lock(legacy_dir) as held:
             if ((held or not jsonl.locking_available())
                     and not os.path.lexists(target_dir)):
+                # Where an open handle pins the directory (Windows), the lock
+                # is given up for the rename itself.
+                jsonl.release_for_removal(legacy_dir)
                 try:
                     os.rename(legacy_dir, target_dir)
                     renamed = True
@@ -972,6 +975,9 @@ def _retire(legacy_dir: Path) -> _Retired:
         held = root.read_text(encoding="utf-8").strip()
     except OSError:
         held = ""
+    # Where an open handle pins its file (Windows) the holder lets go of the
+    # sidecar first, or neither the rename nor the unlinks below can happen.
+    jsonl.release_for_removal(legacy_dir)
     try:
         tomb = store.move_aside(legacy_dir)
     except OSError:

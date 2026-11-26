@@ -7,26 +7,34 @@ Granting is not enough: after the flock the lock must still be the one the
 path names, or it excludes nobody.
 """
 
-import fcntl
 import os
 from pathlib import Path
 
 import pytest
 
 from daimon_briefing import jsonl
-from tests._lockhooks import FirstFlockHook as _FirstFlockHook
+from tests._lockhooks import FirstLockHook as _FirstLockHook
 
 
 def _probe_is_excluded(sidecar: Path) -> bool:
     """True when a second opener of `sidecar` cannot take the lock."""
     probe = open(sidecar, "a+")
     try:
-        fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        jsonl.lock_fd(probe.fileno())
         return False
     except OSError:
         return True
     finally:
         probe.close()
+
+
+# Windows refuses to unlink a sidecar another handle has open, so a fold can
+# never pull one out from under a waiter there: these interleavings only exist
+# where a lock does not pin its file.
+posix_only = pytest.mark.skipif(
+    jsonl._lock is not None and jsonl._lock.pins_files,
+    reason="an open handle pins the sidecar on this platform; the fold that "
+           "these tests simulate cannot unlink it")
 
 
 @pytest.fixture
@@ -35,10 +43,11 @@ def fast(monkeypatch):
     monkeypatch.setattr(jsonl, "_LOCK_INTERVAL", 0.01)
 
 
+@posix_only
 def test_a_sidecar_unlinked_while_waiting_is_not_the_lock_that_is_held(
         tmp_path, monkeypatch, fast):
     sidecar = tmp_path / jsonl.LOCK_NAME
-    monkeypatch.setattr(jsonl, "_fcntl", _FirstFlockHook(sidecar.unlink))
+    monkeypatch.setattr(jsonl, "_lock", _FirstLockHook(sidecar.unlink))
     with jsonl.dir_lock(tmp_path) as held:
         assert held is True
         # the held lock is on the sidecar the path names NOW
@@ -46,6 +55,7 @@ def test_a_sidecar_unlinked_while_waiting_is_not_the_lock_that_is_held(
         assert _probe_is_excluded(sidecar)
 
 
+@posix_only
 def test_a_directory_removed_while_waiting_is_not_held(
         tmp_path, monkeypatch, fast):
     d = tmp_path / "gone"
@@ -55,12 +65,13 @@ def test_a_directory_removed_while_waiting_is_not_held(
         (d / jsonl.LOCK_NAME).unlink()
         d.rmdir()
 
-    monkeypatch.setattr(jsonl, "_fcntl", _FirstFlockHook(fold))
+    monkeypatch.setattr(jsonl, "_lock", _FirstLockHook(fold))
     with jsonl.dir_lock(d) as held:
         assert held is False
     assert not d.exists()
 
 
+@posix_only
 def test_a_reborn_directory_whose_writer_holds_the_new_sidecar_is_not_ours(
         tmp_path, monkeypatch, fast):
     d = tmp_path / "reborn"
@@ -72,10 +83,10 @@ def test_a_reborn_directory_whose_writer_holds_the_new_sidecar_is_not_ours(
         d.rmdir()
         d.mkdir()
         fh = open(d / jsonl.LOCK_NAME, "a+")
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        jsonl.lock_fd(fh.fileno())
         writer.append(fh)
 
-    monkeypatch.setattr(jsonl, "_fcntl", _FirstFlockHook(fold_and_rebirth))
+    monkeypatch.setattr(jsonl, "_lock", _FirstLockHook(fold_and_rebirth))
     try:
         with jsonl.dir_lock(d) as held:
             # the old inode is grantable, but it is not the writer's lock

@@ -23,6 +23,7 @@ import json
 import os
 import re
 import stat
+import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextvars import ContextVar
@@ -34,14 +35,80 @@ from typing import NamedTuple, Union
 from . import surfaces
 from .surfaces import WritePosture, Writer
 
-# Annotated before the import (#842): the try branch alone infers a Module, so
-# the except branch's None reads as a type error rather than as the degrade it
-# is. Every use site honors it with an `if _fcntl` guard.
-_fcntl: ModuleType | None
-try:
-    import fcntl as _fcntl
-except ImportError:  # pragma: no cover - non-POSIX: the lock degrades to a no-op
-    _fcntl = None
+class _LockPrimitive(NamedTuple):
+    """The one platform lock, chosen once (#1401). `acquire(fd)` takes an
+    exclusive lock without blocking and raises BlockingIOError on contention
+    (any other OSError is a real failure); `release(fd)` drops it. `pins_files`
+    is True where an open handle stops the file being unlinked or its
+    directory renamed (Windows), so a holder about to remove the sidecar must
+    let go of it first (`release_for_removal`)."""
+    acquire: Callable[[int], None]
+    release: Callable[[int], None]
+    pins_files: bool
+
+
+def _flock_primitive(fcntl: ModuleType) -> _LockPrimitive:
+    def acquire(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def release(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+    return _LockPrimitive(acquire, release, pins_files=False)
+
+
+# What msvcrt.locking raises for a range another handle holds: EACCES (and
+# EDEADLOCK from the blocking modes). Anything else is not contention.
+_CONTENDED = (errno.EACCES, errno.EAGAIN, getattr(errno, "EDEADLOCK", -1))
+
+
+def _msvcrt_primitive(msvcrt: ModuleType) -> _LockPrimitive:
+    """`msvcrt.locking` locks a byte range from the handle's CURRENT position,
+    so every call seeks to 0 first and locks the same single byte (locking
+    past the end of an empty sidecar is allowed)."""
+    def acquire(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            if exc.errno in _CONTENDED:
+                raise BlockingIOError(exc.errno, str(exc)) from exc
+            raise
+
+    def release(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+    return _LockPrimitive(acquire, release, pins_files=True)
+
+
+def _select_primitive(fcntl: ModuleType | None,
+                      msvcrt: ModuleType | None) -> _LockPrimitive | None:
+    if fcntl is not None:
+        return _flock_primitive(fcntl)
+    if msvcrt is not None:
+        return _msvcrt_primitive(msvcrt)
+    return None
+
+
+def _import_primitive() -> _LockPrimitive | None:
+    fcntl: ModuleType | None
+    msvcrt: ModuleType | None
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None
+    try:
+        import msvcrt
+    except ImportError:
+        msvcrt = None
+    return _select_primitive(fcntl, msvcrt)
+
+
+# The only place a platform lock module is named. `dir_lock` and the heal lock
+# both go through it (`lock_fd`, `unlock_fd`); None only on a platform with
+# neither module, where every lock degrades to a no-op that yields "not held".
+_lock: _LockPrimitive | None = _import_primitive()
 
 # A past `scrub_event_fields` split such a row and rejoined the fragments
 # with "\n". A row can hold several separators, so the rejoin accumulates;
@@ -123,18 +190,81 @@ def locking_available() -> bool:
     from "the lock was not granted" asks this (the second is a refusal for a
     verb that deletes, the first can only proceed unguarded, as it always
     did)."""
-    return _fcntl is not None
+    return _lock is not None
+
+
+def lock_fd(fd: int) -> None:
+    """Take the platform lock on an open file, without blocking. Raises
+    BlockingIOError when another handle holds it, any other OSError on a real
+    failure. Callers check `locking_available()` first."""
+    assert _lock is not None
+    _lock.acquire(fd)
+
+
+def unlock_fd(fd: int) -> None:
+    assert _lock is not None
+    _lock.release(fd)
+
+
+# Sidecars this process holds through `dir_lock`, by normalised directory, so
+# `release_for_removal` can find the handle a fold must let go of.
+_held_here: dict[str, "_Held"] = {}
+_held_guard = threading.Lock()
+
+
+class _Held:
+    """One granted lock: the open sidecar, closed at most once."""
+
+    def __init__(self, fh) -> None:
+        self.fh = fh
+
+    def release(self) -> None:
+        fh, self.fh = self.fh, None
+        if fh is None:
+            return
+        try:
+            if _lock is not None:
+                _lock.release(fh.fileno())
+        except OSError:
+            pass
+        finally:
+            _drop(fh)
+
+
+def _held_key(d: Path) -> str:
+    return os.path.normcase(os.path.abspath(d))
+
+
+def release_for_removal(d: Path) -> None:
+    """Let go of the lock this process holds on `d`, right before the sidecar
+    is unlinked or the directory renamed or removed (a fold).
+
+    A POSIX lock lives on the inode, so a fold removes a held sidecar freely
+    and a waiter that was granted the old inode notices (`dir_lock` re-checks
+    it): this is a no-op there and the lock stays held to the end. Windows
+    refuses to unlink a file, or rename the directory around it, while any
+    handle is open, so the holder closes its handle first. The exclusion ends
+    here: a writer that gets in before the removal either lands a row the
+    fold's leftovers check sees, or holds a handle that makes the removal fail
+    and leave the bucket standing. Neither loses data."""
+    if _lock is None or not _lock.pins_files:
+        return
+    with _held_guard:
+        held = _held_here.pop(_held_key(d), None)
+    if held is not None:
+        held.release()
 
 
 @contextmanager
 def dir_lock(d: Path) -> Iterator[bool]:
     """Serialize a critical section over the files of directory `d` (#31).
 
-    flock on a sidecar dotfile with a bounded wait; yields whether the lock
-    was actually acquired. Fail-open everywhere (no fcntl, unwritable or
+    A lock on a sidecar dotfile (the platform primitive, `_lock`) with a
+    bounded wait; yields whether the lock was actually acquired. Fail-open
+    everywhere (no lock primitive, unwritable or
     missing dir, contention past the wait): the caller proceeds unguarded,
     which is exactly the pre-lock behavior. A lock that is yielded as held is
-    a lock on the sidecar the path names AT THAT MOMENT: a flock granted on an
+    a lock on the sidecar the path names AT THAT MOMENT: a lock granted on an
     inode a fold has since unlinked is dropped and the live sidecar opened
     instead, and a directory that is gone is "not held", never held on a ghost
     (#1411). The sidecar is opened with the
@@ -144,7 +274,7 @@ def dir_lock(d: Path) -> Iterator[bool]:
     It is a sidecar, not a lock on the ledger's own fd, because `rewrite`
     swaps the inode with os.replace and a lock on the old inode would not
     exclude a writer holding the new one."""
-    if _fcntl is None:
+    if _lock is None:
         yield False
         return
     fh = None
@@ -158,7 +288,7 @@ def dir_lock(d: Path) -> Iterator[bool]:
                 # unwritable directory: fail open, as before.
                 break
         try:
-            _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            _lock.acquire(fh.fileno())
         except OSError:
             time.sleep(_LOCK_INTERVAL)
             continue
@@ -171,16 +301,23 @@ def dir_lock(d: Path) -> Iterator[bool]:
         # open the live one (or find the directory gone).
         _drop(fh)
         fh = None
+    handle = _Held(fh) if fh is not None else None
+    key = _held_key(d)
+    if held and handle is not None:
+        with _held_guard:
+            _held_here[key] = handle
     try:
         yield held
     finally:
-        if fh is not None:
-            try:
-                if held:
-                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
-                fh.close()
-            except OSError:
-                pass
+        if held and handle is not None:
+            with _held_guard:
+                if _held_here.get(key) is handle:
+                    del _held_here[key]
+        if handle is not None:
+            if held:
+                handle.release()
+            else:
+                _drop(fh)
 
 
 def _names_this_inode(fh, path: Path) -> bool:

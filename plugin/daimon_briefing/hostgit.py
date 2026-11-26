@@ -370,6 +370,10 @@ def _refuse(path, code: str) -> Refused:
 
 
 def _below(child: str, parent: str) -> bool:
+    """`child` is `parent` or lies below it, separator-bounded. Compared the
+    way recorded roots are (`store.root_eq`): `normcase` on both sides, so a
+    path in another case on a case-insensitive volume is still below."""
+    child, parent = os.path.normcase(child), os.path.normcase(parent)
     return child == parent or child.startswith(parent.rstrip(os.sep) + os.sep)
 
 
@@ -1108,7 +1112,7 @@ def init(path, *, timeout: float = SIDECAR_TIMEOUT) -> Checkout | Refused:
         return _refuse(raw, "not-a-dir")
     real = os.path.realpath(raw)
     top = ceiling()
-    if real == top or not _below(real, top):
+    if os.path.normcase(real) == os.path.normcase(top) or not _below(real, top):
         return _refuse(raw, "outside-ceiling")
     no_entry = _lstat(os.path.join(real, ".git")) is None
     if no_entry:

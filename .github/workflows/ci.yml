@@ -114,6 +114,34 @@ jobs:
           uv run --extra dev mypy daimon_briefing > mypy-out.txt || true
           ! grep "ReadResult" mypy-out.txt | grep -v "^daimon_briefing/store.py"
 
+  lock-windows:
+    # #1401: the lock primitive is chosen once in jsonl (fcntl on POSIX,
+    # msvcrt on Windows). This runs ONLY the lock contract and the hostgit
+    # path comparison on the real thing; the rest of the suite is not yet
+    # Windows-clean and is not run here.
+    name: lock contract (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugin/uv.lock
+
+      - name: lock contract tests
+        run: >-
+          uv run --extra dev --extra pretty pytest -q
+          tests/test_lock_contract.py
+          tests/test_dir_lock_identity.py
+          "tests/test_identity_windows_semantics.py::test_hostgit_below_is_separator_bounded_and_case_blind_on_windows"
+          "tests/test_identity_windows_semantics.py::test_hostgit_below_stays_case_sensitive_on_posix"
+
   scar-lint:
     name: scar lint
     runs-on: ubuntu-latest

@@ -143,12 +143,20 @@ def test_a_transcript_from_the_old_windows_home_is_found_in_the_history(
 # ---- hostgit's own containment test (design: UNVERIFIED on Windows) ----------------------
 
 
-def test_hostgit_below_uses_the_platform_separator(monkeypatch):
-    """`_below` compares with `os.sep` and no `normcase`. With a backslash
-    separator it bounds correctly at a separator; a different CASING of the
-    same folder is NOT below, which is the documented residual (design D9,
-    SEALED on Windows unverified). Pinned so a change is deliberate."""
+def test_hostgit_below_is_separator_bounded_and_case_blind_on_windows(
+        monkeypatch, ntcase):
+    """`_below` compares with `os.sep` after `normcase`, like every other
+    root comparison (#1401). With a backslash separator it bounds at a
+    separator, and a different CASING of the same folder, which a
+    case-insensitive volume treats as the same folder, is below it."""
     monkeypatch.setattr(os, "sep", "\\")
     assert hostgit._below("C:\\r\\sub", "C:\\r")
     assert not hostgit._below("C:\\rr", "C:\\r")
-    assert not hostgit._below("c:\\r\\sub", "C:\\r")
+    assert hostgit._below("c:\\r\\sub", "C:\\r")
+    assert hostgit._below("C:\\R", "c:\\r")
+    assert hostgit._below("C:/r/sub", "C:\\r")
+
+
+def test_hostgit_below_stays_case_sensitive_on_posix(monkeypatch):
+    monkeypatch.setattr(os.path, "normcase", os.fspath)
+    assert not hostgit._below("/Users/a/sub", "/users/a")
