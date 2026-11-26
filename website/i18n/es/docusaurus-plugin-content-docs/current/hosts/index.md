@@ -44,7 +44,8 @@ así que los bytes coinciden; mira
 | API de Python `render_briefing` | Hosts que embeben daimon | Soportado. Se marca como visto al volver; `preview_briefing` no marca nada. |
 
 Los paneles pertenecen al briefing del propio proyecto. Una lectura de otro
-proyecto (un slug, o una ruta bajo el permiso entre proyectos) no muestra
+proyecto (un slug, `daimon brief --project` que nombra otro proyecto, o una
+ruta bajo el permiso entre proyectos) no muestra
 ninguno y no marca nada como visto para ese proyecto.
 
 ## Tres piezas móviles

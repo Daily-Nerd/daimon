@@ -228,13 +228,14 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     return 0
 
 
-def _prepared(project, route, worldcheck_project=None):
+def _prepared(project, route, worldcheck_project=None, own_ledger=True):
     """`briefing.prepare` for a CLI verb, or None after printing the one error
     line (rc 2): when the view cannot be built no briefing renders at all,
     never an unfiltered one."""
     try:
         return briefing.prepare(project, time.time(), route=route,
-                                worldcheck_project=worldcheck_project)
+                                worldcheck_project=worldcheck_project,
+                                own_ledger=own_ledger)
     except Exception as exc:  # noqa: BLE001 — reported, never rendered around
         print("error: the briefing could not be prepared "
               f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
@@ -316,8 +317,13 @@ def _cmd_brief(args, fx) -> int:
     # #365: worldcheck never probes a fallback body (the global pointer may
     # belong to ANOTHER project and `gh` resolves against THIS cwd's repo);
     # `prepare` enforces that from `fell_back`.
+    # #1402: the panels are the caller's OWN project's. `view.cli_read` is
+    # the one decision of whether this read stays inside the own bucket (a
+    # `--project` naming another one does not): a foreign path shows no panel
+    # and stamps nothing, as on the MCP surface.
     annotated = _prepared(project, store.Route.OWN_ELSE_GLOBAL,
-                          worldcheck_project=project)
+                          worldcheck_project=project,
+                          own_ledger=view.cli_read(project=args.project).own)
     if annotated is None:
         return 2
     checkpoint = annotated.checkpoint

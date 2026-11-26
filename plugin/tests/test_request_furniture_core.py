@@ -304,3 +304,32 @@ def test_the_rich_brief_prints_the_format_version_note(
               {"text": "x", "trust": "inferred"}]}}
     prep.render_brief(cp, snap=prep.synthetic())
     assert "checkpoint format 0.0.1" in capsys.readouterr().out
+
+
+def test_the_cli_briefing_a_foreign_project_path_shows_and_stamps_no_panel(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    """`daimon brief --project <other>` reads another project's briefing. Its
+    agent never saw the requests addressed to it, so the reader's call must
+    show no panel or count and must not stamp them as surfaced. The body
+    prints as it does today."""
+    ids = seed.seed()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", seed.OTHER)
+    assert cli.main(["brief", "--project", seed.PROJECT]) == 0
+    out = capsys.readouterr().out
+    assert seed.KEPT in out
+    assert not any(h in out for h in (
+        briefing._REQUEST_PANEL_HEADER, briefing._VERDICT_PANEL_HEADER,
+        briefing._OWED_PANEL_HEADER, briefing._OVERDUE_PANEL_HEADER))
+    assert "decision waiting on you" not in out
+    record = requests.recipient_join(project_dir=seed.PROJECT)[ids["request"]]
+    assert requests.needs_surfaced_stamp(record) is True
+
+
+def test_the_cli_briefing_its_own_project_by_path_still_shows_the_panels(
+        tmp_checkpoint_dir, monkeypatch, capsys):
+    ids = seed.seed()
+    monkeypatch.setenv("DAIMON_PROJECT_DIR", seed.PROJECT)
+    assert cli.main(["brief", "--project", seed.PROJECT]) == 0
+    assert briefing._REQUEST_PANEL_HEADER in capsys.readouterr().out
+    record = requests.recipient_join(project_dir=seed.PROJECT)[ids["request"]]
+    assert requests.needs_surfaced_stamp(record) is False

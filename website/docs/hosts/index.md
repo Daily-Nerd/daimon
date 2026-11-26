@@ -43,7 +43,8 @@ trailer. One composer writes it, so the bytes match; see
 | Python API `render_briefing` | Embedding hosts | Supported. Marked as seen on return; `preview_briefing` marks nothing. |
 
 The panels belong to a project's own briefing. A read of another project (a
-slug, or a path under the cross-project grant) shows none of them and marks
+slug, `daimon brief --project` naming another project, or a path under the
+cross-project grant) shows none of them and marks
 nothing as seen for that project.
 
 ## Three moving parts

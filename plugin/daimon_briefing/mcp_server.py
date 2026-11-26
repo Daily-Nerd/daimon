@@ -84,7 +84,8 @@ def _tool_descriptors():
                 "was doing, decisions, open loops, trust-tagged. Strictly "
                 "project-scoped: no checkpoint here answers 'none', never "
                 "another project's content"
-                + (" (pass slug to read one explicitly)." if cross else ".")),
+                + (" (pass slug to read one explicitly)." if cross else ".")
+                + " It records which request cards it delivered."),
             "inputSchema": {"type": "object", "properties": brief_props},
             "annotations": {"readOnlyHint": True},
         },
