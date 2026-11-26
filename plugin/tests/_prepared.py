@@ -63,3 +63,46 @@ class FrozenClock:
 
     def new_id(self):
         return uuid.uuid4().hex
+
+
+def annotated_of(checkpoint, *, handoff=None, project_dir=None,
+                 worldcheck_project=None, snap=None, notes=(), now=NOW):
+    """The `Annotated` of a checkpoint in hand, for a test that renders it:
+    the furniture comes from the real builder (`briefing._furniture`), with
+    `worldcheck_project` as the gate (the project whose panels are read, None
+    for none) and `project_dir` the project the rulings are read for."""
+    return briefing.Annotated(
+        checkpoint, (), {}, [], None, [], None, snap, notes=tuple(notes),
+        handoff=handoff,
+        furniture=briefing._furniture(project_dir, worldcheck_project, snap,
+                                      notes, now),
+        version_note=(briefing.version_note(checkpoint)
+                      if isinstance(checkpoint, dict) else ""))
+
+
+def rendered(checkpoint, project_dir=None, worldcheck_project=None, *,
+             loops_pointer=True, snap=None, notes=(), handoff=None, now=NOW):
+    """`briefing.render` for a checkpoint in hand, with the panels of
+    `worldcheck_project` (the gate of `briefing._furniture`, the one builder)
+    when a test asks for them."""
+    furniture = (briefing._furniture(project_dir, worldcheck_project, snap,
+                                     notes, now)
+                 if project_dir is not None or worldcheck_project is not None
+                 else briefing.Furniture())
+    return briefing.render(checkpoint, project_dir, loops_pointer=loops_pointer,
+                           snap=snap, notes=notes, handoff=handoff,
+                           furniture=furniture)
+
+
+def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
+                 project_dir=None, worldcheck_project=None, trailer=None,
+                 loops_pointer=True, snap=None, notes=(), lead=()):
+    """`render.render_brief` for a checkpoint in hand: the same print, from
+    an `Annotated` built the way `prepare` builds it (`annotated_of`)."""
+    from daimon_briefing import render
+    return render.render_brief(
+        annotated_of(checkpoint, handoff=handoff, project_dir=project_dir,
+                     worldcheck_project=worldcheck_project, snap=snap,
+                     notes=notes),
+        drift=drift, teammates=teammates, trailer=trailer,
+        loops_pointer=loops_pointer, lead=lead)

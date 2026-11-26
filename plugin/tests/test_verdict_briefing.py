@@ -6,6 +6,7 @@ is exercised in test_cli_brief_requests.py, not here.
 """
 
 from daimon_briefing import briefing, refutations, requests, store
+from tests._prepared import rendered
 
 SENDER = "/p/verdict-brief-sender"
 RECIPIENT = "/p/verdict-brief-recipient"
@@ -125,7 +126,7 @@ def test_panel_and_incoming_panel_coexist(tmp_checkpoint_dir):
     incoming_id = requests.open_request(
         to=store.project_slug(SENDER), ask="the incoming ask",
         why="because", channel="cli-agent", project_dir=RECIPIENT)
-    out = briefing.render(None, project_dir=SENDER, worldcheck_project=SENDER)
+    out = rendered(None, project_dir=SENDER, worldcheck_project=SENDER)
     assert "the sent ask" in out
     assert "the incoming ask" in out
     assert incoming_id  # keeps the linter from flagging an unused id
@@ -137,14 +138,14 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint):
     import os
     os.environ["DAIMON_BRIEF_MAX_TOKENS"] = "40"
     try:
-        out = briefing.render(sample_checkpoint, project_dir=SENDER,
+        out = rendered(sample_checkpoint, project_dir=SENDER,
                               worldcheck_project=SENDER)
         # #1128: over budget the panel collapses to its header and a count
         # line; with room it shows the card again.
         assert briefing._VERDICT_PANEL_HEADER in out
         assert "1 cut for budget, see: daimon request list" in out
         os.environ["DAIMON_BRIEF_MAX_TOKENS"] = "3000"
-        out = briefing.render(sample_checkpoint, project_dir=SENDER,
+        out = rendered(sample_checkpoint, project_dir=SENDER,
                               worldcheck_project=SENDER)
     finally:
         del os.environ["DAIMON_BRIEF_MAX_TOKENS"]
@@ -154,7 +155,7 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint):
 def test_render_with_no_checkpoint_still_shows_the_panel(tmp_checkpoint_dir):
     q_id = _ask()
     requests.accept(q_id, channel="cli-tty", project_dir=RECIPIENT)
-    out = briefing.render(None, project_dir=SENDER, worldcheck_project=SENDER)
+    out = rendered(None, project_dir=SENDER, worldcheck_project=SENDER)
     assert out is not None
     assert "publish the schema" in out
 

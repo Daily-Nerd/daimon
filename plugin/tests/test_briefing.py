@@ -664,7 +664,7 @@ def test_byte_ceiling_caps_output_and_preserves_rulings(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "900")
     b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
-    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    out = briefing.render_plain(b, furniture=briefing.Furniture(rulings=tuple(_CEILING_RULINGS)))
     # #1128: the rulings, the greeting and the newest decision are fixed
     # furniture, and here they alone exceed 900 bytes. Nothing is blindly cut
     # to force a fit: the render says by how much it is over, and keeps them.
@@ -674,7 +674,7 @@ def test_byte_ceiling_caps_output_and_preserves_rulings(monkeypatch):
         assert line in out
     # Where the fixed part fits, the ceiling holds and no marker appears.
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "2600")
-    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    out = briefing.render_plain(b, furniture=briefing.Furniture(rulings=tuple(_CEILING_RULINGS)))
     assert len(out.encode("utf-8")) <= 2600
     assert "bytes over the" not in out
     for line in _CEILING_RULINGS:
@@ -688,7 +688,7 @@ def test_byte_ceiling_drops_items_without_the_hard_backstop(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "15000")
     b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
-    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    out = briefing.render_plain(b, furniture=briefing.Furniture(rulings=tuple(_CEILING_RULINGS)))
     assert len(out.encode("utf-8")) <= 15000
     assert "cut for budget" in out
     assert "bytes over the" not in out
@@ -700,7 +700,7 @@ def test_byte_ceiling_zero_disables(monkeypatch):
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
     b = briefing.build(_byte_ceiling_checkpoint(), now=1_800_000_000.0)
-    out = briefing.render_plain(b, rulings=_CEILING_RULINGS)
+    out = briefing.render_plain(b, furniture=briefing.Furniture(rulings=tuple(_CEILING_RULINGS)))
     assert len(out.encode("utf-8")) > 900
     assert "truncated" not in out
 

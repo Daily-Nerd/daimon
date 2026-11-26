@@ -1,4 +1,5 @@
 from daimon_briefing import anchor
+from tests._prepared import render_brief
 
 _SRC = '''
 def foo(x):
@@ -185,7 +186,6 @@ def test_drifted_degrades_on_syntax_error_file(tmp_path):
 def test_brief_render_survives_syntax_error_in_anchored_file(tmp_path, capsys):
     # End-to-end pin: brief render over a drift scan that hit an unparseable
     # file must not traceback — the item surfaces as GONE drift.
-    from daimon_briefing import render
 
     _write(tmp_path, "m.py", _SRC)
     a = anchor.resolve(tmp_path, "m.py", "foo")
@@ -201,7 +201,7 @@ def test_brief_render_survives_syntax_error_in_anchored_file(tmp_path, capsys):
         "epistemic_snapshot": {"strong_beliefs": [], "uncertainties": []},
     }
     drift = anchor.drifted(checkpoint, tmp_path)
-    render.render_brief(checkpoint, drift=drift)  # must not raise
+    render_brief(checkpoint, drift=drift)  # must not raise
     out = capsys.readouterr().out
     assert "CODE DRIFT" in out
     assert "[GONE] q-broken-file" in out

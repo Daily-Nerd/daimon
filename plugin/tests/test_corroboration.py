@@ -38,6 +38,7 @@ import pytest
 from daimon_briefing import (briefing, capture, carry, cli, config, hooks,
                              mcp_tools, normalize, recall, render, scoring,
                              serializer, store, transcript)
+from tests._prepared import render_brief
 
 from ._prepared import shown, synthetic
 from daimon_briefing.surfaces import Writer
@@ -1150,10 +1151,10 @@ def test_plain_and_rich_render_the_same_badge(monkeypatch, capsys):
     marked = briefing.mark_corroborated(
         _render_checkpoint(text="the feed pauses drop entries"),
         {ITEM: _entry({OBSERVER})})
-    render.render_brief(marked)
+    render_brief(marked)
     plain = capsys.readouterr().out
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    render.render_brief(marked)
+    render_brief(marked)
     rich_out = capsys.readouterr().out
     assert BADGE_2 in plain
     assert BADGE_2 in rich_out

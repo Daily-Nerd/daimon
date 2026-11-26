@@ -3906,7 +3906,8 @@ def verdict_renderable(project_dir=None) -> dict:
                        got.notes)
 
 
-def overdue_renderable(project_dir=None, shown_ids=frozenset()) -> dict:
+def overdue_renderable(project_dir=None, shown_ids=frozenset(),
+                       now_ns: int | None = None) -> dict:
     """#1281: the sender-side overdue panel data, `{"rows": [...],
     "overflow": N}`. Asks THIS project sent that are still owed (open,
     needs-info, accepted with no done) and have not moved for the threshold,
@@ -3916,9 +3917,12 @@ def overdue_renderable(project_dir=None, shown_ids=frozenset()) -> dict:
 
     `shown_ids` are the requests the verdict panel already printed in this
     brief: they are dropped BEFORE the cap, so a repeat never costs a slot
-    (the dedup-before-cap order `verdict_deliverable` documents)."""
+    (the dedup-before-cap order `verdict_deliverable` documents).
+
+    `now_ns` is the reader's clock (a briefing passes its own, so every age
+    it prints reads one instant); None reads the injected clock."""
     got = sent(project_dir)
-    now = clock.now_ns()
+    now = clock.now_ns() if now_ns is None else now_ns
     rows = [r for r in got.by_id.values()
             if r["request_id"] not in shown_ids and is_overdue(r, now)]
     rows.sort(key=_recency)

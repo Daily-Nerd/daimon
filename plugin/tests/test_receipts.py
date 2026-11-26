@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from daimon_briefing import briefing, cli, config, receipts, render, store
+from tests._prepared import render_brief
 from daimon_briefing.surfaces import Writer
 
 _SEED = bytes(range(32))
@@ -880,7 +881,7 @@ def test_briefing_receipt_degraded_swallows_exception(monkeypatch):
 def test_rich_brief_prints_degrade_note(monkeypatch, sample_checkpoint, capsys):
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     monkeypatch.setattr(briefing, "receipt_degraded", lambda cp: True)
-    render.render_brief(sample_checkpoint)
+    render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     assert "RECEIPT UNVERIFIED" in out
 

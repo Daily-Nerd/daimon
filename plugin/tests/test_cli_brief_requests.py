@@ -115,12 +115,12 @@ def test_cli_brief_slug_path_never_stamps_or_shows_the_panel(
     assert "publish the schema" not in out
 
 
-def test_cli_brief_global_fallback_never_stamps_or_shows_the_panel(
+def test_cli_brief_global_fallback_never_stamps_or_shows_another_projects_panel(
         tmp_checkpoint_dir, monkeypatch, capsys):
     recipient = "/p/cbr-recipient-e"
     # Recipient has no checkpoint of its own, so `brief` falls back to the
     # global pointer — the branch under test.
-    _open_ask(recipient, seed_recipient=False)
+    q_id = _open_ask(recipient, seed_recipient=False)
     # Global pointer belongs to a THIRD, unrelated project.
     store.write_checkpoint("S-other", {
         "session_id": "S-other", "created": "2026-08-16T00:00:00Z",
@@ -129,19 +129,15 @@ def test_cli_brief_global_fallback_never_stamps_or_shows_the_panel(
     }, writer=Writer.HUMAN)  # no project_dir -> global pointer only
     monkeypatch.setenv("DAIMON_BRIEF_GLOBAL_FALLBACK", "full")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/cbr-never-seen")
-
-    def _boom(*a, **k):
-        raise AssertionError("global-fallback briefs must never touch the "
-                             "composer")
-
-    # #961 slice 3: the stamping loop (and the panel) read through
-    # `decision_renderable`, not `inbox_renderable` — patching the function
-    # this path no longer calls would prove nothing (landmine: moving a
-    # function off a call graph silently shrinks a monkeypatch-based test).
-    monkeypatch.setattr(requests, "decision_renderable", _boom)
-    monkeypatch.setattr(requests, "stamp_surfaced", _boom)
     rc = cli.main(["brief"])
     assert rc == 0
+    # #1402: the panels read the REQUESTED project's own ledgers, whichever
+    # body was served. That project (`/p/cbr-never-seen`) has no request, so
+    # no panel prints, and the request addressed to ANOTHER project is neither
+    # shown nor stamped.
+    assert "publish the schema" not in capsys.readouterr().out
+    record = requests.recipient_join(project_dir=recipient)[q_id]
+    assert requests.needs_surfaced_stamp(record) is True
 
 
 def test_cli_brief_a_crash_before_the_stamp_leaves_it_unstamped(

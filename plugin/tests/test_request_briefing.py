@@ -8,6 +8,7 @@ this file drives briefing.request_panel_lines/render directly.
 import json
 
 from daimon_briefing import briefing, clock, config, requests, store
+from tests._prepared import rendered
 from daimon_briefing.surfaces import Writer
 
 RECIPIENT = "/p/req-brief-recipient"
@@ -205,7 +206,7 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint,
     sender = _seed_sender()
     _ask(sender)
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "40")
-    out = briefing.render(sample_checkpoint, project_dir=RECIPIENT,
+    out = rendered(sample_checkpoint, project_dir=RECIPIENT,
                           worldcheck_project=RECIPIENT)
     # #1128: when the fixed sections alone exceed the budget the panel
     # collapses to its frozen header and a count line (never silently gone);
@@ -213,7 +214,7 @@ def test_panel_survives_budget_pressure(tmp_checkpoint_dir, sample_checkpoint,
     assert briefing._REQUEST_PANEL_HEADER in out
     assert "1 cut for budget, see: daimon request inbox" in out
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "3000")
-    out = briefing.render(sample_checkpoint, project_dir=RECIPIENT,
+    out = rendered(sample_checkpoint, project_dir=RECIPIENT,
                           worldcheck_project=RECIPIENT)
     assert "publish the schema" in out
 
@@ -238,7 +239,7 @@ def test_panel_rides_the_llm_opt_in_render_path(tmp_checkpoint_dir,
         'Decided: "we adopt the D-007 prompt for the serializer".'
     )
     monkeypatch.setattr(llm, "chat", lambda *a, **k: faithful)
-    out = briefing.render(sample_checkpoint, project_dir=RECIPIENT,
+    out = rendered(sample_checkpoint, project_dir=RECIPIENT,
                           worldcheck_project=RECIPIENT)
     assert "publish the schema" in out
     assert faithful in out
@@ -250,7 +251,7 @@ def test_render_with_no_checkpoint_still_shows_the_panel(tmp_checkpoint_dir):
     # gets might be an incoming ask, before it has serialized anything.
     sender = _seed_sender()
     _ask(sender)
-    out = briefing.render(None, project_dir=RECIPIENT,
+    out = rendered(None, project_dir=RECIPIENT,
                           worldcheck_project=RECIPIENT)
     assert out is not None
     assert "publish the schema" in out

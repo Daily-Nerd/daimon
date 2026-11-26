@@ -18,7 +18,6 @@ from .. import (
     anchor,
     briefing,
     config,
-    display,
     effects_commit,
     recall,
     render,
@@ -150,31 +149,6 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     return out
 
 
-def _withheld_trailer(own, team) -> list:
-    """The advisory lines about what the briefing withheld. Resolved loops
-    keep their count and wording; a quarantined item gets its own line, only
-    when there is one. `own` is the `Annotated` of the reader's briefing (or
-    None), `team` a `_TeamCounts` (or None)."""
-    resolved = (own.suppressed if own else 0) + (team.resolved if team else 0)
-    quarantined = ((own.quarantined if own else 0)
-                   + (team.quarantined if team else 0))
-    trailer = []
-    if resolved:
-        # #981: the count covers the Teammates section too, and says how
-        # many were a teammate's, since `status --suppressed` lists only the
-        # reader's own checkpoint.
-        note = f"{resolved} resolved item(s) withheld"
-        if team and team.resolved:
-            note += f" ({team.resolved} a teammate's)"
-        trailer.append(note + " — `daimon status --suppressed` to list")
-    if quarantined:
-        note = f"{quarantined} quarantined item(s) withheld"
-        if team and team.quarantined:
-            note += f" ({team.quarantined} a teammate's)"
-        trailer.append(note + " — `daimon trust list` shows them")
-    return trailer
-
-
 def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
                           worldcheck_project=None, team_counts=None,
                           loops_pointer=True, lead=()) -> int:
@@ -206,23 +180,21 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
              if checkpoint and drift_project else [])
     # #523: the baton leads the briefing. `briefing.prepare` read it (fail-open);
     # this host only renders it.
-    handoff = annotated.handoff if annotated else None
-    trailer = _withheld_trailer(annotated, team_counts)
+    trailer = briefing.withheld_trailer(annotated, team_counts)
     # One cap over every note this brief carries: the #1236 import note of
     # the body rendered here, the snapshot's, the request joins' (merged in
-    # `briefing.prepare`) and the teammates' (#1132 PR 10a).
-    notes = display.merge_notes(annotated.body_notes if annotated else (),
-                                team_counts.notes if team_counts else ())
-    # #1128: the note rides INTO render_brief so it is charged to the same
+    # `briefing.prepare`) and the teammates' (#1132 PR 10a): the teammates'
+    # ride in as `extra_notes`, capped once with the rest.
+    #
+    # #1128: the notes ride INTO render_brief so they are charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the
     # budgeted brief actually showed of each panel.
-    printed = render.render_brief(checkpoint, drift=drift, teammates=teammates,
-                                  handoff=handoff, project_dir=route,
-                                  worldcheck_project=worldcheck_project,
+    printed = render.render_brief(annotated, drift=drift, teammates=teammates,
                                   trailer=trailer,
                                   loops_pointer=loops_pointer,
-                                  snap=annotated.snapshot if annotated else None,
-                                  notes=notes, lead=lead)
+                                  extra_notes=(team_counts.notes
+                                               if team_counts else ()),
+                                  lead=lead)
 
     # #1128: worldcheck (#365/#397/#439) ran inside briefing.prepare. Every
     # briefing path opts in explicitly (#1279: this CLI, the MCP tool, the
@@ -242,13 +214,13 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     # cards `render_brief` printed in full, taken from the one read that
     # built the panels: a row the budget cut (its panel collapsed to a count
     # line) never reached the reader, so it is not stamped, and no manifest
-    # means nothing is known to have been shown. Gated on the same
-    # `worldcheck_project` parameter as the panel itself (D2) — never on
-    # `route`, which is set on every path including --slug. The stamps go
-    # through `requests.stamp_surfaced` / `stamp_verdict_surfaced`, the
-    # `_stamp` chokepoint (#961 slice 3: the request cards are the panel's
-    # own, `decision_renderable`, which excludes `kind == "info"`).
-    fx.add(effects_commit.surfaced_effects(worldcheck_project, printed))
+    # means nothing is known to have been shown. The gate is the furniture's
+    # own (`printed.project`, #1402): a slug prints no panel and so has no
+    # card. The stamps go through `requests.stamp_surfaced` /
+    # `stamp_verdict_surfaced`, the `_stamp` chokepoint (#961 slice 3: the
+    # request cards are the panel's own, `decision_renderable`, which
+    # excludes `kind == "info"`).
+    fx.add(effects_commit.surfaced_effects(printed))
     # #1128: the standing ">N days unverified" footer is gone. The stale
     # items carry [? unverified] marks in the body, and a section that hid
     # stale carried items says so in its own note, so the footer repeated
@@ -366,6 +338,11 @@ def _cmd_brief(args, fx) -> int:
         # serialize-count-based in store.active_handoff.
         render.render_handoff(annotated.handoff)
         render.render_brief_note(list(annotated.notes))
+        # #1402: the panels read this project's own ledgers, whichever body
+        # the read fell back to, so a request addressed to a project with no
+        # checkpoint of its own is still shown, and stamped as shown.
+        fx.add(effects_commit.surfaced_effects(
+            render.render_furniture(annotated.furniture)))
         render.render_brief_line([
             "No briefing for this project yet — the first serialized session "
             "will create one.",

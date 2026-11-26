@@ -77,16 +77,20 @@ def rendered_worldcheck_effects(project, rendered) -> Effects:
                               rendered.ledger_rows, rendered.worldcheck_skips)
 
 
-def surfaced_effects(worldcheck_project, printed) -> Effects:
-    """`surfaced` records for the cards `render_brief` printed in full.
-    `printed` is its manifest (None: nothing is known to have been shown)."""
-    if worldcheck_project is None or not printed:
+def surfaced_effects(printed) -> Effects:
+    """`surfaced` records for the cards a render printed in full. `printed` is
+    its `briefing.Printed` manifest: the project whose bucket the stamps are
+    written to (the furniture's gate, never a slug or a fallback target) and
+    the cards, each owed a stamp only when the panel decided so (`Card.stamp`).
+    A render that showed no panel returns a manifest with no project and so
+    stamps nothing."""
+    if printed is None or printed.project is None:
         return Effects.none()
-    out = [Surfaced("request", worldcheck_project, c.request_id)
-           for c in printed.get("request") or () if c.stamp]
-    out += [Surfaced("verdict", worldcheck_project, c.request_id,
+    out = [Surfaced("request", printed.project, c.request_id)
+           for c in printed.request if c.stamp]
+    out += [Surfaced("verdict", printed.project, c.request_id,
                      c.reply_event_id)
-            for c in printed.get("verdict") or () if c.stamp]
+            for c in printed.verdict if c.stamp]
     return Effects(surfaced=tuple(out))
 
 

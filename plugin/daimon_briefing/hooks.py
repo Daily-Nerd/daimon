@@ -295,7 +295,7 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         if annotated.checkpoint is None:
             # #693: standing rulings exist before the first checkpoint does —
             # a day-one ratification must reach the very next session.
-            rulings = briefing.ruling_lines(project, snap=annotated.snapshot)
+            rulings = annotated.furniture.rulings
             lines = [*annotated.notes, *rulings]
             baton = briefing.handoff_block(annotated.handoff)
             context = baton + "\n".join(lines)

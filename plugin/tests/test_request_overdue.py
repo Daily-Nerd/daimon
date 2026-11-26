@@ -314,7 +314,7 @@ def test_a_recipient_mute_does_not_hide_the_ask_from_its_sender(
 
 
 def test_collapsed_panel_points_at_request_list():
-    assert briefing._PANEL_POINTERS[3] == "daimon request list"
+    assert briefing._PANEL_POINTERS["overdue"] == "daimon request list"
 
 
 def _seed_checkpoint(project_dir, session):
@@ -343,7 +343,9 @@ def test_the_overdue_panel_renders_through_the_pure_renderer(
     share, so the panel has to ride it."""
     b = {"working_context": {}}
     panel = [briefing._OVERDUE_PANEL_HEADER, "! q-x  some ask  [open, 9d]"]
-    text = briefing.render_plain(b, overdue_lines=panel)
+    text = briefing.render_plain(b, furniture=briefing.Furniture(
+        project="/p/x", panels=(briefing.PanelBlock(
+            "overdue", tuple(panel), (briefing.Card("q-x", False),)),)))
     assert briefing._OVERDUE_PANEL_HEADER in text
 
 

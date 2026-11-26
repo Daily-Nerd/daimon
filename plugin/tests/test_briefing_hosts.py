@@ -8,6 +8,7 @@ import pytest
 
 from daimon_briefing import (amendments, briefing, cli, hooks, mcp_tools,
                              normalize, refutations, requests, store, trust)
+from tests._prepared import render_brief
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/hosts"
@@ -590,10 +591,10 @@ def test_the_rich_brief_prints_the_notes(tmp_checkpoint_dir, monkeypatch,
                                          capsys):
     from daimon_briefing import render
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    render.render_brief(_cp(KEPT), notes=("⚠ events.jsonl is degraded (torn)",))
+    render_brief(_cp(KEPT), notes=("⚠ events.jsonl is degraded (torn)",))
     out = capsys.readouterr().out
     assert "⚠ events.jsonl is degraded (torn)" in out
-    render.render_brief(None, notes=("⚠ events.jsonl is degraded (torn)",))
+    render_brief(None, notes=("⚠ events.jsonl is degraded (torn)",))
     assert "⚠ events.jsonl is degraded (torn)" in capsys.readouterr().out
 
 

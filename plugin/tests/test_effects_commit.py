@@ -158,13 +158,16 @@ def test_commit_survives_a_stdout_that_cannot_flush(monkeypatch):
 
 def test_surfaced_effects_only_for_cards_that_owe_a_stamp():
     card = briefing.Card
-    printed = {"request": (card("q-1", True), card("q-2", False)),
-               "verdict": (card("q-3", True, "ev1"),)}
-    got = effects_commit.surfaced_effects("/p", printed)
+    printed = briefing.Printed(
+        "/p", (card("q-1", True), card("q-2", False)),
+        (card("q-3", True, "ev1"),))
+    got = effects_commit.surfaced_effects(printed)
     assert got.surfaced == (Surfaced("request", "/p", "q-1", None),
                             Surfaced("verdict", "/p", "q-3", "ev1"))
-    assert effects_commit.surfaced_effects(None, printed) == Effects.none()
-    assert effects_commit.surfaced_effects("/p", None) == Effects.none()
+    # no gate (a slug, a foreign path), or nothing known to be printed
+    assert effects_commit.surfaced_effects(
+        printed._replace(project=None)) == Effects.none()
+    assert effects_commit.surfaced_effects(None) == Effects.none()
 
 
 def test_committing_commits_when_the_verb_raises(events, monkeypatch):
