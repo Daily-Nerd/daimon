@@ -137,16 +137,17 @@ def test_own_else_global_never_appears_in_own_only_modules():
 # a wrong route here is the same silent #784 failure as a wrong route above.
 # (file, qualname, callee, route source): None when the call passes no route
 # (the default is the own route, or the caller hands in an `Opened`).
-PREPARE = {"prepare", "_prepared"}
+PREPARE = {"prepare", "prepare_view", "_prepared"}
 PREPARE_MANIFEST = {
     ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN"),
     ("cli/brief.py", "_cmd_brief", "_prepared", "store.Route.OWN_ELSE_GLOBAL"),
     ("cli/brief.py", "_prepared", "prepare", "route"),
     ("cli/brief.py", "_team_briefings", "prepare", None),
-    ("cli/lifecycle.py", "_cmd_loops", "prepare", "store.Route.OWN"),
+    ("cli/lifecycle.py", "_cmd_loops", "prepare_view", "store.Route.OWN"),
     ("hooks.py", "pre_llm_call", "prepare",
      "briefing.injection_read_route(project)"),
     ("briefing.py", "machine_brief", "prepare", "store.Route.OWN"),
+    ("briefing.py", "prepare", "prepare_view", "route"),
 }
 
 

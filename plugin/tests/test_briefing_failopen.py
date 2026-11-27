@@ -8,6 +8,7 @@ import pytest
 
 from daimon_briefing import (briefing, cli, render, requests, store, trust,
                              worldcheck)
+from tests._prepared import render_brief
 
 from ._prepared import in_hand
 from .test_briefing_select import NOW, _fixture_checkpoint
@@ -107,9 +108,9 @@ def test_panel_cards_fail_open_to_nothing_stamped(monkeypatch, capsys):
     monkeypatch.setattr(requests, "decision_renderable", _boom)
     monkeypatch.setattr(requests, "verdict_renderable", _boom)
     for project in ("/p/x", None):
-        got = render.render_brief(_cp(), project_dir=project,
+        got = render_brief(_cp(), project_dir=project,
                                   worldcheck_project=project)
-        assert got == {"request": (), "verdict": ()}
+        assert (got.request, got.verdict) == ((), ())
     capsys.readouterr()
 
 
@@ -168,7 +169,7 @@ def test_cli_brief_survives_worldcheck_bookkeeping_failing(
 
 def test_rich_path_prints_the_trailer(monkeypatch, capsys):
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    render.render_brief(_fixture_checkpoint(), trailer=["3 resolved item(s) withheld"])
+    render_brief(_fixture_checkpoint(), trailer=["3 resolved item(s) withheld"])
     assert "3 resolved item(s) withheld" in capsys.readouterr().out
 
 

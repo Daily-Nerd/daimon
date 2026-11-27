@@ -87,8 +87,20 @@ def _env(monkeypatch):
     monkeypatch.setenv("DAIMON_STALE_DAYS", "7")
 
 
-def _sel(b, budget, **kw):
-    return briefing.select(b, budget, NOW, **kw)
+def _furniture(rulings=(), request_lines=()):
+    """The `Furniture` of plain data: standing rulings and one request panel
+    whose cards are the `→` lines."""
+    cards = tuple(briefing.Card(ln.split()[1], True) for ln in request_lines
+                  if ln.startswith("→ "))
+    panels = ((briefing.PanelBlock("request", tuple(request_lines), cards),)
+              if request_lines else ())
+    return briefing.Furniture(project="/p/x" if panels else None,
+                              rulings=tuple(rulings), panels=panels)
+
+
+def _sel(b, budget, rulings=(), request_lines=(), **kw):
+    return briefing.select(b, budget, NOW, furniture=_furniture(
+        rulings, request_lines), **kw)
 
 
 def _bytes(sel):
@@ -437,10 +449,13 @@ def test_render_plain_is_a_thin_wrapper_over_select(monkeypatch):
     monkeypatch.setenv("DAIMON_MAX_BRIEFING_DECISIONS", "10")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "6000")
     b = _annotated_b()
-    assert briefing.render_plain(b, rulings=RULINGS) == \
+    furniture = _furniture(RULINGS)
+    assert briefing.render_plain(b, furniture=furniture) == \
         briefing.render_selection(
-            briefing.select(b, briefing.effective_budget(), rulings=RULINGS))
-    assert len(briefing.render_plain(b, rulings=RULINGS).encode()) <= 6000
+            briefing.select(b, briefing.effective_budget(),
+                            furniture=furniture))
+    assert len(briefing.render_plain(
+        b, furniture=furniture).encode()) <= 6000
 
 
 def test_effective_budget_is_one_byte_unit(monkeypatch):

@@ -9,6 +9,7 @@ that is agent tier whatever terminal the process holds.
 import pytest
 
 from daimon_briefing import authority, cli, jsonl, render, store
+from tests._prepared import render_brief
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/handoff-tier"
@@ -154,6 +155,6 @@ def test_the_rich_seam_labels_by_tier(monkeypatch, capsys, tier, label):
 def test_render_brief_labels_an_agent_baton(
         monkeypatch, capsys, sample_checkpoint, rich):
     monkeypatch.setattr(render, "supports_rich", lambda: rich)
-    render.render_brief(sample_checkpoint, handoff=_baton("agent"))
+    render_brief(sample_checkpoint, handoff=_baton("agent"))
     out = capsys.readouterr().out
     assert AGENT_LABEL in out and HUMAN_LABEL not in out

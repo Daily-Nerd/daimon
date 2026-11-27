@@ -29,7 +29,7 @@ from typing import Any, NamedTuple
 from . import (capture, checks_host, checks_runtime, clock, config, display, hostgit,
                identity, ledger,
                llm, marks, pending, receipts, refutations, requests, schema,
-               scoring, store)
+               scoring, serializer, store)
 # Imported as constants, not as the module.
 from .amendments import CHANGES as _AMEND_CHANGES
 from .amendments import RENDER_STATES as _AMEND_RENDER_STATES
@@ -742,6 +742,80 @@ def noted_suffix(item) -> str:
     return f" (noted {when}Z, re-check before acting)"
 
 
+# ---- #1402: the request furniture, built once --------------------------------
+
+
+class Card(NamedTuple):
+    """One request card a panel printed: the id, whether showing it owes a
+    `surfaced` / `verdict_surfaced` stamp row (decided on the row the panel
+    itself rendered), and for a verdict card the late reply it showed. The
+    owed and overdue panels carry cards too (`stamp` False: they have no
+    `surfaced` stamp), so every panel counts what it printed the same way."""
+    request_id: str
+    stamp: bool
+    reply_event_id: str | None = None
+
+
+class PanelBlock(NamedTuple):
+    """One request panel as printed: `name` is `request`, `verdict`, `owed`
+    or `overdue`; `lines` the block (header first, then each card's lines, the
+    overflow line, the close rule, and the join notes) and `cards` one per
+    card, in print order."""
+    name: str
+    lines: tuple[str, ...]
+    cards: tuple[Card, ...]
+
+
+class Furniture(NamedTuple):
+    """What a briefing prints besides its body, built once by `prepare`:
+    the standing rulings, the decision count (its line first, then its
+    notes) and the request panels in print order, empty ones omitted.
+
+    `project` is the gate (I2): the project whose own ledgers the panels were
+    read from, None when this read shows no panels, no count and stamps
+    nothing (a slug, a foreign path, a teammate block). Rulings keep their
+    wider gate: every briefing read has them."""
+    project: str | None = None
+    rulings: tuple[str, ...] = ()
+    decision_count: tuple[str, ...] = ()
+    panels: tuple[PanelBlock, ...] = ()
+
+    def block(self, name: str) -> PanelBlock | None:
+        return next((p for p in self.panels if p.name == name), None)
+
+    def lines(self, name: str) -> list[str]:
+        block = self.block(name)
+        return list(block.lines) if block else []
+
+    def cards(self, name: str) -> tuple[Card, ...]:
+        block = self.block(name)
+        return block.cards if block else ()
+
+    def count_line(self) -> str | None:
+        return "\n".join(self.decision_count) or None
+
+    def printed(self) -> "Printed":
+        """Every card, for a render that prints each panel whole."""
+        return Printed(self.project, self.cards("request"),
+                       self.cards("verdict"))
+
+
+class Printed(NamedTuple):
+    """The cards a render printed whole: the manifest an entry point commits
+    as `surfaced` stamps at its delivery boundary (`effects_commit.
+    surfaced_effects`). `project` is whose bucket the stamps go to (the
+    furniture's gate). Empty means nothing is known to have been shown."""
+    project: str | None = None
+    request: tuple[Card, ...] = ()
+    verdict: tuple[Card, ...] = ()
+
+
+class Composed(NamedTuple):
+    """A composed briefing: its `text` and the `printed` manifest."""
+    text: str
+    printed: Printed
+
+
 # ---- #1128: the one annotation step every host shares ----
 
 
@@ -783,6 +857,11 @@ class Annotated(NamedTuple):
     # host renders the same section and none reads the events ledger for it
     # on its own. The teammate blocks (`stamps=False`) carry none.
     handoff: dict | None = None
+    # #1402: the rulings, decision count and request panels every host
+    # prints, and the format-version note (one `⚠` line, "" when there is
+    # nothing to say), both built here so no host builds its own.
+    furniture: Furniture = Furniture()
+    version_note: str = ""
 
     @property
     def body_notes(self) -> tuple:
@@ -922,18 +1001,22 @@ def coverage_note(checkpoint) -> str | None:
     return marks.warning(" ".join(sentences))
 
 
-def prepare(project, now, *, live: bool = True, worldcheck_project=None,
-            route=None, stamps: bool = True, opened=None) -> Annotated:
-    """#1132 PR 7a: the one preparation every briefing host shares (the CLI
-    brief, the MCP tool, the Hermes hook, `daimon loops` and the teammates):
-    `view.open` (what the reader may see), then `stamp` (the transient marks
-    the renderers read), then the optional worldcheck.
+def prepare_view(project, now, *, live: bool = True, worldcheck_project=None,
+                 route=None, stamps: bool = True, opened=None) -> Annotated:
+    """#1132 PR 7a: the preparation every reader of a checkpoint shares (the
+    CLI brief, the MCP tool, the Hermes hook, `daimon loops` and the
+    teammates): `view.open` (what the reader may see), then `stamp` (the
+    transient marks the renderers read), then the optional worldcheck. It
+    returns no furniture: `prepare` adds that for the hosts that print a
+    briefing, and a reader that lists items (`daimon loops`) stops here, so it
+    pays for no ledger it does not show.
 
     `route` is the store route (default `Route.OWN`; the CLI brief asks for
     OWN_ELSE_GLOBAL and reads `fell_back` off the result). `live=False`
     keeps loops a resolution closed. `stamps=False` skips the stamps (the
     teammate blocks never carried them). `opened` hands in an `Opened` the
     caller already has (`view.team`) instead of opening `project`.
+    `worldcheck_project` means one thing: run world evidence.
 
     No try blocks: a ledger that cannot be read is a health value in the
     snapshot (an unreadable trust ledger CLOSES the view), and a raise from
@@ -1041,16 +1124,6 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         gap = coverage_note(checkpoint)
         if gap:
             notes = display.merge_notes(notes, (gap,))
-    if worldcheck_project and not opened.fell_back:
-        # The request panels of this brief read the same joins; their notes
-        # (a sender left out, or read around) join the snapshot's here, so
-        # the brief caps its notes once. Fail-open like the panels.
-        try:
-            notes = display.merge_notes(
-                notes, (*requests.join(worldcheck_project).notes,
-                        *requests.sent(worldcheck_project).notes))
-        except Exception:  # noqa: BLE001
-            pass
     # Query this response's checkout, never the process-wide refusal history.
     # The requested project owns this diagnostic even when its memory body
     # falls back to another project. Named buckets have no checkout to query.
@@ -1083,6 +1156,136 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         ledger_rows, opened, snap, opened.suppressed,
         sum(1 for w in opened.withheld if w.reason == "quarantine"),
         notes, opened.fell_back, tuple(skips), note, handoff)
+
+
+def prepare(project, now, *, live: bool = True, worldcheck_project=None,
+            route=None, stamps: bool = True, opened=None,
+            read=None) -> Annotated:
+    """The one preparation every briefing host shares (the CLI brief, the MCP
+    tool, the Hermes hook, `api.render_briefing`): `prepare_view`, plus the
+    furniture every plain host prints.
+
+    #1402: `Annotated.furniture` (rulings, the decision count, the four
+    request panels) and `version_note` are built here, once. The panels' gate
+    (I2) is "a briefing read (`stamps`) of a project PATH that is the caller's
+    own bucket", whatever body was served: a fallback changes which BODY
+    prints, never whose LEDGER the panels read. A slug names another bucket
+    and a `read` that is not `own` is the read of a foreign path
+    (`view.model_read` decides, `ModelRead.own`); neither shows or stamps
+    another project's panels. `read` is that decision (`ModelRead`: `own` and
+    `cross`); without one the read fails closed, with no panel, no count and no
+    stamp, so no entry point can grant by forgetting. A teammate block
+    (`stamps=False`) has none. The panels read the same joins, and a sender left out or read around is a note
+    of the brief: it joins the notes here, so the brief caps them once."""
+    annotated = prepare_view(project, now, live=live,
+                             worldcheck_project=worldcheck_project,
+                             route=route, stamps=stamps, opened=opened)
+    if not stamps:
+        return annotated
+    gate = (project if read is not None and read.own and project
+            and not _is_slug_input(project) else None)
+    notes = annotated.notes
+    if gate is not None:
+        # Fail-open like the panels.
+        try:
+            notes = display.merge_notes(
+                notes, (*requests.join(gate).notes,
+                        *requests.sent(gate).notes))
+        except Exception:  # noqa: BLE001
+            pass
+    return annotated._replace(
+        notes=notes,
+        furniture=_furniture(project, gate, annotated.snapshot, notes, now,
+                             cross=bool(read and read.cross)),
+        version_note=version_note(annotated.checkpoint))
+
+
+def _furniture(project, gate, snap, notes, now, cross=False) -> Furniture:
+    """The one builder of what a briefing prints besides its body (I1):
+    the standing rulings (every briefing read, a slug included), and, when
+    `gate` names the caller's own project path, the decision count and the
+    four request panels with the cards each printed. The sibling joins' notes
+    were merged into `notes` already, so a warning the brief carries is said
+    once: `drop_repeated_notes` keeps each at its first appearance. Every
+    age reads `now` (I8). `cross` is the read's grant to look at other buckets
+    (`ModelRead.cross`): the "elsewhere" count is a fact about them, so it is
+    only counted with it."""
+    rulings = tuple(ruling_lines(project, snap=snap))
+    if gate is None:
+        return Furniture(None, rulings)
+    count = decision_count_line(gate, cross=cross)
+    request_lines, request_cards = request_panel(gate, snap=snap)
+    verdict_lines, verdict_cards = verdict_panel(gate, snap=snap)
+    owed_lines, owed_cards = owed_panel(gate, snap=snap)
+    overdue_lines, overdue_cards = overdue_panel(
+        gate, snap=snap, shown_ids={c.request_id for c in verdict_cards},
+        now_ns=int(now * 1e9))
+    request_lines, verdict_lines, owed_lines, overdue_lines = \
+        drop_repeated_notes(request_lines, verdict_lines, owed_lines,
+                            overdue_lines, notes=notes)
+    panels = tuple(PanelBlock(name, tuple(lines), cards)
+                   for name, lines, cards in (
+                       ("request", request_lines, request_cards),
+                       ("verdict", verdict_lines, verdict_cards),
+                       ("owed", owed_lines, owed_cards),
+                       ("overdue", overdue_lines, overdue_cards)) if lines)
+    return Furniture(gate, rulings, tuple(count.split("\n")) if count else (),
+                     panels)
+
+
+def version_note(checkpoint) -> str:
+    """The format-version drift note (#1044) as one `⚠` line, "" when there
+    is nothing to say. Legacy checkpoints (no format_version) render silently
+    — nothing to compare (#93). #294: older-than-code is routine schema drift
+    (#93); newer-than-code is impossible by construction (PROMPT_VERSION is a
+    source constant) and gets distinct wording — see cli._status_health's
+    sibling check for the full reasoning. Unparseable versions fail soft into
+    the older-style wording. The stamp is a checkpoint field, so it is made
+    one printable line and bounded (I6)."""
+    fv = (checkpoint or {}).get("format_version") \
+        if isinstance(checkpoint, dict) else None
+    # `is not None`, not truthy: an absent key (legacy checkpoint, #93) stays
+    # silent, but an explicitly stamped "" is a garbage value that still
+    # deserves the fail-soft fallback wording below (#294).
+    if fv is None or fv == serializer.PROMPT_VERSION:
+        return ""
+    order = schema.compare_format_versions(fv, serializer.PROMPT_VERSION)
+    shown = display.shorten(display.printable(str(fv)), 40)
+    if order is not None and order > 0:
+        return (f"⚠ checkpoint format {shown} claims a version newer than "
+                f"this daimon's {serializer.PROMPT_VERSION} — a checkpoint "
+                f"cannot be newer than the code that wrote it, so the stamp "
+                f"is unreliable (check for a second daimon install writing "
+                f"to this checkpoint dir, or a downgraded install).")
+    return (f"⚠ checkpoint format {shown} != current "
+            f"{serializer.PROMPT_VERSION} — schema changed; some sections "
+            f"may render partially.")
+
+
+def withheld_trailer(own, team=None) -> list:
+    """The advisory lines about what the briefing withheld. Resolved loops
+    keep their count and wording; a quarantined item gets its own line, only
+    when there is one. `own` is the `Annotated` of the reader's briefing (or
+    None), `team` the CLI's teammate counts (`resolved`, `quarantined`) or
+    None: teammates are an opt-in CLI fact, so every other host passes none."""
+    resolved = (own.suppressed if own else 0) + (team.resolved if team else 0)
+    quarantined = ((own.quarantined if own else 0)
+                   + (team.quarantined if team else 0))
+    trailer = []
+    if resolved:
+        # #981: the count covers the Teammates section too, and says how
+        # many were a teammate's, since `status --suppressed` lists only the
+        # reader's own checkpoint.
+        note = f"{resolved} {marks.WITHHELD_RESOLVED}"
+        if team and team.resolved:
+            note += marks.WITHHELD_TEAM.format(n=team.resolved)
+        trailer.append(note + " — `daimon status --suppressed` to list")
+    if quarantined:
+        note = f"{quarantined} {marks.WITHHELD_QUARANTINED}"
+        if team and team.quarantined:
+            note += marks.WITHHELD_TEAM.format(n=team.quarantined)
+        trailer.append(note + " — `daimon trust list` shows them")
+    return trailer
 
 
 # ---- #79: token budget — section-preserving truncation ----
@@ -1173,7 +1376,7 @@ def truncate_preserving_sections(text: str, max_len: int, *, measure=len) -> str
 # never silently drop the one section whose whole point is that it cannot
 # fade. Worst case (a full cap of maximum-length rulings) costs ~17-20% of
 # the default 3000-token budget — pinned by test.
-_RULING_HEADER = "Standing rulings (human-ratified — honor these):"
+_RULING_HEADER = marks.RULINGS_HEADER
 
 
 class RulingsRead(NamedTuple):
@@ -1715,31 +1918,30 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
 # `foreign_queues` (the text path scar 0055 forbids on this surface). Frozen
 # tokens: "decisions waiting on you", "here", "elsewhere", "- daimon decide".
 
-_DECISION_COUNT_LINE_PLURAL = \
-    "{n} decisions waiting on you here{elsewhere} - daimon decide"
-_DECISION_COUNT_LINE_SINGULAR = \
-    "1 decision waiting on you here{elsewhere} - daimon decide"
+_DECISION_COUNT_LINE_PLURAL = marks.DECISION_COUNT_PLURAL
+_DECISION_COUNT_LINE_SINGULAR = marks.DECISION_COUNT_SINGULAR
 
 
-def decision_count_line(project_dir=None) -> str | None:
+def decision_count_line(project_dir=None, *, cross: bool = False) -> str | None:
     """The #766 slice 5 count line, or None when there is nothing to say.
 
     `here` reads `pending.queue` (this project's own backlog); `elsewhere`
-    reads `pending.foreign_counts`, SKIPPED ENTIRELY under
-    `config.tenant_scoped()`: a tenant-scoped host must not learn that other
-    buckets exist, so the call itself never happens, not merely its
-    rendering. Zero-both is silence: both counts zero renders no line; a
+    reads `pending.foreign_counts`, SKIPPED ENTIRELY unless the read's grant
+    to look at other buckets (`cross`, `ModelRead.cross`) is set: a tenant
+    scoped home grants none, and a model surface grants it only with
+    DAIMON_MODEL_CROSS_PROJECT, so a host that must not learn that other
+    buckets exist never has the call made, not merely its rendering. Zero-both is silence: both counts zero renders no line; a
     zero `here` with a nonzero `elsewhere` still renders. Fail-open like the
     panels around it, each half INDEPENDENTLY: a broken `here` read yields
     None (the line has nothing honest to say without it), but a broken
     `elsewhere` read degrades to 0 rather than discarding a perfectly good
     `here` count — one lane's failure must not blank the whole line.
 
-    `project_dir` here follows `request_panel_lines`'s own gate, not the
-    rulings section's: callers pass the CLI's `worldcheck_project`, so this
-    line is absent on `--slug` and the global-pointer-fallback body — same
-    posture as every panel in this family (this is content ABOUT another
-    bucket's existence, just as a count, not a record read directly off it).
+    `project_dir` here follows the panels' gate, not the rulings section's:
+    `_furniture` passes the gate project (#1402, I2), so this line is absent
+    on a slug and on a read of another project's bucket — same posture as
+    every panel in this family (this is content ABOUT another bucket's
+    existence, just as a count, not a record read directly off it).
 
     The line's exact wording and scope are frozen; a change to either routes
     through the project's public-vocabulary process, not a local edit here.
@@ -1756,7 +1958,7 @@ def decision_count_line(project_dir=None) -> str | None:
         return None
     elsewhere = 0
     notes: tuple = ()
-    if not config.tenant_scoped():
+    if cross:
         try:
             got = pending.foreign_counts_typed(project_dir=project_dir)
             elsewhere, notes = sum(got.counts.values()), got.notes
@@ -1766,7 +1968,8 @@ def decision_count_line(project_dir=None) -> str | None:
         # #1132 PR 10a: other projects left out are said even when nothing
         # was counted (the note stands alone).
         return "\n".join(notes) or None
-    suffix = f" ({elsewhere} elsewhere)" if elsewhere else ""
+    suffix = (marks.DECISION_ELSEWHERE.format(n=elsewhere)
+              if elsewhere else "")
     template = (_DECISION_COUNT_LINE_SINGULAR if here == 1
                 else _DECISION_COUNT_LINE_PLURAL)
     return "\n".join([template.format(n=here, elsewhere=suffix), *notes])
@@ -1776,7 +1979,7 @@ def decision_count_line(project_dir=None) -> str | None:
 
 # Ruling-shaped (D2): always-present, skeleton furniture, capped and loud on
 # overflow — never a section budget pressure is allowed to quietly thin out.
-_REQUEST_PANEL_HEADER = "Requests waiting on you (from other projects):"
+_REQUEST_PANEL_HEADER = marks.REQUEST_PANEL_HEADER
 
 # An `ask` can be up to `requests.MAX_TEXT_CHARS` (2000 chars); the panel line is
 # meant to be skimmable, not the full record — `daimon request inbox` has the
@@ -1791,13 +1994,13 @@ def _truncate_request_ask(ask: str) -> str:
     return requests.short_ask(ask)
 
 
-class Card(NamedTuple):
-    """One request card a panel printed: the id, whether showing it owes a
-    `surfaced` / `verdict_surfaced` stamp row (decided on the row the panel
-    itself rendered), and for a verdict card the late reply it showed."""
-    request_id: str
-    stamp: bool
-    reply_event_id: str | None = None
+def _field(value) -> str:
+    """A foreign field as one printable physical line (I6): a panel prints
+    text a peer (or an edited ledger line) wrote, and a line break inside it
+    would let that text start a line of its own, a ruling, an item or a
+    header, in any reader of the briefing. Bounded here, at the one place
+    every panel line is built, so no panel carries its own."""
+    return display.one_line(display.printable(str(value or "")))
 
 
 def request_panel_lines(project_dir=None, *, snap=None) -> list[str]:
@@ -1820,10 +2023,9 @@ def request_panel(project_dir=None, *, snap=None):
     skeleton furniture, but empty furniture is noise).
 
     Fail-open like `ruling_lines`: ANY error from the composer yields []
-    rather than costing the briefing. `project_dir` here is the CLI's
-    `worldcheck_project` — the caller (render.render_brief /
-    cli._render_briefing_body) is the ONE place that decides whether this
-    request is same-project (D2's CLI-only gate); this function never
+    rather than costing the briefing. `project_dir` is the project whose
+    ledger is read: `_furniture` is the one caller and decides whether this
+    read is the caller's own bucket (#1402, I2); this function never
     inspects route or surface on its own.
 
     #961 slice 3: sourced from `requests.decision_renderable`, not
@@ -1868,7 +2070,7 @@ def request_panel(project_dir=None, *, snap=None):
         lines.append(f"→ {row['request_id']}  "
                      f"{requests.headline(row)}"
                      f"{marker}{claim_marker}")
-        lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
+        lines.append(f"  From: {_field(row.get('from_label')) or 'an unnamed project'}")
         severity = requests.severity_line(row)
         if severity:  # #1348: nothing at all for a default severity
             lines.append(severity)
@@ -1886,13 +2088,21 @@ def request_panel(project_dir=None, *, snap=None):
 # Registered and frozen the same way the two headings above are (§3 amendment
 # 2026-08-27). The wording says OWE deliberately: an item here is not a
 # decision waiting on the human, it is work this project already agreed to.
-_OWED_PANEL_HEADER = "Requests you accepted and still owe:"
+_OWED_PANEL_HEADER = marks.OWED_PANEL_HEADER
 
 
 def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
-    """#885: the recipient's OWED panel ([] when this project owes nothing,
-    or `project_dir` is None). Same posture as the two panels around it:
-    fail-open, skeleton furniture, never silently truncated over RENDER_CAP.
+    """The lines of `owed_panel`; see it."""
+    return owed_panel(project_dir, snap=snap)[0]
+
+
+def owed_panel(project_dir=None, *, snap=None):
+    """#885: the recipient's OWED panel as `(lines, cards)` ([] when this
+    project owes nothing, or `project_dir` is None). Same posture as the two
+    panels around it: fail-open, skeleton furniture, never silently
+    truncated over RENDER_CAP. The cards carry no `surfaced` stamp (`stamp`
+    False): an owed ask has its own per-session `owed_delivered`, written by
+    request-inject.
 
     A third panel rather than more rows in `request_panel_lines`, because the
     verb differs and the reader must not have to infer which from a glyph: an
@@ -1900,15 +2110,16 @@ def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
     closing line names that verb for the same reason the inbox panel names
     its own surface."""
     if project_dir is None:
-        return []
+        return [], ()
     try:
         entry = requests.owed_renderable(project_dir=project_dir)
     except Exception:
-        return []
+        return [], ()
     rows = entry.get("rows") or []
     notes = list(entry.get("notes") or ())
     if not rows:
-        return notes
+        return notes, ()
+    cards = tuple(Card(row["request_id"], False) for row in rows)
     rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
     lines = [_OWED_PANEL_HEADER]
     for row in rows:
@@ -1918,7 +2129,7 @@ def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
         lines.append(f"✓ {row['request_id']}  "
                      f"{requests.headline(row)}"
                      f"{kind_marker}{marker}")
-        lines.append(f"  From: {row.get('from_label') or 'an unnamed project'}")
+        lines.append(f"  From: {_field(row.get('from_label')) or 'an unnamed project'}")
         severity = requests.severity_line(row)
         if severity:  # #1348: nothing at all for a default severity
             lines.append(severity)
@@ -1928,12 +2139,12 @@ def owed_panel_lines(project_dir=None, *, snap=None) -> list[str]:
                      "daimon request inbox)")
     lines.append(f"  {requests.CLOSE_RULE_SHORT}")
     lines.extend(notes)
-    return lines
+    return lines, cards
 
 
 # ---- #694 PR 3: the sender-side verdict panel -------------------------------
 
-_VERDICT_PANEL_HEADER = "Decisions on requests you sent:"
+_VERDICT_PANEL_HEADER = marks.VERDICT_PANEL_HEADER
 
 # Mirrors cli/request.py's _MARKS glyph-per-state — a separate small table
 # rather than an import, because briefing.py must not depend on the cli
@@ -1951,8 +2162,8 @@ def verdict_panel(project_dir=None, *, snap=None):
     """The sender-side panel as `(lines, cards)`: its rendered lines ([] when
     nothing this project sent has been decided yet, or `project_dir` is None). Same posture as
     `request_panel_lines`: fail-open, skeleton furniture, never silently
-    truncated over RENDER_CAP. `project_dir` is the CLI's
-    `worldcheck_project` — same D2 CLI-only gate, same caller contract.
+    truncated over RENDER_CAP. `project_dir` is the project whose ledger is
+    read, the same caller contract (`_furniture`, I2).
 
     #961 slice 2: deliberately carries no `kind` marker. This panel reports
     the OUTCOME of a request this project itself sent, and it already chose
@@ -1992,10 +2203,10 @@ def verdict_panel(project_dir=None, *, snap=None):
         # folded row's own `accepted_by`, never derived here.
         state_label = ("accepted (by agent)"
                        if state == "accepted" and row.get("accepted_by") == "agent"
-                       else state)
+                       else _field(state))
         lines.append(f"{mark} {state_label}  {row['request_id']}  "
                      f"{requests.headline(row)}")
-        lines.append(f"  To: {row.get('to') or '?'}")
+        lines.append(f"  To: {_field(row.get('to')) or '?'}")
         note = str(row.get("note") or "").strip()
         if note:
             lines.append(f"  Note: {_truncate_request_ask(note)}")
@@ -2020,47 +2231,57 @@ def verdict_panel(project_dir=None, *, snap=None):
 
 # ---- #1281: the sender-side overdue panel ----------------------------------
 
-_OVERDUE_PANEL_HEADER = "Requests you sent that nobody is moving:"
+_OVERDUE_PANEL_HEADER = marks.OVERDUE_PANEL_HEADER
 
 
 def overdue_panel_lines(project_dir=None, *, snap=None,
-                        shown_ids=frozenset()) -> list[str]:
-    """#1281: the sender's OVERDUE panel ([] when nothing this project sent
-    has sat still past `DAIMON_REQUEST_OVERDUE_DAYS`, or `project_dir` is
-    None). Fail-open skeleton furniture like its siblings, capped at
-    RENDER_CAP with a counted overflow, ONE line per ask.
+                        shown_ids=frozenset(), now_ns=None) -> list[str]:
+    """The lines of `overdue_panel`; see it."""
+    return overdue_panel(project_dir, snap=snap, shown_ids=shown_ids,
+                         now_ns=now_ns)[0]
+
+
+def overdue_panel(project_dir=None, *, snap=None, shown_ids=frozenset(),
+                  now_ns=None):
+    """#1281: the sender's OVERDUE panel as `(lines, cards)` ([] when nothing
+    this project sent has sat still past `DAIMON_REQUEST_OVERDUE_DAYS`, or
+    `project_dir` is None). Fail-open skeleton furniture like its siblings,
+    capped at RENDER_CAP with a counted overflow, ONE line per ask. Its cards
+    carry no stamp: the age is derived on read, so it needs none.
 
     `shown_ids` are the requests the verdict panel printed in this same brief
     (its cards' ids): an accepted or needs-info ask already there is not
     repeated. The line carries the sender's own headline and the recipient's
     slug, the same two things the verdict panel prints; it adds no
-    recipient-written text (scar 0055). The age is derived on read from the
-    injected clock, so it needs no stamp and no card."""
+    recipient-written text (scar 0055). `now_ns` is the briefing's own clock
+    (I8), so the age on the line and the rows chosen read one instant; None
+    reads the injected clock."""
     if project_dir is None:
-        return []
+        return [], ()
+    now = clock.now_ns() if now_ns is None else now_ns
     try:
         entry = requests.overdue_renderable(project_dir=project_dir,
-                                            shown_ids=shown_ids)
+                                            shown_ids=shown_ids, now_ns=now)
     except Exception:
-        return []
+        return [], ()
     rows = entry.get("rows") or []
     notes = list(entry.get("notes") or ())
     if not rows:
-        return notes
-    now = clock.now_ns()
+        return notes, ()
+    cards = tuple(Card(row["request_id"], False) for row in rows)
     rows = _masked_rows(project_dir, "requests.jsonl", rows, snap)
     lines = [_OVERDUE_PANEL_HEADER]
     for row in rows:
         age = requests.age_seconds(row, now)
         days = int(age // 86_400) if age is not None else 0
         lines.append(f"! {row['request_id']}  {requests.headline(row)}  "
-                     f"[{row.get('state') or 'open'}, {days}d, "
-                     f"to {row.get('to') or '?'}]")
+                     f"[{_field(row.get('state')) or 'open'}, {days}d, "
+                     f"to {_field(row.get('to')) or '?'}]")
     overflow = entry.get("overflow") or 0
     if overflow:
         lines.append(f"  (+{overflow} more overdue — daimon request list)")
     lines.extend(notes)
-    return lines
+    return lines, cards
 
 
 def drop_repeated_notes(*blocks, notes=()) -> list:
@@ -2083,10 +2304,9 @@ def drop_repeated_notes(*blocks, notes=()) -> list:
     return out
 
 
-def render_plain(b: dict, degraded: bool = False, rulings=(),
-                 request_lines=(), verdict_lines=(), owed_lines=(),
-                 decision_count: str | None = None, *,
-                 max_bytes: int | None = None, overdue_lines=(),
+def render_plain(b: dict, degraded: bool = False,
+                 furniture: Furniture = Furniture(), *,
+                 max_bytes: int | None = None,
                  loops_pointer: bool = True, notes=(),
                  reserved: int = 0) -> str:
     """The deterministic briefing text: a thin wrapper over `select` and
@@ -2097,8 +2317,8 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     then whole candidates drop in the one global order `select` documents,
     each section announcing what it lost. `degraded` (#204) downgrades every
     verbatim label and adds one header note when the receipt is unverifiable.
-    `decision_count` (#766 slice 5) and the request/verdict/owed panels are
-    protected furniture.
+    The `furniture` (the rulings, the decision count of #766 slice 5 and the
+    request panels) is protected.
 
     One budget: `effective_budget(max_bytes)`, min(brief_max_bytes,
     brief_max_tokens * 4) in UTF-8 bytes, a unit no host limit
@@ -2107,10 +2327,7 @@ def render_plain(b: dict, degraded: bool = False, rulings=(),
     `render.render_brief` passes the room left once the blocks printed beside
     the body are counted."""
     budget = effective_budget(max_bytes)
-    sel = select(b, budget, degraded=degraded, rulings=rulings,
-                 request_lines=request_lines, verdict_lines=verdict_lines,
-                 owed_lines=owed_lines, overdue_lines=overdue_lines,
-                 decision_count=decision_count,
+    sel = select(b, budget, degraded=degraded, furniture=furniture,
                  loops_pointer=loops_pointer, notes=notes, reserved=reserved)
     text = render_selection(sel)
     _log_render_size(text, budget)
@@ -2139,13 +2356,19 @@ class RenderedBriefing(NamedTuple):
     `prepare` returned when the caller asked for world evidence (None, () and
     () when it did not run). They are the CALLER's to record: `check` writes
     nothing, so a host that wants the ledger rows commits them through
-    `effects_commit.rendered_worldcheck_effects`."""
+    `effects_commit.rendered_worldcheck_effects`.
+
+    #1402: `printed` is the manifest of request cards the text printed whole
+    (`Printed`), the CALLER's to commit as `surfaced` stamps once the text has
+    been delivered (`effects_commit.surfaced_effects`). Nothing is stamped by
+    building the text."""
     text: str
     state: str
     notes: tuple
     worldcheck: dict | None = None
     ledger_rows: tuple = ()
     worldcheck_skips: tuple = ()
+    printed: Printed = Printed()
 
 
 def _unavailable(exc: BaseException) -> RenderedBriefing:
@@ -2188,7 +2411,40 @@ def handoff_block(handoff) -> str:
     return "\n".join(parts) + "\n\n"
 
 
-def machine_brief(target, now, *, loops_pointer: bool,
+# #1402: which entry prints which section of a briefing, one row per section.
+# The CLI is `daimon brief` (and so the Claude Code, Codex, Kimi and Gemini
+# hooks, which run it), `mcp` the `daimon_brief` tool, `api` the host API's
+# `render_briefing` and `hermes` the Hermes hook. A cell says `supported`,
+# `opt-in (...)` or `unsupported (...)` with the reason, the way
+# `host_mcp_caps.MCP_HOST_CAPS` does for hosts: the explicit row a host-facing
+# change owes every entry. A parity test reads both tables, so a section added
+# without a row fails.
+_ALL = {"cli": "supported", "mcp": "supported", "api": "supported",
+        "hermes": "supported"}
+_STAGE_2 = "unsupported (#1402 stage 2)"
+_CLI_ONLY = "unsupported (opt-in, CLI only)"
+SECTION_CAPS: dict[str, dict[str, str]] = {
+    "baton": dict(_ALL),
+    "rulings": dict(_ALL),
+    "decision_count": dict(_ALL),
+    "request": dict(_ALL),
+    "verdict": dict(_ALL),
+    "owed": dict(_ALL),
+    "overdue": dict(_ALL),
+    "version_note": dict(_ALL),
+    "withheld": dict(_ALL),
+    "surfaced_stamps": {
+        "cli": "supported", "mcp": "supported (after the response is written)",
+        "api": "supported (at return; preview_briefing writes none)",
+        "hermes": "supported"},
+    "anchor_drift": {"cli": "supported", "mcp": _STAGE_2, "api": _STAGE_2,
+                     "hermes": _STAGE_2},
+    "teammates": {"cli": "opt-in (--team)", "mcp": _CLI_ONLY,
+                  "api": _CLI_ONLY, "hermes": _CLI_ONLY},
+}
+
+
+def machine_brief(target, now, *, loops_pointer: bool, read,
                   worldcheck_project=None) -> RenderedBriefing:
     """The briefing a machine consumer reads (the MCP tool, `render_briefing`):
     the strictly scoped read of `target`, always the deterministic render,
@@ -2207,32 +2463,41 @@ def machine_brief(target, now, *, loops_pointer: bool,
     cannot be built is `unavailable`, never an unfiltered briefing; any later
     failure propagates to the caller.
 
+    #1402: the text is `compose`, the layout every plain host shares, so the
+    request panels, the decision count, the version note and the withheld
+    trailer ride every state. They read `target`'s own ledgers only when it is
+    a project path and `read.own` (the read decision, `ModelRead`: a foreign
+    path is not own, and `read` has no default, so no entry can grant by
+    forgetting). The render is always the deterministic one: the machine paths
+    never send a checkpoint to a provider, whatever DAIMON_LLM_BRIEFING says. This commits nothing: `printed` names
+    the cards the text showed whole, for the caller to stamp once the text has
+    been delivered.
+
     `loops_pointer` adds the note's `daimon loops` pointer, honest only when
     that command would list this same project: never for a named slug or a
     foreign project."""
     try:
         annotated = prepare(target, now, route=store.Route.OWN,
-                            worldcheck_project=worldcheck_project)
+                            worldcheck_project=worldcheck_project,
+                            read=read)
     except Exception as exc:
         return _unavailable(exc)
-    world = _world(annotated)
-    notes = annotated.notes
+    checkpoint = annotated.checkpoint
     snap = annotated.snapshot
-    # #523: the baton leads every state, charged to the same budget as the body.
-    baton = handoff_block(annotated.handoff)
-    # #693: one strictly-scoped ledger read serves every return below, since
-    # standing rulings exist before the first checkpoint does.
-    rulings = ruling_lines(target, snap=snap)
-    ruling_text = "\n".join([*notes, *rulings])
-    ruling_text = ruling_text + "\n\n" if ruling_text else ""
-    filtered = annotated.checkpoint
-    if filtered is None:
-        # Orientation without content: name the explicit path, leak nothing
-        # (#96, machine edition). #899, #1223: the count and the remedy the
-        # hint names (daimon_projects, then a slug) are cross-project
-        # reads, offered only when the host granted them; otherwise the hint
-        # says nothing of other projects.
-        cross = config.model_cross_project()
+    if checkpoint is None:
+        state = "no-checkpoint"
+    elif build(checkpoint) is not None:
+        state = "briefing"
+    else:
+        state = "closed" if snap.closed else "empty"
+    # Orientation without content: name the explicit path, leak nothing (#96,
+    # machine edition). #899, #1223: the count and the remedy the hint names
+    # (daimon_projects, then a slug) are cross-project reads, offered only
+    # when the host granted them; otherwise the hint says nothing of other
+    # projects.
+    orientation = Orientation()
+    if state == "no-checkpoint":
+        cross = read.cross
         others = len(store.list_buckets()) if cross else 0
         hint = (f"daimon knows {others} project(s) — call daimon_projects "
                 "and pass a slug to read one explicitly."
@@ -2240,28 +2505,31 @@ def machine_brief(target, now, *, loops_pointer: bool,
                 "no projects have checkpoints yet — the first serialized "
                 "session creates one." if cross else
                 "the first serialized session creates one.")
-        return RenderedBriefing(
-            f"{baton}{ruling_text}no checkpoint for this project. {hint}",
-            "no-checkpoint", notes, **world)
-    b = build(filtered)
-    if b is None:
-        if snap.closed:
-            return RenderedBriefing(
-                f"{baton}{GREETING}\n\n{ruling_text}{CLOSED_LINE}", "closed",
-                notes,
-                **world)
-        return RenderedBriefing(
-            f"{baton}{ruling_text}checkpoint exists but has nothing worth "
-            "surfacing.",
-            "empty", notes, **world)
-    # #1236: the body renders, so its import note leads the notes; the
-    # returns above print no body and keep the reader's notes alone.
-    notes = annotated.body_notes
-    return RenderedBriefing(
-        baton + render_plain(b, receipt_degraded(filtered), rulings,
-                             loops_pointer=loops_pointer, notes=notes,
-                             reserved=_byte_len(baton)),
-        "briefing", notes, **world)
+        orientation = Orientation(
+            no_checkpoint=f"no checkpoint for this project. {hint}")
+    elif state == "empty":
+        orientation = Orientation(
+            empty="checkpoint exists but has nothing worth surfacing.")
+    composed = compose(annotated, orientation=orientation,
+                       loops_pointer=loops_pointer)
+    return RenderedBriefing(composed.text, state, annotated.body_notes,
+                            printed=composed.printed, **_world(annotated))
+
+
+def _read_briefing(project_dir, now, loops_pointer):
+    """The shared read of `render_briefing` and `preview_briefing`: the
+    resolved target and the machine briefing, never raising."""
+    # The read decision is made here, once, from the path as given: own only
+    # for the process's own project, so another project's path shows and
+    # stamps no panel.
+    from . import view
+    with identity.operation():  # one scan of the recorded roots per read
+        read = view.host_read(None if project_dir is None else str(project_dir))
+        target = read.project
+        got = machine_brief(target, time.time() if now is None else now,
+                            loops_pointer=loops_pointer, read=read,
+                            worldcheck_project=target)
+    return target, got
 
 
 def render_briefing(project_dir=None, *, now=None,
@@ -2271,32 +2539,43 @@ def render_briefing(project_dir=None, *, now=None,
     every failure becomes `unavailable` with a note naming the exception type.
     `project_dir=None` means DAIMON_PROJECT_DIR, else the working directory.
 
-    #1279: with DAIMON_WORLDCHECK on this read runs world evidence on the
-    resolved project. A host API has no post-write seam, so the verification
-    ledger rows and usage counters are committed here, best effort, after the
-    text is built.
+    This read RECORDS DELIVERY: a host API has no post-write seam, so the
+    return is its delivery boundary and the bookkeeping is committed here,
+    best effort, after the text is built. With DAIMON_WORLDCHECK on it runs
+    world evidence on the resolved project (#1279) and writes the verification
+    ledger rows and usage counters; and it stamps `surfaced` on the request and
+    verdict cards the text printed whole (#1402), so the sender sees that the
+    card reached an agent. A caller that only looks, and will not hand the text
+    to an agent, uses `preview_briefing`.
 
     The bytes are stable under the conditions `api.render_briefing` lists."""
     try:
-        target = config.resolve_read_project(
-            None if project_dir is None else str(project_dir))
-        with identity.operation():  # one scan of the recorded roots per read
-            got = machine_brief(target, time.time() if now is None else now,
-                                loops_pointer=loops_pointer,
-                                worldcheck_project=target)
+        target, got = _read_briefing(project_dir, now, loops_pointer)
     except Exception as exc:  # noqa: BLE001 — host reads never raise: the failure is the `unavailable` state
         return _unavailable(exc)
     try:
         from . import effects_commit
-        effects_commit.commit(
-            effects_commit.rendered_worldcheck_effects(target, got))
+        effects_commit.commit(effects_commit.rendered_effects(target, got))
     except Exception:  # noqa: BLE001 — the commit is bookkeeping, never the answer
         pass
     return got
 
 
+def preview_briefing(project_dir=None, *, now=None,
+                     loops_pointer: bool = False) -> RenderedBriefing:
+    """`render_briefing` that writes nothing: the same text, the same state
+    and the same `printed` manifest, but no `surfaced` stamp and no world
+    evidence rows. For a caller that reads a briefing without delivering it to
+    an agent. Never raises."""
+    try:
+        return _read_briefing(project_dir, now, loops_pointer)[1]
+    except Exception as exc:  # noqa: BLE001 — host reads never raise
+        return _unavailable(exc)
+
+
 def briefing_text(project_dir=None, *, now=None) -> str:
-    """The text of `render_briefing(project_dir, now=now)`."""
+    """The text of `render_briefing(project_dir, now=now)`, so it records
+    delivery too (see there)."""
     return render_briefing(project_dir, now=now).text
 
 
@@ -2422,8 +2701,10 @@ _DECISION_FLOOR = 3
 _TEAMMATE_FLOOR = 2
 # The panels in print order, with the command that lists what a collapsed
 # panel hid.
-_PANEL_POINTERS = ("daimon request inbox", "daimon request list",
-                   "daimon request inbox", "daimon request list")
+_PANEL_POINTERS = {"request": "daimon request inbox",
+                   "verdict": "daimon request list",
+                   "owed": "daimon request inbox",
+                   "overdue": "daimon request list"}
 
 
 def _decision_floor(cap: int) -> int:
@@ -2487,11 +2768,11 @@ class Selection:
     `render_selection` needs to print the same thing `select` measured."""
 
     def __init__(self, kept, dropped, reasons, *, order, totals, cap,
-                 stale_days, budget, degraded, rulings, count_line, panels,
-                 overage, now, panel_names=(), reserved=0,
+                 stale_days, budget, degraded, furniture, panels,
+                 overage, now, reserved=0,
                  teammate_blocks=(), teammate_header="", kept_teammates=(),
                  collapsed=False, loops_pointer=True, full_quotes=False,
-                 notes=(), cards=None, imported=False, import_age_days=None):
+                 notes=(), imported=False, import_age_days=None):
         self.kept = kept
         self.notes = tuple(notes)
         # #1236: the body is imported history, and how old its newest
@@ -2506,16 +2787,19 @@ class Selection:
         self.stale_days = stale_days
         self.budget = budget
         self.degraded = degraded
-        self.rulings = rulings
-        self.count_line = count_line
+        self.furniture = furniture
+        self.rulings = list(furniture.rulings)
+        self.count_line = furniture.count_line()
+        # the panels' lines as printed (collapsed to a count under budget)
         self.panels = panels
         self.overage = overage
         self.now = now
-        # parallel to `panels`: "request" / "verdict" / "owed". The CLI reads
-        # what was printed from here, so `surfaced` follows the print.
-        self.panel_names = list(panel_names)
+        # parallel to `panels`: "request" / "verdict" / "owed" / "overdue".
+        # `printed()` reads what was printed from here, so `surfaced` follows
+        # the print.
+        self.panel_names = [p.name for p in furniture.panels]
         # the panels printed with their cards, i.e. not collapsed to a count
-        self.panel_names_whole = [] if collapsed else list(panel_names)
+        self.panel_names_whole = [] if collapsed else list(self.panel_names)
         # Bytes the caller prints beside the body (HANDOFF, version note,
         # drift block, withheld note), charged to the same budget.
         self.reserved = reserved
@@ -2529,17 +2813,21 @@ class Selection:
         # The opt-in LLM path must reproduce verbatim quotes whole, so its
         # sizing charges them whole; the deterministic render shows a span.
         self.full_quotes = full_quotes
-        # #1132 PR 7b-2: the request and verdict cards captured by the one
-        # read that built the panel lines, {"request": (Card, ...), "verdict":
-        # (Card, ...)}. What the brief stamps as surfaced follows from here.
-        self.cards = {"request": (), "verdict": (), **(cards or {})}
+        # #1132 PR 7b-2: the request and verdict cards of the one read that
+        # built the panel lines. What the brief stamps as surfaced follows
+        # from `printed()`.
+        self.cards = {"request": furniture.cards("request"),
+                      "verdict": furniture.cards("verdict")}
         self._lines: dict = {}
 
-    def printed_cards(self) -> dict:
+    def printed(self) -> Printed:
         """The cards of the panels printed whole: a panel collapsed to a
-        count line showed no card, so none of its cards is owed a stamp."""
-        return {name: (cards if name in self.panel_names_whole else ())
-                for name, cards in self.cards.items()}
+        count line showed no card, so none of its cards is owed a stamp
+        (I4)."""
+        whole = {name: (cards if name in self.panel_names_whole else ())
+                 for name, cards in self.cards.items()}
+        return Printed(self.furniture.project, whole["request"],
+                       whole["verdict"])
 
     def dropped_for(self, section, reason=None):
         return [i for i, r in zip(self.dropped.get(section, []),
@@ -2560,11 +2848,14 @@ def effective_budget(max_bytes=None) -> int | None:
     return min(sides) if sides else None
 
 
-def _collapse_panel(lines, pointer) -> list[str]:
-    """A request/verdict/owed panel reduced to its frozen header and one
-    count line. Cards are the unindented lines after the header."""
-    cards = sum(1 for ln in lines[1:] if ln and not ln.startswith(" "))
-    return [lines[0], f"  ({cards} cut for budget, see: {pointer})"]
+def _collapse_panel(block, pointer) -> list[str]:
+    """A request panel reduced to its frozen header and one count line. The
+    count is the panel's cards (a join note is not one). A block with no card
+    is only notes: there is nothing to cut, so it stays as it is."""
+    if not block.cards:
+        return list(block.lines)
+    return [block.lines[0],
+            f"  ({len(block.cards)} cut for budget, see: {pointer})"]
 
 
 def _split_decisions(decisions, cap, now):
@@ -2590,21 +2881,20 @@ def _split_decisions(decisions, cap, now):
     return kept, capped
 
 
-def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
-           request_lines=(), verdict_lines=(), owed_lines=(),
-           decision_count: str | None = None, reserved: int = 0,
-           overdue_lines=(),
+def select(b: dict, budget, now=None, *, degraded: bool = False,
+           furniture: Furniture = Furniture(), reserved: int = 0,
            teammate_blocks=(), teammate_header: str = "",
            loops_pointer: bool = True, full_quotes: bool = False,
-           notes=(), cards=None) -> Selection:
+           notes=()) -> Selection:
     """#1128: decide what the briefing shows. Pure: a function of the
     annotated items in `b`, the byte `budget` (None = unbounded: the decision
     cap still applies, nothing else is dropped) and `now`.
 
     Protected, charged first and never dropped (they give way only in a fixed
     order when they alone exceed the budget, see below): the greeting, the
-    degrade note, the ledger-health `notes`, standing rulings, the decision count and the
-    request/verdict/owed panels (each bounded by its own render cap), the
+    degrade note, the ledger-health `notes`, the `furniture` (standing
+    rulings, the decision count and the four request panels, each bounded by
+    its own render cap), the
     active topic, the `min(3, cap)` newest native decisions, and the
     per-section count lines. Everything else is a candidate. Candidates drop
     lowest key first, whole items only, in one global order:
@@ -2690,10 +2980,7 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
     active = b.get("active_topic")
     active = active if isinstance(active, dict) else None
     line_cache: dict = {}
-    panel_sets = [(list(request_lines), _PANEL_POINTERS[0], "request"),
-                  (list(verdict_lines), _PANEL_POINTERS[1], "verdict"),
-                  (list(owed_lines), _PANEL_POINTERS[2], "owed"),
-                  (list(overdue_lines), _PANEL_POINTERS[3], "overdue")]
+    panel_blocks = list(furniture.panels)
 
     def build_selection(n_dropped, floor_keep, collapse, overage=0):
         seq = cands
@@ -2718,23 +3005,21 @@ def select(b: dict, budget, now=None, *, degraded: bool = False, rulings=(),
                     keep.append(it)
             kept[s] = keep
         kept["active_topic"] = active
-        panels = [_collapse_panel(lines, ptr) if collapse else lines
-                  for lines, ptr, _ in panel_sets if lines]
-        names = [name for lines, _, name in panel_sets if lines]
+        panels = [_collapse_panel(blk, _PANEL_POINTERS[blk.name])
+                  if collapse else list(blk.lines) for blk in panel_blocks]
         kept_team = [ti for ti in range(len(blocks))
                      if ("teammates", ti) not in drop_ids]
         sel = Selection(kept, d, r,
                         order=[(s, it) for _, s, _, it in seq],
                         totals=totals, cap=cap,
                         stale_days=stale_days, budget=budget,
-                        degraded=degraded, rulings=list(rulings),
-                        count_line=decision_count, panels=panels,
-                        overage=overage, now=now, panel_names=names,
+                        degraded=degraded, furniture=furniture,
+                        panels=panels, overage=overage, now=now,
                         reserved=reserved, teammate_blocks=blocks,
                         teammate_header=teammate_header,
                         kept_teammates=kept_team, collapsed=collapse,
                         loops_pointer=loops_pointer, full_quotes=full_quotes,
-                        notes=notes, cards=cards,
+                        notes=notes,
                         imported=bool(b.get("imported")),
                         import_age_days=b.get("import_age_days"))
         sel._lines = line_cache  # the search below re-renders many times
@@ -2948,87 +3233,60 @@ def _validate_llm_render(rendered: str, checkpoint) -> bool:
     return True
 
 
-def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
-           loops_pointer: bool = True, snap=None,
-           notes=(), cards_out: dict | None = None,
-           handoff=None) -> str | None:
-    """Render the briefing, or None if there is nothing worth surfacing.
-    LLM rendering is opt-in (DAIMON_LLM_BRIEFING), post-validated for verbatim
-    quote integrity, and falls back to deterministic on any doubt.
+class Body(NamedTuple):
+    """The body of a briefing, rendered: its `text`, what it `printed`
+    whole (the manifest, I4: taken from the branch that actually printed)
+    and the `teammates` text that follows it (budgeted with the body on the
+    deterministic render, whole after an LLM narrative)."""
+    text: str
+    printed: Printed
+    teammates: str = ""
 
-    `project_dir` (#693) scopes the standing-rulings section; None (legacy
-    callers, hand-built checkpoints in tests) skips the read entirely — an
-    unknown project resolves to no ledger path and reads nothing, so the
-    guard saves a pointless call rather than preventing a leak.
 
-    `worldcheck_project` (#694 PR 2/3) scopes the incoming-request panel AND
-    the sender-side verdict panel — a SEPARATE parameter from `project_dir`,
-    never reused, because both panels' gate is narrower than the rulings
-    section's: rulings render on every route (including `--slug`), the
-    panels only on the CLI same-project path (`cli._render_briefing_body`'s
-    own `worldcheck_project`, D2).
+def _teammates_whole(blocks, header: str) -> str:
+    """The Teammates section with nothing dropped; "" when there are none.
+    The budgeted render composes the same bytes through `teammates_text`."""
+    if not blocks:
+        return ""
+    return "\n" + header + "".join(blocks) + "\n"
 
-    `cards_out`, when given, receives the request and verdict cards the same
-    read printed (both panels print whole here), for the caller's stamps.
 
-    `handoff` (#523) is `Annotated.handoff`: its block leads the text and is
-    charged to the byte budget, so a host that injects this text (the Hermes
-    hook) shows the baton like the CLI does. The CLI prints its own and
-    passes none."""
-    baton = handoff_block(handoff)
-    b = build(checkpoint)
-    # #1132 PR 7a: `snap` is the view's snapshot (the rulings are read once
-    # out of it and every panel masks a withheld whole value); `notes` are its
-    # ledger-health lines. Neither given: the legacy behavior, nothing masked.
-    rulings = (ruling_lines(project_dir, snap=snap)
-               if project_dir is not None else [])
-    # #766 slice 5: same gate as the request panel below, not the rulings
-    # section above — this line is content ABOUT another bucket's existence
-    # (a count), so it follows request_panel_lines's posture: absent on
-    # --slug and the global-pointer-fallback body.
-    decision_count = (decision_count_line(worldcheck_project)
-                      if worldcheck_project is not None else None)
-    decision_count_block = [decision_count] if decision_count else []
-    request_lines, request_cards = request_panel(worldcheck_project, snap=snap)
-    verdict_lines, verdict_cards = verdict_panel(worldcheck_project, snap=snap)
-    owed_lines = (owed_panel_lines(worldcheck_project, snap=snap)
-                  if worldcheck_project is not None else [])
-    overdue_lines = overdue_panel_lines(
-        worldcheck_project, snap=snap,
-        shown_ids={c.request_id for c in verdict_cards})
-    (request_lines, verdict_lines, owed_lines,
-     overdue_lines) = drop_repeated_notes(
-        request_lines, verdict_lines, owed_lines, overdue_lines, notes=notes)
-    if cards_out is not None:
-        # Both panels print whole on this path: the caller stamps from these.
-        cards_out.update(request=request_cards, verdict=verdict_cards)
+def skeleton_blocks(snap, notes, furniture: Furniture) -> list[list[str]]:
+    """The day-one skeleton every host prints around (or instead of) a body
+    (#693/#694/#766): the greeting when the view is closed, the notes, the
+    standing rulings, the decision count and the panels, one block each, empty
+    blocks left out. A ruling ratified, a request addressed or a verdict
+    decided exists before the first checkpoint does, so it must reach the
+    reader whether or not a body renders."""
     closed = snap is not None and snap.closed
-    head = [GREETING] if closed else []
-    skeleton_blocks = [blk for blk in (head, list(notes), rulings,
-                                       decision_count_block,
-                                       request_lines, verdict_lines,
-                                       owed_lines, overdue_lines) if blk]
-    if b is None:
-        # #693/#694/#766: a ruling ratified, a request addressed, a verdict
-        # decided, or a decision now waiting — before the first real
-        # checkpoint (a day-one action) — must still reach context;
-        # "nothing worth surfacing" is no longer true when any of these exist.
-        if not skeleton_blocks:
-            return baton.rstrip("\n") or None
-        if closed:
-            skeleton_blocks.append([CLOSED_LINE])
-        return baton + "\n\n".join("\n".join(blk) for blk in skeleton_blocks)
-    degraded = receipt_degraded(checkpoint)
-    if config.llm_briefing():
-        # #1128: the LLM narrates only what `select` kept under the same
-        # budget the deterministic render uses (the rulings and panels it is
-        # handed are charged as protected furniture), and the verbatim-quote
-        # check runs over that same set, so this path obeys the same model.
+    return [blk for blk in ([GREETING] if closed else [], list(notes),
+                            list(furniture.rulings),
+                            list(furniture.decision_count),
+                            *(list(p.lines) for p in furniture.panels))
+            if blk]
+
+
+def render_body(b: dict, checkpoint: dict, furniture: Furniture, *,
+                degraded: bool, notes=(), loops_pointer: bool = True,
+                reserved: int = 0, snap=None, teammate_blocks=(),
+                teammate_header: str = "", llm: bool = False) -> Body:
+    """The body of a briefing that has one. LLM rendering is the ENTRY's
+    choice (`llm`, from DAIMON_LLM_BRIEFING at the entries that offer it: the
+    CLI and the Hermes hook; the machine paths never do), post-validated for
+    verbatim quote integrity, and falls back to the deterministic render on
+    any doubt. Nothing below the entry reads that flag.
+
+    One allocator (#1128): `reserved` bytes the caller prints beside the body
+    (and the teammates block) share the one budget. The LLM narrates only what
+    `select` kept (the rulings and panels it is handed are charged as
+    protected furniture) and the verbatim-quote check runs over that same set.
+    The manifest comes from the branch that printed (I4): an LLM narrative
+    prints every panel whole (they are prepended verbatim, never narrated),
+    the deterministic render only the ones the budget did not collapse, so a
+    fallback that collapses the panels stamps nothing it did not show."""
+    if llm:
         sel = select(b, effective_budget(), degraded=degraded,
-                     reserved=_byte_len(baton), rulings=rulings, request_lines=request_lines,
-                     verdict_lines=verdict_lines, owed_lines=owed_lines,
-                     overdue_lines=overdue_lines,
-                     decision_count=decision_count,
+                     reserved=reserved, furniture=furniture,
                      loops_pointer=loops_pointer, full_quotes=True,
                      notes=notes)
         kept_checkpoint = _kept_checkpoint(sel)
@@ -3038,22 +3296,134 @@ def render(checkpoint: dict, project_dir=None, worldcheck_project=None,
                 # The LLM render carries no per-item marks to degrade; the one
                 # header note stays FIRST on every path (#204 — the loudest
                 # line never moves below another section). #693/#694: the LLM
-                # narrates the CHECKPOINT; rulings and both request panels
+                # narrates the CHECKPOINT; rulings and the request panels
                 # live outside it, so the deterministic sections are
                 # prepended verbatim after the note — never re-narrated,
-                # never trusted to a generative pass.
+                # never trusted to a generative pass. `notes` ride in the
+                # skeleton blocks, first.
                 parts = ([DEGRADE_NOTE] if degraded else [])
-                # `notes` ride in skeleton_blocks, first
-                parts.extend("\n".join(blk) for blk in skeleton_blocks)
+                parts.extend("\n".join(blk) for blk in
+                             skeleton_blocks(snap, notes, furniture))
                 parts.append(rendered)
-                return baton + "\n\n".join(parts)
+                return Body("\n\n".join(parts), furniture.printed(),
+                            _teammates_whole(teammate_blocks,
+                                             teammate_header))
             log.warning("llm briefing dropped a verbatim quote — "
                         "falling back to the deterministic render")
-    return baton + render_plain(b, degraded, rulings, request_lines,
-                                verdict_lines, owed_lines, decision_count,
-                                overdue_lines=overdue_lines,
-                                loops_pointer=loops_pointer, notes=notes,
-                                reserved=_byte_len(baton))
+    sel = select(b, effective_budget(), degraded=degraded, reserved=reserved,
+                 furniture=furniture, loops_pointer=loops_pointer,
+                 notes=notes, teammate_blocks=teammate_blocks,
+                 teammate_header=teammate_header)
+    text = render_selection(sel)
+    _log_render_size(text, sel.budget)
+    return Body(text, sel.printed(), teammates_text(sel))
+
+
+class Orientation(NamedTuple):
+    """The one line a briefing with no body ends with, per state: the entry
+    point's own wording (the CLI points at `daimon serialize`, the machine
+    tool at `daimon_projects`). "" prints none."""
+    no_checkpoint: str = ""
+    empty: str = ""
+
+
+def _lines_text(lines) -> str:
+    return "".join(f"{ln}\n" for ln in lines)
+
+
+def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
+            lead: str = "", drift: str = "", teammate_blocks=(),
+            teammate_header: str = "", trailer=None, extra_notes=(),
+            loops_pointer: bool = True, llm: bool = False) -> Composed:
+    """The plain text of a briefing and the cards it printed whole (I3): the
+    one layout every plain host prints, so the panels and the furniture around
+    them are the same bytes on each by construction. Layout, in order: `lead`
+    (the CLI's label and warnings), the baton, the format-version note, the
+    body (or, with none, the skeleton and the entry `orientation`), the
+    `drift` block, the teammates and the withheld `trailer` (None: the lines
+    `withheld_trailer` words for this briefing alone; the CLI passes its own,
+    which add the teammates' counts).
+
+    The fixed text is `reserved` against the one budget and is never cut; the
+    body and the teammates share what is left. `extra_notes` are notes only
+    the caller knows (the teammates' own), capped once with the rest. A
+    composed text is never written to disk and never commits anything: the
+    caller commits `printed` at its own delivery boundary."""
+    checkpoint = annotated.checkpoint
+    furniture = annotated.furniture
+    snap = annotated.snapshot
+    b = build(checkpoint) if checkpoint is not None else None
+    # The body's notes lead with the imported-history note; a briefing with no
+    # body prints the reader's notes alone (it describes a body not shown).
+    notes = display.merge_notes(
+        annotated.body_notes if b is not None else annotated.notes,
+        extra_notes)
+    baton = handoff_block(annotated.handoff)
+    trailer_text = _lines_text(withheld_trailer(annotated)
+                               if trailer is None else trailer)
+    if b is None:
+        blocks = skeleton_blocks(snap, notes, furniture)
+        if snap is not None and snap.closed:
+            pointer = CLOSED_LINE
+        elif checkpoint is None:
+            pointer = orientation.no_checkpoint
+        else:
+            pointer = orientation.empty
+        text = "\n\n".join("\n".join(blk) for blk in blocks)
+        if pointer:
+            text = f"{text}\n\n{pointer}" if text else pointer
+        if text:
+            text += "\n"
+        return Composed(
+            lead + baton + text
+            + _teammates_whole(teammate_blocks, teammate_header)
+            + trailer_text, furniture.printed())
+    version = annotated.version_note + "\n" if annotated.version_note else ""
+    # One allocator (#1128). Fixed text first: the lead, baton, version note,
+    # drift block and trailer are never cut, so they are `reserved` bytes of
+    # the one budget. +1 for the newline printed after the body: a byte this
+    # composition always spends, reserved here rather than left for the
+    # body's share to absorb.
+    reserved = _byte_len(lead + baton + version + drift + trailer_text) + 1
+    body = render_body(b, checkpoint, furniture,
+                       degraded=receipt_degraded(checkpoint), notes=notes,
+                       loops_pointer=loops_pointer, reserved=reserved,
+                       snap=snap, teammate_blocks=teammate_blocks,
+                       teammate_header=teammate_header, llm=llm)
+    return Composed(lead + baton + version + body.text + "\n" + drift
+                    + body.teammates + trailer_text, body.printed)
+
+
+def render(checkpoint: dict, project_dir=None, loops_pointer: bool = True,
+           snap=None, notes=(), handoff=None,
+           furniture: Furniture | None = None) -> str | None:
+    """The body of a briefing for a checkpoint in hand (LLM opt-in or
+    deterministic, see `render_body`), led by the baton, or None if there is
+    nothing worth surfacing. No host calls it: every host composes through
+    `compose`. It is the entry for a hand-built checkpoint, and it adds
+    nothing to the layout: `project_dir` (#693) scopes the standing rulings
+    through `_furniture`, the one builder (None skips the read), and a
+    `furniture` handed in is used as it is. `handoff` (#523) is
+    `Annotated.handoff`: its block leads the text and is charged to the byte
+    budget."""
+    baton = handoff_block(handoff)
+    b = build(checkpoint)
+    if furniture is None:
+        furniture = (_furniture(project_dir, None, snap, notes, time.time())
+                     if project_dir is not None else Furniture())
+    if b is None:
+        blocks = skeleton_blocks(snap, notes, furniture)
+        if snap is not None and snap.closed:
+            blocks.append([CLOSED_LINE])
+        if not blocks:
+            return baton.rstrip("\n") or None
+        return baton + "\n\n".join("\n".join(blk) for blk in blocks)
+    body = render_body(b, checkpoint, furniture,
+                       degraded=receipt_degraded(checkpoint), notes=notes,
+                       loops_pointer=loops_pointer,
+                       reserved=_byte_len(baton), snap=snap,
+                       llm=config.llm_briefing())
+    return baton + body.text
 
 
 # Seeded from research/experiments/track-a/prompts/02-reconstruct.md, tuned for a

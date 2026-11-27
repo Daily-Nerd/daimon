@@ -20,9 +20,10 @@ def test_the_table_covers_exactly_the_installers_host_set():
     assert set(host_mcp_caps.MCP_HOST_CAPS) == _INSTALLER_HOSTS
 
 
-def test_every_row_carries_both_capabilities_from_the_known_vocabulary():
+def test_every_row_carries_every_capability_from_the_known_vocabulary():
     for host, caps in host_mcp_caps.MCP_HOST_CAPS.items():
-        assert set(caps) == {"mcp", "hint"}, host
+        assert set(caps) == {"mcp", "hint", "brief"}, host
+        assert caps["brief"].startswith(("supported", "unsupported")), host
         assert caps["mcp"] == "supported", host  # every host ships registration
         assert caps["hint"].startswith(("supported", "unsupported")), host
 

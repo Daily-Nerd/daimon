@@ -47,8 +47,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Mapping, NamedTuple
 
-from . import (buckets, clock, config, display, identity, jsonl, normalize,
-               policy, redact, refutations, scope, store, surfaces)
+from . import (buckets, clock, config, display, identity, jsonl, marks,
+               normalize, policy, redact, refutations, scope, store, surfaces)
 # One channel doctrine for every ledger: authority is a property of the WRITE
 # PATH, never a caller's claim about itself. `authority.py` owns the tier a
 # channel carries, so a future channel tier ("ui", "signed") stays consistent
@@ -410,8 +410,7 @@ CLOSE_RULE = (
     "ruling; reject and needs-info are a person's. On an ask nobody "
     "accepted, an agent `done` is only a pending claim that lands when a "
     "person accepts.")
-CLOSE_RULE_SHORT = ("Accepted and owed. Close one now, no human needed: "
-                    "`daimon request done <id> --evidence …`")
+CLOSE_RULE_SHORT = marks.OWED_CLOSE_LINE
 CLOSE_RULE_HELP = ("An agent may run this on an accepted ask without asking "
                    "the human.")
 # Per-brief render budget (D2). Over-cap renders a loud "+N more waiting"
@@ -454,7 +453,7 @@ _EVENT_RANK = {
     "done_verified": 10,
     "withdrawn_delivered": 2,
 }
-_REQUEST_ID_RE = re.compile(r"q-[0-9a-f]{12}")
+_REQUEST_ID_RE = re.compile(marks.REQUEST_ID_PATTERN)
 
 
 def is_request_id(value) -> bool:
@@ -3906,7 +3905,8 @@ def verdict_renderable(project_dir=None) -> dict:
                        got.notes)
 
 
-def overdue_renderable(project_dir=None, shown_ids=frozenset()) -> dict:
+def overdue_renderable(project_dir=None, shown_ids=frozenset(),
+                       now_ns: int | None = None) -> dict:
     """#1281: the sender-side overdue panel data, `{"rows": [...],
     "overflow": N}`. Asks THIS project sent that are still owed (open,
     needs-info, accepted with no done) and have not moved for the threshold,
@@ -3916,9 +3916,12 @@ def overdue_renderable(project_dir=None, shown_ids=frozenset()) -> dict:
 
     `shown_ids` are the requests the verdict panel already printed in this
     brief: they are dropped BEFORE the cap, so a repeat never costs a slot
-    (the dedup-before-cap order `verdict_deliverable` documents)."""
+    (the dedup-before-cap order `verdict_deliverable` documents).
+
+    `now_ns` is the reader's clock (a briefing passes its own, so every age
+    it prints reads one instant); None reads the injected clock."""
     got = sent(project_dir)
-    now = clock.now_ns()
+    now = clock.now_ns() if now_ns is None else now_ns
     rows = [r for r in got.by_id.values()
             if r["request_id"] not in shown_ids and is_overdue(r, now)]
     rows.sort(key=_recency)

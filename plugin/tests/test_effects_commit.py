@@ -158,13 +158,16 @@ def test_commit_survives_a_stdout_that_cannot_flush(monkeypatch):
 
 def test_surfaced_effects_only_for_cards_that_owe_a_stamp():
     card = briefing.Card
-    printed = {"request": (card("q-1", True), card("q-2", False)),
-               "verdict": (card("q-3", True, "ev1"),)}
-    got = effects_commit.surfaced_effects("/p", printed)
+    printed = briefing.Printed(
+        "/p", (card("q-1", True), card("q-2", False)),
+        (card("q-3", True, "ev1"),))
+    got = effects_commit.surfaced_effects(printed)
     assert got.surfaced == (Surfaced("request", "/p", "q-1", None),
                             Surfaced("verdict", "/p", "q-3", "ev1"))
-    assert effects_commit.surfaced_effects(None, printed) == Effects.none()
-    assert effects_commit.surfaced_effects("/p", None) == Effects.none()
+    # no gate (a slug, a foreign path), or nothing known to be printed
+    assert effects_commit.surfaced_effects(
+        printed._replace(project=None)) == Effects.none()
+    assert effects_commit.surfaced_effects(None) == Effects.none()
 
 
 def test_committing_commits_when_the_verb_raises(events, monkeypatch):
@@ -274,7 +277,7 @@ def test_brief_records_usage_when_the_view_cannot_be_built(
     def boom(*a, **k):
         raise RuntimeError("view")
 
-    monkeypatch.setattr(briefing, "prepare", boom)
+    monkeypatch.setattr(briefing, "prepare_view", boom)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/ec-y")
     assert cli.main(["brief"]) == 2
     assert cli.main(["loops"]) == 2
@@ -324,8 +327,8 @@ def test_every_mcp_handler_records_usage_after_its_response_is_built(
     _checkpoint("/p/ec-mcp")
     monkeypatch.setenv("DAIMON_PROJECT_DIR", "/p/ec-mcp")
     built = []
-    real_render = briefing.render_plain
-    monkeypatch.setattr(briefing, "render_plain",
+    real_render = briefing.render_selection
+    monkeypatch.setattr(briefing, "render_selection",
                         lambda *a, **k: built.append(1) or real_render(*a, **k))
     mcp_tools.HANDLERS["daimon_brief"]({})
     assert built and events == ["flush", ("usage", "mcp:brief")]

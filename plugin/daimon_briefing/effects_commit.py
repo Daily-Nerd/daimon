@@ -12,7 +12,14 @@ printed has left the process before any usage line, stamp or ledger row is
 written, and a crash in between leaves the card to be shown again rather than
 recorded as shown. Hosts call it from a `finally`, so `usage` is recorded when
 the verb exits 1 or 2 too. `verification`, `surfaced` and `telemetry` commit on
-the success path alone for the briefing hosts. The recall verbs (`recall`,
+the success path alone for the briefing hosts.
+
+Every briefing host commits its `surfaced` stamps at the last point daimon
+controls before the text leaves: the CLI after the stdout flush, the MCP
+server after the JSON-RPC response is written (`Pending.on_delivery`, then
+`mcp_server.serve`), `api.render_briefing` at its return, the Hermes hook at
+the hook's return. A preview, a parse or a direct `machine_brief` call writes
+nothing. The recall verbs (`recall`,
 `recall-inject`, `action-recall`) record their `usage`, `telemetry` and `seen`
 as they go and commit them all from the `finally` of `committing`, after the
 output.
@@ -35,13 +42,20 @@ from .effects import Effects, Surfaced, Verification, merge
 
 
 class Pending:
-    """The effects a host has accumulated so far; `add` merges more in."""
+    """The effects a host has accumulated so far; `add` merges more in.
+    `delivery` holds the ones that must wait for the host's own delivery
+    boundary (`on_delivery`): a stamp that says "this card reached an agent"
+    cannot be committed before the response carrying it is written."""
 
     def __init__(self, *usage: str):
         self.effects = Effects(usage=tuple(usage))
+        self.delivery = Effects.none()
 
     def add(self, more: Effects) -> None:
         self.effects = merge(self.effects, more)
+
+    def on_delivery(self, more: Effects) -> None:
+        self.delivery = merge(self.delivery, more)
 
 
 def committing(fn):
@@ -77,16 +91,29 @@ def rendered_worldcheck_effects(project, rendered) -> Effects:
                               rendered.ledger_rows, rendered.worldcheck_skips)
 
 
-def surfaced_effects(worldcheck_project, printed) -> Effects:
-    """`surfaced` records for the cards `render_brief` printed in full.
-    `printed` is its manifest (None: nothing is known to have been shown)."""
-    if worldcheck_project is None or not printed:
+def rendered_effects(project, rendered) -> Effects:
+    """Everything a `briefing.RenderedBriefing` delivered to a host API caller
+    owes the store: the worldcheck bookkeeping and the `surfaced` stamps of
+    the cards it printed whole. The host API has no post-write seam, so its
+    return is the delivery boundary."""
+    return merge(rendered_worldcheck_effects(project, rendered),
+                 surfaced_effects(rendered.printed))
+
+
+def surfaced_effects(printed) -> Effects:
+    """`surfaced` records for the cards a render printed in full. `printed` is
+    its `briefing.Printed` manifest: the project whose bucket the stamps are
+    written to (the furniture's gate, never a slug or a fallback target) and
+    the cards, each owed a stamp only when the panel decided so (`Card.stamp`).
+    A render that showed no panel returns a manifest with no project and so
+    stamps nothing."""
+    if printed is None or printed.project is None:
         return Effects.none()
-    out = [Surfaced("request", worldcheck_project, c.request_id)
-           for c in printed.get("request") or () if c.stamp]
-    out += [Surfaced("verdict", worldcheck_project, c.request_id,
+    out = [Surfaced("request", printed.project, c.request_id)
+           for c in printed.request if c.stamp]
+    out += [Surfaced("verdict", printed.project, c.request_id,
                      c.reply_event_id)
-            for c in printed.get("verdict") or () if c.stamp]
+            for c in printed.verdict if c.stamp]
     return Effects(surfaced=tuple(out))
 
 

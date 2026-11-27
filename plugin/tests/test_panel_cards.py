@@ -7,6 +7,7 @@ import re
 import pytest
 
 from daimon_briefing import briefing, cli, render, requests, store
+from tests._prepared import render_brief
 from daimon_briefing.surfaces import Writer
 
 SENDER = "/p/pc-sender"
@@ -81,14 +82,15 @@ def test_select_keeps_the_cards_and_names_the_ones_printed_whole():
              "  From: y"]
     vlines = ["Decisions on requests you sent:", "✓ accepted  q-2  z",
               "  To: w"]
-    whole = briefing.select(b, None, request_lines=lines, verdict_lines=vlines,
-                            cards=cards)
+    furniture = briefing.Furniture(project="/p/x", panels=(
+        briefing.PanelBlock("request", tuple(lines), cards["request"]),
+        briefing.PanelBlock("verdict", tuple(vlines), cards["verdict"])))
+    whole = briefing.select(b, None, furniture=furniture)
     assert whole.cards == cards
-    assert whole.printed_cards() == cards
-    cut = briefing.select(b, 1, request_lines=lines, verdict_lines=vlines,
-                          cards=cards)
+    assert whole.printed() == briefing.Printed("/p/x", **cards)
+    cut = briefing.select(b, 1, furniture=furniture)
     assert cut.cards == cards
-    assert cut.printed_cards() == {"request": (), "verdict": ()}
+    assert cut.printed() == briefing.Printed("/p/x", (), ())
 
 
 def test_render_brief_returns_the_cards_it_printed_and_none_without_a_gate(
@@ -96,12 +98,13 @@ def test_render_brief_returns_the_cards_it_printed_and_none_without_a_gate(
     monkeypatch.setattr(render, "supports_rich", lambda: False)
     _checkpoint(RECIPIENT, "S-pc-r4")
     rid = _ask(SENDER, RECIPIENT, "publish the schema")
-    got = render.render_brief(_cp(), project_dir=RECIPIENT,
+    got = render_brief(_cp(), project_dir=RECIPIENT,
                               worldcheck_project=RECIPIENT)
-    assert {k: [c.request_id for c in v] for k, v in got.items()} == {
+    assert got.project == RECIPIENT
+    assert {"request": [c.request_id for c in got.request],
+            "verdict": [c.request_id for c in got.verdict]} == {
         "request": [rid], "verdict": []}
-    assert render.render_brief(_cp(), project_dir=RECIPIENT) == {
-        "request": (), "verdict": ()}
+    assert render_brief(_cp(), project_dir=RECIPIENT) == briefing.Printed()
     capsys.readouterr()
 
 

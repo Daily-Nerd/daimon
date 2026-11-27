@@ -464,6 +464,9 @@ ALLOWED_UPWARD = {
         "stdlib-only presenter, one wording for every channel",
     ("daimon_briefing/ledger.py", "display"):
         "stdlib-only presenter, one wording for every channel",
+    ("daimon_briefing/requests.py", "marks"):
+        "stdlib-only constants: the request id shape and the owed close line "
+        "are spelled once, with the briefing format the parser reads back",
 }
 LEAVES = {"daimon_briefing/jsonl.py": {"surfaces"},
           "daimon_briefing/surfaces.py": set()}

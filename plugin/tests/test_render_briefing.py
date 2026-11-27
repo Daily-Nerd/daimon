@@ -64,7 +64,8 @@ def test_a_closed_view_renders_the_greeting_and_the_closed_line(project):
     _plant(project, "trust.jsonl", b"<<<<<<< HEAD\n")
     got = api.render_briefing(project)
     assert got.state == "closed"
-    assert got.text.endswith(briefing.CLOSED_LINE) and KEPT not in got.text
+    assert got.text.endswith(briefing.CLOSED_LINE + "\n")
+    assert KEPT not in got.text
     assert any("trust.jsonl is unreadable" in n for n in got.notes)
 
 
@@ -93,7 +94,7 @@ def test_a_prepare_that_raises_is_unavailable_with_the_exception_type(
     assert "secret detail" not in repr(got)
 
 
-@pytest.mark.parametrize("name", ["ruling_lines", "build", "render_plain"])
+@pytest.mark.parametrize("name", ["ruling_lines", "build", "render_selection"])
 def test_any_later_failure_is_unavailable_too(project, monkeypatch, name):
     _seed(project, KEPT)
 
@@ -227,7 +228,7 @@ def test_the_bytes_do_not_depend_on_the_plain_flag_or_a_terminal(
 
 # ---- the format version (D20) ----
 
-_FINGERPRINT = "6f66ac16be874e1edd97cbbb87cbbf172ef44c9fc69bdea86b1196ab5f16e718"
+_FINGERPRINT = "aec4fba8c4f63a5415a42c283595819e563c3a2c235e47f9f87198cc2f141acf"
 
 
 def _marks_fingerprint():
@@ -237,7 +238,7 @@ def _marks_fingerprint():
 
 
 def test_the_format_version_is_the_exported_integer():
-    assert marks.FORMAT_VERSION == 3 == api.BRIEFING_FORMAT
+    assert marks.FORMAT_VERSION == 4 == api.BRIEFING_FORMAT
     assert isinstance(api.BRIEFING_FORMAT, int)
 
 

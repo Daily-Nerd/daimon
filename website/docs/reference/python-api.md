@@ -32,6 +32,22 @@ The row fields a host reads are the record id, its state, subject, scope, anchor
 
 Deliberately not covered: the order rows come back in, the wording of diagnostics and log lines, the message text of a raised error (match on the exception type instead), and anything not named on this page. Importable is not the same as documented.
 
+## Reading a briefing
+
+`api.render_briefing(project_dir, now=None, loops_pointer=False)` returns the text `daimon_brief` returns over MCP: the baton, a format-version warning, the standing rulings, the decision count, the four request panels, the body and the withheld trailer, from the same composer `daimon brief` uses. It returns a `RenderedBriefing(text, state, notes, ..., printed)` and never raises; a failure is the `unavailable` state. The panels belong to the project the process runs in (`DAIMON_PROJECT_DIR`, else the working directory): a path of any other project shows none and marks nothing as seen, and the `(N elsewhere)` part of the decision count appears only when `DAIMON_MODEL_CROSS_PROJECT` is set. The render is always the deterministic one, whatever `DAIMON_LLM_BRIEFING` says.
+
+Reading is not free of bookkeeping here. A host API has no later seam, so the return is the delivery boundary: `render_briefing` marks the request and decision cards its text printed whole as seen by their senders (a `surfaced` row in this project's own ledger), and records the world-evidence rows it ran when `DAIMON_WORLDCHECK` is on. A card the byte budget collapsed to a count is not marked. `api.preview_briefing` takes the same arguments, returns the same text and `printed` cards and writes nothing, for a caller that reads a briefing without handing it to an agent. `api.briefing_text` is the text of `render_briefing`, so it marks cards too.
+
+`api.parse_briefing(text)` reads a briefing back (`api.BRIEFING_FORMAT` is its version, 4). Besides `header`, `standing_rulings`, `items`, `warnings` and `handoff`, it returns the request furniture, each field `None` when the text has no such section:
+
+| Field | What it holds |
+|---|---|
+| `requests`, `verdicts`, `owed`, `overdue` | A `Panel` each: `cards` (a `PanelCard` with the `request_id`, the card `line` and its indented `detail` lines), `more` (the `(+N more …)` count), `cut` (cards a collapsed panel lost to the budget) and `lines` (every line of the block). |
+| `decisions` | A `DecisionCount(here, elsewhere)`. |
+| `withheld` | A `Withheld(resolved, quarantined)`. |
+
+A panel is read as a block from its title to the next blank line, by its title and never by a mark, so a baton arrow and a request card arrow cannot be mixed up, and text a peer wrote inside a card stays in that card. The format-version warning is one of `warnings`. The bytes of `render_briefing` are stable under the conditions its docstring lists, which now include the requests ledgers of the project and of the projects it exchanges requests with, and the `now` that sets the overdue ages.
+
 ## Embedding hosts: the sealed git surface
 
 A program that embeds daimon and works in directories written by a less trusted

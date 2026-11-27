@@ -381,4 +381,4 @@ def test_the_request_id_pattern_has_one_reader_and_one_spelling():
         readers += [path.name for _ in range(text.count("_REQUEST_ID_RE.")) ]
         spellings += [path.name for _ in range(text.count("q-[0-9a-f]"))]
     assert readers == ["requests.py"]      # only is_request_id reads the pattern
-    assert spellings == ["requests.py"]    # and nobody spells it again
+    assert spellings == ["marks.py"]       # one spelling, with the format marks

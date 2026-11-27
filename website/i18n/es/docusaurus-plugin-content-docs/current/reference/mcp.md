@@ -21,12 +21,14 @@ daimon mcp serve   # bloquea y sirve JSON-RPC por stdio hasta EOF
 | Herramienta | Qué hace | Argumentos |
 | --- | --- | --- |
 | `daimon_recall` | Search daimon's cross-session memory. Rows carry provenance: trust class (verbatim = exact quote, inferred = model conclusion), author, origin project slug, and a `status` field in plain words when a row is resolved, superseded or contradicted (null for a live row). Searches this project only. | `query` `string` obligatorio: search terms<br />`limit` `integer` por defecto `20`<br />`session` `string`: the live session id this pull should be attributed to, if known<br />`all_projects` `boolean` solo con `DAIMON_MODEL_CROSS_PROJECT`: search every project<br />`slug` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: search one other project by slug |
-| `daimon_brief` | The latest briefing for this project: what the last session was doing, decisions, open loops, trust-tagged. Strictly project-scoped: no checkpoint here answers 'none', never another project's content. | `slug` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: read another project by slug<br />`project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+| `daimon_brief` | The latest briefing for this project: what the last session was doing, decisions, open loops, trust-tagged. Strictly project-scoped: no checkpoint here answers 'none', never another project's content. It records which request cards it delivered. | `slug` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: read another project by slug<br />`project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
 | `daimon_projects` | This project's own entry: slug, age, last topic. | - |
 | `daimon_status` | Capture health for this project: checkpoint freshness, last serialize result, outstanding failures, alarms. | `project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
-| `requests_inbox` | Requests other daimon projects have addressed to this one (the cross-project ask ledger, #694). Deliberate pull, never ambient: daimon_brief does not carry this content. Read-only: opening, answering, or deciding a request is CLI-only (`daimon request ...`). | `min_severity` `critical\|high\|normal\|low`: only requests at this severity or a more severe one<br />`project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
+| `requests_inbox` | Requests other daimon projects have addressed to this one (the cross-project ask ledger, #694), the full listing. daimon_brief carries the capped panel of the same requests; this tool reads all of them, with the severity filter. Read-only: opening, answering, or deciding a request is CLI-only (`daimon request ...`). | `min_severity` `critical\|high\|normal\|low`: only requests at this severity or a more severe one<br />`project` `string` solo con `DAIMON_MODEL_CROSS_PROJECT`: project directory path |
 
 {/* end generated:mcp-tools */}
+
+`daimon_brief` lleva el mismo contenido que imprime `daimon brief` (mira [Formato del briefing](./briefing-format.md)): el batón, las reglas vigentes, el conteo de decisiones, los cuatro paneles de pedidos, una advertencia de formato de versión y el pie de lo retenido. Eso la convierte en la vía de briefing para un host sin hook de briefing, como Windsurf. Los paneles leen solo el proyecto propio de quien llama; `slug`, o un `project` bajo `DAIMON_MODEL_CROSS_PROJECT`, no muestra ninguno. Una vez escrita la respuesta, cada tarjeta de pedido o de decisión que imprimió completa se marca como vista por quien la envió (una fila `surfaced` en el ledger de este proyecto), una vez por tarjeta. Esa marca es registro de entrega, como el conteo de uso, no memoria: nunca cambia lo que devuelve una lectura. `requests_inbox` es el listado completo de los mismos pedidos.
 
 Las filas de `requests_inbox` llevan `severity` y `severity_reason` (una fila `normal` tiene la razón vacía), y el texto en cuarentena u olvidado vuelve como marcador o en blanco. La tabla de arriba lista los argumentos de las herramientas tal como el servidor se los envía a un cliente.
 
@@ -144,5 +146,5 @@ omitir `DAIMON_PROJECT_DIR` — el directorio de trabajo resuelve igual.
 
 Nota: en hosts donde los hooks de daimon ya corren, el briefing por hook es
 la integración más rica — el servidor MCP es para lecturas a demanda y para
-hosts sin hooks. Correr ambos está bien; las herramientas son de solo
-lectura.
+hosts sin hooks. Correr ambos está bien; ninguna herramienta cambia tu
+memoria.

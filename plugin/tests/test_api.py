@@ -16,11 +16,13 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "serializes", "serialize_rows", "SerializeRow", "Serializes",
              "SERIALIZE_STATES", "LIVE_STATES", "HealPlan", "HealReport",
              "HealTarget", "HealSkip", "heal_plan", "heal_all",
-             "RenderedBriefing", "render_briefing", "briefing_text",
+             "RenderedBriefing", "render_briefing", "preview_briefing",
+             "briefing_text",
              "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
              "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
              "HandoffNotRecorded", "write_handoff")
-OWNED = ("Handoff", "Briefing", "parse_briefing")
+OWNED = ("Handoff", "PanelCard", "Panel", "DecisionCount", "Withheld",
+         "Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
 
@@ -82,7 +84,8 @@ def test_only_the_briefing_parser_is_defined_in_the_module():
     re-export). No other public name exists besides `__all__`."""
     tree = ast.parse(Path(api.__file__).read_text(encoding="utf-8"))
     defined = [n.name for n in tree.body
-               if isinstance(n, (ast.FunctionDef, ast.ClassDef))]
+               if isinstance(n, (ast.FunctionDef, ast.ClassDef))
+               and not n.name.startswith("_")]
     assert sorted(defined) == sorted(OWNED)
     public = {n for n in vars(api) if not n.startswith("_")}
     assert public - set(EXPECTED) <= {"dataclass", "field", "ITEM_MARKS",

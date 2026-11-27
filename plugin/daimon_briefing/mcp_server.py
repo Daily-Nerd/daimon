@@ -16,7 +16,8 @@ semantic rule — this module owns serialization to MCP shapes, nothing else).
 import json
 import logging
 
-from . import config, requests
+from . import config, effects_commit, requests
+from .effects import Effects
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +84,8 @@ def _tool_descriptors():
                 "was doing, decisions, open loops, trust-tagged. Strictly "
                 "project-scoped: no checkpoint here answers 'none', never "
                 "another project's content"
-                + (" (pass slug to read one explicitly)." if cross else ".")),
+                + (" (pass slug to read one explicitly)." if cross else ".")
+                + " It records which request cards it delivered."),
             "inputSchema": {"type": "object", "properties": brief_props},
             "annotations": {"readOnlyHint": True},
         },
@@ -112,10 +114,11 @@ def _tool_descriptors():
             "name": "requests_inbox",
             "description": (
                 "Requests other daimon projects have addressed to this one "
-                "(the cross-project ask ledger, #694). Deliberate pull, "
-                "never ambient: daimon_brief does not carry this content. "
-                "Read-only: opening, answering, or deciding a request is "
-                "CLI-only (`daimon request ...`)."),
+                "(the cross-project ask ledger, #694), the full listing. "
+                "daimon_brief carries the capped panel of the same "
+                "requests; this tool reads all of them, with the severity "
+                "filter. Read-only: opening, answering, or deciding a "
+                "request is CLI-only (`daimon request ...`)."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -155,9 +158,17 @@ def _handle_initialize(params):
 
 
 def _handle_tools_call(params):
-    """Dispatch one tool call. Tool-level failures come back as isError
-    content (the agent can read them); only an unknown tool is a protocol
-    error — that's a client bug, not a daimon state."""
+    """The result of one tool call (`_call_tool` without the delivery
+    effects, for a caller that delivers nothing)."""
+    return _call_tool(params)[0]
+
+
+def _call_tool(params):
+    """Dispatch one tool call as `(result, delivered)`: the tools/call result
+    and the effects that wait for the response to be written (#1402).
+    Tool-level failures come back as isError content (the agent can read
+    them); only an unknown tool is a protocol error — that's a client bug,
+    not a daimon state."""
     from . import mcp_tools
     name = str((params or {}).get("name") or "")
     arguments = (params or {}).get("arguments") or {}
@@ -171,11 +182,11 @@ def _handle_tools_call(params):
             result = handler(arguments)
     except mcp_tools.ToolError as e:
         return {"content": [{"type": "text", "text": str(e)}],
-                "isError": True}
+                "isError": True}, Effects.none()
     # The payload is block 1; each note is a block of its own after it.
     blocks = [{"type": "text", "text": result.text},
               *({"type": "text", "text": note} for note in result.notes)]
-    return {"content": blocks, "isError": False}
+    return {"content": blocks, "isError": False}, result.delivered
 
 
 class _UnknownTool(Exception):
@@ -221,6 +232,7 @@ def serve(in_stream=None, out_stream=None) -> int:
         method = str(req.get("method") or "")
         has_id = "id" in req
         id_ = req.get("id")
+        delivered = Effects.none()
         try:
             if method == "initialize":
                 result = _handle_initialize(req.get("params"))
@@ -229,7 +241,7 @@ def serve(in_stream=None, out_stream=None) -> int:
             elif method == "tools/list":
                 result = {"tools": _tool_descriptors()}
             elif method == "tools/call":
-                result = _handle_tools_call(req.get("params"))
+                result, delivered = _call_tool(req.get("params"))
             else:
                 if has_id:
                     emit(_response(id_, error={
@@ -244,4 +256,9 @@ def serve(in_stream=None, out_stream=None) -> int:
             continue
         if has_id:
             emit(_response(id_, result=result))
+            # #1402: the response is on the wire, so the cards it carried have
+            # been delivered: commit their `surfaced` stamps now. A write that
+            # raised never reaches here, so a response the host did not get
+            # stamps nothing (the card shows again, the safe direction).
+            effects_commit.commit(delivered)
     return 0

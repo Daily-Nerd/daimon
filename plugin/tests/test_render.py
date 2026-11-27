@@ -4,6 +4,7 @@ import pytest
 
 from daimon_briefing import render
 from daimon_briefing.surfaces import Writer
+from tests._prepared import render_brief
 
 
 def _force_rich_present(monkeypatch):
@@ -58,7 +59,7 @@ def test_supports_rich_true_when_all_conditions_met(monkeypatch):
 def test_render_brief_plain_matches_briefing_text(monkeypatch, sample_checkpoint, capsys):
     # DAIMON_PLAIN=1 from the autouse fixture forces the plain path.
     from daimon_briefing import briefing
-    render.render_brief(sample_checkpoint)
+    render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     expected = briefing.render(sample_checkpoint)
     assert out.strip() == expected.strip()
@@ -69,7 +70,7 @@ def test_render_brief_rich_smoke(monkeypatch, sample_checkpoint, capsys):
     # box-drawing, and width-dependent wrapping, so exact-format assertions here
     # would be brittle. Format correctness is covered on the plain path.
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    render.render_brief(sample_checkpoint)
+    render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     assert "VERIFY BEFORE TRUSTING" in out
     assert "PR #6" in out
@@ -104,7 +105,7 @@ def test_render_brief_rich_stale_carried_renders_unverified(monkeypatch, capsys)
     stamped, stale = briefing.stamp_stale_carried(
         cp, {}, now, threshold_days=7.0)
     assert len(stale) == 1
-    render.render_brief(stamped)
+    render_brief(stamped)
     out = capsys.readouterr().out
     assert "[? unverified]" in out
     assert "(was verbatim, carried 10d)" in out
@@ -117,7 +118,7 @@ def test_render_brief_rich_handoff_is_a_panel(monkeypatch, sample_checkpoint, ca
     # format fact under test: the HANDOFF header sits ON a panel border line.
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "merge PR first\nthen review"}
-    render.render_brief(sample_checkpoint, handoff=handoff)
+    render_brief(sample_checkpoint, handoff=handoff)
     out = capsys.readouterr().out
     header_lines = [ln for ln in out.splitlines() if "HANDOFF" in ln]
     assert header_lines, "handoff header missing from rich output"
@@ -131,7 +132,7 @@ def test_render_brief_plain_handoff_unchanged(monkeypatch, sample_checkpoint, ca
     # #566: the plain path is a compatibility surface (non-TTY hosts, hook
     # briefings) — byte-identical to the pre-#566 shape.
     handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "merge PR first\nthen review"}
-    render.render_brief(sample_checkpoint, handoff=handoff)
+    render_brief(sample_checkpoint, handoff=handoff)
     out = capsys.readouterr().out
     assert out.startswith(
         "HANDOFF (left deliberately by previous session, 2026-08-04T18:09:41Z):\n"
@@ -208,7 +209,7 @@ def test_render_brief_plain_total_stdout_bounded_by_byte_ceiling(
              "anchor": {"qualified_name": "plugin/x.py::run"}}]
     teammates = _teammate_sections()
 
-    render.render_brief(_heavy_checkpoint_for_byte_ceiling(), drift=drift,
+    render_brief(_heavy_checkpoint_for_byte_ceiling(), drift=drift,
                         teammates=teammates, handoff=handoff,
                         project_dir=project)
     out = capsys.readouterr().out
@@ -233,7 +234,7 @@ def test_render_brief_plain_body_budget_has_a_floor(monkeypatch,
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "0")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "50")
     handoff = {"ts": "2026-08-04T18:09:41Z", "tier": "human", "note": "x" * 2000}
-    render.render_brief(sample_checkpoint, handoff=handoff)
+    render_brief(sample_checkpoint, handoff=handoff)
     out = capsys.readouterr().out
     # The body still rendered something, not nothing, despite a ceiling far
     # smaller than the handoff text it sits beside.
@@ -243,7 +244,7 @@ def test_render_brief_plain_body_budget_has_a_floor(monkeypatch,
 def test_render_brief_no_content(capsys):
     # #29: the old hint said "Run `serialize` first" — a dead end (serialize
     # needs a transcript path and is hook-internal). Point at the real flow.
-    render.render_brief({})
+    render_brief({})
     out = capsys.readouterr().out
     assert "No checkpoint yet" in out
     assert "Run `serialize` first" not in out
@@ -256,7 +257,7 @@ def test_render_brief_rich_no_content(monkeypatch, capsys):
     # its own call site now that the #1044 rework split render_brief into
     # separate rich/non-rich branches.
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    render.render_brief({})
+    render_brief({})
     out = capsys.readouterr().out
     assert "No checkpoint yet" in out
 
@@ -274,7 +275,7 @@ def test_render_brief_rich_honors_llm_briefing_when_present(
                 'the GitHub UI" / "do we chunk below 1200 lines or '
                 'single-pass?" / "we adopt the D-007 prompt for the serializer"')
     monkeypatch.setattr(briefing, "_render_llm", lambda cp: sentinel)
-    render.render_brief(sample_checkpoint)
+    render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     assert "LLM-NARRATIVE-SENTINEL" in out
 
@@ -298,7 +299,7 @@ def _seed_request(recipient_dir, ask="publish the schema"):
 def test_render_brief_shows_the_panel_when_worldcheck_project_is_given(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     _seed_request("/p/render-req-recipient-a")
-    render.render_brief(sample_checkpoint,
+    render_brief(sample_checkpoint,
                         worldcheck_project="/p/render-req-recipient-a")
     out = capsys.readouterr().out
     assert "publish the schema" in out
@@ -310,7 +311,7 @@ def test_render_brief_hides_the_panel_without_worldcheck_project(
     # worldcheck_project (the --slug / global-fallback / MCP shape) must get
     # no panel even though a matching request exists.
     _seed_request("/p/render-req-recipient-b")
-    render.render_brief(sample_checkpoint,
+    render_brief(sample_checkpoint,
                         project_dir="/p/render-req-recipient-b")
     out = capsys.readouterr().out
     assert "publish the schema" not in out
@@ -319,7 +320,7 @@ def test_render_brief_hides_the_panel_without_worldcheck_project(
 def test_render_brief_no_checkpoint_still_shows_the_panel(
         tmp_checkpoint_dir, capsys):
     _seed_request("/p/render-req-recipient-c")
-    render.render_brief({}, worldcheck_project="/p/render-req-recipient-c")
+    render_brief({}, worldcheck_project="/p/render-req-recipient-c")
     out = capsys.readouterr().out
     assert "publish the schema" in out
 
@@ -331,7 +332,7 @@ def test_render_brief_rich_no_checkpoint_still_shows_the_panel(
     # rich/non-rich branches. Mirrors the plain-path test above.
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     _seed_request("/p/render-req-recipient-rich")
-    render.render_brief({}, worldcheck_project="/p/render-req-recipient-rich")
+    render_brief({}, worldcheck_project="/p/render-req-recipient-rich")
     out = capsys.readouterr().out
     assert "publish the schema" in out
 
@@ -358,7 +359,7 @@ def _seed_verdict(sender_dir, ask="publish the schema"):
 def test_render_brief_shows_the_verdict_panel_when_worldcheck_project_given(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     _seed_verdict("/p/render-verdict-sender-a")
-    render.render_brief(sample_checkpoint,
+    render_brief(sample_checkpoint,
                         worldcheck_project="/p/render-verdict-sender-a")
     out = capsys.readouterr().out
     assert "publish the schema" in out
@@ -368,7 +369,7 @@ def test_render_brief_shows_the_verdict_panel_when_worldcheck_project_given(
 def test_render_brief_hides_the_verdict_panel_without_worldcheck_project(
         tmp_checkpoint_dir, sample_checkpoint, capsys):
     _seed_verdict("/p/render-verdict-sender-b")
-    render.render_brief(sample_checkpoint,
+    render_brief(sample_checkpoint,
                         project_dir="/p/render-verdict-sender-b")
     out = capsys.readouterr().out
     assert "publish the schema" not in out
@@ -377,7 +378,7 @@ def test_render_brief_hides_the_verdict_panel_without_worldcheck_project(
 def test_render_brief_no_checkpoint_still_shows_the_verdict_panel(
         tmp_checkpoint_dir, capsys):
     _seed_verdict("/p/render-verdict-sender-c")
-    render.render_brief({}, worldcheck_project="/p/render-verdict-sender-c")
+    render_brief({}, worldcheck_project="/p/render-verdict-sender-c")
     out = capsys.readouterr().out
     assert "publish the schema" in out
 
@@ -387,7 +388,7 @@ def test_render_brief_rich_smoke_shows_the_verdict_panel(
     # Rich path: content-only (see test_render_brief_rich_smoke for rationale).
     monkeypatch.setattr(render, "supports_rich", lambda: True)
     _seed_verdict("/p/render-verdict-sender-rich")
-    render.render_brief(sample_checkpoint,
+    render_brief(sample_checkpoint,
                         worldcheck_project="/p/render-verdict-sender-rich")
     out = capsys.readouterr().out
     assert "publish the schema" in out
@@ -449,21 +450,21 @@ def test_render_status_rescue_gap_same_warning_rich_and_plain(monkeypatch, capsy
 def test_render_brief_notes_version_mismatch(sample_checkpoint, capsys):
     # #93: a checkpoint whose format_version differs from the current one gets a
     # note instead of silently rendering against a changed schema.
-    render.render_brief({**sample_checkpoint, "format_version": "D-000"})
+    render_brief({**sample_checkpoint, "format_version": "D-000"})
     out = capsys.readouterr().out
     assert "D-000" in out and "format" in out.lower()
 
 
 def test_render_brief_no_note_for_current_version(sample_checkpoint, capsys):
     from daimon_briefing import serializer
-    render.render_brief({**sample_checkpoint, "format_version": serializer.PROMPT_VERSION})
+    render_brief({**sample_checkpoint, "format_version": serializer.PROMPT_VERSION})
     out = capsys.readouterr().out
     assert "format" not in out.lower()
 
 
 def test_render_brief_no_note_for_legacy_checkpoint(sample_checkpoint, capsys):
     # Legacy checkpoint (no format_version) renders normally, no note.
-    render.render_brief(sample_checkpoint)
+    render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     assert "format" not in out.lower()
 
@@ -471,7 +472,7 @@ def test_render_brief_no_note_for_legacy_checkpoint(sample_checkpoint, capsys):
 def test_render_brief_older_checkpoint_suggests_reserialize(sample_checkpoint, capsys):
     # #294: checkpoint OLDER than the running code is routine drift (#93) —
     # existing wording (still framed as a schema change), unchanged.
-    render.render_brief({**sample_checkpoint, "format_version": "D-000"})
+    render_brief({**sample_checkpoint, "format_version": "D-000"})
     out = capsys.readouterr().out
     assert "schema changed" in out.lower()
 
@@ -482,7 +483,7 @@ def test_render_brief_newer_checkpoint_flags_impossible_stamp(
     # Distinct wording — must NOT reuse "schema changed" or suggest re-serialize.
     from daimon_briefing import serializer
     monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-013")
-    render.render_brief({**sample_checkpoint, "format_version": "D-014"})
+    render_brief({**sample_checkpoint, "format_version": "D-014"})
     out = capsys.readouterr().out
     assert "D-014" in out and "D-013" in out
     assert "schema changed" not in out.lower()
@@ -491,7 +492,7 @@ def test_render_brief_newer_checkpoint_flags_impossible_stamp(
 
 def test_render_brief_unparseable_format_version_falls_back(sample_checkpoint, capsys):
     # #294: fail soft — never raise, fall back to the existing wording.
-    render.render_brief({**sample_checkpoint, "format_version": "banana"})
+    render_brief({**sample_checkpoint, "format_version": "banana"})
     out = capsys.readouterr().out
     assert "schema changed" in out.lower()
 
@@ -502,7 +503,7 @@ def test_render_brief_version_ordering_uses_integers_not_strings(
     # D-10 against current D-9 is numerically NEWER (impossible).
     from daimon_briefing import serializer
     monkeypatch.setattr(serializer, "PROMPT_VERSION", "D-9")
-    render.render_brief({**sample_checkpoint, "format_version": "D-10"})
+    render_brief({**sample_checkpoint, "format_version": "D-10"})
     out = capsys.readouterr().out
     assert "schema changed" not in out.lower()
     assert "D-10" in out and "D-9" in out
@@ -955,7 +956,7 @@ def test_render_brief_honors_llm_briefing_when_present(monkeypatch, sample_check
                 'single-pass?" / "we adopt the D-007 prompt for the serializer"')
     monkeypatch.setattr(briefing, "_render_llm", lambda cp: sentinel)
     # plain path (autouse DAIMON_PLAIN=1 keeps supports_rich False)
-    render.render_brief(sample_checkpoint)
+    render_brief(sample_checkpoint)
     out = capsys.readouterr().out
     assert "LLM-NARRATIVE-SENTINEL" in out
 
@@ -980,14 +981,14 @@ def test_render_brief_appends_drift_block(monkeypatch, sample_checkpoint, capsys
     # Plain drift block is deterministic — assert the exact header + line format.
     drift = [{"item": {"text": "Adopt D-007 prompt"}, "kind": "soft",
               "anchor": {"qualified_name": "plugin/x.py::run"}}]
-    render.render_brief(sample_checkpoint, drift=drift)
+    render_brief(sample_checkpoint, drift=drift)
     out = capsys.readouterr().out
     assert "CODE DRIFT — verify before trusting (anchored code changed):\n" in out
     assert "- [changed] Adopt D-007 prompt  (plugin/x.py::run)\n" in out
 
 
 def test_render_brief_no_drift_block_when_empty(monkeypatch, sample_checkpoint, capsys):
-    render.render_brief(sample_checkpoint, drift=[])
+    render_brief(sample_checkpoint, drift=[])
     out = capsys.readouterr().out
     assert "CODE DRIFT" not in out.upper()
 
@@ -995,7 +996,7 @@ def test_render_brief_no_drift_block_when_empty(monkeypatch, sample_checkpoint, 
 def test_render_brief_drift_malformed_anchor_label(sample_checkpoint, capsys):
     # A malformed anchor (no qualified_name) renders a label, not empty parens.
     drift = [{"item": {"text": "broken-item"}, "kind": "hard", "anchor": {}}]
-    render.render_brief(sample_checkpoint, drift=drift)
+    render_brief(sample_checkpoint, drift=drift)
     out = capsys.readouterr().out
     assert "- [GONE] broken-item  (malformed anchor)\n" in out
 
@@ -1332,7 +1333,7 @@ def _teammate_sections():
 
 
 def test_render_brief_teammates_plain(sample_checkpoint, capsys):
-    render.render_brief(sample_checkpoint, teammates=_teammate_sections())
+    render_brief(sample_checkpoint, teammates=_teammate_sections())
     out = capsys.readouterr().out
     assert "Teammates — where they left off:" in out
     assert "[grace]" in out
@@ -1341,9 +1342,9 @@ def test_render_brief_teammates_plain(sample_checkpoint, capsys):
 
 
 def test_render_brief_teammates_none_is_noop(sample_checkpoint, capsys):
-    render.render_brief(sample_checkpoint, teammates=None)
+    render_brief(sample_checkpoint, teammates=None)
     without = capsys.readouterr().out
-    render.render_brief(sample_checkpoint, teammates=[])
+    render_brief(sample_checkpoint, teammates=[])
     empty = capsys.readouterr().out
     assert without == empty
     assert "Teammates" not in without  # empty team → byte-identical, no section
@@ -1351,7 +1352,7 @@ def test_render_brief_teammates_none_is_noop(sample_checkpoint, capsys):
 
 def test_render_brief_teammates_rich_smoke(monkeypatch, sample_checkpoint, capsys):
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    render.render_brief(sample_checkpoint, teammates=_teammate_sections())
+    render_brief(sample_checkpoint, teammates=_teammate_sections())
     out = capsys.readouterr().out
     assert "grace" in out
     assert "Refactoring the store" in out
@@ -2474,7 +2475,7 @@ def _rich_out(monkeypatch, capsys, item, now=1_900_000_000):
                                "contradictions_flagged": []},
     }
     stamped = briefing.stamp(cp, view.Snapshot.empty(), now)[0]
-    render.render_brief(stamped)
+    render_brief(stamped)
     return capsys.readouterr().out
 
 
@@ -2538,7 +2539,7 @@ def test_rich_leaves_the_noted_line_off_when_the_text_claim_was_answered(
                                  "contradictions_flagged": []}}
     stamped = briefing.stamp(cp, view.Snapshot.empty(), 1_900_000_000)[0]
     stamped["working_context"]["open_questions"][0]["_worldcheck_text"] = "confirmed"
-    render.render_brief(stamped)
+    render_brief(stamped)
     out = capsys.readouterr().out
     assert "PR #60 awaiting review [carried]" in out and "(noted" not in out
 

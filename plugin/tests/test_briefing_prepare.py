@@ -407,19 +407,20 @@ def test_a_missing_stamp_is_fail_open_not_stale(tmp_checkpoint_dir):
 def test_every_host_carries_the_stale_mark_and_calls_prepare(
         tmp_checkpoint_dir, monkeypatch, capsys):
     """The CLI brief, `daimon loops`, the MCP tool and the Hermes hook all
-    go through `prepare`, so the stale mark cannot differ by host."""
+    go through `prepare_view` (`prepare` adds the briefing furniture on top of
+    it), so the stale mark cannot differ by host."""
     from daimon_briefing import cli, hooks, mcp_tools
     cp = _stale_checkpoint(_days_ago(12, time.time()))
     cp["working_context"]["open_questions"][0]["text"] = (
         "stale carried claim")
     store.write_checkpoint("S-stale", cp, project_dir=PROJECT, writer=Writer.HUMAN)
     seen = []
-    real = briefing.prepare
+    real = briefing.prepare_view
 
     def _spy(project, now, **kw):
         seen.append(project)
         return real(project, now, **kw)
-    monkeypatch.setattr(briefing, "prepare", _spy)
+    monkeypatch.setattr(briefing, "prepare_view", _spy)
     monkeypatch.setenv("DAIMON_PROJECT_DIR", PROJECT)
     assert cli.main(["brief", "--project", PROJECT]) == 0
     assert "[? unverified] stale carried claim" in capsys.readouterr().out

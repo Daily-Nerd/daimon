@@ -12,7 +12,7 @@ it, and neither may drift from the other.
 # as `api.BRIEFING_FORMAT` and never printed into one. Bump it with ANY change
 # to the constants below or to the parser's rules; `test_render_briefing`
 # hashes the constants and fails on a change that did not bump it.
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 # The first line of every briefing, and what a parser takes as its header
 # once the warnings above it are set aside.
@@ -47,6 +47,46 @@ HANDOFF_LEAD = "HANDOFF ("
 HANDOFF_BY_HUMAN = "left deliberately by previous session"
 HANDOFF_BY_AGENT = "written by an agent, unverified"
 HANDOFF_LINE_MARK = "\u2192"
+
+
+# The request furniture (#1402, format 4). A panel is a block: its frozen
+# header, then its cards, then its notes, and the block ends at the next blank
+# line. The headers are registered public strings: a change to one routes
+# through the public-vocabulary process, never a local edit.
+REQUEST_PANEL_HEADER = "Requests waiting on you (from other projects):"
+VERDICT_PANEL_HEADER = "Decisions on requests you sent:"
+OWED_PANEL_HEADER = "Requests you accepted and still owe:"
+OVERDUE_PANEL_HEADER = "Requests you sent that nobody is moving:"
+PANEL_HEADERS = {REQUEST_PANEL_HEADER: "request", VERDICT_PANEL_HEADER:
+                 "verdict", OWED_PANEL_HEADER: "owed",
+                 OVERDUE_PANEL_HEADER: "overdue"}
+
+# What a panel indents: the lines behind a card line, the overflow and the cut
+# count, and the owed panel's close rule.
+PANEL_INDENT = "  "
+
+# A request id, as every card line prints it before any text a peer wrote.
+REQUEST_ID_PATTERN = r"q-[0-9a-f]{12}"
+
+# The owed panel's closing line: who may close an accepted request.
+OWED_CLOSE_LINE = ("Accepted and owed. Close one now, no human needed: "
+                   "`daimon request done <id> --evidence …`")
+
+# The standing rulings block's title.
+RULINGS_HEADER = "Standing rulings (human-ratified — honor these):"
+
+# The decision count line (#766): `here` waits on this project, `elsewhere`
+# on others. The wording and scope are frozen.
+DECISION_COUNT_PLURAL = \
+    "{n} decisions waiting on you here{elsewhere} - daimon decide"
+DECISION_COUNT_SINGULAR = \
+    "1 decision waiting on you here{elsewhere} - daimon decide"
+DECISION_ELSEWHERE = " ({n} elsewhere)"
+
+# The withheld trailer: what the briefing left out, counted, one line each.
+WITHHELD_RESOLVED = "resolved item(s) withheld"
+WITHHELD_QUARANTINED = "quarantined item(s) withheld"
+WITHHELD_TEAM = " ({n} a teammate's)"
 
 
 def warning(text: str) -> str:

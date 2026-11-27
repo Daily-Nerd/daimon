@@ -10,6 +10,7 @@ test_cli_brief_requests.py's fixture shape.
 """
 
 from daimon_briefing import briefing, cli, pending, render, requests, store
+from tests._prepared import render_brief, rendered
 from daimon_briefing.surfaces import Writer
 
 
@@ -149,7 +150,7 @@ def test_no_checkpoint_day_one_path_still_renders_the_line(
     recipient = "/p/dc-recipient-g"
     _open_ask(recipient, "publish the schema", "/p/dc-s12",
              seed_recipient=False)
-    out = briefing.render(None, project_dir=recipient,
+    out = rendered(None, project_dir=recipient,
                           worldcheck_project=recipient)
     assert out is not None
     assert "1 decision waiting on you here - daimon decide" in out
@@ -163,7 +164,7 @@ def test_render_brief_no_checkpoint_branch_still_renders_the_line(
     recipient = "/p/dc-recipient-j"
     _open_ask(recipient, "publish the schema", "/p/dc-s15",
              seed_recipient=False)
-    render.render_brief(None, project_dir=recipient,
+    render_brief(None, project_dir=recipient,
                         worldcheck_project=recipient)
     out = capsys.readouterr().out
     assert "1 decision waiting on you here - daimon decide" in out
@@ -230,7 +231,7 @@ def test_the_count_line_survives_budget_pressure(
     recipient = "/p/dc-recipient-l"
     _open_ask(recipient, "publish the schema", "/p/dc-s17")
     monkeypatch.setenv("DAIMON_BRIEF_MAX_TOKENS", "40")
-    out = briefing.render(sample_checkpoint, project_dir=recipient,
+    out = rendered(sample_checkpoint, project_dir=recipient,
                           worldcheck_project=recipient)
     assert out is not None
     assert "1 decision waiting on you here - daimon decide" in out

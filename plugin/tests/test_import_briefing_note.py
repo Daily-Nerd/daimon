@@ -13,6 +13,7 @@ checkpoint dir the conftest fixture points at.
 import pytest
 
 from daimon_briefing import api, briefing, cli, marks, render, store
+from tests._prepared import own_read
 from daimon_briefing.surfaces import Writer
 
 PROJECT = "/p/imported-history"
@@ -60,7 +61,8 @@ def _import_three(project=PROJECT):
 
 
 def _brief(now=NOW):
-    return briefing.machine_brief(PROJECT, now, loops_pointer=False)
+    return briefing.machine_brief(PROJECT, now, loops_pointer=False,
+                                  read=own_read(PROJECT))
 
 
 # ---- the plain head ---------------------------------------------------------

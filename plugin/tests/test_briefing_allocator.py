@@ -6,6 +6,7 @@ the printed brief actually carried."""
 import pytest
 
 from daimon_briefing import briefing, cli, render, requests, store
+from tests._prepared import render_brief
 
 from ._prepared import in_hand
 from .test_briefing_select import NOW, _fixture_checkpoint
@@ -38,7 +39,7 @@ def _teammates(n=5, per=4):
 
 def _printed(capsys, **kw):
     cp = in_hand(_fixture_checkpoint(), "/repo/x", NOW).checkpoint
-    render.render_brief(cp, **kw)
+    render_brief(cp, **kw)
     return capsys.readouterr().out
 
 
@@ -142,7 +143,8 @@ def _checkpoint_for(route):
 
 
 def _ids(manifest):
-    return {k: {c.request_id for c in v} for k, v in manifest.items()}
+    return {"request": {c.request_id for c in manifest.request},
+            "verdict": {c.request_id for c in manifest.verdict}}
 
 
 def test_render_brief_returns_the_ids_of_printed_cards(
@@ -150,13 +152,13 @@ def test_render_brief_returns_the_ids_of_printed_cards(
     q_id = _open_ask()
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
     cp = _checkpoint_for(RECIPIENT)
-    printed = render.render_brief(cp, project_dir=RECIPIENT,
+    printed = render_brief(cp, project_dir=RECIPIENT,
                                   worldcheck_project=RECIPIENT)
     capsys.readouterr()
     assert _ids(printed) == {"request": {q_id}, "verdict": set()}
     # collapsed to a count line under budget: no card, no id
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "200")
-    printed = render.render_brief(cp, project_dir=RECIPIENT,
+    printed = render_brief(cp, project_dir=RECIPIENT,
                                   worldcheck_project=RECIPIENT)
     capsys.readouterr()
     assert _ids(printed) == {"request": set(), "verdict": set()}
@@ -166,7 +168,7 @@ def test_no_worldcheck_project_means_no_cards_and_nothing_to_stamp(
         tmp_checkpoint_dir, monkeypatch, capsys):
     _open_ask()
     monkeypatch.setenv("DAIMON_BRIEF_MAX_BYTES", "0")
-    printed = render.render_brief(_checkpoint_for(RECIPIENT),
+    printed = render_brief(_checkpoint_for(RECIPIENT),
                                   project_dir=RECIPIENT)
     capsys.readouterr()
     assert _ids(printed) == {"request": set(), "verdict": set()}
@@ -177,7 +179,7 @@ def test_rich_path_reports_the_full_cards_it_printed(
     pytest.importorskip("rich")
     q_id = _open_ask()
     monkeypatch.setattr(render, "supports_rich", lambda: True)
-    printed = render.render_brief(_checkpoint_for(RECIPIENT),
+    printed = render_brief(_checkpoint_for(RECIPIENT),
                                   project_dir=RECIPIENT,
                                   worldcheck_project=RECIPIENT)
     capsys.readouterr()
@@ -202,7 +204,7 @@ def test_an_id_quoted_in_printed_text_is_not_a_printed_card(
     def fake(*a, **k):
         # the id appears in printed text (a note), but no card was printed
         print(f"note mentioning {q_id}")
-        return {"request": frozenset(), "verdict": frozenset()}
+        return briefing.Printed(RECIPIENT)
     monkeypatch.setattr(render, "render_brief", fake)
     assert cli.main(["brief"]) == 0
     record = requests.recipient_join(project_dir=RECIPIENT)[q_id]
