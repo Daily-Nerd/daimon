@@ -5,6 +5,34 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.76.0](https://github.com/Daily-Nerd/daimon/compare/v0.75.0...v0.76.0) (2026-11-27)
+
+
+### Features
+
+* **api:** parse the request furniture in briefing format 4 ([7071d5f](https://github.com/Daily-Nerd/daimon/commit/7071d5f1917a4aeb817ae91e99f0f86290055e93))
+* **briefing:** show anchor drift in every briefing host ([6aad965](https://github.com/Daily-Nerd/daimon/commit/6aad965e6edb1406088cf68c245464976d08cc44))
+* **requests:** request open says when the recipient bucket is quiet and a similarly named one is active ([3b6861f](https://github.com/Daily-Nerd/daimon/commit/3b6861fcfa6a73d310d21b85ad9cc1a2ca8c159e)), closes [#1424](https://github.com/Daily-Nerd/daimon/issues/1424)
+
+
+### Bug Fixes
+
+* **briefing:** a foreign --project shows and stamps no request panel ([13cfd35](https://github.com/Daily-Nerd/daimon/commit/13cfd35bba93a3a07ed74d132bcd1314aa2147b3))
+* **briefing:** make the host API read decision inside its one identity operation ([ddd9217](https://github.com/Daily-Nerd/daimon/commit/ddd9217d785327233a12169bba7e19e3b43a0107))
+* **briefing:** print the request furniture on every briefing host ([df734bd](https://github.com/Daily-Nerd/daimon/commit/df734bdd581461abf6b1231e17b351b96cb28fa7))
+* **briefing:** sanitize drift entries once for the plain block and the rich panel ([ea8bed1](https://github.com/Daily-Nerd/daimon/commit/ea8bed1dae04f65add3ed63cbec6c00452c83ab7))
+* **briefing:** the entry point decides the LLM render, the panels and the cross-project count ([91099ac](https://github.com/Daily-Nerd/daimon/commit/91099acc6e694e203375890b060389709c874e0b))
+* **hostgit:** key declared roots by normcase(realpath) at every site ([15e4dea](https://github.com/Daily-Nerd/daimon/commit/15e4dea0603595f299ab45db3c68a7b78ac3d5e9))
+* **hostgit:** one case-aware containment test for roots, and Windows-safe CI tests ([e579f46](https://github.com/Daily-Nerd/daimon/commit/e579f46a8a819a6d8c7b124876bcb2461179a106))
+* **lock:** choose one platform lock primitive so bucket merge works on Windows ([ca24954](https://github.com/Daily-Nerd/daimon/commit/ca24954766026f6fad46ed651f1790b2f08855af))
+
+
+### Documentation
+
+* **api:** document the drift field and briefing format 5 ([42a9df7](https://github.com/Daily-Nerd/daimon/commit/42a9df785dcef65479bc9d2fef26dca996e66d61))
+* **scars:** candidate that keeps daimon loops on prepare_view, not prepare ([5a39de1](https://github.com/Daily-Nerd/daimon/commit/5a39de183560e8f106d2f0ecbec6e82bed2dd856))
+* the request furniture in every host's briefing and briefing format 4 ([48f8f67](https://github.com/Daily-Nerd/daimon/commit/48f8f6778eb4ec391f2107c35395861c8fbbf917))
+
 ## [0.75.0](https://github.com/Daily-Nerd/daimon/compare/v0.74.0...v0.75.0) (2026-11-24)
 
 
