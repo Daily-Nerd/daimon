@@ -247,3 +247,33 @@ def test_an_item_text_with_a_newline_cannot_forge_a_drift_line(
 def test_the_capability_row_says_every_entry_prints_drift():
     assert briefing.SECTION_CAPS["anchor_drift"] == {
         h: "supported" for h in ("cli", "mcp", "api", "hermes")}
+
+
+# ---- foreign text in a drift entry never reaches a terminal ----------------
+
+ESC = "\x1b"
+HOSTILE = [{"item": {"text": f"item{ESC}[2Jtext"}, "kind": "soft",
+            "anchor": {"qualified_name": f"m.py{ESC}]0;pwned\x07::f"}}]
+
+
+def test_a_control_character_in_the_anchor_name_never_reaches_the_plain_text():
+    text = briefing.drift_block(HOSTILE)
+    assert ESC not in text and "\x07" not in text
+    assert "(m.py]0;pwned::f)" in text
+
+
+def test_a_control_character_in_a_drift_entry_never_reaches_the_rich_panel(
+        monkeypatch, capsys):
+    from daimon_briefing import render
+    monkeypatch.setattr(render, "supports_rich", lambda: True)
+    render._print_drift(tuple(HOSTILE))
+    out = capsys.readouterr().out
+    # rich writes its own colour sequences; none may carry the foreign text
+    assert "pwned" in out
+    assert f"{ESC}]0;" not in out and "\x07" not in out
+    assert f"{ESC}[2J" not in out
+
+
+def test_the_plain_block_and_the_rich_panel_share_one_sanitized_triple():
+    assert briefing.drift_parts(HOSTILE[0]) == (
+        marks.DRIFT_CHANGED, "item[2Jtext", "m.py]0;pwned::f")

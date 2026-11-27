@@ -280,11 +280,10 @@ def _print_drift(drift) -> None:
 
     body = Text()
     for d in drift:
-        tag = marks.DRIFT_GONE if d["kind"] == "hard" else marks.DRIFT_CHANGED
-        body.append(f"[{tag}] {d['item'].get('text', '').strip()}\n",
+        tag, text, name = briefing.drift_parts(d)
+        body.append(f"[{tag}] {text}\n",
                     style="red" if d["kind"] == "hard" else "yellow")
-        qn = d["anchor"].get("qualified_name") or marks.DRIFT_UNANCHORED
-        body.append(f"    {qn}\n", style="dim")
+        body.append(f"    {name}\n", style="dim")
     Console().print(
         Panel(body, title="⚠ CODE DRIFT — verify before trusting",
               border_style="red", title_align="left")

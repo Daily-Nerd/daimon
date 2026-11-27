@@ -1230,16 +1230,23 @@ def _drift(gate, annotated) -> tuple:
         return ()
 
 
-def drift_line(entry) -> str:
-    """One drifted item as the block prints it. Foreign text (the item, the
-    anchor name) is one-lined, so a line of the block is always one physical
-    line and a parser can tell where it ends."""
+def drift_parts(entry) -> tuple[str, str, str]:
+    """`(tag, text, name)` of one drifted item, the one place foreign text
+    becomes printable: the item text and the anchor name (a checkpoint is
+    hand-editable) lose the characters a terminal acts on and sit on one line,
+    so a line of the block is always one physical line and a parser can tell
+    where it ends. The plain block and the rich panel both print this triple."""
     tag = marks.DRIFT_GONE if entry["kind"] == "hard" else marks.DRIFT_CHANGED
-    name = (display.one_line(entry["anchor"].get("qualified_name"))
-            or marks.DRIFT_UNANCHORED)
-    return (f"- [{tag}] "
-            f"{display.one_line(display.printable(entry['item'].get('text')))}"
-            f"  ({name})")
+    text = display.one_line(display.printable(entry["item"].get("text")))
+    name = (display.one_line(display.printable(
+        entry["anchor"].get("qualified_name"))) or marks.DRIFT_UNANCHORED)
+    return tag, text, name
+
+
+def drift_line(entry) -> str:
+    """One drifted item as the block prints it."""
+    tag, text, name = drift_parts(entry)
+    return f"- [{tag}] {text}  ({name})"
 
 
 def drift_block(drift) -> str:
