@@ -74,7 +74,8 @@ def own_read(project, *, own=True):
 
 
 def annotated_of(checkpoint, *, handoff=None, project_dir=None,
-                 worldcheck_project=None, snap=None, notes=(), now=NOW):
+                 worldcheck_project=None, snap=None, notes=(), now=NOW,
+                 drift=()):
     """The `Annotated` of a checkpoint in hand, for a test that renders it:
     the furniture comes from the real builder (`briefing._furniture`), with
     `worldcheck_project` as the gate (the project whose panels are read, None
@@ -85,7 +86,8 @@ def annotated_of(checkpoint, *, handoff=None, project_dir=None,
         furniture=briefing._furniture(project_dir, worldcheck_project, snap,
                                       notes, now),
         version_note=(briefing.version_note(checkpoint)
-                      if isinstance(checkpoint, dict) else ""))
+                      if isinstance(checkpoint, dict) else ""),
+        drift=tuple(drift or ()))
 
 
 def rendered(checkpoint, project_dir=None, worldcheck_project=None, *,
@@ -111,6 +113,6 @@ def render_brief(checkpoint, drift=None, teammates=None, handoff=None,
     return render.render_brief(
         annotated_of(checkpoint, handoff=handoff, project_dir=project_dir,
                      worldcheck_project=worldcheck_project, snap=snap,
-                     notes=notes),
-        drift=drift, teammates=teammates, trailer=trailer,
+                     notes=notes, drift=drift),
+        teammates=teammates, trailer=trailer,
         loops_pointer=loops_pointer, lead=lead)

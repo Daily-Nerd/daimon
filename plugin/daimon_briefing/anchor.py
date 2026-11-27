@@ -102,6 +102,13 @@ def _all_items(checkpoint: dict):
         yield item
 
 
+def has_anchor(checkpoint: dict) -> bool:
+    """Whether any item of `checkpoint` carries an anchor: the cheap question
+    that comes before any file or checkout is touched."""
+    return any(isinstance(item, dict) and isinstance(item.get("anchored_to"), dict)
+               for item in _all_items(checkpoint))
+
+
 def drifted(checkpoint: dict, project_root) -> list[dict]:
     """Anchored items whose code has drifted (soft/hard); live ones omitted."""
     out = []

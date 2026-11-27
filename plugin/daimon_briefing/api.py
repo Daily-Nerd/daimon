@@ -155,7 +155,14 @@ count and the withheld trailer are fields of their own (format 4): `requests`,
 each None when the text has no such section. A panel is a block from its
 frozen header to the next blank line, read by its header and never by a mark
 (the baton and a request card both start with an arrow); the first block of a
-name wins and a repeat is swallowed whole. `BRIEFING_FORMAT` is an integer that
+name wins and a repeat is swallowed whole. Format 5 adds `drift`, the CODE DRIFT
+block (`Drift(items)`, one `DriftItem(state, text, anchor)` per line, `state`
+`gone` or `changed`), None when the text has none. Its lines open with an item
+mark but are never in `items`: the block opens at its title and ends at the
+first line that is not a drift line (the withheld trailer follows it with no
+blank line). It is printed only for the project this process runs in (a path
+of another project, a named bucket or a fallback body shows none) and only
+when that path is a git checkout. `BRIEFING_FORMAT` is an integer that
 changes only when what `parse_briefing` extracts changes; it is never printed
 into a briefing.
 
@@ -202,7 +209,8 @@ __all__ = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marker"
            "BRIEFING_FORMAT", "declare_project", "HANDOFF_MAX_CHARS",
            "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
            "HandoffNotRecorded", "write_handoff", "Handoff", "PanelCard",
-           "Panel", "DecisionCount", "Withheld", "Briefing",
+           "Panel", "DecisionCount", "Withheld", "Drift", "DriftItem",
+           "Briefing",
            "parse_briefing")
 
 
@@ -262,6 +270,25 @@ class Withheld:
 
 
 @dataclass(frozen=True)
+class DriftItem:
+    """One line of the CODE DRIFT block: its `state` (`gone`: the anchored
+    code is gone or unreadable, `changed`: its body changed), the item `text`
+    and the `anchor` name (`file::symbol`, or `marks.DRIFT_UNANCHORED`)."""
+
+    state: str
+    text: str
+    anchor: str
+
+
+@dataclass(frozen=True)
+class Drift:
+    """The anchor drift block (format 5): the `items` whose code drifted, in
+    print order."""
+
+    items: tuple = ()
+
+
+@dataclass(frozen=True)
 class Briefing:
     """A briefing split by line kind. `header` is the first line that is not
     a warning, `standing_rulings` start with the ruling mark, `items` with an
@@ -291,6 +318,7 @@ class Briefing:
     overdue: Panel | None = None
     decisions: DecisionCount | None = None
     withheld: Withheld | None = None
+    drift: Drift | None = None
 
 
 _HANDOFF_TITLE = _re.compile(
@@ -319,6 +347,9 @@ _COUNT = [_re.compile("^" + _template(t, n=r"(?P<n>\d+)",
                     _marks.DECISION_COUNT_SINGULAR)]
 _RESOLVED = _re.compile(r"^(\d+) " + _re.escape(_marks.WITHHELD_RESOLVED))
 _QUARANTINED = _re.compile(r"^(\d+) " + _re.escape(_marks.WITHHELD_QUARANTINED))
+_DRIFT_LINE = _re.compile(
+    r"^- \[(" + _re.escape(_marks.DRIFT_GONE) + "|"
+    + _re.escape(_marks.DRIFT_CHANGED) + r")\] (.*)  \((.*)\)$")
 _PANEL_FIELDS = {"request": "requests", "verdict": "verdicts", "owed": "owed",
                  "overdue": "overdue"}
 
@@ -386,8 +417,21 @@ def parse_briefing(text: str) -> Briefing:
     decisions = None
     resolved = quarantined = None
     item_seen = False
+    drift: list | None = None          # the first drift block's items
+    in_drift: list | None = None       # the block being read (None: closed)
     for line in text.splitlines():
         stripped = line.strip()
+        if in_drift is not None:
+            # A drift line is one physical line; anything else closes the
+            # block (the withheld trailer follows it with no blank line) and
+            # is read as any other line.
+            row = _DRIFT_LINE.match(line)
+            if row:
+                in_drift.append(DriftItem(
+                    "gone" if row[1] == _marks.DRIFT_GONE else "changed",
+                    row[2], row[3]))
+                continue
+            in_drift = None
         if open_baton is not None:
             if stripped.startswith(_ARROW):
                 open_baton[2].append(stripped[len(_ARROW):])
@@ -404,6 +448,15 @@ def parse_briefing(text: str) -> Briefing:
             block = None
             continue
         if not stripped:
+            continue
+        if line == _marks.DRIFT_TITLE:
+            # Daimon's own line, at column 0 and after the items. The first
+            # block is the drift; a repeat is swallowed whole, so text a peer
+            # got into the briefing can neither replace it nor leak lines.
+            if drift is None:
+                drift = in_drift = []
+            else:
+                in_drift = []
             continue
         titled = (_HANDOFF_TITLE.match(stripped)
                   if handoff is None and not header else None)
@@ -455,4 +508,5 @@ def parse_briefing(text: str) -> Briefing:
                 if resolved is not None or quarantined is not None else None)
     return Briefing(header, tuple(rulings), tuple(items), tuple(warnings),
                     text, handoff, decisions=decisions, withheld=withheld,
+                    drift=Drift(tuple(drift)) if drift is not None else None,
                     **panels)

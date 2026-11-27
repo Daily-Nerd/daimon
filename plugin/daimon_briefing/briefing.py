@@ -26,7 +26,7 @@ from typing import Any, NamedTuple
 # don't apply here). checks_runtime is the #943 stdlib-only runtime module —
 # it imports nothing from this package, so it carries no cycle risk either
 # (#1093: the manifest-derived enforce lines read it directly).
-from . import (capture, checks_host, checks_runtime, clock, config, display, hostgit,
+from . import (anchor, capture, checks_host, checks_runtime, clock, config, display, hostgit,
                identity, ledger,
                llm, marks, pending, receipts, refutations, requests, schema,
                scoring, serializer, store)
@@ -862,6 +862,10 @@ class Annotated(NamedTuple):
     # nothing to say), both built here so no host builds its own.
     furniture: Furniture = Furniture()
     version_note: str = ""
+    # #1402 stage 2: the anchored items whose code drifted, as
+    # `anchor.drifted` returns them, read here once for the caller's OWN
+    # checked-out project path (`_drift`). () for every other read.
+    drift: tuple = ()
 
     @property
     def body_notes(self) -> tuple:
@@ -1197,7 +1201,55 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
         notes=notes,
         furniture=_furniture(project, gate, annotated.snapshot, notes, now,
                              cross=bool(read and read.cross)),
-        version_note=version_note(annotated.checkpoint))
+        version_note=version_note(annotated.checkpoint),
+        drift=_drift(gate, annotated))
+
+
+def _drift(gate, annotated) -> tuple:
+    """The anchored items of the body whose code drifted, or () (#1402 stage 2).
+
+    An anchor is a path relative to the root of the project that wrote it, so
+    drift is only meaningful against that project's own checkout. The gate is
+    the panels' (I2, `prepare`'s `gate`: a project PATH the read decision
+    says is the caller's own) and the body must be that project's, not a
+    global-fallback one. It needs a real checkout at the path: a directory git
+    does not know is not a place anchors were made against. The checkout is
+    asked only once an item carries an anchor, so an ordinary briefing spawns
+    nothing. Fail-open like the panels: advisory, never the briefing."""
+    checkpoint = annotated.checkpoint
+    if (gate is None or annotated.fell_back
+            or not isinstance(checkpoint, dict)
+            or not anchor.has_anchor(checkpoint)
+            or not os.path.isdir(gate)):
+        return ()
+    try:
+        if isinstance(hostgit.project(gate), hostgit.Refused):
+            return ()
+        return tuple(anchor.drifted(checkpoint, gate))
+    except Exception:  # noqa: BLE001
+        return ()
+
+
+def drift_line(entry) -> str:
+    """One drifted item as the block prints it. Foreign text (the item, the
+    anchor name) is one-lined, so a line of the block is always one physical
+    line and a parser can tell where it ends."""
+    tag = marks.DRIFT_GONE if entry["kind"] == "hard" else marks.DRIFT_CHANGED
+    name = (display.one_line(entry["anchor"].get("qualified_name"))
+            or marks.DRIFT_UNANCHORED)
+    return (f"- [{tag}] "
+            f"{display.one_line(display.printable(entry['item'].get('text')))}"
+            f"  ({name})")
+
+
+def drift_block(drift) -> str:
+    """The plain CODE DRIFT block every plain host prints after the body
+    (#1044): a blank line, the title and one line per item, "" when nothing
+    drifted. Fixed text, `reserved` against the one budget."""
+    if not drift:
+        return ""
+    return "\n".join(["", marks.DRIFT_TITLE,
+                      *(drift_line(d) for d in drift)]) + "\n"
 
 
 def _furniture(project, gate, snap, notes, now, cross=False) -> Furniture:
@@ -2421,7 +2473,6 @@ def handoff_block(handoff) -> str:
 # without a row fails.
 _ALL = {"cli": "supported", "mcp": "supported", "api": "supported",
         "hermes": "supported"}
-_STAGE_2 = "unsupported (#1402 stage 2)"
 _CLI_ONLY = "unsupported (opt-in, CLI only)"
 SECTION_CAPS: dict[str, dict[str, str]] = {
     "baton": dict(_ALL),
@@ -2437,8 +2488,7 @@ SECTION_CAPS: dict[str, dict[str, str]] = {
         "cli": "supported", "mcp": "supported (after the response is written)",
         "api": "supported (at return; preview_briefing writes none)",
         "hermes": "supported"},
-    "anchor_drift": {"cli": "supported", "mcp": _STAGE_2, "api": _STAGE_2,
-                     "hermes": _STAGE_2},
+    "anchor_drift": dict(_ALL),
     "teammates": {"cli": "opt-in (--team)", "mcp": _CLI_ONLY,
                   "api": _CLI_ONLY, "hermes": _CLI_ONLY},
 }
@@ -3332,7 +3382,7 @@ def _lines_text(lines) -> str:
 
 
 def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
-            lead: str = "", drift: str = "", teammate_blocks=(),
+            lead: str = "", teammate_blocks=(),
             teammate_header: str = "", trailer=None, extra_notes=(),
             loops_pointer: bool = True, llm: bool = False) -> Composed:
     """The plain text of a briefing and the cards it printed whole (I3): the
@@ -3340,7 +3390,7 @@ def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
     them are the same bytes on each by construction. Layout, in order: `lead`
     (the CLI's label and warnings), the baton, the format-version note, the
     body (or, with none, the skeleton and the entry `orientation`), the
-    `drift` block, the teammates and the withheld `trailer` (None: the lines
+    drift block (`annotated.drift`), the teammates and the withheld `trailer` (None: the lines
     `withheld_trailer` words for this briefing alone; the CLI passes its own,
     which add the teammates' counts).
 
@@ -3379,6 +3429,7 @@ def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
             + _teammates_whole(teammate_blocks, teammate_header)
             + trailer_text, furniture.printed())
     version = annotated.version_note + "\n" if annotated.version_note else ""
+    drift = drift_block(annotated.drift)
     # One allocator (#1128). Fixed text first: the lead, baton, version note,
     # drift block and trailer are never cut, so they are `reserved` bytes of
     # the one budget. +1 for the newline printed after the body: a byte this

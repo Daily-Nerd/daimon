@@ -37,8 +37,10 @@ def _fields(got):
 
 # ---- the contract -----------------------------------------------------------
 
-def test_the_format_version_is_four_and_the_headers_are_marks():
-    assert marks.FORMAT_VERSION == 4 == api.BRIEFING_FORMAT
+def test_the_format_version_keeps_the_four_headers_as_marks():
+    # format 4 introduced the panels; every later format keeps them
+    assert marks.FORMAT_VERSION >= 4
+    assert api.BRIEFING_FORMAT == marks.FORMAT_VERSION
     assert marks.PANEL_HEADERS == {v: k for k, v in HEADERS.items()}
     assert marks.PANEL_INDENT == "  "
     assert briefing._REQUEST_PANEL_HEADER == marks.REQUEST_PANEL_HEADER

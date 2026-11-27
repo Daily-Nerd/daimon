@@ -12,7 +12,7 @@ it, and neither may drift from the other.
 # as `api.BRIEFING_FORMAT` and never printed into one. Bump it with ANY change
 # to the constants below or to the parser's rules; `test_render_briefing`
 # hashes the constants and fails on a change that did not bump it.
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 
 # The first line of every briefing, and what a parser takes as its header
 # once the warnings above it are set aside.
@@ -87,6 +87,18 @@ DECISION_ELSEWHERE = " ({n} elsewhere)"
 WITHHELD_RESOLVED = "resolved item(s) withheld"
 WITHHELD_QUARANTINED = "quarantined item(s) withheld"
 WITHHELD_TEAM = " ({n} a teammate's)"
+
+# The anchor drift block (#1402, format 5), printed after the body: a blank
+# line, the title, then one line per drifted item,
+# `- [GONE] <text>  (<anchor>)` or `- [changed] <text>  (<anchor>)`. The
+# lines open with an item mark but are NOT items: a parser reads them by
+# their block. DRIFT_GONE is code that is gone or cannot be read, DRIFT_CHANGED
+# code whose body changed. DRIFT_UNANCHORED stands where a hand-edited anchor
+# names nothing.
+DRIFT_TITLE = "CODE DRIFT \u2014 verify before trusting (anchored code changed):"
+DRIFT_GONE = "GONE"
+DRIFT_CHANGED = "changed"
+DRIFT_UNANCHORED = "malformed anchor"
 
 
 def warning(text: str) -> str:
