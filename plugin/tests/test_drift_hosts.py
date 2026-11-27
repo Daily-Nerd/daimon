@@ -277,3 +277,22 @@ def test_a_control_character_in_a_drift_entry_never_reaches_the_rich_panel(
 def test_the_plain_block_and_the_rich_panel_share_one_sanitized_triple():
     assert briefing.drift_parts(HOSTILE[0]) == (
         marks.DRIFT_CHANGED, "item[2Jtext", "m.py]0;pwned::f")
+
+
+# ---- drift is advisory: a read that fails costs the block, never the brief --
+
+@pytest.mark.parametrize("target", ["anchor.drifted", "hostgit.project"])
+@pytest.mark.parametrize("host", HOSTS, ids=IDS)
+def test_a_drift_read_that_raises_costs_only_the_drift_block(
+        monkeypatch, capsys, mine, host, target):
+    from daimon_briefing import hostgit
+    owner = {"anchor.drifted": anchor, "hostgit.project": hostgit}[target]
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("drift read failed")
+
+    monkeypatch.setattr(owner, target.split(".")[1], boom)
+    text = host(monkeypatch, capsys, mine)
+    assert text.startswith(briefing.GREETING)
+    assert "the foo decision" in text and "the bar loop" in text
+    _assert_no_drift(text)
