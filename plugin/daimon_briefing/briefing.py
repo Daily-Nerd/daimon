@@ -190,7 +190,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
     # default only fires for an ABSENT key), so a torn/legacy checkpoint could
     # crash the whole render here. Use the codebase's str(x or "") idiom
     # (store.py, carry.py) — tolerant of null, same as iter_items' stance.
-    text = str(item.get("text") or "").strip()
+    text = display.one_line(item.get("text"))
     quote = item_quote(item, text, full_quotes)
     mark = _mark(item, degraded)
     stale_days = item.get("_stale_carried_days")
@@ -3227,7 +3227,7 @@ def render_selection(sel: Selection) -> str:
             if sel.kept.get("active_topic"):
                 parts.append("")
                 parts.append(active_topic_label(sel) + ": "
-                             + sel.kept["active_topic"].get("text", "").strip())
+                             + display.one_line(sel.kept["active_topic"].get("text")))
             continue
         items = sel.kept.get(section) or []
         note = section_note(sel, section)

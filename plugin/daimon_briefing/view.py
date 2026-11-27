@@ -1198,6 +1198,14 @@ def _projection(item) -> dict | None:
             "origin_author": stamp("origin_author")}
 
 
+# Item keys that keep their line breaks in a reader's copy. `quote` and `scene`
+# are one-lined at render (`display.quote_span`). `text` is a designed
+# multi-line shape (a **Problem:** / **Fix:** item that select cuts by section,
+# `briefing.truncate_preserving_sections`), so its renderers put it on one line
+# at composition (`briefing._line`, the rich panels, the topic lines).
+MULTILINE_KEYS = ("quote", "scene", "text")
+
+
 def _filter(raw: dict, snap: Snapshot, live_only: bool):
     """A copy of one checkpoint with withheld items removed; returns
     (copy, withheld, suppressed)."""
@@ -1229,8 +1237,10 @@ def _filter(raw: dict, snap: Snapshot, live_only: bool):
                 kept.append(item)
         block[fld.key] = kept
     # The copy is what a reader shows: no stored item can carry a terminal
-    # instruction through it (`display.printable`).
-    display.printable_tree(out)
+    # instruction or a line break through it. Flat by default
+    # (`display.line_tree`), so a field nobody declared cannot add a line to
+    # a renderer; only the keys in `MULTILINE_KEYS` keep their breaks.
+    display.line_tree(out, keep=MULTILINE_KEYS)
     return out, tuple(withheld), suppressed
 
 
@@ -1711,6 +1721,7 @@ def _answer_from_row(row: dict, item_id: str, snap: Snapshot,
     verdict = classify(fld, item, snap)
     if isinstance(verdict, Withheld):
         return _lookup_withheld(verdict, item_id)
+    display.line_tree(item, keep=MULTILINE_KEYS)
     meta = store.Meta(
         row.get("session_id"), _iso(row.get("created")), row.get("author"),
         None, row.get("project_slug"), None, None, None, None, None, None)
