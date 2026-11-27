@@ -54,7 +54,15 @@ def test_the_furniture_builders_are_called_only_from_furniture():
     assert {h[1] for h in hits if h[2] == "_furniture"} == BUILDERS
 
 
+def _read(own=True):
+    """The read decision of a caller whose own project is `seed.PROJECT`."""
+    from daimon_briefing import view
+    return view.ModelRead(view.read_scope(seed.PROJECT), seed.PROJECT,
+                          own=own, cross=True)
+
+
 def _prepared(project=seed.PROJECT, now=None, **kw):
+    kw.setdefault("read", _read())
     return briefing.prepare(project, now or 1_800_000_000.0, **kw)
 
 
@@ -73,7 +81,7 @@ def test_prepare_builds_no_panel_for_a_slug_a_teammate_or_a_foreign_ledger(
     seed.seed()
     slug = store.project_slug(seed.PROJECT)
     for annotated in (_prepared(slug), _prepared(stamps=False),
-                      _prepared(own_ledger=False)):
+                      _prepared(read=_read(own=False))):
         assert annotated.furniture.project is None
         assert annotated.furniture.panels == ()
         assert annotated.furniture.decision_count == ()

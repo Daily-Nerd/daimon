@@ -115,9 +115,12 @@ The text carries what `daimon brief` prints beside the body, from the same
 composer (#1402): the baton, the format-version note (a warning line), the
 standing rulings, the decision count, the four request panels (requests
 waiting on you, decisions on requests you sent, requests you owe, requests you
-sent that nobody is moving) and the withheld trailer. They read the
-requested project's own ledgers only: a named bucket or another project's
-path shows none. `RenderedBriefing.printed` is the cards printed whole.
+sent that nobody is moving) and the withheld trailer. They belong to the
+project this process runs in (DAIMON_PROJECT_DIR, else the working directory):
+a read of any other project's path, or of a named bucket, shows none and
+stamps none, and the "elsewhere" part of the decision count appears only when
+the host granted DAIMON_MODEL_CROSS_PROJECT. The render is always the
+deterministic one: this API never sends a checkpoint to an LLM provider. `RenderedBriefing.printed` is the cards printed whole.
 `render_briefing` commits their `surfaced` stamps at its return, because this
 API has no later seam and the return is its delivery boundary: the sender's
 "seen" means the text reached the caller. A collapsed panel (the budget cut it

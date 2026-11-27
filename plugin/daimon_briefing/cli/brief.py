@@ -228,14 +228,14 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     return 0
 
 
-def _prepared(project, route, worldcheck_project=None, own_ledger=True):
+def _prepared(project, route, worldcheck_project=None, read=None):
     """`briefing.prepare` for a CLI verb, or None after printing the one error
     line (rc 2): when the view cannot be built no briefing renders at all,
     never an unfiltered one."""
     try:
         return briefing.prepare(project, time.time(), route=route,
                                 worldcheck_project=worldcheck_project,
-                                own_ledger=own_ledger)
+                                read=read)
     except Exception as exc:  # noqa: BLE001 — reported, never rendered around
         print("error: the briefing could not be prepared "
               f"({type(exc).__name__}); nothing was rendered", file=sys.stderr)
@@ -323,7 +323,7 @@ def _cmd_brief(args, fx) -> int:
     # and stamps nothing, as on the MCP surface.
     annotated = _prepared(project, store.Route.OWN_ELSE_GLOBAL,
                           worldcheck_project=project,
-                          own_ledger=view.cli_read(project=args.project).own)
+                          read=view.cli_read(project=args.project))
     if annotated is None:
         return 2
     checkpoint = annotated.checkpoint

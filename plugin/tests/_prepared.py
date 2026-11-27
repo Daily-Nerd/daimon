@@ -65,6 +65,14 @@ class FrozenClock:
         return uuid.uuid4().hex
 
 
+def own_read(project, *, own=True):
+    """The read decision of a surface whose own project is `project`: what
+    `view.model_read` answers for it under the current settings."""
+    from daimon_briefing import config
+    return view.ModelRead(view.read_scope(project), project, own=own,
+                          cross=config.model_cross_project())
+
+
 def annotated_of(checkpoint, *, handoff=None, project_dir=None,
                  worldcheck_project=None, snap=None, notes=(), now=NOW):
     """The `Annotated` of a checkpoint in hand, for a test that renders it:

@@ -450,10 +450,15 @@ class ModelRead:
     scope: Scope
     project: str
     project_arg: str | None = None
-    # True when the request stayed inside the own bucket (the very comparison
-    # `_decide` refuses or grants on): a briefing shows and stamps a project's
-    # request panels only for such a read.
-    own: bool = True
+    # What the read decision says about reach, the one place it is said (#1402).
+    # `own`: the request stayed inside the own bucket (the very comparison
+    # `_decide` refuses or grants on); a briefing shows and stamps a project's
+    # request panels only for such a read. `cross`: the surface may look at
+    # other buckets (the grant `_decide` compared against), so a count or a hint
+    # about them is allowed. Both default closed: a read built without the
+    # decision shows no panel, stamps nothing and names no other bucket.
+    own: bool = False
+    cross: bool = False
 
     @property
     def slug(self) -> str | None:
@@ -464,6 +469,30 @@ class ModelRead:
         return isinstance(self.scope, All)
 
 
+def _leaves(*, slug, all_projects, project, global_fallback):
+    """`(own bucket, target, leaves)`: does this request leave the own bucket?
+    A request leaves it when it names another `slug`, asks for `all_projects`,
+    asks for the global pointer, or points `project` at a directory whose
+    bucket is not the server's own."""
+    own = store.bucket_of(config.resolve_read_project(None))
+    target = config.resolve_read_project(project)
+    leaves = (bool(all_projects) or bool(global_fallback)
+              or bool(slug and slug != own)
+              or store.bucket_of(target) != own)
+    return target, leaves
+
+
+def host_read(project: str | None = None) -> ModelRead:
+    """The decision for the host API (`api.render_briefing`): a host may read
+    any project path it names, so nothing is refused, but the read is `own`
+    only when the path is the process's own project, and `cross` only with the
+    model grant. A path elsewhere is a foreign read: no panel, no stamp."""
+    target, leaves = _leaves(slug=None, all_projects=False, project=project,
+                             global_fallback=False)
+    return ModelRead(read_scope(target), target, project or None,
+                     own=not leaves, cross=config.model_cross_project())
+
+
 def _decide(*, slug: str | None, all_projects: bool, project: str | None,
             global_fallback: bool, granted: bool, refusal: str) -> ModelRead:
     """The one comparison both surfaces make: does this request leave the own
@@ -472,16 +501,13 @@ def _decide(*, slug: str | None, all_projects: bool, project: str | None,
     directory whose bucket is not the server's own. A request that leaves it
     without the surface's grant is refused out loud (`ScopeRefused`); one that
     stays inside is answered, whichever argument expressed it."""
-    own = store.bucket_of(config.resolve_read_project(None))
-    target = config.resolve_read_project(project)
-    leaves = (bool(all_projects) or bool(global_fallback)
-              or bool(slug and slug != own)
-              or store.bucket_of(target) != own)
+    target, leaves = _leaves(slug=slug, all_projects=all_projects,
+                             project=project, global_fallback=global_fallback)
     if leaves and not granted:
         raise ScopeRefused(refusal)
     return ModelRead(read_scope(target, slug=slug or None,
                                 all_projects=bool(all_projects)), target,
-                     project or None, own=not leaves)
+                     project or None, own=not leaves, cross=granted)
 
 
 def model_read(*, slug: str | None = None, all_projects: bool = False,

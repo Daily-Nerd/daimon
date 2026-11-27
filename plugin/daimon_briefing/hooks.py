@@ -288,7 +288,7 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         # never on a global-fallback body.
         annotated = briefing.prepare(
             project, time.time(), route=briefing.injection_read_route(project),
-            worldcheck_project=project)
+            worldcheck_project=project, read=view.model_read())
         if annotated.worldcheck is not None:
             fx.add(effects_commit.worldcheck_effects(
                 project, project, annotated.worldcheck,
@@ -310,7 +310,8 @@ def pre_llm_call(session_id=None, user_message=None, conversation_history=None,
         composed = briefing.compose(
             annotated,
             loops_pointer=(briefing.injection_read_route(project)
-                           is store.Route.OWN))
+                           is store.Route.OWN),
+            llm=config.llm_briefing())
         fx.add(effects_commit.surfaced_effects(composed.printed))
         if not composed.text:
             return None

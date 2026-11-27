@@ -446,7 +446,7 @@ def test_the_decision_count_line_carries_the_elsewhere_note(
     _candidate(ELSE)
     _candidate(ELSE2)
     _plant(ELSE2, "refutations.jsonl", b"<<<<<<< HEAD\n")
-    got = briefing.decision_count_line(OWN)
+    got = briefing.decision_count_line(OWN, cross=True)
     assert got.splitlines() == [
         "0 decisions waiting on you here (1 elsewhere) - daimon decide",
         SKIPPED_ELSE]
@@ -458,7 +458,7 @@ def test_the_decision_count_note_stands_alone_when_nothing_else_is_said(
     _write(OWN, ["ours"])
     _candidate(ELSE2)
     _plant(ELSE2, "refutations.jsonl", b"<<<<<<< HEAD\n")
-    assert briefing.decision_count_line(OWN) == SKIPPED_ELSE
+    assert briefing.decision_count_line(OWN, cross=True) == SKIPPED_ELSE
 
 
 def test_decide_all_projects_prints_the_note_after_the_blocks(

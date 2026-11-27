@@ -166,7 +166,7 @@ def _brief(arguments: dict, fx) -> str:
         target, time.time(),
         loops_pointer=not read.slug and cli.loops_lists_project(target),
         worldcheck_project=None if read.slug else read.project,
-        own_ledger=read.own)
+        read=read)
     if got.state == "unavailable":
         raise ToolError(got.notes[0])
     fx.add(effects_commit.rendered_worldcheck_effects(read.project, got))

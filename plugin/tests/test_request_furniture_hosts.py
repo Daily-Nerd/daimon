@@ -17,10 +17,11 @@ import json
 
 import pytest
 
-from daimon_briefing import (api, briefing, cli, clock, config, hooks,
+from daimon_briefing import (api, briefing, cli, clock, hooks,
                              host_mcp_caps, marks, mcp_server, mcp_tools,
                              requests, store)
 from tests import _furniture_seed as seed
+from tests._prepared import own_read
 
 HEADERS = ("Requests waiting on you (from other projects):",
            "Decisions on requests you sent:",
@@ -33,6 +34,9 @@ NOW = (seed.T0 + 10 * seed.DAY) / 10 ** 9
 
 def _env(monkeypatch, project=seed.PROJECT):
     monkeypatch.setenv("DAIMON_PROJECT_DIR", project)
+    # the parity fixture has a pending decision in another project, and the
+    # count names it only on a read that may look at other buckets
+    monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
 
 
 def _cli(monkeypatch, capsys):
@@ -58,6 +62,7 @@ def _mcp(monkeypatch, capsys):
 
 
 def _api(monkeypatch, capsys):
+    _env(monkeypatch)
     return api.render_briefing(seed.PROJECT, now=NOW).text
 
 
@@ -245,11 +250,12 @@ def test_a_delivery_stamps_each_card_once_and_changes_no_byte_of_the_next(
 def test_a_read_that_delivers_nothing_stamps_nothing(
         tmp_checkpoint_dir, monkeypatch, capsys):
     ids = seed.seed()
+    _env(monkeypatch)
     got = api.preview_briefing(seed.PROJECT, now=NOW)
     assert ids["request"] in got.text and got.printed.request
-    briefing.machine_brief(seed.PROJECT, NOW, loops_pointer=False)
+    briefing.machine_brief(seed.PROJECT, NOW, loops_pointer=False,
+                           read=own_read(seed.PROJECT))
     api.parse_briefing(got.text)
-    _env(monkeypatch)
     mcp_tools.HANDLERS["daimon_brief"]({"project": seed.PROJECT})
     assert _stamped() == []
 
@@ -338,11 +344,11 @@ def test_every_section_has_a_cell_for_every_entry():
 # ---- 13: one clock ---------------------------------------------------------
 
 def test_the_overdue_age_does_not_move_with_the_wall_clock(
-        tmp_checkpoint_dir):
+        tmp_checkpoint_dir, monkeypatch):
     ids = seed.seed()
+    _env(monkeypatch)
     first = api.preview_briefing(seed.PROJECT, now=NOW).text
     with clock.use(clock.StepClock(seed.T0 + 400 * seed.DAY)):
         second = api.preview_briefing(seed.PROJECT, now=NOW).text
     assert first == second
     assert "10d" in first and ids["overdue"] in first
-    assert config.model_cross_project() is False

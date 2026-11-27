@@ -5,6 +5,7 @@ import time
 import pytest
 
 from daimon_briefing import briefing, cli, hooks, hostgit, mcp_tools, store
+from tests._prepared import own_read
 from tests.test_hostgit_config_gate import _plain
 from tests.test_hostgit_sealed import fake_repo
 
@@ -103,7 +104,8 @@ def test_ambient_and_named_bucket_do_not_query_diagnostic(sealed, monkeypatch):
         return real(path)
 
     monkeypatch.setattr(hostgit, "project", spy)
-    got = briefing.machine_brief("named-bucket", time.time(), loops_pointer=False)
+    got = briefing.machine_brief("named-bucket", time.time(), loops_pointer=False,
+                                 read=own_read("named-bucket", own=False))
     assert "Git-backed reads unavailable" not in got.text
     assert calls == []
 

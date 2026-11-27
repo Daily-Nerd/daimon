@@ -22,6 +22,7 @@ import pytest
 import daimon_briefing
 from daimon_briefing import (api, briefing, cli, config, hooks, ledger, marks,
                              mcp_tools, store, testing)
+from tests._prepared import own_read
 
 NOTE = "a serialize is in flight"
 KEPT = "an unrelated decision that stays visible"
@@ -115,7 +116,8 @@ def _mcp_project(box, capsys):
 def _machine_brief(box, capsys):
     _seed(box.project)
     return briefing.machine_brief(box.project, time.time(),
-                                  loops_pointer=False).text
+                                  loops_pointer=False,
+                                  read=own_read(box.project)).text
 
 
 def _api(box, capsys):
@@ -207,7 +209,8 @@ def test_the_note_is_about_the_bucket_the_briefing_renders(box, capsys):
     out = _cli(capsys, "--slug", _slug(box.other))
     assert _warnings(out) == []
     got = briefing.machine_brief(_slug(box.other), time.time(),
-                                 loops_pointer=False)
+                                 loops_pointer=False,
+                                 read=own_read(box.project, own=False))
     assert _warnings(got.text) == []
     # And when that bucket's own serialize is live, a named read says so.
     _stamp(box.other, "S-other")

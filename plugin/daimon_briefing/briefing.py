@@ -1160,7 +1160,7 @@ def prepare_view(project, now, *, live: bool = True, worldcheck_project=None,
 
 def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             route=None, stamps: bool = True, opened=None,
-            own_ledger: bool = True) -> Annotated:
+            read=None) -> Annotated:
     """The one preparation every briefing host shares (the CLI brief, the MCP
     tool, the Hermes hook, `api.render_briefing`): `prepare_view`, plus the
     furniture every plain host prints.
@@ -1170,17 +1170,19 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
     (I2) is "a briefing read (`stamps`) of a project PATH that is the caller's
     own bucket", whatever body was served: a fallback changes which BODY
     prints, never whose LEDGER the panels read. A slug names another bucket
-    and `own_ledger=False` is the model-surface read of a foreign path
+    and a `read` that is not `own` is the read of a foreign path
     (`view.model_read` decides, `ModelRead.own`); neither shows or stamps
-    another project's panels. A teammate block (`stamps=False`) has none. The
-    panels read the same joins, and a sender left out or read around is a note
+    another project's panels. `read` is that decision (`ModelRead`: `own` and
+    `cross`); without one the read fails closed, with no panel, no count and no
+    stamp, so no entry point can grant by forgetting. A teammate block
+    (`stamps=False`) has none. The panels read the same joins, and a sender left out or read around is a note
     of the brief: it joins the notes here, so the brief caps them once."""
     annotated = prepare_view(project, now, live=live,
                              worldcheck_project=worldcheck_project,
                              route=route, stamps=stamps, opened=opened)
     if not stamps:
         return annotated
-    gate = (project if own_ledger and project
+    gate = (project if read is not None and read.own and project
             and not _is_slug_input(project) else None)
     notes = annotated.notes
     if gate is not None:
@@ -1193,22 +1195,25 @@ def prepare(project, now, *, live: bool = True, worldcheck_project=None,
             pass
     return annotated._replace(
         notes=notes,
-        furniture=_furniture(project, gate, annotated.snapshot, notes, now),
+        furniture=_furniture(project, gate, annotated.snapshot, notes, now,
+                             cross=bool(read and read.cross)),
         version_note=version_note(annotated.checkpoint))
 
 
-def _furniture(project, gate, snap, notes, now) -> Furniture:
+def _furniture(project, gate, snap, notes, now, cross=False) -> Furniture:
     """The one builder of what a briefing prints besides its body (I1):
     the standing rulings (every briefing read, a slug included), and, when
     `gate` names the caller's own project path, the decision count and the
     four request panels with the cards each printed. The sibling joins' notes
     were merged into `notes` already, so a warning the brief carries is said
     once: `drop_repeated_notes` keeps each at its first appearance. Every
-    age reads `now` (I8)."""
+    age reads `now` (I8). `cross` is the read's grant to look at other buckets
+    (`ModelRead.cross`): the "elsewhere" count is a fact about them, so it is
+    only counted with it."""
     rulings = tuple(ruling_lines(project, snap=snap))
     if gate is None:
         return Furniture(None, rulings)
-    count = decision_count_line(gate)
+    count = decision_count_line(gate, cross=cross)
     request_lines, request_cards = request_panel(gate, snap=snap)
     verdict_lines, verdict_cards = verdict_panel(gate, snap=snap)
     owed_lines, owed_cards = owed_panel(gate, snap=snap)
@@ -1917,14 +1922,15 @@ _DECISION_COUNT_LINE_PLURAL = marks.DECISION_COUNT_PLURAL
 _DECISION_COUNT_LINE_SINGULAR = marks.DECISION_COUNT_SINGULAR
 
 
-def decision_count_line(project_dir=None) -> str | None:
+def decision_count_line(project_dir=None, *, cross: bool = False) -> str | None:
     """The #766 slice 5 count line, or None when there is nothing to say.
 
     `here` reads `pending.queue` (this project's own backlog); `elsewhere`
-    reads `pending.foreign_counts`, SKIPPED ENTIRELY under
-    `config.tenant_scoped()`: a tenant-scoped host must not learn that other
-    buckets exist, so the call itself never happens, not merely its
-    rendering. Zero-both is silence: both counts zero renders no line; a
+    reads `pending.foreign_counts`, SKIPPED ENTIRELY unless the read's grant
+    to look at other buckets (`cross`, `ModelRead.cross`) is set: a tenant
+    scoped home grants none, and a model surface grants it only with
+    DAIMON_MODEL_CROSS_PROJECT, so a host that must not learn that other
+    buckets exist never has the call made, not merely its rendering. Zero-both is silence: both counts zero renders no line; a
     zero `here` with a nonzero `elsewhere` still renders. Fail-open like the
     panels around it, each half INDEPENDENTLY: a broken `here` read yields
     None (the line has nothing honest to say without it), but a broken
@@ -1952,7 +1958,7 @@ def decision_count_line(project_dir=None) -> str | None:
         return None
     elsewhere = 0
     notes: tuple = ()
-    if not config.tenant_scoped():
+    if cross:
         try:
             got = pending.foreign_counts_typed(project_dir=project_dir)
             elsewhere, notes = sum(got.counts.values()), got.notes
@@ -2438,9 +2444,8 @@ SECTION_CAPS: dict[str, dict[str, str]] = {
 }
 
 
-def machine_brief(target, now, *, loops_pointer: bool,
-                  worldcheck_project=None,
-                  own_ledger: bool = True) -> RenderedBriefing:
+def machine_brief(target, now, *, loops_pointer: bool, read,
+                  worldcheck_project=None) -> RenderedBriefing:
     """The briefing a machine consumer reads (the MCP tool, `render_briefing`):
     the strictly scoped read of `target`, always the deterministic render,
     never the LLM one and never anything a terminal changes.
@@ -2461,8 +2466,10 @@ def machine_brief(target, now, *, loops_pointer: bool,
     #1402: the text is `compose`, the layout every plain host shares, so the
     request panels, the decision count, the version note and the withheld
     trailer ride every state. They read `target`'s own ledgers only when it is
-    a project path and `own_ledger` (a model-surface read of a foreign path
-    is not: `view.model_read` decides). This commits nothing: `printed` names
+    a project path and `read.own` (the read decision, `ModelRead`: a foreign
+    path is not own, and `read` has no default, so no entry can grant by
+    forgetting). The render is always the deterministic one: the machine paths
+    never send a checkpoint to a provider, whatever DAIMON_LLM_BRIEFING says. This commits nothing: `printed` names
     the cards the text showed whole, for the caller to stamp once the text has
     been delivered.
 
@@ -2472,7 +2479,7 @@ def machine_brief(target, now, *, loops_pointer: bool,
     try:
         annotated = prepare(target, now, route=store.Route.OWN,
                             worldcheck_project=worldcheck_project,
-                            own_ledger=own_ledger)
+                            read=read)
     except Exception as exc:
         return _unavailable(exc)
     checkpoint = annotated.checkpoint
@@ -2490,7 +2497,7 @@ def machine_brief(target, now, *, loops_pointer: bool,
     # projects.
     orientation = Orientation()
     if state == "no-checkpoint":
-        cross = config.model_cross_project()
+        cross = read.cross
         others = len(store.list_buckets()) if cross else 0
         hint = (f"daimon knows {others} project(s) — call daimon_projects "
                 "and pass a slug to read one explicitly."
@@ -2512,11 +2519,15 @@ def machine_brief(target, now, *, loops_pointer: bool,
 def _read_briefing(project_dir, now, loops_pointer):
     """The shared read of `render_briefing` and `preview_briefing`: the
     resolved target and the machine briefing, never raising."""
-    target = config.resolve_read_project(
-        None if project_dir is None else str(project_dir))
+    # The read decision is made here, once, from the path as given: own only
+    # for the process's own project, so another project's path shows and
+    # stamps no panel.
+    from . import view
+    read = view.host_read(None if project_dir is None else str(project_dir))
+    target = read.project
     with identity.operation():  # one scan of the recorded roots per read
         got = machine_brief(target, time.time() if now is None else now,
-                            loops_pointer=loops_pointer,
+                            loops_pointer=loops_pointer, read=read,
                             worldcheck_project=target)
     return target, got
 
@@ -3258,10 +3269,12 @@ def skeleton_blocks(snap, notes, furniture: Furniture) -> list[list[str]]:
 def render_body(b: dict, checkpoint: dict, furniture: Furniture, *,
                 degraded: bool, notes=(), loops_pointer: bool = True,
                 reserved: int = 0, snap=None, teammate_blocks=(),
-                teammate_header: str = "") -> Body:
-    """The body of a briefing that has one. LLM rendering is opt-in
-    (DAIMON_LLM_BRIEFING), post-validated for verbatim quote integrity, and
-    falls back to the deterministic render on any doubt.
+                teammate_header: str = "", llm: bool = False) -> Body:
+    """The body of a briefing that has one. LLM rendering is the ENTRY's
+    choice (`llm`, from DAIMON_LLM_BRIEFING at the entries that offer it: the
+    CLI and the Hermes hook; the machine paths never do), post-validated for
+    verbatim quote integrity, and falls back to the deterministic render on
+    any doubt. Nothing below the entry reads that flag.
 
     One allocator (#1128): `reserved` bytes the caller prints beside the body
     (and the teammates block) share the one budget. The LLM narrates only what
@@ -3271,7 +3284,7 @@ def render_body(b: dict, checkpoint: dict, furniture: Furniture, *,
     prints every panel whole (they are prepended verbatim, never narrated),
     the deterministic render only the ones the budget did not collapse, so a
     fallback that collapses the panels stamps nothing it did not show."""
-    if config.llm_briefing():
+    if llm:
         sel = select(b, effective_budget(), degraded=degraded,
                      reserved=reserved, furniture=furniture,
                      loops_pointer=loops_pointer, full_quotes=True,
@@ -3321,7 +3334,7 @@ def _lines_text(lines) -> str:
 def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
             lead: str = "", drift: str = "", teammate_blocks=(),
             teammate_header: str = "", trailer=None, extra_notes=(),
-            loops_pointer: bool = True) -> Composed:
+            loops_pointer: bool = True, llm: bool = False) -> Composed:
     """The plain text of a briefing and the cards it printed whole (I3): the
     one layout every plain host prints, so the panels and the furniture around
     them are the same bytes on each by construction. Layout, in order: `lead`
@@ -3339,11 +3352,15 @@ def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
     checkpoint = annotated.checkpoint
     furniture = annotated.furniture
     snap = annotated.snapshot
-    notes = display.merge_notes(annotated.body_notes, extra_notes)
+    b = build(checkpoint) if checkpoint is not None else None
+    # The body's notes lead with the imported-history note; a briefing with no
+    # body prints the reader's notes alone (it describes a body not shown).
+    notes = display.merge_notes(
+        annotated.body_notes if b is not None else annotated.notes,
+        extra_notes)
     baton = handoff_block(annotated.handoff)
     trailer_text = _lines_text(withheld_trailer(annotated)
                                if trailer is None else trailer)
-    b = build(checkpoint) if checkpoint is not None else None
     if b is None:
         blocks = skeleton_blocks(snap, notes, furniture)
         if snap is not None and snap.closed:
@@ -3372,7 +3389,7 @@ def compose(annotated: Annotated, *, orientation: Orientation = Orientation(),
                        degraded=receipt_degraded(checkpoint), notes=notes,
                        loops_pointer=loops_pointer, reserved=reserved,
                        snap=snap, teammate_blocks=teammate_blocks,
-                       teammate_header=teammate_header)
+                       teammate_header=teammate_header, llm=llm)
     return Composed(lead + baton + version + body.text + "\n" + drift
                     + body.teammates + trailer_text, body.printed)
 
@@ -3404,7 +3421,8 @@ def render(checkpoint: dict, project_dir=None, loops_pointer: bool = True,
     body = render_body(b, checkpoint, furniture,
                        degraded=receipt_degraded(checkpoint), notes=notes,
                        loops_pointer=loops_pointer,
-                       reserved=_byte_len(baton), snap=snap)
+                       reserved=_byte_len(baton), snap=snap,
+                       llm=config.llm_briefing())
     return baton + body.text
 
 

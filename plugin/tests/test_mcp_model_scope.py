@@ -14,6 +14,7 @@ import pytest
 
 from daimon_briefing import (briefing, config, mcp_server, mcp_tools,
                              recall, requests, store, view)
+from tests._prepared import own_read
 from daimon_briefing.surfaces import Writer
 
 MINE = "/repo/mine"
@@ -301,9 +302,11 @@ def test_the_no_checkpoint_hint_names_daimon_projects_only_with_the_grant(
     monkeypatch.setenv("DAIMON_PROJECT_DIR", MINE)
     if tenant_on:
         monkeypatch.setenv("DAIMON_TENANT_SCOPED", "1")
-    off = briefing.machine_brief(MINE, 0.0, loops_pointer=False).text
+    off = briefing.machine_brief(MINE, 0.0, loops_pointer=False,
+                                read=own_read(MINE)).text
     assert "daimon_projects" not in off
     assert "1 project(s)" not in off
     monkeypatch.setenv("DAIMON_MODEL_CROSS_PROJECT", "1")
-    on = briefing.machine_brief(MINE, 0.0, loops_pointer=False).text
+    on = briefing.machine_brief(MINE, 0.0, loops_pointer=False,
+                                read=own_read(MINE)).text
     assert ("daimon_projects" in on) is (not tenant_on)

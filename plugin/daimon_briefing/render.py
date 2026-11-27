@@ -204,7 +204,8 @@ def render_brief(annotated, drift=None, teammates=None, trailer=None,
             drift=_format_drift(drift),
             teammate_blocks=_teammate_blocks(teammates or ()),
             teammate_header=_TEAMMATES_HEADER, trailer=trailer or (),
-            extra_notes=extra_notes, loops_pointer=loops_pointer)
+            extra_notes=extra_notes, loops_pointer=loops_pointer,
+            llm=config.llm_briefing())
         print(composed.text, end="")
         return composed.printed
     checkpoint = annotated.checkpoint
@@ -242,7 +243,7 @@ def render_brief(annotated, drift=None, teammates=None, trailer=None,
         body = briefing.render_body(
             b, checkpoint, furniture,
             degraded=briefing.receipt_degraded(checkpoint), notes=notes,
-            loops_pointer=loops_pointer, snap=annotated.snapshot)
+            loops_pointer=loops_pointer, snap=annotated.snapshot, llm=True)
         print(body.text)
         _print_drift(drift)
         _print_teammates(teammates)
