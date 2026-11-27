@@ -11,31 +11,33 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from . import marks
+from . import marks, unsafe_text
 from .surfaces import ledger_hint  # noqa: F401 — the cure rule lives in the registry
 
 _SPACE_RE = re.compile(r"\s+")
 
-# What a terminal acts on: C0 except tab and newline (ESC starts every cursor
-# move, erase and title sequence, CR rewrites a row), DEL, C1 (NEL, and the
-# single-byte CSI and OSC introducers) and the Unicode line and paragraph
-# separators. Text that carries any of these is not shown, never "escaped".
-_UNPRINTABLE_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+# #1399: the characters that never display (what a terminal acts on, what
+# reorders or hides text) live in `unsafe_text`, the one list. `printable` and
+# `one_line` both apply it; `printable` keeps tab and newline, `one_line` none.
+_UNSAFE_RE = unsafe_text.UNSAFE_RE
 
 
 def has_unprintable(text) -> bool:
-    """Whether `text` carries a character a terminal would act on."""
-    return bool(_UNPRINTABLE_RE.search(str(text or "")))
+    """Whether `text` carries a control a terminal acts on (the write-time
+    refusal of a baton). The format characters are not refused: every reader
+    cleans them at render, whoever wrote the record."""
+    return bool(unsafe_text.CONTROLS_RE.search(str(text or "")))
 
 
 def printable(text):
-    """`text` without the characters a terminal acts on (`_UNPRINTABLE_RE`).
-    Foreign text (a stored item, a ledger prose value, a baton) is data, and a
-    reader's terminal must never take an instruction from it. A non-string is
-    returned as it is. Tab and newline survive."""
+    """`text` without the characters that never display (`_UNSAFE_RE`), for the
+    few places that keep newlines (a baton's lines, a ceremony). Foreign text
+    (a stored item, a ledger prose value, a baton) is data, and a reader's
+    terminal must never take an instruction from it. A non-string is returned
+    as it is. Tab and newline survive. A line renderer uses `one_line`."""
     if not isinstance(text, str):
         return text
-    return _UNPRINTABLE_RE.sub("", text)
+    return _UNSAFE_RE.sub("", text)
 
 
 def printable_tree(node):
@@ -50,6 +52,28 @@ def printable_tree(node):
             node[index] = (printable(member) if isinstance(member, str)
                            else printable_tree(member))
     return node
+
+
+def line_tree(node, keep=()):
+    """`node` with `one_line` applied to every string in it, in place, except
+    the values of the dict keys named in `keep` (multi-line by design: they get
+    `printable`). Flat is the default, so a field nobody declared cannot carry
+    a line break to a renderer. Returns `node`."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(value, str):
+                node[key] = printable(value) if key in keep else one_line(value)
+            else:
+                line_tree(value, keep)
+    elif isinstance(node, list):
+        for index, member in enumerate(node):
+            if isinstance(member, str):
+                node[index] = one_line(member)
+            else:
+                line_tree(member, keep)
+    return node
+
+
 _MIN_SENTENCE = 20
 _SENTENCE_END_RE = re.compile(r"[.?!](?= [A-Z])")
 
@@ -60,9 +84,13 @@ QUOTE_CHARS = 120
 
 
 def one_line(text) -> str:
-    """`text` on one line: every whitespace run becomes one space, ends
-    stripped. Null-safe (`None` is the empty string)."""
-    return _SPACE_RE.sub(" ", str(text or "")).strip()
+    """Foreign `text` as one physical line made only of characters that
+    display: every line break (what `str.splitlines` splits on) and whitespace
+    run becomes one space, the characters in `_UNSAFE_RE` go, ends stripped.
+    The breaks turn into spaces BEFORE the removal, so a carriage return
+    never joins two words. Null-safe (`None` is the empty string)."""
+    text = _SPACE_RE.sub(" ", str(text or ""))
+    return _SPACE_RE.sub(" ", _UNSAFE_RE.sub("", text)).strip()
 
 
 def shorten(text, limit: int, *, sentence: bool = False,

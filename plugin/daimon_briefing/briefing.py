@@ -1237,9 +1237,9 @@ def drift_parts(entry) -> tuple[str, str, str]:
     so a line of the block is always one physical line and a parser can tell
     where it ends. The plain block and the rich panel both print this triple."""
     tag = marks.DRIFT_GONE if entry["kind"] == "hard" else marks.DRIFT_CHANGED
-    text = display.one_line(display.printable(entry["item"].get("text")))
-    name = (display.one_line(display.printable(
-        entry["anchor"].get("qualified_name"))) or marks.DRIFT_UNANCHORED)
+    text = display.one_line(entry["item"].get("text"))
+    name = (display.one_line(entry["anchor"].get("qualified_name"))
+            or marks.DRIFT_UNANCHORED)
     return tag, text, name
 
 
@@ -2059,7 +2059,7 @@ def _field(value) -> str:
     would let that text start a line of its own, a ruling, an item or a
     header, in any reader of the briefing. Bounded here, at the one place
     every panel line is built, so no panel carries its own."""
-    return display.one_line(display.printable(str(value or "")))
+    return display.one_line(value)
 
 
 def request_panel_lines(project_dir=None, *, snap=None) -> list[str]:
