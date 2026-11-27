@@ -149,10 +149,10 @@ def _team_briefings(project, counts: "_TeamCounts | None" = None) -> list:
     return out
 
 
-def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
+def _render_briefing_body(annotated, route, fx, *, teammates,
                           worldcheck_project=None, team_counts=None,
                           loops_pointer=True, lead=()) -> int:
-    """Shared tail of `brief` and `brief --slug`: drift, render, footnotes,
+    """Shared tail of `brief` and `brief --slug`: render, footnotes,
     and the effects (worldcheck bookkeeping, surfaced stamps) recorded into
     `fx` once the output is written; `effects_commit` writes them after it
     flushes stdout. `annotated` is `briefing.prepare`'s result (the
@@ -161,8 +161,10 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     bare slug on the --slug path (the store's slug munging is idempotent, so a
     slug rides through project_dir-shaped APIs unchanged; guarded by
     test_project_slug_is_idempotent_on_slugs).
-    `drift_project=None` skips the anchor drift check: anchor paths are
-    relative to the origin project's root, which a slug cannot recover.
+    Anchor drift is `annotated.drift`, read once by `briefing.prepare` for
+    the caller's own checked-out project (a slug, a foreign path and a
+    fallback body get none: anchor paths are relative to the origin
+    project's root).
     `worldcheck_project=None` skips the #365 external-state spot-check for the
     same reason drift skips: --slug and global-fallback briefs render ANOTHER
     project's checkpoint, and `gh` probes resolve against THIS cwd's repo —
@@ -172,12 +174,6 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     everything a host hook captures is stdout, not just the body."""
     checkpoint = annotated.checkpoint if annotated else None
 
-    # NOTE: drift is checked against the resolved project root. If read_latest fell
-    # back to the GLOBAL pointer (another project's checkpoint), its anchor file paths
-    # are relative to a different root and may report spurious "hard" drift. Acceptable
-    # for v1 (degrades safely); origin-project gating is future work (#60 follow-up).
-    drift = (anchor.drifted(checkpoint, drift_project)
-             if checkpoint and drift_project else [])
     # #523: the baton leads the briefing. `briefing.prepare` read it (fail-open);
     # this host only renders it.
     trailer = briefing.withheld_trailer(annotated, team_counts)
@@ -189,7 +185,7 @@ def _render_briefing_body(annotated, route, fx, *, drift_project, teammates,
     # #1128: the notes ride INTO render_brief so they are charged to the same
     # byte budget as the body, HANDOFF and teammates. `printed` is what the
     # budgeted brief actually showed of each panel.
-    printed = render.render_brief(annotated, drift=drift, teammates=teammates,
+    printed = render.render_brief(annotated, teammates=teammates,
                                   trailer=trailer,
                                   loops_pointer=loops_pointer,
                                   extra_notes=(team_counts.notes
@@ -300,7 +296,7 @@ def _cmd_brief(args, fx) -> int:
             return 1
         # A named bucket is somebody else's listing: no `daimon loops` pointer.
         return _render_briefing_body(
-            annotated, slug, fx, drift_project=None, teammates=None,
+            annotated, slug, fx, teammates=None,
             loops_pointer=False,
             lead=render.brief_note_lines(
                 [f"cross-project briefing — project: {slug}"]))
@@ -395,7 +391,7 @@ def _cmd_brief(args, fx) -> int:
     teammates = (_team_briefings(project, team_counts)
                  if getattr(args, "team", False) else None)
     return _render_briefing_body(annotated, project, fx,
-                                 drift_project=project, teammates=teammates,
+                                 teammates=teammates,
                                  worldcheck_project=None if fallback_used
                                  else project, team_counts=team_counts,
                                  loops_pointer=(not fallback_used

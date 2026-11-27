@@ -228,7 +228,7 @@ def test_the_bytes_do_not_depend_on_the_plain_flag_or_a_terminal(
 
 # ---- the format version (D20) ----
 
-_FINGERPRINT = "aec4fba8c4f63a5415a42c283595819e563c3a2c235e47f9f87198cc2f141acf"
+_FINGERPRINT = "9445818a38f3a08d46c194b2d9e3d6d4e77c9421177143238c64997d52c75d7c"
 
 
 def _marks_fingerprint():
@@ -238,7 +238,7 @@ def _marks_fingerprint():
 
 
 def test_the_format_version_is_the_exported_integer():
-    assert marks.FORMAT_VERSION == 4 == api.BRIEFING_FORMAT
+    assert marks.FORMAT_VERSION == 5 == api.BRIEFING_FORMAT
     assert isinstance(api.BRIEFING_FORMAT, int)
 
 

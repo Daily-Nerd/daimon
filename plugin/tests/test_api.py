@@ -22,7 +22,7 @@ REEXPORTS = ("lookup", "match", "why", "why_lines", "read_meta", "withheld_marke
              "HANDOFF_MAX_BYTES", "HandoffTooLong", "HandoffUnprintable",
              "HandoffNotRecorded", "write_handoff")
 OWNED = ("Handoff", "PanelCard", "Panel", "DecisionCount", "Withheld",
-         "Briefing", "parse_briefing")
+         "Drift", "DriftItem", "Briefing", "parse_briefing")
 EXPECTED = REEXPORTS + OWNED
 
 

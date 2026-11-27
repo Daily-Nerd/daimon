@@ -163,7 +163,7 @@ CLI_ORIENTATION = briefing.Orientation(
            "`daimon serialize <transcript>`."))
 
 
-def render_brief(annotated, drift=None, teammates=None, trailer=None,
+def render_brief(annotated, teammates=None, trailer=None,
                  loops_pointer: bool = True, extra_notes=(),
                  lead=()) -> briefing.Printed:
     """Print `annotated` (`briefing.prepare`'s result: the checkpoint after
@@ -181,7 +181,7 @@ def render_brief(annotated, drift=None, teammates=None, trailer=None,
     Codex, Gemini, and Kimi all shell out to that CLI and capture its whole
     stdout. That stdout has to fit under `config.brief_max_bytes()`, not just
     the body, so it is ONE composition, `briefing.compose` (#1128, #1402): the
-    lead, baton, version note, drift block and `trailer` (advisory lines
+    lead, baton, version note, drift block (`annotated.drift`) and `trailer` (advisory lines
     printed last, e.g. the withheld count) are fixed and counted first, and
     the body and the teammates block share what is left. The rich branch is
     TTY-interactive, never captured or spilled by a host, so the byte ceiling
@@ -201,7 +201,6 @@ def render_brief(annotated, drift=None, teammates=None, trailer=None,
         composed = briefing.compose(
             annotated, orientation=CLI_ORIENTATION,
             lead="".join(f"{ln}\n" for ln in lead),
-            drift=_format_drift(drift),
             teammate_blocks=_teammate_blocks(teammates or ()),
             teammate_header=_TEAMMATES_HEADER, trailer=trailer or (),
             extra_notes=extra_notes, loops_pointer=loops_pointer,
@@ -245,7 +244,7 @@ def render_brief(annotated, drift=None, teammates=None, trailer=None,
             degraded=briefing.receipt_degraded(checkpoint), notes=notes,
             loops_pointer=loops_pointer, snap=annotated.snapshot, llm=True)
         print(body.text)
-        _print_drift(drift)
+        _print_drift(annotated.drift)
         _print_teammates(teammates)
         _print_trailer(trailer)
         return body.printed
@@ -257,7 +256,7 @@ def render_brief(annotated, drift=None, teammates=None, trailer=None,
                 furniture.lines("owed"), furniture.count_line(),
                 loops_pointer, notes,
                 overdue_lines=furniture.lines("overdue"))
-    _print_drift(drift)
+    _print_drift(annotated.drift)
     _print_teammates(teammates)
     _print_trailer(trailer)
     return furniture.printed()
@@ -269,26 +268,11 @@ def _print_trailer(trailer) -> None:
         _render_lines(list(trailer))
 
 
-def _format_drift(drift) -> str:
-    """Plain-path text for the CODE DRIFT block (#1044): identical bytes to
-    what `_print_drift`'s non-rich branch used to print directly, extracted
-    so `render_brief`'s byte-ceiling accounting can measure it before the
-    body renders. "" when there is no drift (nothing to reserve or print)."""
-    if not drift:
-        return ""
-    lines = ["", "CODE DRIFT — verify before trusting (anchored code changed):"]
-    for d in drift:
-        tag = "GONE" if d["kind"] == "hard" else "changed"
-        qn = d["anchor"].get("qualified_name") or "malformed anchor"
-        lines.append(f"- [{tag}] {d['item'].get('text', '').strip()}  ({qn})")
-    return "\n".join(lines) + "\n"
-
-
 def _print_drift(drift) -> None:
     if not drift:
         return
     if not supports_rich():
-        print(_format_drift(drift), end="")
+        print(briefing.drift_block(drift), end="")
         return
     from rich.console import Console
     from rich.text import Text
@@ -296,11 +280,10 @@ def _print_drift(drift) -> None:
 
     body = Text()
     for d in drift:
-        tag = "GONE" if d["kind"] == "hard" else "changed"
-        body.append(f"[{tag}] {d['item'].get('text', '').strip()}\n",
+        tag, text, name = briefing.drift_parts(d)
+        body.append(f"[{tag}] {text}\n",
                     style="red" if d["kind"] == "hard" else "yellow")
-        qn = d["anchor"].get("qualified_name") or "malformed anchor"
-        body.append(f"    {qn}\n", style="dim")
+        body.append(f"    {name}\n", style="dim")
     Console().print(
         Panel(body, title="⚠ CODE DRIFT — verify before trusting",
               border_style="red", title_align="left")
