@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-from .. import config, refutations, render, store, view
+from .. import config, display, refutations, render, store, view
 from . import _cap_refusal, _observe
 
 # #920: over-cap `subject`/`verdict`/`scope`/`evidence` name where the
@@ -444,7 +444,8 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
     mark = "§" if state == "active" else ("×" if state == "overturned" else "?")
     word = "ruling " if tag else ""
     lines = [f"[{word}{mark} {shown_state} · {activation}] "
-             f"{record['refutation_id']}  {record.get('verdict', '')}"]
+             f"{record['refutation_id']}  "
+             f"{display.one_line(record.get('verdict'))}"]
     lifecycle = record.get("check_lifecycle")
     if lifecycle and not detailed:
         lines[0] += f" [check: {lifecycle}]"
@@ -461,8 +462,8 @@ def _ruling_lines(record: dict, *, detailed: bool = False,
         lines.append("  not as ratified: an enforcement value is withheld")
     if not detailed:
         return lines
-    lines.append(f"  Governs: {record.get('subject', '')}")
-    lines.append(f"  Scope: {record.get('scope', '')}")
+    lines.append(f"  Governs: {display.one_line(record.get('subject'))}")
+    lines.append(f"  Scope: {display.one_line(record.get('scope'))}")
     anchors = record.get("anchors") or []
     if anchors:
         lines.append(f"  Anchors: {', '.join(anchors)}")
@@ -572,7 +573,7 @@ def _inherited_ceremony_lines(project_dir) -> list:
         if not row.get("verdict"):   # a forgotten rule is shown as nothing
             continue
         home = config.home_relative(row.get("inherited_from") or "")
-        lines.append(f"  § {row.get('verdict', '')}  [from {home}]")
+        lines.append(f"  § {display.one_line(row.get('verdict'))}  [from {home}]")
     return lines if len(lines) > 1 else []
 
 

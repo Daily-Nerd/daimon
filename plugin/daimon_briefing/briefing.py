@@ -1854,8 +1854,8 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
             ruling_id = str(entry.get("ruling_id") or "")
             if not ruling_id or ruling_id in rendered_ids:
                 continue
-            match = str(entry.get("match") or "")
-            root = str(entry.get("project_dir") or "")
+            match = display.one_line(entry.get("match"))
+            root = display.one_line(entry.get("project_dir"))
             if not match or not root:
                 continue
             lines.append(f"{RULING_MARK} enforced from {config.home_relative(root)}: "
@@ -1922,6 +1922,10 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
         # verdict leaves its row in place, blank.
         from . import view
         rows = view.masked(project_dir, "refutations.jsonl", rows, snap=snap)
+        # A ruling line is one physical line whatever the row holds: the
+        # masked rows are copies, flattened once here for every column the
+        # lines below print (verdict, subject, policy kind).
+        rows = [display.line_tree(row) for row in rows]
     try:
         cap = config.ruling_cap()
     except Exception:
@@ -2450,7 +2454,7 @@ def handoff_lines(handoff) -> tuple[str, list[str]]:
     (a baton is foreign text; a stored row may predate the write-time check).
     The plain block, the rich panel and the parser's inverse all read these."""
     title = handoff_title(handoff.get("tier"),
-                          display.printable(str(handoff["ts"])))
+                          display.one_line(handoff["ts"]))
     lines = [ln.strip() for ln in display.printable(
         str(handoff["note"])).splitlines() if ln.strip()]
     return title, lines
