@@ -38,13 +38,14 @@ Deliberately not covered: the order rows come back in, the wording of diagnostic
 
 Reading is not free of bookkeeping here. A host API has no later seam, so the return is the delivery boundary: `render_briefing` marks the request and decision cards its text printed whole as seen by their senders (a `surfaced` row in this project's own ledger), and records the world-evidence rows it ran when `DAIMON_WORLDCHECK` is on. A card the byte budget collapsed to a count is not marked. `api.preview_briefing` takes the same arguments, returns the same text and `printed` cards and writes nothing, for a caller that reads a briefing without handing it to an agent. `api.briefing_text` is the text of `render_briefing`, so it marks cards too.
 
-`api.parse_briefing(text)` reads a briefing back (`api.BRIEFING_FORMAT` is its version, 4). Besides `header`, `standing_rulings`, `items`, `warnings` and `handoff`, it returns the request furniture, each field `None` when the text has no such section:
+`api.parse_briefing(text)` reads a briefing back (`api.BRIEFING_FORMAT` is its version, 5). Besides `header`, `standing_rulings`, `items`, `warnings` and `handoff`, it returns the request furniture, each field `None` when the text has no such section:
 
 | Field | What it holds |
 |---|---|
 | `requests`, `verdicts`, `owed`, `overdue` | A `Panel` each: `cards` (a `PanelCard` with the `request_id`, the card `line` and its indented `detail` lines), `more` (the `(+N more …)` count), `cut` (cards a collapsed panel lost to the budget) and `lines` (every line of the block). |
 | `decisions` | A `DecisionCount(here, elsewhere)`. |
 | `withheld` | A `Withheld(resolved, quarantined)`. |
+| `drift` | A `Drift(items)` with one `DriftItem(state, text, anchor)` per anchored item whose code changed (`state` is `gone` or `changed`), from the CODE DRIFT block. Those lines never appear in `items`. The block is printed only for the project the process runs in, and only when it is a git checkout. |
 
 A panel is read as a block from its title to the next blank line, by its title and never by a mark, so a baton arrow and a request card arrow cannot be mixed up, and text a peer wrote inside a card stays in that card. The format-version warning is one of `warnings`. The bytes of `render_briefing` are stable under the conditions its docstring lists, which now include the requests ledgers of the project and of the projects it exchanges requests with, and the `now` that sets the overdue ages.
 

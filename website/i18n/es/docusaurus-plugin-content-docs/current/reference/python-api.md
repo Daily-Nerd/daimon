@@ -38,13 +38,14 @@ Deliberadamente fuera de la promesa: el orden en que vuelven las filas, la redac
 
 Acá leer no está libre de registro. Una API de host no tiene un punto posterior, así que el retorno es el límite de entrega: `render_briefing` marca como vistas por quien las envió (una fila `surfaced` en el ledger de este proyecto) las tarjetas de pedidos y de decisiones que su texto imprimió completas, y registra las filas de evidencia del mundo que corrió cuando `DAIMON_WORLDCHECK` está activo. Una tarjeta que el presupuesto de bytes contrajo a un conteo no se marca. `api.preview_briefing` recibe los mismos argumentos, devuelve el mismo texto y las mismas tarjetas en `printed`, y no escribe nada, para quien lee un briefing sin entregárselo a un agente. `api.briefing_text` es el texto de `render_briefing`, así que también marca tarjetas.
 
-`api.parse_briefing(text)` lee un briefing de vuelta (`api.BRIEFING_FORMAT` es su versión, 4). Además de `header`, `standing_rulings`, `items`, `warnings` y `handoff`, devuelve los pedidos, el conteo y el pie, cada campo `None` cuando el texto no tiene esa sección:
+`api.parse_briefing(text)` lee un briefing de vuelta (`api.BRIEFING_FORMAT` es su versión, 5). Además de `header`, `standing_rulings`, `items`, `warnings` y `handoff`, devuelve los pedidos, el conteo y el pie, cada campo `None` cuando el texto no tiene esa sección:
 
 | Campo | Qué contiene |
 |---|---|
 | `requests`, `verdicts`, `owed`, `overdue` | Un `Panel` cada uno: `cards` (un `PanelCard` con el `request_id`, la `line` de la tarjeta y sus líneas `detail` con sangría), `more` (el conteo de `(+N more …)`), `cut` (tarjetas que un panel contraído perdió por el presupuesto) y `lines` (todas las líneas del bloque). |
 | `decisions` | Un `DecisionCount(here, elsewhere)`. |
 | `withheld` | Un `Withheld(resolved, quarantined)`. |
+| `drift` | Un `Drift(items)` con un `DriftItem(state, text, anchor)` por cada ítem anclado cuyo código cambió (`state` es `gone` o `changed`), del bloque CODE DRIFT. Esas líneas nunca aparecen en `items`. El bloque se imprime solo para el proyecto en el que corre el proceso, y solo si es un checkout de git. |
 
 Un panel se lee como un bloque desde su título hasta la siguiente línea en blanco, por su título y nunca por una marca, así que la flecha de un batón y la de una tarjeta de pedido no se confunden, y el texto que un par escribió dentro de una tarjeta se queda en esa tarjeta. La advertencia de formato de versión es una de las `warnings`. Los bytes de `render_briefing` son estables bajo las condiciones que lista su docstring, que ahora incluyen los ledgers de pedidos del proyecto y de los proyectos con los que intercambia pedidos, y el `now` que fija las edades de lo vencido.
 
