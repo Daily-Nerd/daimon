@@ -2523,9 +2523,9 @@ def _read_briefing(project_dir, now, loops_pointer):
     # for the process's own project, so another project's path shows and
     # stamps no panel.
     from . import view
-    read = view.host_read(None if project_dir is None else str(project_dir))
-    target = read.project
     with identity.operation():  # one scan of the recorded roots per read
+        read = view.host_read(None if project_dir is None else str(project_dir))
+        target = read.project
         got = machine_brief(target, time.time() if now is None else now,
                             loops_pointer=loops_pointer, read=read,
                             worldcheck_project=target)
