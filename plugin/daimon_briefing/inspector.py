@@ -645,7 +645,7 @@ def human_lines(result: dict) -> list[str]:
     support = _SUPPORT_WORDS[axes["current_support"]]
     source_state = _source_state(axes)
     item_line = (f"Item: [{item['item_id']}] [{item['kind']}] "
-                 f"{item.get('text') or '(content unavailable)'}")
+                 f"{display.one_line(item.get('text')) or '(content unavailable)'}")
     lines = [
         f"Now: capture {axes['capture']}; {source_state}; {support}",
         item_line,

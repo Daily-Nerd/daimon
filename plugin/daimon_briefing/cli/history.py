@@ -114,7 +114,7 @@ def _was(old_text, snap) -> str:
     masked without a reason: naming it would confirm that it was forgotten."""
     verdict = view.prose_verdict(old_text, snap, closed_masks=True)
     if verdict is None:
-        return f"was \"{old_text}\""
+        return f"was \"{display.one_line(old_text)}\""
     if verdict.reason == "forgotten":
         return "was (previous wording not shown)"
     return f"was {display.withheld_marker(verdict)}"
@@ -203,7 +203,7 @@ def _change_line(row: dict) -> str:
     """One line per change, in `recall`'s bracket shape so the id and the
     trust tag sit where a reader of the sibling verbs already looks."""
     marker = _MARKERS.get(row["change"], "-")
-    text = row["text"] or "(content unavailable)"
+    text = display.one_line(row["text"]) or "(content unavailable)"
     detail = f" ({row['detail']})" if row["detail"] else ""
     where = f" in {row['where']}" if row["where"] else ""
     return (f"{marker} {row['change']:<10} [{row['item_id']}] "
@@ -488,7 +488,7 @@ def _item_line(payload: dict) -> str:
         return f"Item: [{payload['item_id']}] [{payload['kind']}] {marker}"
     return (f"Item: [{payload['item_id']}] "
             f"[{payload['trust'] or 'untagged'}] [{payload['kind']}] "
-            f"{text or '(content unavailable)'}")
+            f"{display.one_line(text) or '(content unavailable)'}")
 
 
 def _blame_lines(payload: dict, oldest: str) -> list[str]:
@@ -517,7 +517,7 @@ def _blame_lines(payload: dict, oldest: str) -> list[str]:
     if not payload["events"]:
         lines.append("  none recorded")
     for evt in payload["events"]:
-        note = f" — {evt['note']}" if evt["note"] else ""
+        note = f" — {display.one_line(evt['note'])}" if evt["note"] else ""
         lines.append(f"  {evt['ts']} {evt['status']} "
                      f"(via {evt['source'] or 'unknown'}){note}")
     return lines

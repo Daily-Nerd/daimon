@@ -18,6 +18,7 @@ from .. import (
     anchor,
     briefing,
     config,
+    display,
     effects_commit,
     recall,
     render,
@@ -72,7 +73,8 @@ def _cmd_anchor(args) -> int:
         print(f"error: {len(found.hits)} items match {args.attach!r}; "
               "narrow the match:", file=sys.stderr)
         for hit in found.hits:
-            print(f"  - {hit.item.get('text')}", file=sys.stderr)
+            print(f"  - {display.one_line(hit.item.get('text'))}",
+                  file=sys.stderr)
         return 1
     hit = found.hits[0]
     try:
@@ -91,7 +93,8 @@ def _cmd_anchor(args) -> int:
               file=sys.stderr)
         return 1
     render.render_anchor_attach(
-        [f"attached {a['qualified_name']} to: {hit.item.get('text')}"])
+        [f"attached {a['qualified_name']} to: "
+         f"{display.one_line(hit.item.get('text'))}"])
     recall.warm()  # #246: the re-write staled the index; freshen off the read path
     return 0
 
