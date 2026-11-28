@@ -5,6 +5,17 @@ All notable changes to daimon are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.76.1](https://github.com/Daily-Nerd/daimon/compare/v0.76.0...v0.76.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **briefing:** print each ruling and the baton title on one physical line ([0f178a8](https://github.com/Daily-Nerd/daimon/commit/0f178a89658cab72fd8283ba739be44c6f91d42c)), closes [#1431](https://github.com/Daily-Nerd/daimon/issues/1431)
+* **cli:** print a stored item's text on one line in every card and listing ([415fad1](https://github.com/Daily-Nerd/daimon/commit/415fad16c9e56f8f83af30d35644685c2b4958f9)), closes [#1431](https://github.com/Daily-Nerd/daimon/issues/1431)
+* **display:** one list of characters that never display, one_line owns lines and characters ([8748cc5](https://github.com/Daily-Nerd/daimon/commit/8748cc5465c745216acca4bbf27fa962160bff02))
+* **recall:** hand every reader of a hit one clean line ([fa4d0c3](https://github.com/Daily-Nerd/daimon/commit/fa4d0c3fb11e4f0772fa3f849010210d1f20c0cd))
+* **view:** flatten opened checkpoint copies, put item text on one line at render ([df65b8f](https://github.com/Daily-Nerd/daimon/commit/df65b8f8f7df23470e8efb3d18e3e22ddeff291f)), closes [#1431](https://github.com/Daily-Nerd/daimon/issues/1431)
+
 ## [0.76.0](https://github.com/Daily-Nerd/daimon/compare/v0.75.0...v0.76.0) (2026-11-27)
 
 
