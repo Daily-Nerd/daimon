@@ -66,8 +66,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (buckets, config, index_locate, jsonl, policy, redact, schema,
-               scoring, scope, store, surfaces, teamproject, view)
+from . import (buckets, config, display, index_locate, jsonl, policy, redact,
+               schema, scoring, scope, store, surfaces, teamproject, view)
 # The term functions moved to `terms` so `view` can sit under both `carry` and
 # `recall`. The three public names stay importable from here for one release.
 from .terms import (  # noqa: F401
@@ -1766,7 +1766,12 @@ def query(text: str, project_dir=None, all_projects: bool = False,
         except (OSError, sqlite3.DatabaseError) as exc:
             _note_error("search", exc)
             return Recalled([], tuple(notes))
-    return Recalled(_dedupe_rows(kept, want_n), tuple(notes))
+    # The one exit every reader of a hit passes (the search verb, the prompt and
+    # action recall hooks, the MCP tool): index text is foreign data, shown as
+    # one clean line (`display.line_tree`); quote and scene keep their breaks.
+    rows = [display.line_tree(row, keep=("quote", "scene"))
+            for row in _dedupe_rows(kept, want_n)]
+    return Recalled(rows, tuple(notes))
 
 
 def _select(sql: str, params) -> list[dict]:

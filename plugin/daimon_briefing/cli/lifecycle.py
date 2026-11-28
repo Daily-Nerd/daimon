@@ -188,7 +188,7 @@ def _cmd_resolve(args) -> int:
     else:
         assert target is not None      # the branches above returned otherwise
         item_id = str(target.item["id"])
-        shown = f"{item_id}: {target.item.get('text', '')}"
+        shown = f"{item_id}: {display.one_line(target.item.get('text'))}"
     if dry_run:
         # A distinct tag, not "resolve": nothing was written, so folding this
         # into the success counter would inflate it with attempts that never
@@ -746,7 +746,8 @@ def _cmd_forget(args) -> int:
             preview = [f"would forget {target['id']} [{shown_kind}] "
                        f"{display.withheld_marker(verdict)}"]
         else:
-            preview = [f"would forget {target['id']}: {target.get('text', '')}"]
+            preview = [f"would forget {target['id']}: "
+                       f"{display.one_line(target.get('text'))}"]
         active_rulings = refutations.active_rulings_reached(
             {value_key}, item_ids={str(target["id"])}, project_dir=project)
         if active_rulings:
@@ -1073,7 +1074,7 @@ def _cmd_reverify(args) -> int:
             return 1
         item = found_item.item
         item_id = str(item["id"])
-        shown = f"{item_id}: {item.get('text', '')}"
+        shown = f"{item_id}: {display.one_line(item.get('text'))}"
         a = item.get("anchored_to")
         if isinstance(a, dict) and anchor.check(a, project) == "live":
             note = "reverified: anchor live"
@@ -1301,7 +1302,7 @@ def _generic_card(row: dict) -> list:
 def _quote_lines(evidence) -> list:
     """#1129: the amendment quote, wrapped to the card width with a hanging
     indent under the quote text. Never cut: the human judges the quote here."""
-    return textwrap.wrap(f'"{evidence or ""}"', width=76,
+    return textwrap.wrap(f'"{display.one_line(evidence)}"', width=76,
                          initial_indent="  quote  ",
                          subsequent_indent=" " * 11)
 
@@ -1317,13 +1318,13 @@ def _amendment_card(row: dict) -> list:
     amend = row.get("amend") or {}
     card = [f"[{tag}] {row['id']}"]
     card.append(f"  loop   {amend.get('loop_id') or '?'}  "
-               f"\"{amend.get('loop_text') or '(loop text unavailable)'}\"")
+               f"\"{display.one_line(amend.get('loop_text')) or '(loop text unavailable)'}\"")
     card.append(f"  state  {amend.get('state_from') or '?'} → "
                f"{amend.get('state_to') or '?'}")
     card += _quote_lines(amend.get("evidence"))
     card.append(f"  found  {amend.get('found') or ''}")
     if amend.get("note"):
-        card.append(f"  note   {amend['note']}")
+        card.append(f"  note   {display.one_line(amend['note'])}")
     card += [f"    {label}: {command}"
              for label, command in row.get("commands") or []]
     return card

@@ -391,10 +391,10 @@ def _print_suppressed(project) -> int:
     for row in sup.resolved:
         item, evt = row.item, row.event
         item_id = item.get("id") or "-"
-        text = str(item.get("text") or "").strip()
+        text = display.one_line(item.get("text"))
         status = str(evt.get("status") or "")
         ts = str(evt.get("ts") or "")
-        note = str(evt.get("note") or "").strip()
+        note = display.one_line(evt.get("note"))
         paren = f"{status} {ts}"
         if note:
             paren += f", {note}"
@@ -417,7 +417,7 @@ def _print_suppressed(project) -> int:
         print("likely superseded (unconfirmed):")
         for key, item, evt in sup.candidates:
             item_id = item.get("id") or "-"
-            text = str(item.get("text") or "").strip()
+            text = display.one_line(item.get("text"))
             new_id = item.get("_supersede_candidate") or "-"
             print(f"  {item_id}  [{key}] {text}  -> {new_id}")
             # #111: both a confirm and a reject path — a human who disagrees

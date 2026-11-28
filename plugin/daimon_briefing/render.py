@@ -364,7 +364,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
             if sel.kept.get("active_topic"):
                 console.print(
                     Panel(
-                        Text(sel.kept["active_topic"].get("text", "").strip()),
+                        Text(display.one_line(sel.kept["active_topic"].get("text"))),
                         # #1236: the plain line's label, qualifier included.
                         title=briefing.active_topic_label(sel),
                         border_style="white", title_align="left",
@@ -383,7 +383,7 @@ def _rich_brief(b: dict, degraded: bool = False, rulings=(),
         briefable = key in briefing.BRIEFABLE_SECTIONS
         for i in items:
             trust = _trust_key(i)
-            text = str(i.get("text") or "").strip()
+            text = display.one_line(i.get("text"))
             stale_days = i.get("_stale_carried_days")
             if isinstance(stale_days, (int, float)) \
                     and not isinstance(stale_days, bool):
@@ -529,7 +529,7 @@ def _teammate_blocks(teammates) -> list[str]:
         lines = ["", f"[{author}]"]
         active = b.get("active_topic")
         if active:
-            line = f"  Active topic: {active.get('text', '').strip()}"
+            line = f"  Active topic: {display.one_line(active.get('text'))}"
             if active.get("foreign_verbatim_claim"):
                 # #423: decisions get this via briefing._line; the topic line
                 # is built here, so the label has to be repeated.
@@ -574,7 +574,7 @@ def _rich_teammates(teammates) -> None:
         body = Text()
         active = b.get("active_topic")
         if active:
-            body.append(f"Active topic: {active.get('text', '').strip()}\n", style="white")
+            body.append(f"Active topic: {display.one_line(active.get('text'))}\n", style="white")
             if active.get("foreign_verbatim_claim"):
                 body.append(f"    {briefing.FOREIGN_VERBATIM_NOTE}\n", style="yellow")
         sel = briefing.select(b, None)
@@ -583,7 +583,7 @@ def _rich_teammates(teammates) -> None:
             body.append("Decisions made:\n", style="bold")
             for i in decisions:
                 trust = _trust_key(i)
-                body.append(f"• {i.get('text', '').strip()}\n", style=_TRUST_STYLE[trust])
+                body.append(f"• {display.one_line(i.get('text'))}\n", style=_TRUST_STYLE[trust])
                 if i.get("foreign_verbatim_claim"):
                     # #423: parity with briefing._line's plain-path label —
                     # this panel builds its own Text body, so the label is

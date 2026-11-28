@@ -190,7 +190,7 @@ def _line(item, degraded: bool = False, briefable: bool = False,
     # default only fires for an ABSENT key), so a torn/legacy checkpoint could
     # crash the whole render here. Use the codebase's str(x or "") idiom
     # (store.py, carry.py) — tolerant of null, same as iter_items' stance.
-    text = str(item.get("text") or "").strip()
+    text = display.one_line(item.get("text"))
     quote = item_quote(item, text, full_quotes)
     mark = _mark(item, degraded)
     stale_days = item.get("_stale_carried_days")
@@ -1237,9 +1237,9 @@ def drift_parts(entry) -> tuple[str, str, str]:
     so a line of the block is always one physical line and a parser can tell
     where it ends. The plain block and the rich panel both print this triple."""
     tag = marks.DRIFT_GONE if entry["kind"] == "hard" else marks.DRIFT_CHANGED
-    text = display.one_line(display.printable(entry["item"].get("text")))
-    name = (display.one_line(display.printable(
-        entry["anchor"].get("qualified_name"))) or marks.DRIFT_UNANCHORED)
+    text = display.one_line(entry["item"].get("text"))
+    name = (display.one_line(entry["anchor"].get("qualified_name"))
+            or marks.DRIFT_UNANCHORED)
     return tag, text, name
 
 
@@ -1854,8 +1854,8 @@ def _manifest_enforce_lines(project_dir, rendered_ids: set) -> list[str]:
             ruling_id = str(entry.get("ruling_id") or "")
             if not ruling_id or ruling_id in rendered_ids:
                 continue
-            match = str(entry.get("match") or "")
-            root = str(entry.get("project_dir") or "")
+            match = display.one_line(entry.get("match"))
+            root = display.one_line(entry.get("project_dir"))
             if not match or not root:
                 continue
             lines.append(f"{RULING_MARK} enforced from {config.home_relative(root)}: "
@@ -1922,6 +1922,10 @@ def ruling_lines(project_dir=None, *, snap=None) -> list[str]:
         # verdict leaves its row in place, blank.
         from . import view
         rows = view.masked(project_dir, "refutations.jsonl", rows, snap=snap)
+        # A ruling line is one physical line whatever the row holds: the
+        # masked rows are copies, flattened once here for every column the
+        # lines below print (verdict, subject, policy kind).
+        rows = [display.line_tree(row) for row in rows]
     try:
         cap = config.ruling_cap()
     except Exception:
@@ -2059,7 +2063,7 @@ def _field(value) -> str:
     would let that text start a line of its own, a ruling, an item or a
     header, in any reader of the briefing. Bounded here, at the one place
     every panel line is built, so no panel carries its own."""
-    return display.one_line(display.printable(str(value or "")))
+    return display.one_line(value)
 
 
 def request_panel_lines(project_dir=None, *, snap=None) -> list[str]:
@@ -2450,7 +2454,7 @@ def handoff_lines(handoff) -> tuple[str, list[str]]:
     (a baton is foreign text; a stored row may predate the write-time check).
     The plain block, the rich panel and the parser's inverse all read these."""
     title = handoff_title(handoff.get("tier"),
-                          display.printable(str(handoff["ts"])))
+                          display.one_line(handoff["ts"]))
     lines = [ln.strip() for ln in display.printable(
         str(handoff["note"])).splitlines() if ln.strip()]
     return title, lines
@@ -3227,7 +3231,7 @@ def render_selection(sel: Selection) -> str:
             if sel.kept.get("active_topic"):
                 parts.append("")
                 parts.append(active_topic_label(sel) + ": "
-                             + sel.kept["active_topic"].get("text", "").strip())
+                             + display.one_line(sel.kept["active_topic"].get("text")))
             continue
         items = sel.kept.get(section) or []
         note = section_note(sel, section)
